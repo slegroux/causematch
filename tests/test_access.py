@@ -72,6 +72,8 @@ ROUTES = {
     ("GET", "/matches/{match_id}/block"): ("volunteer", "own-record"),
     ("POST", "/matches/{match_id}/block"): ("volunteer", "own-record"),
     ("GET", "/profile"): ("volunteer", "own-record"),
+    ("GET", "/me/preferences"): ("volunteer", "own-record"),
+    ("POST", "/me/preferences"): ("volunteer", "own-record"),
     ("GET", "/profile/delete"): ("volunteer", "own-record"),
     ("POST", "/profile/delete"): ("volunteer", "own-record"),
     ("GET", "/privacy"): ("public", None),

@@ -93,6 +93,8 @@ class Profile:
     deleted_at: str
     suspended_at: str  # UTC; an admin suspended this account: it cannot sign in
     sms_opted_out: bool  # the number replied STOP: never text it again
+    # Match preferences (app/prefs.py), private: nonprofits never see them.
+    cause_prefs: str  # JSON {slug: love|open|no}; `causes` keeps love + open
 
 
 class OrgMember:

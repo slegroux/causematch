@@ -13,6 +13,7 @@ from apswutils.db import NotFoundError
 
 from app import db as _db
 from app import match as _match
+from app import prefs as _prefs
 from app.choices import ANY_DISTANCE_KM
 from app.config import phone_hash_key
 from app.metrics_rows import fetch_rows
@@ -42,14 +43,16 @@ def _deck_openings(uid):
     """[(opening, active cause labels, distance_km or None)] this volunteer could still swipe on.
 
     swipe() checks visibility with this same function, so whatever hides an opening
-    from the deck (closed, past, inactive cause, out of radius) also stops a like sent
-    by id. Distance is None for a remote opening or when either side has no location.
+    from the deck (closed, past, inactive cause, a cause that is "not for me", out of
+    radius) also stops a like sent by id. Distance is None for a remote opening or when
+    either side has no location.
     """
     labels = {c.slug: c.label for c in _db.causes() if c.active}
     seen = {
         s.opening_id for s in _db.swipes(where="volunteer_id = ?", where_args=[uid])
     }
     me = _db.profiles[uid]
+    mine = _prefs.cause_prefs(me)
     # Only verified, active orgs the volunteer has not blocked. An org that blocked the
     # volunteer stays visible: hiding it would tell them.
     shown = {
@@ -71,6 +74,8 @@ def _deck_openings(uid):
             continue
         cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
         if not cause_labels or o.id in seen:
+            continue
+        if not _match.causes_allowed(mine, json.loads(o.causes or "[]")):
             continue
         km = None
         if not o.remote:
@@ -123,7 +128,8 @@ def deck(uid, limit=20):
     """
     me = _db.profiles[uid]
     active = {c.slug for c in _db.causes() if c.active}
-    mine = set(json.loads(me.causes or "[]")) & active, json.loads(me.skills or "[]")
+    rated = {s: v for s, v in _prefs.cause_prefs(me).items() if s in active}
+    mine = rated, json.loads(me.skills or "[]")
     free = json.loads(me.availability or "[]")
     org_names = {o.id: o.name for o in _db.orgs()}
     rates = _org_reply_rates()
@@ -837,12 +843,36 @@ def save_onboarding(
         lon=lon,
         radius_km=radius_km,
         causes=json.dumps(list(causes)),
+        cause_prefs=json.dumps(dict.fromkeys(causes, _prefs.LOVE)),
         other_causes=other_causes,
         availability=json.dumps(list(availability)),
         skills=json.dumps(list(skills)),
         frequency=frequency,
         heard_from=heard_from,
         onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+
+
+def preferences(uid):
+    """The volunteer's match preferences, as /me/preferences shows them."""
+    p = _db.profiles[uid]
+    return {
+        "causes": _prefs.cause_prefs(p),
+        "availability": json.loads(p.availability or "[]"),
+        "skills": json.loads(p.skills or "[]"),
+        "frequency": p.frequency or "",
+    }
+
+
+def save_preferences(uid, *, causes, availability, skills, frequency):
+    """causes: {slug: love|open|no}; a cause left out is unrated."""
+    _db.profiles.update(
+        id=uid,
+        cause_prefs=json.dumps(causes),
+        causes=json.dumps(_prefs.picked(causes)),
+        availability=json.dumps(list(availability)),
+        skills=json.dumps(list(skills)),
+        frequency=frequency,
     )
 
 

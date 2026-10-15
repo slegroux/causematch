@@ -31,6 +31,30 @@ def jaccard(a, b):
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+CAUSE_VALUE = {"love": 1.0, "open": 0.6}  # anything else (unrated) counts 0
+
+
+def cause_fit(mine, theirs):
+    """How well an opening's causes suit a volunteer, in 0..1.
+
+    mine is {slug: love|open|no}, or a collection of slugs, all loved. Each of the opening's
+    causes counts CAUSE_VALUE, over the union of its causes and the loved ones. With loved
+    causes only this is jaccard, so a profile from before three-state causes ranks as it did.
+    """
+    if not isinstance(mine, dict):
+        mine = dict.fromkeys(mine, "love")
+    theirs = set(theirs)
+    union = theirs | {s for s, v in mine.items() if v == "love"}
+    if not union:
+        return 0.0
+    return sum(CAUSE_VALUE.get(mine.get(s), 0.0) for s in theirs) / len(union)
+
+
+def causes_allowed(mine, theirs):
+    """False when any of the opening's causes is "not for me": those are never shown."""
+    return not any(mine.get(s) == "no" for s in theirs)
+
+
 def availability_bucket(starts_at):
     """'weekday_morning' etc. for a Los Angeles wall-clock start (str or datetime)."""
     t = datetime.fromisoformat(starts_at) if isinstance(starts_at, str) else starts_at
@@ -85,9 +109,9 @@ def score(
     reply,
 ):
     """Weighted fit in 0..1; each argument is already a 0..1 term, except causes
-    (compared by jaccard) and skills (by coverage), which are (volunteer, opening) pairs."""
+    (compared by cause_fit) and skills (by coverage), which are (volunteer, opening) pairs."""
     return (
-        WEIGHTS["causes"] * jaccard(*causes)
+        WEIGHTS["causes"] * cause_fit(*causes)
         + WEIGHTS["skills"] * skill_coverage(*skills)
         + WEIGHTS["distance"] * distance
         + WEIGHTS["availability"] * availability

@@ -25,6 +25,7 @@ from app.forms import bad_request, str_form
 from app.ui import (
     CARD,
     CLOCK,
+    HEART,
     NEXT,
     SHIELD,
     SIGN_OUT,
@@ -292,6 +293,7 @@ def profile_page(req):
             cls="flex items-center gap-4 p-4 " + CARD,
         ),
         Div(
+            HubRow(HEART, "Preferences", "/me/preferences"),
             HubRow(CLOCK, "History", "/history"),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),

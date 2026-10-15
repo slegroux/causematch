@@ -29,6 +29,7 @@ from app.routes.matches import ar as matches_router
 from app.routes.onboarding import ar as onboarding_router
 from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
+from app.routes.prefs import ar as prefs_router
 from app.routes.pwa import ar as pwa_router
 from app.routes.safety import ar as safety_router
 from app.routes.shifts import ar as shifts_router
@@ -134,6 +135,7 @@ for router in (
     org_router,
     shifts_router,
     safety_router,
+    prefs_router,
     tasks_router,
     pwa_router,
 ):
