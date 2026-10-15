@@ -288,7 +288,7 @@ def profile_page(req):
             Div(
                 H2(name or "Your profile", cls="font-display text-lg font-extrabold"),
                 P(
-                    "Profile & preferences: editing them here is coming soon.",
+                    "Editing your profile here is coming soon; preferences are below.",
                     cls=TextPresets.muted_sm,
                 ),
             ),
