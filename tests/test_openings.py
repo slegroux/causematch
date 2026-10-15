@@ -291,11 +291,11 @@ def test_date_window_is_a_year_and_dst_gap_is_rejected(coord, monkeypatch):
     assert post(coord, starts_at="2027-03-14T03:30", title="After").status_code == 303
 
 
-def test_huge_opening_id_is_404(coord):
+def test_huge_opening_id_is_refused_like_any_unknown_id(coord):
     r = coord.post(
         "/org/openings/99999999999999999999999/close", follow_redirects=False
     )
-    assert r.status_code == 404
+    assert r.status_code == 403  # the same answer as for an id that does not exist
 
 
 def test_name_is_required_before_posting(coord):

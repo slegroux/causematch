@@ -221,6 +221,32 @@ def test_matches_page_and_withdraw(user):
     assert "Withdrawn" in user.get("/matches").text
 
 
+def test_withdraw_asks_first_and_a_get_changes_nothing(user):
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    mid = matches()[0].id
+    assert f'href="/matches/{mid}/withdraw"' in user.get("/matches").text
+    page = user.get(f"/matches/{mid}/withdraw")
+    assert f"Withdraw from {TITLE}?" in page.text
+    assert "You won't be able to like this opening again." in page.text
+    assert (
+        f'action="/matches/{mid}/withdraw"' in page.text and "onclick" not in page.text
+    )
+    assert matches[mid].status == "pending"
+    user.post(f"/matches/{mid}/withdraw")
+    r = user.get(f"/matches/{mid}/withdraw", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/matches"
+
+
+def test_a_withdrawn_volunteer_cannot_like_the_same_opening_again():
+    v = volunteer()
+    o = opening()
+    m = data.swipe(v.uid, o.id, True)
+    data.withdraw(v.uid, m.id)
+    again = data.swipe(v.uid, o.id, True)
+    assert again.id == m.id and matches[m.id].status == "withdrawn"
+    assert len(matches()) == 1
+
+
 def test_other_volunteer_cannot_withdraw_my_match(user):
     user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
     mid = matches()[0].id

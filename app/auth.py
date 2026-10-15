@@ -80,4 +80,27 @@ def check_session(req, sess):
         return Redirect("/onboarding")
 
 
+def ws_session_user(ws, role):
+    """The signed-in profile for this websocket when it has `role`, else None.
+
+    Beforeware does not run for websockets, so every ws handler (connect and each
+    message) must call this itself and, on None, close the socket:
+        if (user := ws_session_user(ws, "volunteer")) is None:
+            return await ws.close(code=1008)
+    Same rules as check_session: live profile, matching session version, and for
+    coordinators a current org membership.
+    """
+    sess = ws.scope.get("session") or {}
+    profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
+    if not profile or sess.get("sv") != (profile.session_version or 1):
+        return None
+    if profile.role != role:
+        return None
+    if role == "coordinator" and not data.coordinator_org_ids(profile.id):
+        return None
+    if role == "volunteer" and not profile.onboarded_at:
+        return None
+    return profile
+
+
 beforeware = Beforeware(check_session, skip=PUBLIC)

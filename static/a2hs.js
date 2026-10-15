@@ -1,4 +1,4 @@
-// "Add to Home Screen" hint: shown on iPhone Safari, in a tab (not the installed app),
+// "Add to Home Screen" hint: shown on iPhone Safari (not other iOS browsers or in-app browsers), in a tab (not the installed app),
 // to anyone who has not dismissed it. The page renders the hint hidden; this only
 // decides whether to show it.
 (function () {
@@ -7,7 +7,7 @@
   if (!hint) return;
 
   var ua = navigator.userAgent;
-  var iphone = /iPhone/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  var iphone = /iPhone/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|Instagram|FBAN|FBAV|GSA\/|Ddg\/|Line\/|Snapchat|TikTok|MicroMessenger|; wv\)/.test(ua);
   var installed =
     navigator.standalone === true ||
     (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);

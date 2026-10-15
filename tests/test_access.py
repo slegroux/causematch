@@ -1,23 +1,28 @@
 """Every route is classified, and checked for sign-in, role and ownership."""
 
 import ast
+import os
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from conftest import coordinator_for, org_sign_in, sign_in
-from starlette.routing import Mount
+from starlette.routing import Mount, WebSocketRoute
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from app import data
-from app.auth import PUBLIC, is_org_path
-from app.db import matches, openings, orgs, profiles
+from app.auth import PUBLIC, is_org_path, session_secret, ws_session_user
+from app.db import matches, openings, org_members, orgs, profiles, swipes
 from main import app
 
 ROOT = Path(__file__).resolve().parent.parent
 TITLE = "Sort and pack pantry boxes"  # org 0's opening that A likes
 NAME = "Zelda"  # volunteer A, whose data nobody else may see
-SECRETS = (NAME, TITLE)
+# What nobody but the owner may see; the world fixture adds A's phone and org 0's coordinator.
+SECRETS = [NAME, TITLE]
 
 # (method, path) -> (who may use it, how the route is scoped)
 #   who: public | volunteer | coordinator | admin (no admin route exists yet)
@@ -39,6 +44,7 @@ ROUTES = {
     ("POST", "/deck"): ("volunteer", "own-record"),
     ("POST", "/swipe"): ("volunteer", "own-record"),
     ("GET", "/matches"): ("volunteer", "own-record"),
+    ("GET", "/matches/{match_id}/withdraw"): ("volunteer", "own-record"),
     ("POST", "/matches/{match_id}/withdraw"): ("volunteer", "own-record"),
     ("GET", "/org"): ("coordinator", "own-org"),
     ("POST", "/org/details"): ("coordinator", "own-org"),
@@ -49,6 +55,11 @@ ROUTES = {
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
+}
+# Ids that arrive in a form body rather than the path: each needs an OWNERSHIP check too.
+BODY_IDS = {
+    ("POST", "/swipe"): {"opening_id"},
+    ("POST", "/org/openings/new"): {"org_id"},
 }
 PUBLIC_ROUTES = [r for r, (who, _) in ROUTES.items() if who == "public"]
 GUARDED = [r for r, (who, _) in ROUTES.items() if who != "public"]
@@ -62,10 +73,15 @@ def app_routes(routes, prefix=""):
         path = prefix + r.path
         if isinstance(r, Mount) and getattr(r, "routes", None):
             yield from app_routes(r.routes, path)
+        elif isinstance(r, WebSocketRoute):
+            yield ("WS", path)
         elif isinstance(r, Mount) or not getattr(r, "methods", None):
             yield ("*", path)
         else:
-            for method in sorted(set(r.methods) - {"HEAD", "OPTIONS"}):
+            methods = set(r.methods)
+            if "GET" in methods:  # Starlette adds HEAD to every GET
+                methods.discard("HEAD")
+            for method in sorted(methods):
                 yield (method, path)
 
 
@@ -94,6 +110,16 @@ def send(client, method, path):
     return client.request(method, path, data=body, follow_redirects=False)
 
 
+def ws_refused(client, path):
+    """True when the socket is closed on the caller; False when the handler talks to them."""
+    try:
+        with client.websocket_connect(path) as ws:
+            ws.receive_text()
+    except WebSocketDisconnect:
+        return True
+    return False
+
+
 @pytest.fixture
 def world():
     """Volunteers A and B, an admin, and a coordinator for org 0 and one for org 1.
@@ -116,7 +142,8 @@ def world():
     profiles.update(id=w.admin.uid, role="admin")
     w.anon = TestClient(app)
     for i in (0, 1):
-        _, email = coordinator_for(i)
+        uid, email = coordinator_for(i)
+        setattr(w, f"org{i}_uid", uid)
         c = TestClient(app)
         org_sign_in(c, email)
         setattr(w, f"org{i}", c)
@@ -124,6 +151,7 @@ def world():
     w.other_opening = openings(where="org_id = ?", where_args=[orgs()[1].id])[0]
     assert w.opening.org_id == orgs()[0].id
     w.match = data.swipe(w.a.uid, w.opening.id, True)
+    SECRETS[:] = [NAME, TITLE, w.a.phone, "coord0@example.org"]
     return w
 
 
@@ -149,6 +177,9 @@ def test_classification_is_well_formed():
             assert scope, f"{path} takes an id: say whose record it is"
         if is_org_path(path) and who != "public":
             assert who == "coordinator", path
+        assert not (method == "WS" and who == "public"), (
+            "a websocket must check its caller"
+        )
         if path in ("/", "/deck", "/matches", "/swipe", "/onboarding"):
             assert who == "volunteer", path
 
@@ -166,6 +197,9 @@ def test_public_means_the_beforeware_skips_it():
 def test_signed_out_is_sent_to_the_right_login(world, route):
     method, template = route
     path = concrete(template, world.match.id, world.opening.id)
+    if method == "WS":
+        assert ws_refused(world.anon, path)
+        return
     r = send(world.anon, method, path)
     assert r.status_code in (401, 403) or (
         r.status_code in (302, 303) and r.headers["location"] == login_of(path)
@@ -218,6 +252,9 @@ def test_wrong_role_never_gets_the_other_sides_page(world, route):
         "coordinator": [("volunteer", world.b), ("admin", world.admin)],
     }[who]
     for role, client in callers:
+        if method == "WS":
+            assert ws_refused(client, path), role
+            continue
         r = send(client, method, path)
         assert_turned_away(r, role, path)
     assert matches[world.match.id].status == "pending"
@@ -242,6 +279,23 @@ def assert_refused(r):
     no_secrets(r)
 
 
+def path_id_check(call, record_id, intact):
+    """Ownership check for a path id: a stranger's call, with the real id and bad ids."""
+
+    def check(w):
+        assert_refused(call(w, record_id(w)))
+        assert intact(w)
+        for gone in GONE:
+            assert_refused(call(w, gone))
+        assert intact(w)
+
+    return check
+
+
+def withdraw_page_other(w, mid):
+    return w.b.get(f"/matches/{mid}/withdraw", follow_redirects=False)
+
+
 def withdraw_other(w, mid):
     return w.b.post(f"/matches/{mid}/withdraw", follow_redirects=False)
 
@@ -258,42 +312,141 @@ def close_other(w, oid):
     return w.org1.post(f"/org/openings/{oid}/close", follow_redirects=False)
 
 
-# route -> (call as a stranger with an id, the record's id in the world, state that must hold)
+LA = ZoneInfo("America/Los_Angeles")
+
+
+def opening_form(org_id, **over):
+    f = {
+        "org_id": str(org_id),
+        "title": "Probe opening",
+        "about": "Unload and shelve donated produce.",
+        "cause": "food-insecurity",
+        "zip": "90012",
+        "neighborhood": "Chinatown",
+        "starts_at": (datetime.now(LA) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M"),
+        "recurrence": "weekly",
+        "slots": "5",
+        "orientation_required": "no",
+        "notes": "",
+        "adult_only_ok": "1",
+        "reply_channel": "email",
+    }
+    return {**f, **over}
+
+
+def check_create_opening(w):
+    """A coordinator names an org in the body; only their own org's id is accepted."""
+    org0, org1 = orgs()[0].id, orgs()[1].id
+    count = openings.count
+    assert_refused(
+        w.org1.post(
+            "/org/openings/new", data=opening_form(org0), follow_redirects=False
+        )
+    )
+    assert openings.count == count and not openings(where="title = 'Probe opening'")
+    for gone in ("0", str(2**63), str(2**70), "999999999999999999", "-1", "x"):
+        r = w.org1.post(
+            "/org/openings/new",
+            data=opening_form(gone),
+            follow_redirects=False,
+        )
+        assert r.status_code in (200, 403, 404), (gone, r.status_code)
+        no_secrets(r)
+    assert openings.count == count
+    # control: the same form for their own org goes through, so the refusals were about ownership
+    r = w.org1.post(
+        "/org/openings/new", data=opening_form(org1), follow_redirects=False
+    )
+    assert r.status_code == 303 and openings.count == count + 1
+    assert openings(where="title = 'Probe opening'")[0].org_id == org1
+
+
+def check_swipe(w):
+    """A swipe names an opening; it must be one in the caller's deck, for the caller only."""
+    b = w.b.uid
+
+    def swipe(oid, **extra):
+        return w.b.post(
+            "/swipe", data={"opening_id": str(oid), "liked": "1", **extra},
+            follow_redirects=False,
+        )  # fmt: skip
+
+    for gone in (0, -1, 2**63 - 1, 2**63, 2**70, "x", "1e3"):
+        assert swipe(gone).status_code in (303, 404), gone
+    data.close_opening(w.org0_uid, w.opening.id)  # closed since the card was drawn
+    assert swipe(w.opening.id).status_code == 303
+    assert not swipes(where="volunteer_id = ?", where_args=[b])
+    assert [m.volunteer_id for m in matches()] == [w.a.uid]
+    # a body cannot swipe for someone else
+    openings.update(id=w.opening.id, status="open")
+    swipe(w.opening.id, volunteer_id=str(w.a.uid))
+    assert sorted(m.volunteer_id for m in matches()) == sorted([w.a.uid, b])
+
+
+# route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
-    ("POST", "/matches/{match_id}/withdraw"): (
+    ("GET", "/matches/{match_id}/withdraw"): path_id_check(
+        withdraw_page_other,
+        lambda w: w.match.id,
+        lambda w: matches[w.match.id].status == "pending",
+    ),
+    ("POST", "/matches/{match_id}/withdraw"): path_id_check(
         withdraw_other,
         lambda w: w.match.id,
         lambda w: matches[w.match.id].status == "pending",
     ),
-    ("POST", "/org/matches/{match_id}/decide"): (
+    ("POST", "/org/matches/{match_id}/decide"): path_id_check(
         decide_other,
         lambda w: w.match.id,
         lambda w: matches[w.match.id].status == "pending",
     ),
-    ("POST", "/org/openings/{opening_id}/close"): (
+    ("POST", "/org/openings/{opening_id}/close"): path_id_check(
         close_other,
         lambda w: w.opening.id,
         lambda w: openings[w.opening.id].status == w.opening.status,
     ),
+    ("POST", "/org/openings/new"): check_create_opening,
+    ("POST", "/swipe"): check_swipe,
 }
 
 
+def handler_id_names():
+    """Every parameter or form key named *_id in the route modules, found from the source."""
+    names = set()
+    for f in (ROOT / "app" / "routes").glob("*.py"):
+        for node in ast.walk(ast.parse(f.read_text())):
+            if isinstance(node, ast.arg) and node.arg.endswith("_id"):
+                names.add(node.arg)
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and re.fullmatch(r"[a-z]+_id", node.value)
+            ):
+                names.add(node.value)
+    return names
+
+
 def test_every_route_with_an_id_has_an_ownership_check():
-    with_ids = {r for r in ROUTES if "{" in r[1]}
-    assert with_ids == set(OWNERSHIP)
+    path_ids = {r for r in ROUTES if "{" in r[1]}
+    assert path_ids | set(BODY_IDS) == set(OWNERSHIP)
+    assert set(BODY_IDS) <= set(ROUTES)
+    declared = set().union(*BODY_IDS.values()) | {
+        n for _, path in path_ids for n in re.findall(r"{(\w+)}", path)
+    }
+    assert handler_id_names() <= declared, (
+        "an id the route modules read is not classified"
+    )
 
 
 @pytest.mark.parametrize("route", sorted(OWNERSHIP), ids=lambda r: " ".join(r))
 def test_another_users_or_orgs_id_is_refused_and_unchanged(world, route):
-    call, record_id, intact = OWNERSHIP[route]
-    assert_refused(call(world, record_id(world)))
-    assert intact(world)
-    for gone in GONE:
-        assert_refused(call(world, gone))
-    assert intact(world)
+    OWNERSHIP[route](world)
 
 
 def test_the_owner_still_can_use_their_own_id(world):
+    page = world.a.get(f"/matches/{world.match.id}/withdraw")
+    assert page.status_code == 200 and TITLE in page.text
+    assert matches[world.match.id].status == "pending"  # a GET never withdraws
     r = world.org0.post(
         f"/org/matches/{world.match.id}/decide",
         data={"decision": "accept"},
@@ -328,8 +481,15 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 # --- data.py is the only door to the database -----------------------------------------
 
 
+TABLES = {
+    "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
+    "orgs", "profiles", "swipes",
+}  # fmt: skip
+
+
 def imports_db(source):
-    """True when the module imports app.db, however it spells it."""
+    """True when the module reaches the database: imports app.db however it is spelled,
+    names it as a string (importlib), or takes a table or the db from app.data."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             if any(
@@ -344,6 +504,18 @@ def imports_db(source):
                 return True
             if node.level and (mod == "db" or mod.startswith("db.")):
                 return True
+            if mod == "app.data" and any(a.name in TABLES for a in node.names):
+                return True
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value == "app.db" or node.value.startswith("app.db."):
+                return True
+        elif (  # data.profiles, data._db
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "data"
+            and node.attr in TABLES
+        ):
+            return True
     return False
 
 
@@ -355,6 +527,10 @@ def test_the_import_check_catches_every_spelling():
         "from . import db",
         "from .db import profiles",
         "from app.db.x import y",
+        "from app.data import db",
+        "from app.data import profiles as p",
+        "import importlib; importlib.import_module('app.db')",
+        "from app import data\ndata.profiles()",
     ):
         assert imports_db(src), src
     for src in ("from app import data", "import apsw", "from app import notify"):
@@ -367,3 +543,66 @@ def test_only_data_imports_db():
     assert any(f.parent.name == "routes" for f in files)  # the glob found the routes
     offenders = [str(f.relative_to(ROOT)) for f in files if imports_db(f.read_text())]
     assert offenders == []
+
+
+def test_data_exposes_functions_only_no_tables_or_db():
+    from apswutils.db import Database, Table
+
+    for name, value in vars(data).items():
+        assert not isinstance(value, (Table, Database)), name
+        assert getattr(value, "__module__", None) != "app.db", name
+        assert name == "_db" or name not in TABLES, name  # _db is the private import
+
+
+# --- websockets: Beforeware does not run, so the handler checks the caller itself ------
+
+
+def ws_app(role):
+    """A throwaway app, built here and never shipped: one ws route guarded by the helper."""
+
+    from fasthtml.common import fast_app
+
+    wsapp, _ = fast_app(secret_key=session_secret(os.environ), exts="ws")
+
+    async def conn(ws):
+        if ws_session_user(ws, role) is None:
+            await ws.close(code=1008)
+            return
+        await ws.send_text("welcome")
+
+    async def on_msg(msg: str, ws):
+        if ws_session_user(ws, role) is None:
+            await ws.close(code=1008)
+
+    wsapp.ws("/ws-probe", conn=conn)(on_msg)
+    return wsapp
+
+
+def ws_client(role, signed_in_as=None):
+    c = TestClient(ws_app(role))
+    if signed_in_as is not None:
+        c.cookies.update(signed_in_as.cookies)  # same secret, so the same session
+    return c
+
+
+def test_ws_helper_lets_the_right_role_in(world):
+    assert not ws_refused(ws_client("volunteer", world.a), "/ws-probe")
+    assert not ws_refused(ws_client("coordinator", world.org0), "/ws-probe")
+
+
+def test_ws_helper_refuses_signed_out_and_wrong_role(world):
+    assert ws_refused(ws_client("volunteer"), "/ws-probe")
+    assert ws_refused(ws_client("volunteer", world.org0), "/ws-probe")
+    assert ws_refused(ws_client("volunteer", world.admin), "/ws-probe")
+    assert ws_refused(ws_client("coordinator", world.a), "/ws-probe")
+    assert ws_refused(ws_client("coordinator", world.admin), "/ws-probe")
+
+
+def test_ws_helper_refuses_unonboarded_removed_and_signed_out_everywhere(world):
+    new = TestClient(app)
+    sign_in(new)
+    assert ws_refused(ws_client("volunteer", new), "/ws-probe")  # not onboarded
+    org_members.delete_where("user_id = ?", [world.org0_uid])  # membership removed
+    assert ws_refused(ws_client("coordinator", world.org0), "/ws-probe")
+    data.sign_out_everywhere(world.a.uid)  # session version bumped
+    assert ws_refused(ws_client("volunteer", world.a), "/ws-probe")

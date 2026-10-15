@@ -35,7 +35,7 @@ app, rt = fast_app(
         Script(src="/static/vendor/htmx-2.0.7.min.js"),
         *Theme.blue.headers(),
         Link(rel="manifest", href="/static/manifest.webmanifest"),
-        Link(rel="icon", href="/favicon.ico", sizes="48x48"),
+        Link(rel="icon", href="/favicon.ico", sizes="any"),
         Link(rel="apple-touch-icon", href="/static/icons/apple-touch-icon.png"),
         Meta(name="theme-color", content="#2563eb"),
         Meta(name="mobile-web-app-capable", content="yes"),

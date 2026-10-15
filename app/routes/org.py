@@ -387,8 +387,6 @@ async def new_opening_save(req):
 
 @ar("/org/openings/{opening_id}/close", methods=["POST"])
 def close(req, opening_id: int):
-    if opening_id > 2**63 - 1:  # past SQLite's integers: no such opening
-        return Response("Not found", status_code=404)
     try:
         data.close_opening(req.scope["uid"], opening_id)
     except PermissionError:

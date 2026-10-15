@@ -1,6 +1,7 @@
-from fasthtml.common import H1, APIRouter, Div, P, Redirect, Response
+from fasthtml.common import H1, A, APIRouter, Div, P, Redirect, Response
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
+    AT,
     Button,
     ButtonT,
     Card,
@@ -43,11 +44,7 @@ def MatchRow(m):
         DivFullySpaced(P(m["title"], cls="font-semibold"), Label(STATUS[m["status"]])),
         P(m["org"], cls=TextPresets.muted_sm),
         P(f"{when(m['starts_at'])} - {m['neighborhood']}", cls=TextPresets.muted_sm),
-        PlainForm(
-            Button("Withdraw", cls=ButtonT.default),
-            action=f"/matches/{m['id']}/withdraw",
-            method="post",
-        )
+        A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=AT.muted)
         if m["status"] in ("pending", "accepted")
         else None,
         cls="w-full",
@@ -66,6 +63,31 @@ def matches_page(req):
                 or [P("No matches yet. Like an opening to start one.")]
             ),
             cls="flex flex-col gap-4 pb-8",
+        ),
+        cls="max-w-md pb-8",
+    )
+
+
+@ar("/matches/{match_id}/withdraw", methods=["GET"])
+def withdraw_confirm(req, match_id: int):
+    try:
+        m = data.my_match(req.scope["uid"], match_id)
+    except PermissionError:
+        return Response("Forbidden", status_code=403)
+    if m["status"] not in ("pending", "accepted"):
+        return Redirect("/matches")
+    return Container(
+        VolunteerNav(),
+        H1(f"Withdraw from {m['title']}?", cls="text-2xl font-bold my-4"),
+        P(
+            "You won't be able to like this opening again.",
+            cls=TextPresets.muted_sm + " mb-4",
+        ),
+        PlainForm(
+            Button("Withdraw", cls=ButtonT.destructive),
+            A("Keep it", href="/matches", cls=AT.muted + " ml-4"),
+            action=f"/matches/{m['id']}/withdraw",
+            method="post",
         ),
         cls="max-w-md pb-8",
     )

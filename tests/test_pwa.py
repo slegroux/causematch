@@ -64,6 +64,21 @@ def test_home_screen_hint_is_on_volunteer_pages_only(anon, user, coord):
         assert 'id="a2hs"' not in client.get(path).text, path
 
 
-def test_home_screen_script_wraps_storage_in_try():
+def test_home_screen_script_wraps_every_storage_call_in_try():
     js = (ROOT / "static" / "a2hs.js").read_text()
-    assert js.count("try {") >= 2  # reads and writes of localStorage are both wrapped
+    blocks = re.findall(r"try \{(.*?)\} catch", js, re.DOTALL)
+    assert js.count("localStorage") == sum(b.count("localStorage") for b in blocks) > 0
+
+
+def test_manifest_has_a_maskable_icon_and_an_id():
+    m = json.loads((ROOT / "static" / "manifest.webmanifest").read_text())
+    assert m["id"] == "/deck"
+    (mask,) = [i for i in m["icons"] if i.get("purpose") == "maskable"]
+    data = (ROOT / mask["src"].removeprefix("/")).read_bytes()
+    assert png_size(data) == (512, 512)
+
+
+def test_in_app_browsers_are_excluded_from_the_hint():
+    js = (ROOT / "static" / "a2hs.js").read_text()
+    for ua in ("Instagram", "FBAN", "FBAV", "GSA/", "Ddg/"):
+        assert ua.replace("/", "\\/") in js, ua
