@@ -1,6 +1,6 @@
 # Causematch
 
-Swipe to volunteer. Causematch matches people with Los Angeles nonprofits that need a hand: volunteers swipe through openings ranked for them, the nonprofit says yes too, and a chat opens.
+Swipe to volunteer. Causematch matches people with nonprofits across Los Angeles County that need a hand (food, environment and parks, animal shelters, homelessness services): volunteers swipe through openings ranked for them, the nonprofit says yes too, and a chat opens.
 
 - **Volunteers** use it on their phone: sign in with a text code, pick causes, swipe.
 - **Nonprofits** use the dashboard: post openings, accept volunteers, mark shifts done.
@@ -56,7 +56,7 @@ Adding a column or a table: edit the class in `app/db.py` (`transform=True` does
 
 ## Admin
 
-Orgs start unverified and their openings stay out of every deck until an admin approves them at `/admin/orgs` (EIN checked against ProPublica) or with `scripts/verify_org.py`. Reports, suspensions, org deactivation and unblocking are in `/admin/reports` and `/admin/blocks`. Nonprofits come from [ProPublica Nonprofit Explorer](https://projects.propublica.org/nonprofits/) (IRS public data): `scripts/import_orgs.py --city "Los Angeles" --state CA` imports a sample of Los Angeles ones, `--ein` imports one, and a coordinator asks for access at `/org/claim` (an admin approves at `/admin/claims`). A report from a volunteer names an org, so to remove one coordinator use `scripts/remove_coordinator.py`.
+Orgs start unverified and their openings stay out of every deck until an admin approves them at `/admin/orgs` (EIN checked against ProPublica) or with `scripts/verify_org.py`. Reports, suspensions, org deactivation and unblocking are in `/admin/reports` and `/admin/blocks`. Nonprofits come from [ProPublica Nonprofit Explorer](https://projects.propublica.org/nonprofits/) (IRS public data): `scripts/import_orgs.py --city "Los Angeles" --state CA` imports a sample of Los Angeles ones (any LA County city works), `--ein` imports one, and a coordinator asks for access at `/org/claim` (an admin approves at `/admin/claims`). A report from a volunteer names an org, so to remove one coordinator use `scripts/remove_coordinator.py`.
 
 ## License
 
