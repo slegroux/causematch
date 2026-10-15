@@ -131,6 +131,11 @@ db.execute("DROP INDEX IF EXISTS idx_profile_phone")
 db.execute(
     "CREATE UNIQUE INDEX IF NOT EXISTS profile_phone_live ON profile(phone) WHERE deleted_at IS NULL"
 )
+# One live coordinator per email, however the address is cased.
+db.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS coordinator_email_live ON profile(lower(email)) "
+    "WHERE role = 'coordinator' AND deleted_at IS NULL"
+)
 
 CAUSES = [
     Cause("food-insecurity", "Food insecurity", "utensils", 1, True),

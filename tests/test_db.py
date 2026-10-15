@@ -6,7 +6,18 @@ from pathlib import Path
 import apsw
 import pytest
 
-from app.db import ROOT, Org, causes, ensure_causes, now, openings, orgs, seed_demo
+from app.db import (
+    ROOT,
+    Org,
+    Profile,
+    causes,
+    ensure_causes,
+    now,
+    openings,
+    orgs,
+    profiles,
+    seed_demo,
+)
 
 
 def test_ensure_causes_adds_missing_without_overwriting():
@@ -51,3 +62,19 @@ def test_default_db_path_is_anchored_to_repo_not_cwd(tmp_path):
         run_db_import(tmp_path, CAUSEMATCH_DB="") == expected
     )  # empty, as in .env.example
     assert not Path(tmp_path, "data").exists()
+
+
+def test_one_live_coordinator_per_email_however_cased():
+    from app import data
+
+    org = orgs()[0].id
+    data.add_coordinator("pat@example.org", org)
+    with pytest.raises(apsw.ConstraintError):
+        profiles.insert(
+            Profile(role="coordinator", email="PAT@example.org", created_at=now())
+        )
+    profiles.insert(  # only coordinators are unique by email
+        Profile(role="volunteer", email="pat@example.org", created_at=now())
+    )
+    profiles.update(id=data.coordinator_by_email("pat@example.org"), deleted_at=now())
+    data.add_coordinator("pat@example.org", org)  # a deleted one frees the address

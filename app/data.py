@@ -17,14 +17,23 @@ from app.db import (
     Swipe,
     causes,
     db,
+    ensure_causes,
     login_tokens,
     matches,
     openings,
     org_members,
     orgs,
     profiles,
+    seed_demo,
     swipes,
 )
+
+
+def start(demo):
+    """Run once at startup: the cause rows, and the invented demo rows when asked."""
+    ensure_causes()
+    if demo:
+        seed_demo()
 
 
 def _deck_openings(uid):
@@ -108,7 +117,7 @@ def decide(coordinator_uid, match_id, accept):
     try:
         m = matches[match_id]
         o = openings[m.opening_id]
-    except NotFoundError:
+    except (NotFoundError, OverflowError):  # OverflowError: past SQLite's integers
         raise PermissionError("no such match") from None
     if o.org_id not in coordinator_org_ids(coordinator_uid):
         raise PermissionError("not a member of this org")
@@ -137,7 +146,7 @@ def withdraw(uid, match_id):
     with db.conn:
         try:
             m = matches[match_id]
-        except NotFoundError:
+        except (NotFoundError, OverflowError):
             raise PermissionError("no such match") from None
         if m.volunteer_id != uid:
             raise PermissionError("not your match")

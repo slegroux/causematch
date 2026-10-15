@@ -5,10 +5,9 @@ from fasthtml.common import fast_app, serve
 from monsterui.all import Theme
 from starlette.staticfiles import StaticFiles
 
-from app import notify
+from app import data, notify
 from app.auth import SESSION_MAX_AGE, beforeware, session_secret
 from app.config import is_production, public_base_url, require_env
-from app.db import ensure_causes, seed_demo
 from app.routes.auth import ar as auth_router
 from app.routes.deck import ar as deck_router
 from app.routes.matches import ar as matches_router
@@ -43,9 +42,8 @@ for router in (
     org_router,
 ):
     router.to_app(app)
-ensure_causes()
-if not is_production() or os.environ.get("CAUSEMATCH_SEED_DEMO") == "1":
-    seed_demo()  # invented orgs and openings: never in production unless asked
+# invented orgs and openings: never in production unless asked
+data.start(not is_production() or os.environ.get("CAUSEMATCH_SEED_DEMO") == "1")
 
 if __name__ == "__main__":
     serve()
