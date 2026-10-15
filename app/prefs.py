@@ -93,6 +93,28 @@ def languages(profile):
     return json.loads(profile.languages or "[]")
 
 
+URGENT_DEFAULTS = {"on": False, "window": "48h", "quiet_from": 21, "quiet_to": 8,
+                   "per_week": 3}  # fmt: skip
+
+
+def urgent(profile):
+    """Last-minute calls: {"on", "window", "quiet_from", "quiet_to", "per_week"}."""
+    saved = {
+        "on": bool(profile.urgent_on),
+        "window": profile.urgent_window,
+        "quiet_from": profile.urgent_quiet_from,
+        "quiet_to": profile.urgent_quiet_to,
+        "per_week": profile.urgent_per_week,
+    }
+    return {k: URGENT_DEFAULTS[k] if v is None else v for k, v in saved.items()}
+
+
+def quiet_now(u, hour):
+    """True when `hour` (local, 0-23) is in the volunteer's quiet hours."""
+    start, end = u["quiet_from"], u["quiet_to"]
+    return start <= hour < end if start < end else hour >= start or hour < end
+
+
 def picked(prefs):
     """The causes a volunteer would help with (love, then open), for the `causes` column."""
     return [s for s, v in prefs.items() if v == LOVE] + [

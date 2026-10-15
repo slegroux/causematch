@@ -248,3 +248,116 @@ def test_deck_demo_seeds_an_urgent_call_first_in_the_deck(user):
     assert (call.opening_id, call.needed, call.auto_accept) == (oid, 2, True)
     top = data.deck(uid_of(user), 50)[0]
     assert top["id"] == oid and top["urgent"] == "Urgent · tomorrow 9 am · needs 2"
+
+
+# --- the volunteer's opt-in (/me/preferences) -----------------------------------------
+
+PREFS = {
+    "cause_food-insecurity": "love",
+    "availability": ["sat_morning"],
+    "frequency": "weekly",
+    "place1_label": "Home",
+    "place1_where": "Chinatown",
+    "place1_mode": "car",
+    "place1_minutes": "30",
+}
+OPT_IN = {
+    "sections": "urgent",
+    "urgent_on": "1",
+    "urgent_window": "today",
+    "urgent_quiet_from": "22",
+    "urgent_quiet_to": "7",
+    "urgent_per_week": "2",
+}
+
+
+def save_prefs(user, **over):
+    body = {**PREFS, **OPT_IN, **over}
+    return user.post("/me/preferences", data=body, follow_redirects=False)
+
+
+def test_optin_is_off_by_default(user):
+    assert data.preferences(uid_of(user))["urgent"] == {
+        "on": False,
+        "window": "48h",
+        "quiet_from": 21,
+        "quiet_to": 8,
+        "per_week": 3,
+    }
+    page = user.get("/me/preferences").text
+    assert "Last-minute calls" in page and "Tell me about last-minute calls" in page
+    assert 'name="urgent_on" value="1" class' in page  # unchecked
+    assert '<option value="21" selected>9 pm</option>' in page
+    assert '<option value="8" selected>8 am</option>' in page
+
+
+def test_optin_saves_and_shows(user):
+    r = save_prefs(user)
+    assert r.status_code == 303 and r.headers["location"] == "/me/preferences?saved=1"
+    assert data.preferences(uid_of(user))["urgent"] == {
+        "on": True,
+        "window": "today",
+        "quiet_from": 22,
+        "quiet_to": 7,
+        "per_week": 2,
+    }
+    page = user.get("/me/preferences").text
+    assert 'name="urgent_on" value="1" checked' in page
+    assert '<option value="22" selected>10 pm</option>' in page
+    # turned off again
+    body = {**PREFS, **OPT_IN}
+    del body["urgent_on"]
+    user.post("/me/preferences", data=body)
+    assert data.preferences(uid_of(user))["urgent"]["on"] is False
+
+
+def test_optin_a_page_without_the_section_keeps_it(user):
+    save_prefs(user)
+    r = user.post("/me/preferences", data=PREFS, follow_redirects=False)
+    assert r.status_code == 303
+    assert data.preferences(uid_of(user))["urgent"]["on"] is True
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"urgent_window": "week"},
+        {"urgent_per_week": "4"},
+        {"urgent_per_week": "0"},
+        {"urgent_quiet_from": "24"},
+        {"urgent_quiet_to": "-1"},
+        {"urgent_quiet_to": ""},
+        {"urgent_on": "yes"},
+    ],
+)
+def test_optin_refuses_values_off_the_page(user, over):
+    r = save_prefs(user, **over)
+    assert r.status_code == 200 and "wasn't recognized" in r.text
+    assert data.preferences(uid_of(user))["urgent"]["on"] is False
+
+
+def test_optin_refuses_quiet_hours_that_start_when_they_end(user):
+    r = save_prefs(user, urgent_quiet_from="9", urgent_quiet_to="9")
+    assert "Quiet hours need a start and an end that differ." in r.text
+    assert data.preferences(uid_of(user))["urgent"]["on"] is False
+
+
+def test_optin_quiet_hours_wrap_past_midnight():
+    from app.prefs import quiet_now
+
+    night = {"quiet_from": 21, "quiet_to": 8}
+    assert [h for h in range(24) if quiet_now(night, h)] == [
+        0, 1, 2, 3, 4, 5, 6, 7, 21, 22, 23
+    ]  # fmt: skip
+    day = {"quiet_from": 9, "quiet_to": 17}
+    assert [h for h in range(24) if quiet_now(day, h)] == list(range(9, 17))
+
+
+def test_optin_is_private(shelter, user):
+    """A nonprofit the volunteer liked sees nothing of it."""
+    save_prefs(user)
+    user.post("/swipe", data={"opening_id": str(shelter.opening.id), "liked": "1"})
+    inbox = shelter.get("/org/inbox").text
+    assert "Sam" in inbox  # the like is there
+    for word in ("Last-minute", "last-minute", "quiet", "10 pm"):
+        assert word not in inbox

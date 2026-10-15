@@ -1410,6 +1410,7 @@ def preferences(uid):
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
         "places": _places(p),
+        "urgent": _prefs.urgent(p),
     }
 
 
@@ -1432,10 +1433,12 @@ def save_preferences(
     languages=(),
     dealbreakers=DEFAULT_DEALBREAKERS,
     surprise=False,
+    urgent=None,
 ):
     """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
     (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
-    ones. The profile's own point follows the first place."""
+    ones. The profile's own point follows the first place. urgent: last-minute calls as
+    prefs.urgent() reads them; None keeps the saved ones."""
     with _db.db.conn:
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         for p in places:
@@ -1460,6 +1463,11 @@ def save_preferences(
             frequency=frequency,
             lat=places[0]["lat"],
             lon=places[0]["lon"],
+            **(
+                {f"urgent_{k}": v for k, v in urgent.items()}
+                if urgent is not None
+                else {}
+            ),
         )
 
 

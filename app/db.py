@@ -129,6 +129,12 @@ class Profile:
     bio: str  # optional, up to choices.MAX_BIO characters
     interests: str  # JSON list of choices.INTERESTS values
     photo_nudge_dismissed_at: str  # UTC; "Not now" on the deck's "Add a photo"
+    # Last-minute calls, private (app/prefs.py urgent): off unless turned on
+    urgent_on: bool
+    urgent_window: str  # today|48h (NULL: 48h)
+    urgent_quiet_from: int  # local hour no notice is sent from (NULL: 21)
+    urgent_quiet_to: int  # ... until (NULL: 8); from > to wraps past midnight
+    urgent_per_week: int  # 1..3 (NULL: 3)
 
 
 class OrgMember:

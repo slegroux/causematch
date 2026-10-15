@@ -359,6 +359,8 @@ def _preferences(uid):
         languages=["es"],
         skills=["physical", "car"],
         frequency="weekly",
+        urgent={"on": True, "window": "48h", "quiet_from": 21, "quiet_to": 8,
+                "per_week": 3},
         places=[
             {"label": "Home", "lat": home[0], "lon": home[1], "area": "Sawtelle",
              "mode": "car", "max_minutes": 45},
