@@ -569,3 +569,42 @@ def test_socket_caps_per_match_and_per_user(chat):
     from app.routes import chat as chat_routes
 
     assert not chat_routes._sockets
+
+
+# --- item 17: cross-site sockets and the frame limit -----------------------------------
+
+
+@pytest.mark.parametrize("origin", ["https://evil.example", "null", None])
+def test_a_foreign_or_missing_origin_is_refused_at_the_handshake(chat, origin):
+    for client, path in ((chat.vol, chat.vol_ws), (chat.coord, chat.coord_ws)):
+        headers = {"Origin": origin} if origin else {}
+        if origin is None:
+            del client.headers["origin"]
+        with (
+            pytest.raises(WebSocketDisconnect) as e,
+            client.websocket_connect(path, headers=headers),
+        ):
+            pass
+        assert e.value.code == 1008
+    assert not data.list_messages(chat.vol.uid, chat.id)
+
+
+def test_the_same_origin_socket_is_accepted(chat):
+    with chat.vol.websocket_connect(chat.vol_ws) as wv:
+        registered(chat.id)
+        say(wv, "hello")
+        assert "hello" in bubble(wv)
+
+
+def test_too_many_frames_close_the_socket_with_1013(chat):
+    with chat.vol.websocket_connect(chat.vol_ws) as wv:
+        registered(chat.id)
+        for i in range(20):
+            say(wv, f"m{i}")
+            assert f"m{i}" in bubble(wv)
+        say(wv, "one too many")
+        with pytest.raises(WebSocketDisconnect) as e:
+            while True:
+                wv.receive_text()
+        assert e.value.code == 1013
+    assert len(data.list_messages(chat.vol.uid, chat.id)) == 20

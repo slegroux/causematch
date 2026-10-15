@@ -20,10 +20,27 @@ import threading
 import time
 
 import pytest
+import starlette.testclient
 import uvicorn
-from starlette.testclient import TestClient
 
-from app import data, notify
+ORIGIN = os.environ["PUBLIC_BASE_URL"]
+
+
+class SameOriginClient(starlette.testclient.TestClient):
+    """A TestClient that sends our Origin, as a browser does on a form POST, an htmx request
+    and a websocket handshake from one of our pages. Cross-site tests set or drop it."""
+
+    def __init__(self, app, *args, headers=None, **kwargs):
+        super().__init__(
+            app, *args, headers={"Origin": ORIGIN, **(headers or {})}, **kwargs
+        )
+
+
+# Before any test module imports it: every test client is a same-origin one.
+starlette.testclient.TestClient = SameOriginClient
+TestClient = SameOriginClient
+
+from app import data, notify, security
 from app.auth import normalize_phone
 from app.db import (
     blocks,
@@ -38,6 +55,7 @@ from app.db import (
     org_members,
     orgs,
     profiles,
+    rate_events,
     reports,
     retained_phones,
     seed_demo,
@@ -67,8 +85,10 @@ def fresh_db():
         blocks,
         retained_phones,
         claim_requests,
+        rate_events,
     ):
         table.delete_where()
+    security.reset_buckets()
     chat_routes._sockets.clear()  # no socket outlives its test
     ensure_causes()
     seed_demo()
@@ -167,6 +187,9 @@ def live_url():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    # The browser's Origin is this server's, so it is the configured one while it runs.
+    os.environ["PUBLIC_BASE_URL"] = url
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     )
@@ -176,7 +199,8 @@ def live_url():
     while not server.started:
         assert thread.is_alive() and time.monotonic() < deadline, "server did not start"
         time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
+    yield url
     server.should_exit = True
     thread.join(timeout=10)
+    os.environ["PUBLIC_BASE_URL"] = ORIGIN
     assert not thread.is_alive()

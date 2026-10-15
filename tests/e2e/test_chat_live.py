@@ -1,7 +1,7 @@
 import pytest
 from conftest import coordinator_for
 from helpers import coordinator_page
-from test_swipe import EXTERNAL, blocked, no_network, sign_in_page
+from test_swipe import guard, offline_under_csp, sign_in_page  # noqa: F401  (fixture)
 
 from app import data
 from app.db import messages, openings, orgs
@@ -11,13 +11,11 @@ pytestmark = pytest.mark.e2e
 
 @pytest.fixture
 def phone_context(browser, playwright, live_url):
-    blocked.clear()
-    ctx = browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
-    ctx.route(EXTERNAL, no_network)
+    ctx = guard(
+        browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
+    )
     yield ctx
     ctx.close()
-    # the htmx core, the ws extension and our scripts are all served from this host
-    assert not [u for u in blocked if "htmx" in u or "chat.js" in u], blocked
 
 
 def send(page, text):

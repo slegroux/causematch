@@ -1,0 +1,62 @@
+/* MonsterUI 1.0.47's inline <style> blocks (Theme.headers()), moved here so the CSP can
+   forbid inline styles. */
+.monster-navbar.navbar-bold a {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.monster-navbar.navbar-bold a.uk-active {
+    transform: scale(1.15) ;
+    font-weight: bold;
+    text-shadow: 0 0 12px rgba(var(--p-rgb), 0.4);
+    letter-spacing: 0.02em;
+    color: hsl(var(--p) / 1);
+}
+.monster-navbar.navbar-underline a.uk-active { position: relative; }
+.monster-navbar.navbar-underline a.uk-active::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -2px;
+    width: 100%;
+    height: 2px;
+    background: currentColor;
+    animation: slideIn 0.3s ease forwards;
+}
+@keyframes slideIn {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+}
+
+:root {
+  --b1: from hsl(var(--background)) l c h;
+  --bc: from hsl(var(--foreground)) l c h;
+  --m: from hsl(var(--muted)) l c h;
+  --mc: from hsl(var(--muted-foreground)) l c h;
+  --po: from hsl(var(--popover)) l c h;
+  --poc: from hsl(var(--popover-foreground)) l c h;
+  --b2: from hsl(var(--card)) l c h;
+  --b2c: from hsl(var(--card-foreground)) l c h;
+  --br: from hsl(var(--border)) l c h;
+  --in: from hsl(var(--input)) l c h;
+  --p: from hsl(var(--primary)) l c h;
+  --pc: from hsl(var(--primary-foreground)) l c h;
+  --s: from hsl(var(--secondary)) l c h;
+  --sc: from hsl(var(--secondary-foreground)) l c h;
+  --a: from hsl(var(--accent)) l c h;
+  --ac: from hsl(var(--accent-foreground)) l c h;
+  --er: from hsl(var(--destructive)) l c h;
+  --erc: from hsl(var(--destructive-foreground)) l c h;
+  --b3: from hsl(var(--ring)) l c h;
+  --ch1: from hsl(var(--chart-1)) l c h;
+  --ch2: from hsl(var(--chart-2)) l c h;
+  --ch3: from hsl(var(--chart-3)) l c h;
+  --ch4: from hsl(var(--chart-4)) l c h;
+  --ch5: from hsl(var(--chart-5)) l c h;
+  --rd: var(--radius);
+}
+
+/* htmx's indicator styles: htmx-config in the page head stops htmx injecting them inline. */
+.htmx-indicator { opacity: 0; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator {
+  opacity: 1;
+  transition: opacity 200ms ease-in;
+}

@@ -18,6 +18,7 @@ from app.auth import (
     PUBLIC,
     is_admin_path,
     is_org_path,
+    session_cookie,
     session_secret,
     ws_session_user,
 )
@@ -930,7 +931,11 @@ def ws_app(role):
 
     from fasthtml.common import fast_app
 
-    wsapp, _ = fast_app(secret_key=session_secret(os.environ), exts="ws")
+    wsapp, _ = fast_app(
+        secret_key=session_secret(os.environ),
+        session_cookie=session_cookie(),
+        exts="ws",
+    )
 
     async def conn(ws):
         if ws_session_user(ws, role) is None:

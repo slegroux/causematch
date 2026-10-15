@@ -10,28 +10,47 @@ pytestmark = pytest.mark.e2e
 
 TITLE = "Sort and pack pantry boxes"  # the soonest seeded opening, so the top card
 EXTERNAL = re.compile(r"^(?!(http|ws)://127\.0\.0\.1)(https?|wss?)://")
-blocked = []
+blocked = []  # requests that tried to leave the machine
+csp_errors = []  # the browser's Content-Security-Policy violation messages
 
 
 def no_network(route):
     """Every request that leaves the machine gets an empty reply (abort() hangs the
-    page load here) and is recorded. The app's own assets are all local, so the flow
-    must work with the network gone; only styling (Tailwind, Franken UI) is missing."""
+    page load here) and is recorded: every asset is self-hosted, so there must be none."""
     blocked.append(route.request.url)
     route.fulfill(body="")
 
 
+def guard(ctx):
+    """Block the network and record CSP violations in this browser context."""
+    ctx.route(EXTERNAL, no_network)
+    ctx.on(
+        "console",
+        lambda m: (
+            csp_errors.append(m.text) if "Content Security Policy" in m.text else None
+        ),
+    )
+    return ctx
+
+
+@pytest.fixture(autouse=True)
+def offline_under_csp():
+    """Each e2e test runs with the network blocked and the CSP enforced (the server sends
+    it), and fails on any external request or CSP violation."""
+    blocked.clear()
+    csp_errors.clear()
+    yield
+    assert not blocked, blocked
+    assert not csp_errors, csp_errors
+
+
 @pytest.fixture
 def phone_context(browser, playwright, live_url):
-    blocked.clear()
-    ctx = browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
-    ctx.route(EXTERNAL, no_network)
+    ctx = guard(
+        browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
+    )
     yield ctx
     ctx.close()
-    # the only external loads are the MonsterUI/Tailwind assets, never htmx or scripts of ours
-    assert not [u for u in blocked if "htmx" in u or "surreal" in u or "pico" in u], (
-        blocked
-    )
 
 
 def sign_in_page(page, phone):
@@ -137,8 +156,7 @@ def test_mouse_drag_works_too(phone_context):
 
 
 def test_buttons_work_with_javascript_off(browser, live_url):
-    ctx = browser.new_context(base_url=live_url, java_script_enabled=False)
-    ctx.route(EXTERNAL, no_network)
+    ctx = guard(browser.new_context(base_url=live_url, java_script_enabled=False))
     page = ctx.new_page()
     page.goto("/login")
     page.get_by_label("Mobile number").fill("(310) 555-0145")

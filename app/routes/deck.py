@@ -40,9 +40,8 @@ def OpeningCard(c):
         distance_line(c),
         P(f"{c['slots']} spots", cls=TextPresets.muted_sm),
         header=CardTitle(c["title"]),
-        cls="w-full select-none",
+        cls="w-full select-none touch-pan-y",  # a class: the CSP forbids style attributes
         data_swipe_card="1",
-        style="touch-action: pan-y;",
     )
 
 

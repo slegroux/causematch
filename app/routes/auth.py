@@ -6,7 +6,7 @@ from fasthtml.common import A, APIRouter, Form, Input, P, Redirect
 from monsterui.all import AT, Button, ButtonT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
-from app import data, notify
+from app import data, notify, security
 from app.auth import BAD_PHONE, normalize_phone
 from app.forms import bad_request, str_form
 from app.ui import Page
@@ -82,6 +82,11 @@ def _sync_send(req, form, sess):
     e164 = normalize_phone(phone)
     if not e164:
         return PhoneForm(phone, BAD_PHONE)
+    # before the suspended check, so a refusal looks the same for every number
+    if not security.allow(
+        (security.SMS_PER_PHONE, e164), (security.SMS_PER_IP, security.ip_subject(req))
+    ):
+        return security.too_many()
     try:
         if not data.phone_suspended(e164):  # a suspended number costs no text
             notify.send_code(e164)
@@ -110,6 +115,8 @@ def _sync_verify(req, form, sess):
     code = form.get("code", "").strip()
     if not re.fullmatch(r"[0-9]{6}", code):
         return CodeForm(e164, "Enter the 6-digit code from the text.")
+    if not security.allow((security.VERIFY_PER_PHONE, e164)):
+        return security.too_many()
     try:
         ok = notify.check_code(e164, code)
     except httpx.HTTPError as e:

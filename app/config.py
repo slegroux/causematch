@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def is_production(env=os.environ):
@@ -65,3 +68,8 @@ def phone_hash_key(env=os.environ):
             return "dev-only-phone-hash-key"
         raise RuntimeError("PHONE_HASH_KEY must be set (any long random string)")
     return key
+
+
+def db_path(env=os.environ):
+    """The SQLite file: CAUSEMATCH_DB, else data/causematch.db in the repo (not the cwd)."""
+    return Path(env.get("CAUSEMATCH_DB") or ROOT / "data" / "causematch.db").resolve()

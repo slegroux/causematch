@@ -1,12 +1,14 @@
+import logging
 import os
 from pathlib import Path
 
 from fasthtml.common import Link, Meta, Script, fast_app, serve
-from monsterui.all import Theme
+from starlette.middleware import Middleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app import data, notify
-from app.auth import SESSION_MAX_AGE, beforeware, session_secret
+from app import data, notify, security
+from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
     contact_email,
     is_production,
@@ -37,11 +39,28 @@ tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact
 phone_hash_key()  # ... or deleted accounts' blocks can't be kept
+# uvicorn settings; the Procfile (item 14's entrypoint) runs the same ones.
+UVICORN = {
+    "ws_max_size": 65536,  # bytes per websocket frame (default 16 MiB); a message is <= 2000 chars
+    "limit_concurrency": 200,  # connections and open sockets; past it uvicorn answers 503
+    "timeout_keep_alive": 15,
+    "timeout_graceful_shutdown": 8,  # inside Cloud Run's 10 s after SIGTERM
+    "proxy_headers": False,  # app/security.py reads X-Forwarded-For itself, only on Cloud Run
+}
+logging.getLogger("uvicorn.access").addFilter(security.RedactTokens())
+
 app, rt = fast_app(
-    before=beforeware,
+    before=(beforeware, security.throttle),
+    middleware=(
+        Middleware(security.Guard),
+    ),  # outside the session: covers every request
     secret_key=session_secret(os.environ),
+    session_cookie=session_cookie(),
     sess_https_only=is_production(),
+    sess_path="/",
+    same_site="lax",
     max_age=SESSION_MAX_AGE,
+    debug=False,  # no traceback pages; security.Guard serves a plain 500 in production
     title="Causematch",
     # Self-hosted, pinned htmx. Not loaded: fasthtml's surreal@main, css-scope-inline@main,
     # pico@latest (unpinned CDN branches the app doesn't use) and fasthtml.js.
@@ -49,9 +68,17 @@ app, rt = fast_app(
     surreal=False,
     pico=False,
     hdrs=(
+        # htmx would otherwise inject its indicator styles inline (theme.css has them)
+        Meta(name="htmx-config", content='{"includeIndicatorStyles": false}'),
         Script(src="/static/vendor/htmx-2.0.7.min.js"),
         Script(src="/static/vendor/htmx-ext-ws-2.0.4.min.js"),
-        *Theme.blue.headers(),
+        # MonsterUI's Theme.blue.headers(), self-hosted so the CSP allows only 'self': its
+        # inline script and styles are now static/theme.js and static/theme.css, and the
+        # Tailwind Play CDN is replaced by static/vendor/app.css (scripts/build_css.sh).
+        # Not loaded: Franken UI's icon script (no UkIcon here).
+        Script(src="/static/theme.js"),
+        *[Link(rel="stylesheet", href=href) for href in security.STYLESHEETS],
+        Script(type="module", src="/static/vendor/franken-ui-2.0.0/core.iife.js"),
         Link(rel="manifest", href="/static/manifest.webmanifest"),
         Link(rel="icon", href="/favicon.ico", sizes="any"),
         Link(rel="apple-touch-icon", href="/static/icons/apple-touch-icon.png"),
@@ -67,7 +94,14 @@ app, rt = fast_app(
 app.routes[:] = [
     r for r in app.routes if getattr(r, "path", "") != "/{fname:path}.{ext:static}"
 ]
-app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"))
+# gzip for the static files only (daisyUI's CSS is 2.9 MB raw, 170 kB gzipped); pages stay
+# uncompressed, so no secret is ever compressed next to reflected input.
+app.mount(
+    "/static",
+    GZipMiddleware(
+        StaticFiles(directory=Path(__file__).parent / "static"), minimum_size=1024
+    ),
+)
 for router in (
     auth_router,
     org_auth_router,
@@ -88,4 +122,4 @@ for router in (
 data.start(not is_production() or os.environ.get("CAUSEMATCH_SEED_DEMO") == "1")
 
 if __name__ == "__main__":
-    serve()
+    serve(**UVICORN)

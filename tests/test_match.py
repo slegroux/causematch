@@ -608,7 +608,7 @@ def test_twenty_concurrent_swipes_over_http_with_sign_ins_in_flight(live_url):
     import httpx
 
     def login(phone):
-        c = httpx.Client(base_url=live_url)
+        c = httpx.Client(base_url=live_url, headers={"Origin": live_url})
         c.post("/login/send", data={"phone": phone})
         r = c.post("/login/verify", data={"code": "000000"})
         return c, r

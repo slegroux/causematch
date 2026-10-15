@@ -17,7 +17,7 @@ from monsterui.all import AT, Button, ButtonT, Container, TextPresets
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from app import data, notify
+from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
 from app.ui import VolunteerNav
@@ -145,14 +145,14 @@ def _too_many(uid, match_id):
     )
 
 
-async def _refuse(ws):
+async def _refuse(ws, code=1008):
     for socks in _sockets.values():
         socks.pop(ws, None)
     if (
         ws.application_state != WebSocketState.DISCONNECTED
     ):  # a message can follow a close
         try:
-            await ws.close(code=1008)
+            await ws.close(code=code)
         except (RuntimeError, OSError, WebSocketDisconnect):
             pass  # already gone: nothing to tell it
 
@@ -220,6 +220,9 @@ def _live(role, base):
         msg = data.get("msg") if isinstance(data, dict) else None
         try:
             uid = await run_in_threadpool(_authorized, ws, role, match_id)
+            if not security.take_token("chat", uid):
+                # 1013, try again later: the ws extension reconnects after a pause
+                return await _refuse(ws, code=1013)
             await _deliver(uid, match_id, msg)
         except PermissionError:
             return await _refuse(ws)

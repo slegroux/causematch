@@ -1,12 +1,12 @@
 import logging
 import re
 
-from fasthtml.common import APIRouter, Form, Input, P, Redirect, Response
+from fasthtml.common import APIRouter, Form, HttpHeader, Input, P, Redirect, Response
 from monsterui.all import Button, ButtonT, TextPresets
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from app import data, notify
+from app import data, notify, security
 from app.forms import query
 from app.ui import Page
 
@@ -79,14 +79,24 @@ def _sync_org_login_send(req, form):
     email = form.get("email", "").strip().lower()
     if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return EmailForm(email[:254], BAD_EMAIL)
+    # every valid-shape address is counted, so a refusal says nothing about the account
+    if not security.allow(
+        (security.LINK_PER_EMAIL, email),
+        (security.LINK_PER_IP, security.ip_subject(req)),
+    ):
+        return security.too_many()
     return EmailForm(notice=SENT), BackgroundTask(_send_link, email)
 
 
 @ar("/org/login/verify", methods=["GET"])
 def org_login_confirm(req):
-    """Changes nothing, so a mail scanner that fetches the link can't use it up."""
+    """Changes nothing, so a mail scanner that fetches the link can't use it up.
+
+    The token is in this page's URL, so no Referer from here may leave the site. Not
+    no-referrer: under it a browser sends `Origin: null` with the button's own POST, which
+    security.Guard refuses."""
     token = query(req, "token")
-    return Page(
+    return HttpHeader("Referrer-Policy", "same-origin"), Page(
         "Sign in to Causematch",
         Form(
             Input(type="hidden", name="token", value=token[:200]),

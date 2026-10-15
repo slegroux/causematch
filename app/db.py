@@ -1,22 +1,21 @@
 import json
-import os
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastlite import database
 
-from app.config import is_dev
+from app import migrations
+from app.config import db_path, is_dev
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = Path(
-    os.environ.get("CAUSEMATCH_DB") or ROOT / "data" / "causematch.db"
-).resolve()
+DB_PATH = db_path()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 db = database(DB_PATH)
 # An early build installed this trigger. It names the shift table, so any later transform
 # of that table fails half-way and strands its rows. Must run before the first create.
 db.execute("DROP TRIGGER IF EXISTS shift_with_match")
+# Before the tables below: a migration (a rename, say) must reshape an existing table before
+# transform=True compares it with its class.
+migrations.migrate(db.conn)
 
 
 class Cause:
@@ -240,6 +239,18 @@ reports = db.create(Report, pk="id", transform=True)
 retained_phones = db.create(RetainedPhoneHash, pk="hash", transform=True)
 blocks = db.create(Block, pk="id", transform=True)
 claim_requests = db.create(ClaimRequest, pk="id", transform=True)
+
+
+class RateEvent:
+    """One counted action (a code sent, a link sent, ...) for app/security.py's limits."""
+
+    id: int
+    key: str  # limit name + HMAC of the phone, email or IP: never the value itself
+    at: float  # unix seconds
+
+
+rate_events = db.create(RateEvent, pk="id", transform=True)
+rate_events.create_index(["key", "at"], if_not_exists=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

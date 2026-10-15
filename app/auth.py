@@ -1,10 +1,11 @@
 import logging
+import os
 import re
 
 from fasthtml.common import Beforeware, Redirect, Response
 
 from app import data
-from app.config import is_dev
+from app.config import is_dev, is_production
 
 log = logging.getLogger("causematch")
 
@@ -41,6 +42,13 @@ def session_secret(env):
         )
     log.warning("SESSION_SECRET is not set: using an insecure development secret")
     return DEV_SECRET
+
+
+def session_cookie(env=os.environ):
+    """The session cookie's name. In production the __Host- prefix makes browsers accept it
+    only Secure, from this host, for path /, so a sibling subdomain can't plant one (cookie
+    tossing). Development runs over plain http, where a __Host- cookie would be refused."""
+    return "__Host-cm_session" if is_production(env) else "cm_session"
 
 
 def normalize_phone(raw):

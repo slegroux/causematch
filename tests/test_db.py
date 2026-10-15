@@ -6,8 +6,8 @@ from pathlib import Path
 import apsw
 import pytest
 
+from app.config import ROOT
 from app.db import (
-    ROOT,
     Org,
     Profile,
     causes,

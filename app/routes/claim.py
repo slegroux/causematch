@@ -4,7 +4,7 @@ from fasthtml.common import APIRouter, Input, P
 from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
-from app import data, propublica
+from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
 from app.forms import bad_request, str_form
 from app.ui import Field, Page
@@ -125,6 +125,11 @@ def _sync_claim_submit(req, form):
         error = BAD_PHONE
     elif form.get("authorized") != "1":
         error = "Please confirm that you're authorized to represent this organization."
+    elif not security.allow(
+        (security.CLAIM_PER_IP, security.ip_subject(req)),
+        (security.CLAIM_PER_EMAIL, email),
+    ):
+        return security.too_many()
     else:
         data.submit_claim(ein, v["org_name"], v["name"], email, phone)
         return Page("Request received", P(RECEIVED))

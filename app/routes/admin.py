@@ -28,7 +28,7 @@ from fasthtml.common import Button as PlainButton
 from monsterui.all import AT, Alert, AlertT, Container, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
-from app import data, notify, propublica
+from app import data, notify, propublica, security
 from app.forms import bad_request, query, str_form
 from app.metrics import (
     BREAKDOWNS,
@@ -374,6 +374,8 @@ async def admin_org_lookup(req, org_id: int):
     rows = await run_in_threadpool(data.admin_orgs, uid)
     if org_id not in {o["id"] for o in rows}:
         return Response("Not found", status_code=404)
+    if not await run_in_threadpool(security.allow, (security.PROPUBLICA, "all")):
+        return security.too_many()
     try:
         found = await run_in_threadpool(propublica.lookup, ein)
     except ValueError as e:
@@ -531,6 +533,8 @@ def _sync_admin_claim_import(req, claim_id: int):
         ein = data.pending_claim_ein(uid, claim_id)
     except LookupError:
         return Redirect("/admin/claims")
+    if not security.allow((security.PROPUBLICA, "all")):
+        return security.too_many()
     try:
         import_ein(ein)
     except (ValueError, propublica.LookupFailed) as e:

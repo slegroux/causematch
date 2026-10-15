@@ -11,11 +11,11 @@ def coordinator_page(browser, live_url):
 
     Waits for the emailed link and for the sign-in to land: a click returns before the server
     has answered, so reading `sent` or navigating straight away races the request."""
-    from test_swipe import EXTERNAL, no_network
+    from test_swipe import guard
 
     _, email = coordinator_for(0)
     ctx = browser.new_context(base_url=live_url)
-    ctx.route(EXTERNAL, no_network)
+    guard(ctx)
     page = ctx.new_page()
     page.goto("/org/login")
     page.get_by_label("Email").fill(email)

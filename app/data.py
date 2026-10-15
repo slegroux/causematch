@@ -1908,6 +1908,27 @@ def remove_coordinator(email):
     return uid
 
 
+RATE_KEEP_SECONDS = 24 * 3600  # the longest window in app/security.py
+
+
+def rate_take(keys, now):
+    """Count one event under every key, unless a key already holds `limit` events within
+    its window: then count nothing and return False. keys: [(key, limit, window_seconds)].
+    """
+    _db.db.execute("DELETE FROM rate_event WHERE at < ?", [now - RATE_KEEP_SECONDS])
+    for key, limit, window in keys:
+        (row,) = _db.db.q(
+            "SELECT count(*) AS n FROM rate_event WHERE key = ? AND at > ?",
+            [key, now - window],
+        )
+        if row["n"] >= limit:
+            return False
+    with _db.db.conn:
+        for key, _, _ in keys:
+            _db.rate_events.insert(key=key, at=now)
+    return True
+
+
 # One apsw connection is shared by every request thread (and, later, websockets); apsw
 # raises ThreadingViolationError when two threads use it at once. SQLite allows a single
 # writer anyway, so every public function here runs under one re-entrant lock.
