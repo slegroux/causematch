@@ -545,7 +545,13 @@ def _sync_save(req, form):
     uid = req.scope["uid"]
     saved = data.preferences(uid)
     active = [c.slug for c in data.active_causes()]
-    rated = {s: form.get(f"cause_{s}") for s in active if form.get(f"cause_{s}")}
+    # a cause the posted page didn't rate keeps its saved rating (a page loaded before
+    # the cause came back); a rated cause always sends its radio
+    rated = {
+        s: form.get(f"cause_{s}") or saved["causes"][s]
+        for s in active
+        if form.get(f"cause_{s}") or s in saved["causes"]
+    }
     f = {
         # a rating of a cause that is inactive now is kept for when it comes back
         "causes": {
@@ -555,8 +561,9 @@ def _sync_save(req, form):
         "availability": form.getlist("availability"),
         "free_dates": form.getlist("free_dates"),
         # A field the form doesn't carry keeps its saved value: a page loaded before a
-        # section existed must not reset it. Radios always send one; a section's
-        # checkboxes count only when its "sections" marker came with the form.
+        # section existed must not reset it. A radio group on the page sends its checked
+        # value (and these always have one); a section's checkboxes count only when its
+        # "sections" marker came with the form.
         "horizon_days": form.get("horizon_days", str(saved["horizon_days"])),
         "commitment": form.get("commitment", saved["commitment"]),
         "setting": form.get("setting", saved["setting"]),

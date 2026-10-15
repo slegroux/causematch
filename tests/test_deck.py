@@ -7,6 +7,10 @@ from app import data
 from app.data import LA
 from app.db import Opening, now, openings, orgs
 
+HOME_PLACES = (
+    True  # each test runs with a saved Home place and as a profile from before
+)
+
 
 def soon(days):
     """Local start time `days` from now, so the tests never age out."""

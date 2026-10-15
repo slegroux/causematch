@@ -6,6 +6,7 @@ the answers it already had, so its deck stays as it was until the volunteer edit
 
 import json
 import re
+import unicodedata
 from datetime import date, timedelta
 
 from app.choices import DEFAULT_DEALBREAKERS, MAX_FREE_DATES, MAX_MINUTES, MODES
@@ -126,6 +127,20 @@ def place_form(place=None, slot=0):
     }
 
 
+FIVE_DIGITS = "Enter a five-digit ZIP code, like 90012."
+TOO_LONG = "One of your answers is too long. Please shorten it."
+WHERE_MAX = 80
+
+
+def as_zip(where):
+    """The five-digit ZIP in what was typed ("90012", "90012-1234", full-width digits),
+    "" when it is digits of the wrong length, None when it isn't a ZIP at all."""
+    typed = unicodedata.normalize("NFKC", where)
+    if m := re.fullmatch(r"([0-9]{5})(-[0-9]{4})?", typed):
+        return m.group(1)
+    return "" if re.fullmatch(r"[0-9-]+", typed) else None
+
+
 def resolve_place(f, current, slot):
     """(place or None, error or None) from one place's form fields.
 
@@ -139,6 +154,8 @@ def resolve_place(f, current, slot):
     where = " ".join(f["where"].split())
     if not where:
         return None, None
+    if len(where) > WHERE_MAX:
+        return None, TOO_LONG
     if len(label) > LABEL_MAX:
         return None, f"A place's name can be up to {LABEL_MAX} characters."
     try:
@@ -156,8 +173,10 @@ def resolve_place(f, current, slot):
             return None, "That location isn't in Los Angeles County."
     elif current and where == current["area"]:
         point = current["lat"], current["lon"]
-    elif where.isdigit() and len(where) == 5:
-        point = zip_latlon(where)
+    elif (typed_zip := as_zip(where)) is not None:
+        if not typed_zip:
+            return None, FIVE_DIGITS
+        area, point = typed_zip, zip_latlon(typed_zip)
     elif found := neighborhood_latlon(where):
         area, point = found
     if point is None:

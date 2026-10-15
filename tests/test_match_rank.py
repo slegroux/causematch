@@ -3,7 +3,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import coordinator_for
+from conftest import coordinator_for, locate
 
 from app import data
 from app.data import LA
@@ -20,6 +20,9 @@ from app.db import (
     profiles,
 )
 
+HOME_PLACES = (
+    True  # each test runs with a saved Home place and as a profile from before
+)
 HOME = (34.0560, -118.2365)  # Union Station
 KM_PER_DEG = 6371.0088 * 3.141592653589793 / 180
 FMT = "%Y-%m-%dT%H:%M"
@@ -64,11 +67,9 @@ def me(user):
     for o in openings():
         openings.update(id=o.id, status="closed")
     uid = data.get_or_create_volunteer(user.phone)
+    locate(uid, *HOME, radius_km=10)
     profiles.update(
         id=uid,
-        lat=HOME[0],
-        lon=HOME[1],
-        radius_km=10,
         causes='["food-insecurity"]',
         skills='["car"]',
         availability='["weekend_morning"]',
@@ -253,7 +254,7 @@ def formats(x):
 def test_no_page_html_contains_a_volunteer_or_opening_coordinate(me):
     vlat, vlon = 34.04812, -118.25934
     olat, olon = 34.07391, -118.23127
-    profiles.update(id=me.uid, lat=vlat, lon=vlon)
+    locate(me.uid, vlat, vlon)
     add("pin one", where=(olat, olon))
     add("pin two", where=(olat + 0.0013, olon - 0.0017))
     pages = [me.get("/deck").text]
@@ -327,12 +328,10 @@ def test_any_distance_volunteer_sees_a_far_city_opening(me):
 
     san_pedro, porter_ranch = (33.732353, -118.278151), (34.281775, -118.555697)
     assert data.get_profile(me.uid)  # a profile exists
-    profiles.update(
-        id=me.uid, lat=san_pedro[0], lon=san_pedro[1], radius_km=ANY_DISTANCE_KM
-    )
+    locate(me.uid, *san_pedro, radius_km=ANY_DISTANCE_KM)
     add("66 km away", where=porter_ranch)
     assert titles(me) == ["66 km away"]
-    profiles.update(id=me.uid, radius_km=25)
+    locate(me.uid, radius_km=25)
     assert titles(me) == []  # a 25 km volunteer still does not
 
 

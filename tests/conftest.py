@@ -42,6 +42,7 @@ TestClient = SameOriginClient
 
 from app import data, notify, security
 from app.auth import normalize_phone
+from app.choices import ANY_DISTANCE_KM
 from app.db import (
     blocks,
     causes,
@@ -64,6 +65,7 @@ from app.db import (
     shifts,
     swipes,
 )
+from app.match import MODE_KMH
 from app.routes import chat as chat_routes
 from main import app
 
@@ -145,18 +147,55 @@ def deck_titles(user):
     return [c["title"] for c in data.deck(data.get_or_create_volunteer(user.phone), 50)]
 
 
+HOME_KINDS = ("home place", "sign-up point")
+
+
+def pytest_generate_tests(metafunc):
+    """A test module with HOME_PLACES = True runs each test that uses `user` twice: with
+    the Home place onboarding saves, and as a profile from before places."""
+    if (
+        getattr(metafunc.module, "HOME_PLACES", False)
+        and "user" in metafunc.fixturenames
+    ):
+        metafunc.parametrize("user", HOME_KINDS, indirect=True)
+
+
 @pytest.fixture
-def user(new_user):
-    """Signed in and onboarded, then: a car and weekly help set in Me, and Home as a
-    profile from before places reads it (the sign-up point, at any distance), so that every
-    seeded opening is in reach and a test can move the volunteer through the profile's
-    lat, lon and radius_km. Places, onboarding and radius have their own tests."""
+def user(new_user, request):
+    """Signed in and onboarded, then: a car and weekly help set in Me, and Home at any
+    distance, so every seeded opening is in reach. Home is either the place row onboarding
+    saved ("home place") or, by default, the sign-up point a profile from before places
+    reads ("sign-up point"); user.home says which. Move the volunteer with locate()."""
+    kind = getattr(request, "param", "sign-up point")
     r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
     assert r.headers["location"] == "/deck"
     uid = data.get_or_create_volunteer(new_user.phone)
-    places.delete_where("user_id = ?", [uid])
     profiles.update(id=uid, radius_km=60, skills='["car"]', frequency="weekly")
+    if kind == "home place":
+        places.update(id=places(where="user_id = ?", where_args=[uid])[0].id,
+                      max_minutes=0)  # fmt: skip
+    else:
+        places.delete_where("user_id = ?", [uid])
+    new_user.home = kind
     return new_user
+
+
+def locate(uid, lat=None, lon=None, radius_km=None):
+    """Move a volunteer: the profile's point and radius, and their Home place row when
+    they have one (by car, reaching exactly radius_km; 60 or more is any distance)."""
+    moved = {"lat": lat, "lon": lon}
+    moved = {k: v for k, v in moved.items() if v is not None}
+    profiles.update(
+        id=uid, **moved, **({} if radius_km is None else {"radius_km": radius_km})
+    )
+    rows = places(where="user_id = ?", where_args=[uid], order_by="id")
+    if rows:
+        if radius_km is not None:
+            moved["mode"] = "car"
+            moved["max_minutes"] = (
+                0 if radius_km >= ANY_DISTANCE_KM else radius_km * 60 / MODE_KMH["car"]
+            )
+        places.update(id=rows[0].id, **moved)
 
 
 @pytest.fixture
