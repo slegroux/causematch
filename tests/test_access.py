@@ -47,6 +47,7 @@ ROUTES = {
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("GET", "/org/inbox"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
+    ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
 }
 PUBLIC_ROUTES = [r for r, (who, _) in ROUTES.items() if who == "public"]
@@ -172,6 +173,17 @@ def test_signed_out_is_sent_to_the_right_login(world, route):
     no_secrets(r)
     assert matches[world.match.id].status == "pending"
     assert openings[world.opening.id].status == world.opening.status
+
+
+def test_manifest_and_icons_are_served_signed_out(world):
+    for path in (
+        "/static/manifest.webmanifest",
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-512.png",
+        "/static/icons/apple-touch-icon.png",
+        "/static/a2hs.js",
+    ):
+        assert world.anon.get(path, follow_redirects=False).status_code == 200, path
 
 
 @pytest.mark.parametrize("route", PUBLIC_ROUTES, ids=lambda r: " ".join(r))

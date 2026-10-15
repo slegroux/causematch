@@ -1,4 +1,4 @@
-from fasthtml.common import H1, A, Div, Form, Option, P, Select
+from fasthtml.common import H1, A, Button, Div, Form, Option, P, Select
 from monsterui.all import (
     AT,
     Alert,
@@ -46,19 +46,36 @@ def Choice(name, options, selected="", placeholder=None):
     )
 
 
+def AddToHomeScreen():
+    """Hidden until static/a2hs.js decides: iPhone Safari, in a tab, not dismissed."""
+    return Div(
+        P(
+            "Add Causematch to your Home Screen: tap Share, then Add to Home Screen.",
+            cls=TextPresets.muted_sm,
+        ),
+        Button("Dismiss", type="button", id="a2hs-close", cls="uk-btn uk-btn-default"),
+        id="a2hs",
+        hidden=True,
+        cls="py-3",
+    )
+
+
 def VolunteerNav():
     return Div(
-        A("Openings", href="/deck", cls=AT.muted),
-        A("Matches", href="/matches", cls=AT.muted),
-        Form(
-            A(
-                "Sign out",
-                href="#",
-                cls=AT.muted,
-                onclick="this.closest('form').submit()",
+        AddToHomeScreen(),
+        Div(
+            A("Openings", href="/deck", cls=AT.muted),
+            A("Matches", href="/matches", cls=AT.muted),
+            Form(
+                A(
+                    "Sign out",
+                    href="#",
+                    cls=AT.muted,
+                    onclick="this.closest('form').submit()",
+                ),
+                action="/logout",
+                method="post",
             ),
-            action="/logout",
-            method="post",
+            cls="flex gap-4 py-3 text-sm",
         ),
-        cls="flex gap-4 py-3 text-sm",
     )

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from fasthtml.common import fast_app, serve
+from fasthtml.common import Link, Meta, Script, fast_app, serve
 from monsterui.all import Theme
 from starlette.staticfiles import StaticFiles
 
@@ -14,6 +14,7 @@ from app.routes.matches import ar as matches_router
 from app.routes.onboarding import ar as onboarding_router
 from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
+from app.routes.pwa import ar as pwa_router
 
 require_env()  # an undeclared environment never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
@@ -25,7 +26,17 @@ app, rt = fast_app(
     sess_https_only=is_production(),
     max_age=SESSION_MAX_AGE,
     title="Causematch",
-    hdrs=Theme.blue.headers(),
+    hdrs=(
+        *Theme.blue.headers(),
+        Link(rel="manifest", href="/static/manifest.webmanifest"),
+        Link(rel="icon", href="/favicon.ico", sizes="48x48"),
+        Link(rel="apple-touch-icon", href="/static/icons/apple-touch-icon.png"),
+        Meta(name="theme-color", content="#2563eb"),
+        Meta(name="mobile-web-app-capable", content="yes"),
+        Meta(name="apple-mobile-web-app-capable", content="yes"),
+        Meta(name="apple-mobile-web-app-title", content="Causematch"),
+        Script(src="/static/a2hs.js", defer=True),
+    ),
 )
 # fast_app registers a catch-all that serves any file under the working directory
 # (and, through an encoded "..", outside it). Drop it; only /static is served.
@@ -40,6 +51,7 @@ for router in (
     deck_router,
     matches_router,
     org_router,
+    pwa_router,
 ):
     router.to_app(app)
 # invented orgs and openings: never in production unless asked
