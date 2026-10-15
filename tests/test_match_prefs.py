@@ -1160,7 +1160,7 @@ def test_a_causes_only_filter_does_not_pin_the_travel_time(bare):
     """The sheet posts its pre-checked minutes too; only what differs is kept."""
     downtown_15(bare)
     pasadena = add("pasadena", PASADENA)  # 17 km: needs 45 min by car
-    every = [FOOD, PARKS, ANIMALS]
+    every = [c.slug for c in data.active_causes()]  # every cause: no filter at all
     bare.post("/deck/filters", data={"max_minutes": "15", "causes": every})
     assert "Filtered" not in bare.get("/deck").text  # nothing differs: no view
     bare.post("/deck/filters", data={"max_minutes": "15", "causes": []})
