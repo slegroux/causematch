@@ -6,7 +6,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, match, prefs
 from app.choices import ANY_DISTANCE_KM, SHARED_WITH_NONPROFIT
-from app.forms import bad_request, str_form
+from app.forms import HIDDEN_CHARS_MESSAGE, bad_request, hidden_chars, str_form
 from app.geo import neighborhoods, round_point, zip_latlon
 from app.routes.prefs import SLOTS, CauseRow, DayGrid, PlaceFields, Section
 from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput
@@ -181,6 +181,8 @@ def _shown_point(lat, lon):
 
 
 def _sync_onboarding_save(req, form):
+    if data.get_profile(req.scope["uid"]).onboarded_at:
+        return Redirect("/deck")  # later changes go through /me/preferences
     text = lambda k: form.get(k, "").strip()
     active = [c.slug for c in data.active_causes()]
     posted = {k: form.get(f"place1_{k}", v) for k, v in HOME.items() if k != "label"}
@@ -203,6 +205,8 @@ def _sync_onboarding_save(req, form):
         return fail(ADULTS_ONLY)
     if any(len(f[k]) > n for k, n in LIMITS.items()):
         return fail("One of your answers is too long. Please shorten it.")
+    if any(hidden_chars(f[k]) for k in LIMITS):
+        return fail(HIDDEN_CHARS_MESSAGE)
     if not f["first_name"]:
         return fail("Please enter your first name.")
     if f["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", f["email"]):

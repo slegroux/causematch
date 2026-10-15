@@ -4,7 +4,9 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from conftest import FORM, ORIGIN, coordinator_for, sign_in
@@ -393,11 +395,10 @@ def test_counters_live_in_the_database_so_a_restart_keeps_them(anon):
 
 
 def test_swipes_are_throttled_per_user(user, monkeypatch):
-    # a stopped clock: however slow the 31 requests are, no token refills between them
-    take = security.take_token
-    monkeypatch.setattr(
-        security, "take_token", lambda name, uid: take(name, uid, 1000.0)
-    )
+    # a stopped clock for the bucket: however slow the 31 requests are, no token refills
+    # between them (security's own `time` only: the event loop keeps the real one)
+    stopped = SimpleNamespace(monotonic=lambda: 1000.0, time=time.time)
+    monkeypatch.setattr(security, "time", stopped)
     codes = [
         user.post("/swipe", data={"opening_id": "x", "liked": "0"}).status_code
         for _ in range(31)

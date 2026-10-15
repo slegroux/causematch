@@ -236,3 +236,48 @@ def test_privacy_page_lists_places_and_preferences_as_private(anon):
     page = anon.get("/privacy").text
     assert "places" in page and "never an address" in page
     assert "Only you see your preferences" in page
+
+
+def test_onboarding_once_done_cannot_be_posted_again(user):
+    """Later changes go through /me/preferences; a second POST changes nothing."""
+    before = profile_of(user)
+    r = user.post(
+        "/onboarding",
+        data={**FORM, "first_name": "Mallory", "neighborhood": "Elsewhere"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    after = profile_of(user)
+    assert (after.display_name, after.neighborhood, after.onboarded_at) == (
+        before.display_name,
+        before.neighborhood,
+        before.onboarded_at,
+    )
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("first_name", "Sa\u200bm"),  # zero-width space
+        ("first_name", "\u3164"),  # Hangul filler: looks blank
+        ("neighborhood", "Echo\u202ePark"),  # right-to-left override
+        ("other_causes", "owls\u0007"),  # a control character
+        ("place1_where", "Mar\u2028Vista"),  # line separator
+    ],
+)
+def test_hidden_characters_are_refused(new_user, field, value):
+    r = new_user.post(
+        "/onboarding", data={**FORM, field: value}, follow_redirects=False
+    )
+    assert r.status_code == 200 and "hidden or special characters" in r.text
+    assert not profile_of(new_user).onboarded_at
+
+
+def test_accented_and_non_latin_names_are_fine(new_user):
+    r = new_user.post(
+        "/onboarding",
+        data={**FORM, "first_name": "José 李", "neighborhood": "Boyle Heights"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert profile_of(new_user).display_name == "José 李"

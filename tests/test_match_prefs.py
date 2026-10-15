@@ -1103,3 +1103,20 @@ def test_why_first_timer_chip_comes_after_matches_unless_wanted(bare):
                          availability=[]))  # fmt: skip
     (c,) = data.deck(uid_of(bare), 5)
     assert [w["text"] for w in c["why"]][2:] == ["First-timer friendly", "Outdoors"]
+
+
+def test_place_names_with_hidden_characters_are_refused(bare):
+    r = save(bare, place_fields(1, "Ho\u200dme", "Downtown"))
+    assert r.status_code == 200 and "hidden or special characters" in r.text
+    r = save(bare, place_fields(1, "Home", "Down\u00adtown"))  # soft hyphen (Cf)
+    assert "hidden or special characters" in r.text
+    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+
+
+def test_hidden_chars_categories():
+    from app.forms import hidden_chars
+
+    assert not hidden_chars("Sam O'Neil-Smith, Café 東京 ✓")
+    for bad in ("a\u200bb", "\u2800", "\uffa0", "a\x00", "\ue000", "a\u2029b"):
+        assert hidden_chars(bad), repr(bad)
+    assert hidden_chars("line\nbreak") and not hidden_chars("line\nbreak", True)

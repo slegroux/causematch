@@ -9,6 +9,7 @@ import re
 from datetime import date, timedelta
 
 from app.choices import DEFAULT_DEALBREAKERS, MAX_FREE_DATES, MAX_MINUTES, MODES
+from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars
 from app.geo import neighborhood_latlon, round_point, zip_latlon
 
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -132,6 +133,8 @@ def resolve_place(f, current, slot):
     browser already rounded it), the saved place when its area text is unchanged, a ZIP,
     a neighborhood. An empty "where" is no place.
     """
+    if hidden_chars(f["label"]) or hidden_chars(f["where"]):
+        return None, HIDDEN_CHARS_MESSAGE
     label = " ".join(f["label"].split()) or DEFAULT_LABELS[slot]
     where = " ".join(f["where"].split())
     if not where:
