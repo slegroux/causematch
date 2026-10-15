@@ -18,6 +18,7 @@ METRICS = {
     "shift1_rate": "First shift done",
     "shift2_rate": "Repeat volunteers",
     "no_show_rate": "No-show rate",
+    "unmarked_past_shifts": "Unmarked past shifts",
 }
 BREAKDOWNS = {
     "overall": "Overall",
@@ -48,8 +49,11 @@ def _group(swipes, matches, shifts, now):
     median_reply_h    median hours from created_at to decided_at, over matches with a
                       decided_at (accepted, declined, or withdrawn after an accept)
     pending_over_48h  pending matches created more than 48 hours before `now`
-    shift1_rate       accepted matches whose first non-cancelled shift has started and is
-                      completed / accepted matches whose first such shift has started
+    shift1_rate       accepted matches whose first non-cancelled shift (earliest starts_at)
+                      is completed / accepted matches whose first such shift is marked
+                      (completed or no_show); a shift not yet marked is in neither count
+    unmarked_past_shifts  non-cancelled shifts that have started and are still scheduled:
+                      how many shifts the shift1 and no-show figures cannot yet see
     shift2_rate       volunteers with >= 2 completed shifts / volunteers with >= 1, counting
                       the slice's shifts (in a cause or intro row: that cause's or intro's
                       shifts; overall and heard-from: any opening)
@@ -77,8 +81,11 @@ def _group(swipes, matches, shifts, now):
     for s in sorted(shifts, key=lambda s: s["starts_at"]):
         if s["match_id"] in accepted_ids and s["status"] != "cancelled":
             first.setdefault(s["match_id"], s)
-    started = [s for s in first.values() if s["starts_at"] <= local_now]
-    done = sum(1 for s in started if s["status"] == "completed")
+    marked = [s for s in first.values() if s["status"] in ("completed", "no_show")]
+    done = sum(1 for s in marked if s["status"] == "completed")
+    unmarked = sum(
+        1 for s in shifts if s["status"] == "scheduled" and s["starts_at"] <= local_now
+    )
     per_volunteer = {}
     for s in shifts:
         if s["status"] == "completed":
@@ -96,11 +103,12 @@ def _group(swipes, matches, shifts, now):
             "value": median(replies) if replies else None,
         },
         "pending_over_48h": {"n": pending, "d": None, "value": pending},
-        "shift1_rate": _rate(done, len(started)),
+        "shift1_rate": _rate(done, len(marked)),
         "shift2_rate": _rate(
             sum(1 for n in per_volunteer.values() if n >= 2), len(per_volunteer)
         ),
         "no_show_rate": _rate(no_show, completed + no_show),
+        "unmarked_past_shifts": {"n": unmarked, "d": None, "value": unmarked},
     }
 
 
@@ -152,7 +160,7 @@ def fmt(metric, cell):
         return "—"
     if metric == "median_reply_h":
         return f"{v:.1f}"
-    if metric == "pending_over_48h":
+    if metric in ("pending_over_48h", "unmarked_past_shifts"):
         return str(v)
     return f"{v * 100:.0f}%"
 

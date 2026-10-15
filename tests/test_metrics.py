@@ -97,6 +97,8 @@ def pilot():
     shift(m_a[0], "2026-10-12T09:00", "completed")
     shift(m_a[1], "2026-10-05T09:00", "completed")
     shift(m_a[2], "2026-10-05T09:00", "no_show")
+    shift(m_a[1], "2026-10-13T09:00", "scheduled")  # past, never marked
+    shift(m_a[0], "2026-10-14T09:00", "cancelled")  # ignored everywhere
     for vi in (0, 1, 3):
         swipe(vi, b, True)
     swipe(2, b, False)
@@ -119,9 +121,53 @@ def test_overall_rates_are_the_hand_computed_ones(pilot):
     assert (o["accept_rate"]["n"], o["accept_rate"]["d"]) == (5, 6)
     assert o["median_reply_h"]["value"] == 3.5  # 1 2 3 4 6 10
     assert o["pending_over_48h"]["value"] == 1
-    assert (o["shift1_rate"]["n"], o["shift1_rate"]["d"]) == (3, 4)  # B v4 not started
+    assert (o["shift1_rate"]["n"], o["shift1_rate"]["d"]) == (
+        3,
+        4,
+    )  # B v4's first shift is still ahead
     assert (o["shift2_rate"]["n"], o["shift2_rate"]["d"]) == (1, 2)  # only v1 repeats
     assert (o["no_show_rate"]["n"], o["no_show_rate"]["d"]) == (1, 5)
+    assert o["unmarked_past_shifts"]["value"] == 1
+
+
+def test_unmarked_past_shifts_are_counted_apart(pilot):
+    assert value(pilot, "overall", None, "unmarked_past_shifts") == 1
+    assert value(pilot, "intro", "warm", "unmarked_past_shifts") == 1
+    assert value(pilot, "intro", "cold", "unmarked_past_shifts") == 0
+
+
+def test_an_unmarked_first_shift_is_in_neither_count():
+    row = {"causes": [], "intro": "cold", "heard_from": "", "volunteer_id": 1}
+    rows = {
+        "causes": [],
+        "swipes": [],
+        "matches": [
+            {**row, "id": 1, "status": "accepted", "created_at": T0, "decided_at": T0}
+        ],
+        "shifts": [
+            {
+                **row,
+                "match_id": 1,
+                "starts_at": "2026-10-05T09:00",
+                "status": "cancelled",
+            },
+            {
+                **row,
+                "match_id": 1,
+                "starts_at": "2026-10-06T09:00",
+                "status": "scheduled",
+            },
+            {
+                **row,
+                "match_id": 1,
+                "starts_at": "2026-10-08T09:00",
+                "status": "completed",
+            },
+        ],
+    }
+    o = pilot_metrics(rows, NOW)["overall"]
+    assert (o["shift1_rate"]["n"], o["shift1_rate"]["d"]) == (0, 0)  # first = the 6th
+    assert o["unmarked_past_shifts"]["value"] == 1
 
 
 def test_three_of_four_accepted_is_a_rate_of_075(pilot):
