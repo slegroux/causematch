@@ -1073,6 +1073,31 @@ def org_openings(coordinator_uid):
     }
 
 
+def opening_counts(coordinator_uid):
+    """{opening id: {"pending": n, "accepted": n}} for the coordinator's own orgs only.
+
+    pending counts the likes their inbox lists as waiting (org_inbox's filters);
+    accepted counts every accepted match, as the full check does.
+    """
+    rows = _db.db.query(
+        "SELECT o.id AS id, "
+        "(SELECT count(*) FROM match m JOIN profile p ON p.id = m.volunteer_id "
+        "WHERE m.opening_id = o.id AND m.status = 'pending' "
+        "AND p.deleted_at IS NULL AND p.suspended_at IS NULL "
+        "AND coalesce(m.org_blind, 0) = 0 "
+        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = p.id "
+        "AND b.blocked_org_id = o.org_id) "
+        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = p.id "
+        "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id)) AS pending, "
+        "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
+        "AND a.status = 'accepted') AS accepted "
+        "FROM opening o "
+        "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?)",
+        [coordinator_uid],
+    )
+    return {r["id"]: {"pending": r["pending"], "accepted": r["accepted"]} for r in rows}
+
+
 def close_opening(coordinator_uid, opening_id):
     if not _is_id(opening_id):
         raise PermissionError("no such opening")

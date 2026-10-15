@@ -4,6 +4,7 @@ from fasthtml.common import (
     APIRouter,
     Button,
     Div,
+    Form,
     Input,
     Nav,
     Option,
@@ -305,3 +306,69 @@ def VolunteerNav(active=None):
         AddToHomeScreen(),
         TabBar(active),
     )
+
+
+# (key, label, href) of each section of the nonprofit's top nav
+ORG_TABS = (
+    ("openings", "Openings", "/org"),
+    ("inbox", "Inbox", "/org/inbox"),
+    ("shifts", "Shifts", "/org/shifts"),
+)
+
+
+def OrgNav(active, waiting=0):
+    """The nonprofit's header: the wordmark, its sections (the inbox with how many
+    volunteers wait for an answer) and Sign out. One row on a desk, two on a phone."""
+
+    def tab(key, label, href):
+        on = key == active
+        return A(
+            label,
+            Span(
+                str(waiting),
+                Span(" waiting", cls="sr-only"),
+                cls="grid h-6 min-w-6 place-items-center rounded-full bg-brand px-1.5 "
+                "text-xs text-white",
+            )
+            if key == "inbox" and waiting
+            else None,
+            href=href,
+            aria_current="page" if on else None,
+            cls="inline-flex min-h-11 items-center gap-2 rounded-full px-4 font-bold "
+            + (
+                "bg-brand-soft text-brand-ink"
+                if on
+                else "text-ink-muted hover:bg-sand hover:text-ink"
+            ),
+        )
+
+    return Div(
+        Div(
+            A(Wordmark(small=True), href="/org", cls="order-1"),
+            Form(
+                Button(
+                    "Sign out",
+                    type="submit",
+                    cls="min-h-11 rounded-full px-4 font-bold text-ink-muted "
+                    "hover:bg-sand hover:text-ink",
+                ),
+                action="/logout",
+                method="post",
+                cls="order-2 ml-auto lg:order-3 lg:ml-0",
+            ),
+            Nav(
+                *[tab(*t) for t in ORG_TABS],
+                aria_label="Organization",
+                cls="order-3 -mx-2 flex w-full gap-1 overflow-x-auto lg:order-2 "
+                "lg:mx-0 lg:ml-6 lg:w-auto lg:flex-1",
+            ),
+            # uk-container: the same side padding as the page below
+            cls="uk-container flex max-w-5xl flex-wrap items-center gap-y-2 py-3",
+        ),
+        cls="border-b border-line bg-white",
+    )
+
+
+def OrgShell(active, waiting, *content):
+    """A nonprofit page: the top nav, then the content, up to two columns wide on a desk."""
+    return Div(OrgNav(active, waiting), Container(*content, cls="max-w-5xl pt-6 pb-12"))

@@ -310,3 +310,98 @@ def test_screenshots_of_real_orgs_stay_out_of_the_repo(tmp_path):
             check=False,
         )
         assert ignored.returncode == 0, png
+
+
+# --- the nonprofit's pages (design item 5) ------------------------------------------
+
+
+class Joined(HTMLParser):
+    """Links that render as one word: an <a> straight after an </a>, nothing between,
+    neither one with a side margin, inside a parent that is not a flex or grid box
+    (any of which would set them apart)."""
+
+    VOID = frozenset({"input", "img", "br", "hr", "meta", "link", "source", "wbr"})
+
+    def __init__(self):
+        super().__init__()
+        self.stack, self.joined, self.last, self.text = [], [], None, ""
+        self.link = ""  # the class of the last link opened
+
+    def handle_starttag(self, tag, attrs):
+        cls = dict(attrs).get("class") or ""
+        if tag == "a" and self.last == "/a":
+            parent = self.stack[-1] if self.stack else ""
+            apart = (
+                re.search(r"\b(flex|grid)\b", parent)
+                or re.search(r"\bm[rx]-[1-9]", self.link)
+                or re.search(r"\bm[lx]-[1-9]", cls)
+            )
+            if not apart:
+                self.joined.append(self.text)
+        if tag == "a":
+            self.link = cls
+        if tag not in self.VOID:
+            self.stack.append(cls)
+        self.last = tag
+
+    def handle_endtag(self, tag):
+        if tag not in self.VOID and self.stack:
+            self.stack.pop()
+        self.last = "/" + tag
+
+    def handle_data(self, data):
+        self.last, self.text = None, data
+
+
+def test_no_run_together_links(pages):
+    org_pages = [(c, p) for c, p in pages if p.startswith("/org")]
+    assert len(org_pages) >= 8
+    for client, path in org_pages:
+        html = client.get(path).text
+        j = Joined()
+        j.feed(html)
+        assert j.joined == [], path
+        assert "shiftReport" not in html, path
+
+
+def test_org_pages_share_the_top_nav(pages, coord):
+    where = {
+        "/org": "Openings",
+        "/org/inbox": "Inbox",
+        "/org/shifts": "Shifts",
+        "/org/openings/new": "Openings",
+    }
+    for path, tab in where.items():
+        html = coord.get(path).text
+        assert 'aria-label="Organization"' in html, path
+        current = re.search(r'<a [^>]*aria-current="page"[^>]*>\s*([A-Za-z]+)', html)
+        assert current and current[1] == tab, path
+
+
+def test_dashboard_counts_waiting_likes_and_fills_the_bar(user, coord):
+    uid = data.get_or_create_volunteer(user.phone)
+    coord_uid = data.coordinator_by_email(coordinator_for(0)[1])
+    a = next(o for o in openings() if o.org_id == coord.org_id and o.status == "open")
+    m = data.swipe(uid, a.id, True)
+    assert data.opening_counts(coord_uid)[a.id] == {"pending": 1, "accepted": 0}
+    page = coord.get("/org").text
+    assert "1 waiting for you" in page
+    assert re.search(r'<nav[^>]*aria-label="Organization".*?>1<', page, re.DOTALL)
+    data.decide(coord_uid, m.id, True)
+    assert data.opening_counts(coord_uid)[a.id] == {"pending": 0, "accepted": 1}
+    page = coord.get("/org").text
+    assert f"1 of {a.slots} spots filled" in page
+    assert f'<progress value="1" max="{a.slots}"' in page
+    # a volunteer the org blocked: their later likes are dropped unseen, and not counted
+    data.block_volunteer(coord_uid, m.id)
+    for o in openings(where="org_id = ? AND status = 'open'", where_args=[a.org_id]):
+        if o.id != a.id:
+            data.swipe(uid, o.id, True)
+    pending = sum(c["pending"] for c in data.opening_counts(coord_uid).values())
+    assert pending == len(data.org_inbox(coord_uid)["pending"]) == 0
+
+
+def test_upcoming_shifts_say_upcoming_not_unmarked(pages, coord):
+    html = coord.get("/org/shifts").text
+    upcoming = html.split(">Upcoming</h2>")[1]
+    assert "Upcoming" in upcoming and "Not marked yet" not in upcoming

@@ -5,25 +5,23 @@ from zoneinfo import ZoneInfo
 from fasthtml.common import (
     H1,
     H2,
+    H3,
     A,
     Div,
     P,
+    Progress,
     Redirect,
     Response,
+    Span,
     Textarea,
 )
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
-    AT,
     Alert,
     AlertT,
     Button,
     ButtonT,
-    Card,
-    Container,
-    DivFullySpaced,
     Form,
-    Label,
     LabelCheckboxX,
     TextPresets,
 )
@@ -34,8 +32,20 @@ from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
-from app.routes.shifts import RepeatForm
-from app.ui import Checks, Choice, Field, Page, Router, TextInput
+from app.routes.shifts import RepeatForm, waiting
+from app.ui import (
+    CALENDAR,
+    CARD,
+    PIN,
+    Checks,
+    Choice,
+    Field,
+    Icon,
+    OrgShell,
+    Pill,
+    Router,
+    TextInput,
+)
 
 ar = Router()
 
@@ -63,6 +73,8 @@ def reply_options(has_phone):
 
 def DetailsForm(profile, error=None):
     return Form(
+        H2("Your details", cls="font-display text-lg font-extrabold text-ink"),
+        P("Volunteers see your name and role.", cls=TextPresets.muted_sm),
         Field(
             'Your name and role, e.g. "Maria Lopez, volunteer coordinator"',
             TextInput(
@@ -86,7 +98,8 @@ def DetailsForm(profile, error=None):
         Button("Save details", cls=ButtonT.default),
         action="/org/details",
         method="post",
-        cls="space-y-3 max-w-md pb-8",
+        id="details",
+        cls="space-y-3 p-5 " + CARD,
     )
 
 
@@ -101,21 +114,68 @@ def when(starts_at):
     return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
 
 
-def OpeningRow(o):
-    return Card(
-        DivFullySpaced(P(o.title, cls="font-semibold"), Label(o.status)),
-        P(
-            f"{when(o.starts_at)} - {o.neighborhood} - {o.slots} spots",
-            cls=TextPresets.muted_sm,
+OPENING_STATUS = {
+    "open": ("Open", "good"),
+    "filled": ("Filled", "info"),
+    "closed": ("Closed", "off"),
+}
+# a page's H1 and a section's H2 on the nonprofit's pages
+ORG_TITLE = "font-display text-2xl font-extrabold text-ink"
+ORG_SECTION = "font-display text-lg font-extrabold text-ink"
+
+
+def Meta(icon, text):
+    return P(
+        Icon(icon, size=16, cls="text-ink-muted"),
+        Span(text),
+        cls="flex items-center gap-2 text-sm text-ink",
+    )
+
+
+def OpeningRow(o, counts):
+    status, tone = OPENING_STATUS.get(o.status, (o.status.title(), "off"))
+    pending, accepted = counts.get("pending", 0), counts.get("accepted", 0)
+    return Div(
+        Div(
+            Pill(status, tone),
+            A(
+                f"{pending} waiting for you",
+                href="/org/inbox",
+                cls="inline-flex items-center rounded-full bg-brand px-2.5 py-1 text-xs "
+                "font-bold text-white hover:bg-brand-strong",
+            )
+            if pending
+            else None,
+            cls="flex flex-wrap items-center gap-1.5",
         ),
+        H3(o.title, cls="font-bold leading-snug text-ink"),
+        Meta(CALENDAR, when(o.starts_at)),
+        Meta(PIN, o.neighborhood),
+        Div(
+            P(
+                Span(f"{accepted} of {o.slots} spots filled"),
+                cls="flex justify-between text-xs font-semibold text-ink-muted",
+            ),
+            # a <progress>: its width comes from value/max, as the CSP forbids a style
+            Progress(
+                value=str(min(accepted, o.slots)),
+                max=str(o.slots),
+                aria_label=f"{accepted} of {o.slots} spots filled",
+                cls="cm-fill",
+            ),
+            cls="space-y-1 pt-1",
+        )
+        if o.slots
+        else None,
         PlainForm(
             Button("Close opening", cls=ButtonT.default),
             action=f"/org/openings/{o.id}/close",
             method="post",
+            cls="pt-1",
         )
         if o.status == "open"
         else None,
-        cls="w-full",
+        cls="w-full space-y-2 p-4 " + CARD,
     )
 
 
@@ -128,44 +188,59 @@ def org_home(req, error=""):
     uid = req.scope["uid"]
     profile = data.get_profile(uid)
     by_org = data.org_openings(uid)
+    counts = data.opening_counts(uid)
     sections = []
     for org, role in data.coordinator_orgs(uid):
-        rows = [OpeningRow(o) for o in by_org.get(org.id, [])]
+        rows = [OpeningRow(o, counts.get(o.id, {})) for o in by_org.get(org.id, [])]
         sections.append(
             Div(
-                H2(org.name, cls="text-xl font-semibold"),
-                P(role, cls=TextPresets.muted_sm),
+                Div(
+                    H2(org.name, cls=ORG_SECTION),
+                    Pill(role.title(), "off"),
+                    cls="flex flex-wrap items-center gap-2",
+                ),
                 *(rows or [P("No openings yet.", cls=TextPresets.muted_sm)]),
                 cls="flex flex-col gap-3",
             )
         )
-    return Container(
-        DivFullySpaced(
-            P("Your openings", cls="text-2xl font-bold my-4"),
-            PlainForm(
-                Button("Sign out", cls=ButtonT.ghost), action="/logout", method="post"
-            ),
-        ),
-        None
-        if profile.display_name
-        else P("Add your name so volunteers know who you are.", cls="font-semibold"),
-        None if profile.display_name else DetailsForm(profile, error or None),
-        Div(*sections, cls="flex flex-col gap-8 pb-4"),
+    named = bool(profile.display_name)
+    return OrgShell(
+        "openings",
+        waiting(uid),
         Div(
+            H1("Your openings", cls=ORG_TITLE),
             A(
                 "Post an opening",
                 href="/org/openings/new",
                 cls="uk-btn " + ButtonT.primary,
-            ),
-            A("Volunteer inbox", href="/org/inbox", cls="uk-btn " + ButtonT.default),
-            A("Shifts", href="/org/shifts", cls="uk-btn " + ButtonT.default),
-            cls="pb-8 flex gap-3",
+            )
+            if named
+            else None,
+            cls="flex flex-wrap items-center justify-between gap-3 pb-4",
         ),
-        H2("Your details", cls="text-xl font-semibold")
-        if profile.display_name
-        else None,
-        DetailsForm(profile, error or None) if profile.display_name else None,
-        cls="max-w-3xl",
+        None
+        if named
+        else P(
+            "Add your name so volunteers know who you are.",
+            cls="pb-3 font-semibold",
+        ),
+        None
+        if named
+        else Div(DetailsForm(profile, error or None), cls="max-w-md pb-8"),
+        Div(
+            Div(*sections, cls="flex flex-col gap-8"),
+            DetailsForm(profile, error or None) if named else None,
+            cls="grid items-start gap-6 lg:grid-cols-[1fr_20rem]",
+        ),
+    )
+
+
+def Group(title, *fields):
+    """One card of the opening form: a heading and its fields."""
+    return Div(
+        H2(title, cls=ORG_SECTION),
+        *fields,
+        cls="space-y-4 p-5 " + CARD,
     )
 
 
@@ -173,9 +248,9 @@ def OpeningForm(uid, f=None, error=None):
     f = f or {}
     my_orgs = data.coordinator_orgs(uid)
     org_id = f.get("org_id") or (str(my_orgs[0][0].id) if len(my_orgs) == 1 else "")
-    return Page(
-        "Post an opening",
-        Form(
+    form = Form(
+        Group(
+            "The opening",
             Field(
                 "Organization",
                 Choice("org_id", [(str(o.id), o.name) for o, _ in my_orgs], org_id),
@@ -202,21 +277,29 @@ def OpeningForm(uid, f=None, error=None):
                     f.get("cause", ""),
                 ),
             ),
-            Field(
-                "ZIP code",
-                TextInput(
-                    name="zip",
-                    value=f.get("zip", ""),
-                    inputmode="numeric",
-                    maxlength="5",
-                    required=True,
+        ),
+        Group(
+            "Where and when",
+            Div(
+                Field(
+                    "ZIP code",
+                    TextInput(
+                        name="zip",
+                        value=f.get("zip", ""),
+                        inputmode="numeric",
+                        maxlength="5",
+                        required=True,
+                    ),
                 ),
-            ),
-            Field(
-                "Neighborhood",
-                TextInput(
-                    name="neighborhood", value=f.get("neighborhood", ""), required=True
+                Field(
+                    "Neighborhood",
+                    TextInput(
+                        name="neighborhood",
+                        value=f.get("neighborhood", ""),
+                        required=True,
+                    ),
                 ),
+                cls="grid gap-4 sm:grid-cols-2",
             ),
             Field(
                 "Date and time of the next shift",
@@ -231,6 +314,9 @@ def OpeningForm(uid, f=None, error=None):
                 "Does it repeat?",
                 Choice("recurrence", RECURRENCE, f.get("recurrence", "")),
             ),
+        ),
+        Group(
+            "Volunteers",
             Field(
                 "How many volunteers do you need?",
                 TextInput(
@@ -265,6 +351,9 @@ def OpeningForm(uid, f=None, error=None):
                 value="1",
                 checked=bool(f.get("adult_only_ok")),
             ),
+        ),
+        Group(
+            "Reaching you",
             Field(
                 "Best way to send you interested volunteers?",
                 Choice(
@@ -273,12 +362,25 @@ def OpeningForm(uid, f=None, error=None):
                     f.get("reply_channel", ""),
                 ),
             ),
-            Button("Post opening", cls=ButtonT.primary + " w-full"),
-            action="/org/openings/new",
-            method="post",
         ),
-        error=error,
-        intro="Volunteers who fit see it after you post it. You can close it any time.",
+        Button("Post opening", cls=ButtonT.primary + " w-full h-12 text-lg"),
+        action="/org/openings/new",
+        method="post",
+        cls="space-y-4",
+    )
+    return OrgShell(
+        "openings",
+        waiting(uid),
+        Div(
+            H1("Post an opening", cls=ORG_TITLE),
+            P(
+                "Volunteers who fit see it after you post it. You can close it any time.",
+                cls=TextPresets.muted_sm + " mt-1 mb-4",
+            ),
+            Alert(error, cls=AlertT.error + " mb-4") if error else None,
+            form,
+            cls="mx-auto max-w-2xl",
+        ),
     )
 
 
@@ -438,77 +540,123 @@ INBOX_NOTICE = {
 }
 
 
+INBOX_TONE = {
+    "pending": "wait",
+    "accepted": "good",
+    "declined": "off",
+    "withdrawn": "off",
+}
+# a small link that is still a 44 px tap target
+SMALL_LINK = (
+    "inline-flex min-h-11 items-center text-sm font-semibold text-ink-muted underline "
+    "underline-offset-4 hover:text-ink"
+)
+
+
+def Fact(term, value):
+    return P(Span(f"{term}: ", cls="font-bold"), value, cls="text-sm text-ink")
+
+
 def InboxRow(m):
     accept = (
-        Label("Full")
+        Pill("Full", "off")
         if m["full"]
         else Button("Accept", name="decision", value="accept", cls=ButtonT.primary)
     )
-    return Card(
-        DivFullySpaced(
-            P(m["first_name"], cls="font-semibold"), Label(INBOX_STATUS[m["status"]])
+    return Div(
+        Div(
+            Span(
+                m["first_name"][:1].upper(),
+                aria_hidden="true",
+                cls="grid h-11 w-11 shrink-0 place-items-center rounded-full "
+                "bg-brand-soft font-display text-lg font-extrabold text-brand-ink",
+            ),
+            Div(
+                P(m["first_name"], cls="font-bold text-ink"),
+                P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm),
+                cls="min-w-0 flex-1",
+            ),
+            Pill(INBOX_STATUS[m["status"]], INBOX_TONE[m["status"]]),
+            cls="flex items-start gap-3",
         ),
-        P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm),
-        P("Causes: " + (", ".join(m["causes"]) or "none given")),
-        P(
-            "Available: "
-            + (", ".join(label_of(AVAILABILITY, a) for a in m["availability"]) or "any")
+        Div(
+            Fact("Causes", ", ".join(m["causes"]) or "none given"),
+            Fact(
+                "Available",
+                ", ".join(label_of(AVAILABILITY, a) for a in m["availability"])
+                or "any",
+            ),
+            Fact("Neighborhood", m["neighborhood"] or "not given"),
+            Fact("Wants to help", label_of(FREQUENCY, m["frequency"]) or "not given"),
+            cls="space-y-1 rounded-2xl bg-cream p-3",
         ),
-        P(f"Neighborhood: {m['neighborhood'] or 'not given'}"),
-        P(f"Wants to help: {label_of(FREQUENCY, m['frequency']) or 'not given'}"),
-        A("Chat", href=f"/org/chat/{m['id']}", cls=AT.muted + " mr-4")
-        if m["status"] in ("accepted", "withdrawn")
-        else None,
-        A(
-            "Schedule another shift",
-            href=f"/org/matches/{m['id']}/shifts/new",
-            cls=AT.muted,
-        )
-        if m["status"] == "accepted"
-        else None,
-        RepeatForm(m["id"]) if m["status"] == "accepted" and m["weekly"] else None,
-        A("Report", href=f"/org/matches/{m['id']}/report", cls=AT.muted + " mr-4"),
-        A("Block", href=f"/org/matches/{m['id']}/block", cls=AT.muted),
         PlainForm(
             accept,
             Button("Decline", name="decision", value="decline", cls=ButtonT.default),
             action=f"/org/matches/{m['id']}/decide",
             method="post",
-            cls="flex gap-3",
+            cls="flex flex-wrap items-center gap-3",
         )
         if m["status"] == "pending"
         else None,
-        cls="w-full",
+        RepeatForm(m["id"]) if m["status"] == "accepted" and m["weekly"] else None,
+        # links in a flex row with a gap: never run together ("shiftReport")
+        Div(
+            A("Chat", href=f"/org/chat/{m['id']}", cls=SMALL_LINK)
+            if m["status"] in ("accepted", "withdrawn")
+            else None,
+            A(
+                "Schedule another shift",
+                href=f"/org/matches/{m['id']}/shifts/new",
+                cls=SMALL_LINK,
+            )
+            if m["status"] == "accepted"
+            else None,
+            A("Report", href=f"/org/matches/{m['id']}/report", cls=SMALL_LINK),
+            A("Block", href=f"/org/matches/{m['id']}/block", cls=SMALL_LINK),
+            cls="flex flex-wrap gap-x-5 border-t border-line pt-1",
+        ),
+        cls="w-full space-y-3 p-4 " + CARD,
+    )
+
+
+def InboxSection(title, rows, empty=None):
+    if not rows and empty is None:
+        return None
+    return Div(
+        H2(title, cls=ORG_SECTION),
+        *(rows or [P(empty, cls=TextPresets.muted_sm)]),
+        cls="flex flex-col gap-3",
     )
 
 
 @ar("/org/inbox", methods=["GET"])
 def inbox(req):
     notice = query(req, "notice")
-    box = data.org_inbox(req.scope["uid"])
-    return Container(
-        H1("Volunteer inbox", cls="text-2xl font-bold my-4"),
+    uid = req.scope["uid"]
+    box = data.org_inbox(uid)
+    return OrgShell(
+        "inbox",
+        len(box["pending"]),
+        H1("Volunteer inbox", cls=ORG_TITLE + " pb-4"),
         Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in INBOX_NOTICE
         else None,
-        H2("Waiting for you", cls="text-xl font-semibold"),
         Div(
-            *([InboxRow(m) for m in box["pending"]] or [P("No one is waiting.")]),
-            cls="flex flex-col gap-3 pb-6",
+            InboxSection(
+                "Waiting for you",
+                [InboxRow(m) for m in box["pending"]],
+                "No one is waiting.",
+            ),
+            Div(
+                InboxSection(
+                    "Decided", [InboxRow(m) for m in box["decided"]], "Nothing yet."
+                ),
+                InboxSection("Past matches", [InboxRow(m) for m in box["past"]]),
+                cls="flex flex-col gap-8",
+            ),
+            cls="grid items-start gap-8 lg:grid-cols-2",
         ),
-        H2("Decided", cls="text-xl font-semibold"),
-        Div(
-            *([InboxRow(m) for m in box["decided"]] or [P("Nothing yet.")]),
-            cls="flex flex-col gap-3 pb-6",
-        ),
-        H2("Past matches", cls="text-xl font-semibold") if box["past"] else None,
-        Div(
-            *[InboxRow(m) for m in box["past"]],
-            cls="flex flex-col gap-3 pb-8",
-        )
-        if box["past"]
-        else None,
-        cls="max-w-3xl",
     )
 
 

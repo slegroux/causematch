@@ -15,7 +15,17 @@ from starlette.concurrency import run_in_threadpool
 from app import data
 from app.forms import bad_request, query, str_form
 from app.routes.deck import when
-from app.ui import CARD, TITLE, Field, Page, Pill, Router, TextInput, VolunteerNav
+from app.ui import (
+    CARD,
+    TITLE,
+    Field,
+    OrgShell,
+    Page,
+    Pill,
+    Router,
+    TextInput,
+    VolunteerNav,
+)
 
 ar = Router()
 
@@ -32,6 +42,11 @@ NOTICE = {
     ),
     "repeat": "Couldn't add next week's shift (it needs a weekly opening, and a date still ahead).",
 }
+
+
+def waiting(uid):
+    """How many volunteers wait for this coordinator's answer (the nav's Inbox badge)."""
+    return len(data.org_inbox(uid)["pending"])
 
 
 def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
@@ -96,40 +111,56 @@ def Section(title, rows, empty):
 @ar("/org/shifts", methods=["GET"])
 def org_shifts_page(req):
     notice = query(req, "notice")
-    box = data.org_shifts(req.scope["uid"])
-    return Container(
-        H1("Shifts", cls="text-2xl font-bold my-4"),
+    uid = req.scope["uid"]
+    box = data.org_shifts(uid)
+    return OrgShell(
+        "shifts",
+        waiting(uid),
+        H1("Shifts", cls="font-display text-2xl font-extrabold text-ink pb-4"),
         Alert(NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in NOTICE
         else None,
-        Section(
-            "Did they come?",
-            [ShiftCard(s, MarkForm(s), repeat_of(s)) for s in box["to_mark"]],
-            "Nothing to mark.",
+        Div(
+            Div(
+                Section(
+                    "Did they come?",
+                    [ShiftCard(s, MarkForm(s), repeat_of(s)) for s in box["to_mark"]],
+                    "Nothing to mark.",
+                ),
+                Section(
+                    "Marked this week (one correction allowed)",
+                    [
+                        ShiftCard(s, MarkForm(s, corrected=True), repeat_of(s))
+                        for s in box["marked"]
+                    ],
+                    "Nothing marked this week.",
+                ),
+            ),
+            # not started yet: nothing to mark, so "Upcoming" rather than "Not marked yet"
+            Section(
+                "Upcoming",
+                [
+                    ShiftCard(
+                        s,
+                        Div(
+                            A(
+                                "Chat",
+                                href=f"/org/chat/{s['match_id']}",
+                                cls="uk-btn uk-btn-default",
+                            ),
+                            repeat_of(s),
+                            CancelForm(s["id"]),
+                            cls="flex flex-wrap gap-2 pt-1",
+                        ),
+                        status="Upcoming",
+                        tone="info",
+                    )
+                    for s in box["upcoming"]
+                ],
+                "No upcoming shifts.",
+            ),
+            cls="grid items-start gap-x-8 lg:grid-cols-2",
         ),
-        Section(
-            "Upcoming",
-            [
-                ShiftCard(
-                    s,
-                    A("Chat", href=f"/org/chat/{s['match_id']}", cls=AT.muted),
-                    repeat_of(s),
-                    CancelForm(s["id"]),
-                )
-                for s in box["upcoming"]
-            ],
-            "No upcoming shifts.",
-        ),
-        Section(
-            "Marked this week (one correction allowed)",
-            [
-                ShiftCard(s, MarkForm(s, corrected=True), repeat_of(s))
-                for s in box["marked"]
-            ],
-            "Nothing marked this week.",
-        ),
-        A("Back to your openings", href="/org", cls=AT.muted + " pb-8 block"),
-        cls="max-w-3xl",
     )
 
 
@@ -175,27 +206,34 @@ def repeat(req, match_id: int):
     return Redirect("/org/shifts")
 
 
-def ShiftForm(match_id, head, error=None, value=""):
-    return Page(
-        "Schedule another shift",
-        P(f"{head['title']} with {head['other']}", cls=TextPresets.muted_sm + " mb-4"),
-        Form(
-            Field(
-                "Date and time (Los Angeles time)",
-                TextInput(
-                    name="starts_at",
-                    type="datetime-local",
-                    value=value,
-                    required=True,
-                ),
+def ShiftForm(uid, match_id, head, error=None, value=""):
+    return OrgShell(
+        "inbox",
+        waiting(uid),
+        Page(
+            "Schedule another shift",
+            P(
+                f"{head['title']} with {head['other']}",
+                cls=TextPresets.muted_sm + " mb-4",
             ),
-            Button("Schedule", cls=ButtonT.primary),
-            A("Cancel", href="/org/inbox", cls=AT.muted + " ml-4"),
-            action=f"/org/matches/{match_id}/shifts/new",
-            method="post",
-            cls="space-y-3",
+            Form(
+                Field(
+                    "Date and time (Los Angeles time)",
+                    TextInput(
+                        name="starts_at",
+                        type="datetime-local",
+                        value=value,
+                        required=True,
+                    ),
+                ),
+                Button("Schedule", cls=ButtonT.primary),
+                A("Cancel", href="/org/inbox", cls=AT.muted + " ml-4"),
+                action=f"/org/matches/{match_id}/shifts/new",
+                method="post",
+                cls="space-y-3",
+            ),
+            error=error,
         ),
-        error=error,
     )
 
 
@@ -213,7 +251,7 @@ def new_shift_page(req, match_id: int):
         head = _writable_head(req.scope["uid"], match_id)
     except PermissionError:
         return Response("Forbidden", status_code=403)
-    return ShiftForm(match_id, head)
+    return ShiftForm(req.scope["uid"], match_id, head)
 
 
 @ar("/org/matches/{match_id}/shifts/new", methods=["POST"])
@@ -233,7 +271,9 @@ def _sync_new_shift_save(req, form, match_id: int):
     except PermissionError:
         return Response("Forbidden", status_code=403)
     except ValueError as e:
-        return ShiftForm(match_id, head, f"Couldn't schedule that: {e}.", starts_at)
+        return ShiftForm(
+            uid, match_id, head, f"Couldn't schedule that: {e}.", starts_at
+        )
     return Redirect("/org/shifts")
 
 

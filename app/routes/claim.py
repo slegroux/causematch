@@ -1,13 +1,13 @@
 import re
 
-from fasthtml.common import P
-from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
+from fasthtml.common import A, P
+from monsterui.all import AT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
 from app.forms import bad_request, str_form
-from app.ui import Field, Page, Router, TextInput
+from app.ui import BigButton, Field, Router, SignInPage, TextInput
 
 ar = Router()
 
@@ -21,7 +21,7 @@ AUTHORIZED = "I'm authorized to represent this organization"
 
 def ClaimForm(values=None, error=None):
     v = values or {}
-    return Page(
+    return SignInPage(
         "Claim your organization",
         Form(
             Field(
@@ -76,7 +76,7 @@ def ClaimForm(values=None, error=None):
                 ),
             ),
             LabelCheckboxX(AUTHORIZED, name="authorized", value="1"),
-            Button("Request access", cls=ButtonT.primary + " w-full"),
+            BigButton("Request access"),
             P(
                 "An admin reviews every request before anyone is added.",
                 cls=TextPresets.muted_sm,
@@ -87,6 +87,10 @@ def ClaimForm(values=None, error=None):
         ),
         error=error,
         intro="Ask to manage your nonprofit's volunteer openings.",
+        aside=P(
+            A("Already have access? Sign in", href="/org/login", cls=AT.muted),
+            cls="pt-6 text-center text-sm",
+        ),
     )
 
 
@@ -132,5 +136,5 @@ def _sync_claim_submit(req, form):
         return security.too_many()
     else:
         data.submit_claim(ein, v["org_name"], v["name"], email, phone)
-        return Page("Request received", P(RECEIVED))
+        return SignInPage("Request received", P(RECEIVED, cls="text-ink"))
     return ClaimForm(v, error)

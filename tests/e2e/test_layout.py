@@ -85,3 +85,18 @@ def test_an_os_dark_mode_keeps_native_controls_light(browser, live_url):
     scheme = page.evaluate("getComputedStyle(document.documentElement).colorScheme")
     assert scheme == "light"
     ctx.close()
+
+
+def test_nonprofit_pages_fit_a_small_phone(browser, live_url):
+    from helpers import coordinator_page
+
+    page = coordinator_page(browser, live_url)
+    page.set_viewport_size(SE)
+    for path in ("/org", "/org/inbox", "/org/shifts", "/org/openings/new"):
+        page.goto(path)
+        width = page.evaluate(
+            "[document.scrollingElement.scrollWidth, window.innerWidth]"
+        )
+        assert width[0] <= width[1], (path, width)
+        assert page.get_by_role("navigation", name="Organization").is_visible(), path
+    page.context.close()
