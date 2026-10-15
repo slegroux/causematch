@@ -11,10 +11,11 @@ from app.config import is_dev, public_base_url
 log = logging.getLogger("causematch")
 
 FAKE_CODE = "000000"
-SMS_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+SMS_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}"
 TWILIO_STOPPED = 21610  # the recipient replied STOP
 MESSAGE_WINDOW = 30 * 60  # seconds: at most one new-message text per match per window
 LIKES_WINDOW = 15 * 60  # seconds: at most one new-likes email per org per window
+MAX_ATTEMPTS = 5  # tries for one send before it is left failed
 LA = ZoneInfo("America/Los_Angeles")
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
@@ -187,7 +188,7 @@ class TwilioSMS:
 
     def send(self, phone, text):
         r = self.client.post(
-            "", data={"To": phone, "From": self.from_number, "Body": text}
+            "/Messages.json", data={"To": phone, "From": self.from_number, "Body": text}
         )
         if r.status_code == 400:
             try:
@@ -230,44 +231,71 @@ def now():
     return datetime.now(UTC)
 
 
-def _window(seconds):
-    return int(now().timestamp() // seconds)
+def _deliver(kind, key, recipient_id, send, window=None, opt_out=None):
+    """Run `send` once for `key` (or once per `window` seconds), recording the outcome.
 
-
-def _deliver(kind, key, recipient_id, send):
-    """Run `send` once for `key`, recording the outcome. Never raises.
-
-    Call it from a worker thread and after the DB commit: it makes a network call.
+    Never raises. Call it from a worker thread and after the DB commit: it makes a network
+    call. A claim that is never finished stays `pending` and is not retried (a lost send is
+    better than a double text). A timeout is recorded `unknown` and not retried either: the
+    provider may have delivered.
     """
-    nid = data.notification_claim(kind, key, recipient_id)
-    if nid is None:
-        return False
     try:
-        send()
-    except SMSOptedOut:
-        data.sms_opted_out(recipient_id)
-        data.notification_done(nid, "skipped")
+        at = now()
+        cutoff = (
+            (at - timedelta(seconds=window)).isoformat(timespec="seconds")
+            if window
+            else None
+        )
+        nid = data.notification_claim(
+            kind,
+            key,
+            recipient_id,
+            at.isoformat(timespec="seconds"),
+            cutoff,
+            MAX_ATTEMPTS,
+        )
+        if nid is None:
+            return False
+        try:
+            send()
+        except SMSOptedOut:
+            if opt_out:
+                opt_out()
+            status = "skipped"
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
+            log.warning("%s notification outcome unknown: %s", kind, type(e).__name__)
+            status = "unknown"
+        except Exception as e:  # noqa: BLE001  a failed notice never fails the request
+            log.warning("%s notification failed: %s", kind, type(e).__name__)
+            status = "failed"
+        else:
+            status = "sent"
+        data.notification_done(nid, status)
+    except Exception as e:  # noqa: BLE001  recording trouble never fails the request either
+        log.warning("%s notification not recorded: %s", kind, type(e).__name__)
         return False
-    except Exception as e:  # noqa: BLE001  a failed notice never fails the user's request
-        log.warning("%s notification failed: %s", kind, type(e).__name__)
-        data.notification_done(nid, "failed")
-        return False
-    data.notification_done(nid, "sent")
-    return True
+    return status == "sent"
 
 
-def _text(kind, key, uid, body):
+def _text(kind, key, uid, body, window=None):
     phone = data.sms_number(uid)
     if phone is None:
         return False
-    return _deliver(kind, key, uid, lambda: get_sms().send(phone, body))
+    return _deliver(
+        kind,
+        key,
+        uid,
+        lambda: get_sms().send(phone, body),
+        window,
+        opt_out=lambda: data.sms_opted_out(uid),
+    )
 
 
 def on_accepted(match_id):
     """Called after a coordinator accepts. Texts the volunteer, once per match."""
     info = data.match_notice(match_id)
     if info:
-        _text(
+        return _text(
             "accepted",
             f"accepted:{match_id}",
             info["volunteer_id"],
@@ -279,14 +307,21 @@ def on_accepted(match_id):
 def on_new_message(match_id, sender_id):
     """Called after a chat message is saved. Texts the volunteer about a coordinator's
     message (never its text), at most once per match per 30 minutes."""
+    from app.routes.chat import volunteer_online  # chat imports this module
+
     info = data.match_notice(match_id)
-    if not info or info["volunteer_id"] == sender_id:
+    if (
+        not info
+        or info["volunteer_id"] == sender_id
+        or volunteer_online(match_id, info["volunteer_id"])
+    ):
         return
     _text(
         "message",
-        f"msg:{match_id}:{_window(MESSAGE_WINDOW)}",
+        f"msg:{match_id}",
         info["volunteer_id"],
         f"New message from {info['org']} on Causematch: {public_base_url()}/chat/{match_id}",
+        MESSAGE_WINDOW,
     )
 
 
@@ -312,18 +347,24 @@ def on_new_like(match_id):
                 f"{public_base_url()}/org/inbox",
             )
 
-    _deliver("likes", f"likes:{org_id}:{_window(LIKES_WINDOW)}", org_id, send)
+    _deliver("likes", f"likes:{org_id}", org_id, send, LIKES_WINDOW)
 
 
 def send_due_reminders():
     """Text the volunteer of every scheduled shift starting 23 to 25 hours from now, once
-    per shift. How many were sent."""
+    per shift, and retry failed "you're matched" texts. How many were sent."""
     t = now()
     first, last = (
         (t + timedelta(hours=h)).astimezone(LA).strftime(_LOCAL_FORMAT)
         for h in (23, 25)
     )
     sent = 0
+    for match_id in data.failed_accepts(
+        MAX_ATTEMPTS
+    ):  # the "you're matched" texts that failed
+        info = data.match_notice(match_id)
+        if info and info["status"] == "accepted":
+            sent += bool(on_accepted(match_id))
     for shift_id, volunteer_id in data.due_reminders(first, last):
         info = data.shift_notice(shift_id)
         if not info:
@@ -333,7 +374,7 @@ def send_due_reminders():
             "reminder",
             f"reminder:{shift_id}",
             volunteer_id,
-            f"Reminder: {info['opening']} with {info['org']} is tomorrow, "
+            f"Reminder: {info['opening']} with {info['org']} is on "
             f"{start.strftime('%a %b %-d, %-I:%M %p')}. Details: {public_base_url()}/matches",
         )
     return sent

@@ -168,6 +168,14 @@ async def _broadcast(match_id, m):
         _sockets.pop(match_id, None)
 
 
+def volunteer_online(match_id, vol_uid):
+    """True while the volunteer has the chat open on this match (a live socket)."""
+    return any(
+        uid == vol_uid and role == "volunteer"
+        for uid, role in list(_sockets.get(match_id, {}).values())
+    )
+
+
 async def _deliver(uid, match_id, text):
     """Save, then broadcast, then tell item 7's hook. ValueError for a bad message,
     PermissionError for a bad caller. Every data call runs off the event loop."""

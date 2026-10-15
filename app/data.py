@@ -163,8 +163,8 @@ def _match_for(uid, opening_id):
     return found[0] if found else None
 
 
-def swipe(uid, opening_id, liked):
-    """Record a swipe; a like makes a pending match. The match, or None for a pass.
+def _swipe(uid, opening_id, liked):
+    """Record a swipe; a like makes a pending match. (match, created), match None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
     the opening in their deck (closed, inactive cause, unknown id).
@@ -175,7 +175,7 @@ def swipe(uid, opening_id, liked):
         if _db.swipes(
             where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
         ):
-            return _match_for(uid, opening_id)
+            return _match_for(uid, opening_id), False
         if opening_id not in {o.id for o, *_ in _deck_openings(uid)}:
             raise LookupError("no such opening")
         _db.swipes.insert(
@@ -187,7 +187,7 @@ def swipe(uid, opening_id, liked):
             )
         )
         if not liked:
-            return None
+            return None, False
         return _db.matches.insert(
             _db.Match(
                 opening_id=opening_id,
@@ -195,7 +195,22 @@ def swipe(uid, opening_id, liked):
                 status="pending",
                 created_at=_now(),
             )
-        )
+        ), True
+
+
+def swipe(uid, opening_id, liked):
+    """Record a swipe; a like makes a pending match. The match, or None for a pass.
+
+    Repeating a swipe changes nothing. LookupError when the volunteer could not see
+    the opening in their deck (closed, inactive cause, unknown id).
+    """
+    return _swipe(uid, opening_id, liked)[0]
+
+
+def swipe_created(uid, opening_id, liked):
+    """Like `swipe`, but the Match only when this call created it (not a pass or a repeat)."""
+    match, created = _swipe(uid, opening_id, liked)
+    return match if created else None
 
 
 def decide(coordinator_uid, match_id, accept):
@@ -1009,10 +1024,12 @@ def close_opening(coordinator_uid, opening_id):
         )
 
 
-def notification_claim(kind, key, recipient_id):
-    """Reserve one logical send: the notification id, or None when `key` was already sent.
+def notification_claim(kind, key, recipient_id, at, cutoff=None, max_attempts=5):
+    """Reserve one send for `key` at time `at`: the notification id, or None.
 
-    A send that failed earlier is reserved again, so a later attempt can retry it.
+    A key sends once. A `failed` send is reserved again until it has had `max_attempts`.
+    With `cutoff` the key is a stream: a send made before `cutoff` is reserved again too.
+    One conditional UPDATE decides, so two callers never both win.
     """
     with _db.db.conn:
         if not _db.notifications(where="key = ?", where_args=[key]):
@@ -1021,14 +1038,17 @@ def notification_claim(kind, key, recipient_id):
                     kind=kind,
                     key=key,
                     recipient_id=recipient_id,
-                    sent_at="",
+                    sent_at=at,
                     status="pending",
+                    attempts=1,
                 )
             ).id
         _db.db.execute(
-            "UPDATE notification SET status = 'pending' "
-            "WHERE key = ? AND status = 'failed'",
-            [key],
+            "UPDATE notification SET status = 'pending', sent_at = ?, "
+            "attempts = CASE WHEN status = 'failed' THEN coalesce(attempts, 0) + 1 ELSE 1 END "
+            "WHERE key = ? AND ((status = 'failed' AND coalesce(attempts, 0) < ?) "
+            "OR (? IS NOT NULL AND status IN ('sent', 'unknown') AND sent_at < ?))",
+            [at, key, max_attempts, cutoff, cutoff],
         )
         if _db.db.conn.changes() != 1:
             return None
@@ -1036,7 +1056,19 @@ def notification_claim(kind, key, recipient_id):
 
 
 def notification_done(notification_id, status):
-    _db.notifications.update(id=notification_id, status=status, sent_at=_now())
+    _db.notifications.update(id=notification_id, status=status)
+
+
+def failed_accepts(max_attempts):
+    """Match ids whose "you're matched" text failed and has tries left."""
+    return [
+        int(r[0].split(":")[1])
+        for r in _db.db.execute(
+            "SELECT key FROM notification WHERE kind = 'accepted' AND status = 'failed' "
+            "AND coalesce(attempts, 0) < ?",
+            [max_attempts],
+        )
+    ]
 
 
 def sms_number(uid):

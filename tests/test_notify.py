@@ -36,6 +36,7 @@ def clock(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
+    """Rows from other test files must not suppress sends here (ids are reused)."""
     notifications.delete_where()
     shifts.delete_where()
     notify.get_sms().sent.clear()
@@ -103,6 +104,19 @@ def chat(world):
     accept(world.coord, world.match)
     texts().clear()
     return world
+
+
+def registered(match_id):
+    """Wait until the server has registered a socket on the match (it accepts first)."""
+    import time
+
+    from app.routes import chat as chat_routes
+
+    for _ in range(200):
+        if chat_routes._sockets.get(match_id):
+            return
+        time.sleep(0.05)
+    raise AssertionError("socket never registered")
 
 
 def post_reminders(client, **headers):
@@ -197,11 +211,20 @@ def test_like_emails_are_throttled_per_org_and_count_the_waiting(clock):
     assert "3 volunteers are waiting" in emails()[-1][2]
 
 
-def test_a_pass_or_a_repeat_like_sends_no_email(clock):
+def test_a_pass_sends_no_email(clock):
     coordinator()
     vol = volunteer()
     vol.post("/swipe", data={"opening_id": str(opening().id), "liked": "0"})
     assert emails() == []
+
+
+def test_a_repeat_like_sends_no_second_email(clock):
+    coordinator()
+    vol = volunteer()
+    like(vol)
+    clock.advance(minutes=16)
+    like(vol)
+    assert len(emails()) == 1
 
 
 # --- opt-out and deleted ----------------------------------------------------------------
@@ -234,14 +257,22 @@ def test_twilio_stop_reply_sets_opted_out_and_is_not_retried(world, monkeypatch)
     assert notify.get_sms().sent == []
 
 
+def twilio(handler):
+    """The real TwilioSMS with only its transport replaced, so its own URL is exercised."""
+    sms = notify.TwilioSMS("ACx", "tok", "+13105550000")
+    sms.client = httpx.Client(
+        base_url=sms.client.base_url,
+        auth=sms.client.auth,
+        transport=httpx.MockTransport(handler),
+    )
+    return sms
+
+
 def test_twilio_sender_maps_error_21610_to_opt_out():
     def handler(request):
         return httpx.Response(400, json={"code": 21610, "message": "unsubscribed"})
 
-    sms = notify.TwilioSMS("ACx", "tok", "+13105550000")
-    sms.client = httpx.Client(
-        base_url="https://api.twilio.test/", transport=httpx.MockTransport(handler)
-    )
+    sms = twilio(handler)
     with pytest.raises(notify.SMSOptedOut):
         sms.send("+13105550123", "hi")
 
@@ -253,13 +284,35 @@ def test_twilio_sender_posts_to_and_from_and_body():
         seen.append(request)
         return httpx.Response(201, json={})
 
-    sms = notify.TwilioSMS("ACx", "tok", "+13105550000")
-    sms.client = httpx.Client(
-        base_url="https://api.twilio.test/", transport=httpx.MockTransport(handler)
-    )
+    sms = twilio(handler)
     sms.send("+13105550123", "hi")
     assert b"To=%2B13105550123" in seen[0].content and b"Body=hi" in seen[0].content
     assert b"From=%2B13105550000" in seen[0].content
+    assert (
+        str(seen[0].url)
+        == "https://api.twilio.com/2010-04-01/Accounts/ACx/Messages.json"
+    )
+    assert seen[0].method == "POST"
+    assert seen[0].headers["authorization"].startswith("Basic ")
+
+
+def test_twilio_verifier_url_is_the_documented_one():
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"status": "approved"})
+
+    v = notify.TwilioVerifier("ACx", "tok", "VAy")
+    v.client = httpx.Client(
+        base_url=v.client.base_url, transport=httpx.MockTransport(handler)
+    )
+    v.send("+13105550123")
+    assert v.check("+13105550123", "123456")
+    assert seen == [
+        "https://verify.twilio.com/v2/Services/VAy/Verifications",
+        "https://verify.twilio.com/v2/Services/VAy/VerificationCheck",
+    ]
 
 
 # --- failures ---------------------------------------------------------------------------
@@ -355,7 +408,7 @@ def test_reminders_pick_exactly_the_shifts_in_the_window_and_only_once(
     assert r.status_code == 200
     assert len(texts()) == 3
     assert all(
-        t.startswith(f"Reminder: {TITLE} with {orgs()[0].name} is tomorrow,")
+        t.startswith(f"Reminder: {TITLE} with {orgs()[0].name} is on ")
         and f"{BASE}/matches" in t
         for _, t in texts()
     )
@@ -410,3 +463,130 @@ def test_startup_checks_the_sender_and_the_token():
 
 def test_phone_numbers_are_masked_in_logs():
     assert notify.mask("+13105550123") == "***0123"
+
+
+# --- review fixes -----------------------------------------------------------------------
+
+
+def test_message_texts_never_come_closer_than_the_window_even_across_a_bucket_edge(
+    chat, clock
+):
+    send = lambda: chat.coord.post(
+        f"/org/chat/{chat.match.id}/send", data={"msg": "hi"}
+    )
+    clock.at = datetime(2027, 3, 1, 18, 29, 59, tzinfo=UTC)
+    send()
+    clock.advance(seconds=2)  # the old fixed bucket ended here
+    send()
+    assert len(texts()) == 1
+    clock.advance(minutes=30)
+    send()
+    assert len(texts()) == 2
+    assert (
+        len([n for n in notifications() if n.kind == "message"]) == 1
+    )  # one row per stream
+
+
+def test_like_emails_never_come_closer_than_the_window_across_a_bucket_edge(clock):
+    coordinator()
+    clock.at = datetime(2027, 3, 1, 18, 14, 59, tzinfo=UTC)
+    like(volunteer("A"))
+    clock.advance(seconds=2)
+    like(volunteer("B"))
+    assert len(emails()) == 1
+    clock.advance(minutes=15)
+    like(volunteer("C"))
+    assert len(emails()) == 2
+
+
+def test_no_text_while_the_volunteer_has_the_chat_open_and_one_when_not(chat):
+    with chat.vol.websocket_connect(f"/chat/{chat.match.id}/ws"):
+        registered(chat.match.id)
+        chat.coord.post(f"/org/chat/{chat.match.id}/send", data={"msg": "live"})
+        assert texts() == []
+    # socket closed: offline now (a new window is not needed: nothing was claimed)
+    chat.coord.post(f"/org/chat/{chat.match.id}/send", data={"msg": "later"})
+    assert len(texts()) == 1
+
+
+def test_volunteer_online_is_per_match_and_per_volunteer(chat):
+    from app.routes import chat as chat_routes
+
+    with chat.vol.websocket_connect(f"/chat/{chat.match.id}/ws"):
+        registered(chat.match.id)
+        assert chat_routes.volunteer_online(chat.match.id, chat.vol.uid)
+        assert not chat_routes.volunteer_online(chat.match.id, chat.vol.uid + 99)
+        assert not chat_routes.volunteer_online(chat.match.id + 99, chat.vol.uid)
+    assert not chat_routes.volunteer_online(chat.match.id, chat.vol.uid)
+
+
+def test_a_failed_accept_text_is_retried_by_the_sweep_and_stops_after_five(
+    world, monkeypatch, anon
+):
+    monkeypatch.setattr(notify, "_sms", BrokenSMS())
+    accept(world.coord, world.match)  # attempt 1
+    row = lambda: next(n for n in notifications() if n.kind == "accepted")
+    assert (row().status, row().attempts) == ("failed", 1)
+    for expected in (2, 3, 4, 5):
+        post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+        assert (row().status, row().attempts) == ("failed", expected)
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")  # no sixth try
+    assert row().attempts == 5
+
+
+def test_a_transient_failure_succeeds_on_the_next_sweep(world, monkeypatch, anon):
+    monkeypatch.setattr(notify, "_sms", BrokenSMS())
+    accept(world.coord, world.match)
+    monkeypatch.setattr(notify, "_sms", notify.FakeSMS())
+    r = post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert r.text == "sent 1" and len(texts()) == 1
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 1
+
+
+class TimeoutSMS:
+    def send(self, phone, text):
+        raise httpx.ReadTimeout("slow")
+
+
+def test_a_timeout_is_unknown_and_never_retried(world, monkeypatch, anon):
+    monkeypatch.setattr(notify, "_sms", TimeoutSMS())
+    accept(world.coord, world.match)
+    assert [n.status for n in notifications() if n.kind == "accepted"] == ["unknown"]
+    monkeypatch.setattr(notify, "_sms", notify.FakeSMS())
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert texts() == []
+
+
+def test_a_recording_failure_after_a_send_does_not_fail_the_request(world, monkeypatch):
+    def boom(*a):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(data, "notification_done", boom)
+    r = world.coord.post(
+        f"/org/matches/{world.match.id}/decide",
+        data={"decision": "accept"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and len(texts()) == 1
+
+
+def test_overlapping_reminder_calls_send_once(world, clock, monkeypatch):
+    import threading
+    import time
+
+    accept(world.coord, world.match)
+    texts().clear()
+    shifts.update(id=shifts()[0].id, starts_at=local(clock, hours=24))
+
+    class Slow(notify.FakeSMS):
+        def send(self, phone, text):
+            time.sleep(0.2)
+            super().send(phone, text)
+
+    sms = Slow()
+    monkeypatch.setattr(notify, "_sms", sms)
+    threads = [threading.Thread(target=notify.send_due_reminders) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(sms.sent) == 1

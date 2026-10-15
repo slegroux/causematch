@@ -39,7 +39,7 @@ async def swipe(req):
     try:
         if not re.fullmatch(r"[0-9]{1,19}", raw):
             raise LookupError("not an opening id")
-        m = data.swipe(uid, int(raw), form["liked"] == "1")
+        m = data.swipe_created(uid, int(raw), form["liked"] == "1")
     except LookupError:
         pass  # closed or gone since the card was drawn: just show the next one
     else:
