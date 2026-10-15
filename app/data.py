@@ -1294,6 +1294,7 @@ REASONS = [
     ("harassment", "Harassment"),
     ("no_show_pattern", "A pattern of no-shows"),
     ("unsafe", "I felt unsafe"),
+    ("inappropriate_profile", "Inappropriate photo or profile"),
     ("spam", "Spam"),
     ("other", "Something else"),
 ]
@@ -1503,6 +1504,7 @@ def admin_reports(admin_uid):
         "(SELECT display_name FROM profile WHERE id = r.reporter_id) AS reporter, "
         "(SELECT display_name FROM profile WHERE id = m.volunteer_id) AS volunteer, "
         "(SELECT suspended_at FROM profile WHERE id = r.target_user_id) AS suspended, "
+        "(SELECT photo_key FROM profile WHERE id = r.target_user_id) AS photo_key, "
         "g.deactivated_at "
         "FROM report r JOIN match m ON m.id = r.match_id "
         "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
@@ -1525,6 +1527,7 @@ def admin_reports(admin_uid):
                 "target_org_id": r["target_org_id"],
                 "suspended": bool(r["suspended"]),
                 "deactivated": bool(r["deactivated_at"]),
+                "photo_key": r["photo_key"],  # the reported volunteer's, for review
             }
         )
     return out
@@ -1579,6 +1582,18 @@ def suspend_target(admin_uid, report_id):
             _end_match(m, admin_uid, "withdrawn")
         _resolve(admin_uid, "target_user_id = ?", [uid], "actioned")
         _refresh_retained(uid, suspended=True)  # a deleted account cannot come back
+
+
+def remove_reported_photo(admin_uid, report_id):
+    """Delete the reported volunteer's photo (they may add another); this report is
+    actioned. ValueError for a report on an org."""
+    with _db.db.conn:
+        r = _open_report(admin_uid, report_id)
+        if r.target_user_id is None:
+            raise ValueError("this report names an org, not a user")
+        _drop_photo(_db.profiles[r.target_user_id].photo_key)
+        _db.profiles.update(id=r.target_user_id, photo_key=None)
+        _resolve(admin_uid, "id = ?", [report_id], "actioned")
 
 
 def deactivate_target_org(admin_uid, report_id):
@@ -1923,7 +1938,8 @@ def delete_account(uid):
     """A volunteer deletes their own account.
 
     Soft-deleted, with every personal column scrubbed (kept: the answers the metrics group
-    by). Pending and accepted matches are withdrawn and future shifts cancelled, their
+    by), and their photos deleted. Pending and accepted matches are withdrawn and future
+    shifts cancelled, their
     message bodies are replaced, texts still queued for them are cancelled, and every
     session ends. They can sign up again later as a new profile.
     """
@@ -1953,10 +1969,14 @@ def delete_account(uid):
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
         _db.db.execute(
+            "DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", [uid]
+        )
+        _db.db.execute(
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
             "last_name = NULL, pronouns = NULL, bio = NULL, interests = NULL, "
+            "photo_key = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
             [_now(), uid],
         )
@@ -2086,6 +2106,10 @@ def set_opening_link(coordinator_uid, opening_id, url):
     with _db.db.conn:
         coordinator_opening(coordinator_uid, opening_id)
         _db.openings.update(id=opening_id, event_url=url)
+
+
+def dismiss_photo_nudge(uid):
+    _db.profiles.update(id=uid, photo_nudge_dismissed_at=_now())
 
 
 def _sees_volunteer(viewer, volunteer_id):

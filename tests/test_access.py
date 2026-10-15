@@ -125,6 +125,8 @@ ROUTES = {
     ("POST", "/me/profile/photo"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo/remove"): ("volunteer", "own-record"),
     ("POST", "/me/profile/details"): ("volunteer", "own-record"),
+    ("POST", "/deck/photo-nudge/dismiss"): ("volunteer", "own-record"),
+    ("POST", "/admin/reports/{report_id}/remove-photo"): ("admin", "own-record"),
     # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's
     ("GET", "/photos/{key}.jpg"): ("signed-in", "own-record"),
     ("GET", "/photos/thumb/{key}.jpg"): ("signed-in", "own-record"),
@@ -842,6 +844,9 @@ OWNERSHIP = {
     ("POST", "/admin/reports/{report_id}/suspend"): check_admin_report_route("suspend"),
     ("POST", "/admin/reports/{report_id}/deactivate"): check_admin_report_route(
         "deactivate"
+    ),
+    ("POST", "/admin/reports/{report_id}/remove-photo"): check_admin_report_route(
+        "remove-photo"
     ),
     ("POST", "/admin/blocks/{block_id}/unblock"): check_admin_unblock,
     ("POST", "/admin/claims/{claim_id}/approve"): check_admin_claim("approve"),

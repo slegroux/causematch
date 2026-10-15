@@ -362,3 +362,99 @@ def test_the_inbox_chat_and_shifts_show_the_photo(user, coord):
     assert thumb in coord.get(f"/org/chat/{m.id}").text
     assert thumb in coord.get("/org/shifts").text
     assert thumb not in user.get(f"/chat/{m.id}").text  # the volunteer sees the org
+
+
+# --- lifecycle and moderation --------------------------------------------------------------
+
+
+def test_deleting_the_account_deletes_the_photos(user):
+    from app.db import photos as photo_rows
+
+    upload(user, jpeg())
+    uid, key = uid_of(user), key_of(user)
+    assert user.post("/profile/delete", follow_redirects=False).status_code == 303
+    assert profiles[uid].photo_key is None
+    assert not photo_rows(
+        where="owner_kind = 'volunteer' AND owner_id = ?", where_args=[uid]
+    )
+    assert admin_client().get(f"/photos/{key}.jpg").status_code == 404
+
+
+def test_a_suspended_volunteers_photo_is_hidden_but_not_from_admins(user, coord):
+    upload(user, jpeg())
+    key = key_of(user)
+    data.decide(_coord_uid(), _liked(user, coord.org_id).id, True)
+    assert coord.get(f"/photos/{key}.jpg").status_code == 200
+    profiles.update(id=uid_of(user), suspended_at="2026-10-15T00:00:00")
+    assert coord.get(f"/photos/{key}.jpg").status_code == 404
+    assert admin_client().get(f"/photos/{key}.jpg").status_code == 200  # to review it
+
+
+def _photo_report(user, coord):
+    upload(user, jpeg())
+    m = _liked(user, coord.org_id)
+    r = coord.post(
+        f"/org/matches/{m.id}/report",
+        data={"reason": "inappropriate_profile", "details": "The photo."},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    from app.db import reports
+
+    (rep,) = reports()
+    return rep
+
+
+def test_an_admin_can_remove_a_reported_photo(user, coord):
+    rep = _photo_report(user, coord)
+    key = key_of(user)
+    admin = admin_client()
+    page = admin.get("/admin/reports").text
+    assert "Inappropriate photo or profile" in page
+    assert f"/photos/thumb/{key}.jpg" in page and "Remove photo" in page
+    r = admin.post(f"/admin/reports/{rep.id}/remove-photo", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/admin/reports"
+    from app.db import reports
+
+    assert reports[rep.id].status == "actioned" and key_of(user) is None
+    assert admin.get(f"/photos/{key}.jpg").status_code == 404
+    assert "Remove photo" not in admin.get("/admin/reports").text
+    assert upload(user, jpeg()).status_code == 303  # they may add another
+
+
+def test_remove_photo_needs_a_report_on_a_volunteer(user, coord):
+    from app.db import reports
+
+    upload(user, jpeg())
+    m = _liked(user, coord.org_id)
+    user.post(f"/matches/{m.id}/report", data={"reason": "spam"})
+    (rep,) = reports()  # names the org
+    r = admin_client().post(f"/admin/reports/{rep.id}/remove-photo")
+    assert r.status_code == 400 and reports[rep.id].status == "open"
+    assert key_of(user)
+
+
+def test_only_an_admin_can_remove_a_photo(user, coord):
+    rep = _photo_report(user, coord)
+    for who in (user, coord):
+        r = who.post(f"/admin/reports/{rep.id}/remove-photo", follow_redirects=False)
+        assert (
+            r.status_code in (303, 403)
+            and r.headers.get("location") != "/admin/reports"
+        )
+    assert key_of(user)
+
+
+# --- the deck's "Add a photo" nudge --------------------------------------------------------
+
+
+def test_the_deck_nudges_for_a_photo_until_one_is_added(user):
+    assert "Add a photo so nonprofits know" in user.get("/deck").text
+    upload(user, jpeg())
+    assert "Add a photo so nonprofits know" not in user.get("/deck").text
+
+
+def test_the_nudge_can_be_dismissed(user):
+    r = user.post("/deck/photo-nudge/dismiss", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    assert "Add a photo so nonprofits know" not in user.get("/deck").text

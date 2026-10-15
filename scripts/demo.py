@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 
 LA = ZoneInfo("America/Los_Angeles")
 ME_PHONE = "(310) 555-0199"  # the volunteer with a match, a chat and shifts
+NO_PHOTO_PHONE = "(310) 555-0102"  # Priya, who has no photo yet
 COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
 # the seed file's words -> the opening form's values (app/routes/org.py)
@@ -357,6 +358,12 @@ def seed(seed_file=None):
         data.swipe(uid, first.id, True)
     data.decide(
         coord, matches(where="volunteer_id = ?", where_args=[others[0]])[0].id, True
+    )
+    data.report_volunteer(  # an open report with a photo, for the admin's queue
+        coord,
+        matches(where="volunteer_id = ?", where_args=[others[1]])[0].id,
+        "inappropriate_profile",
+        "Demo report: is this landscape really the volunteer?",
     )
 
     me = _volunteer(

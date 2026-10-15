@@ -105,6 +105,7 @@ class Profile:
     pronouns: str  # optional, free text (choices.PRONOUNS are suggestions)
     bio: str  # optional, up to choices.MAX_BIO characters
     interests: str  # JSON list of choices.INTERESTS values
+    photo_nudge_dismissed_at: str  # UTC; "Not now" on the deck's "Add a photo"
 
 
 class OrgMember:
@@ -201,7 +202,7 @@ class Report:
     target_user_id: int  # set when a coordinator reported a volunteer
     target_org_id: int  # set when a volunteer reported an org
     match_id: int
-    reason: str  # harassment|no_show_pattern|unsafe|spam|other
+    reason: str  # harassment|no_show_pattern|unsafe|inappropriate_profile|spam|other
     details: str  # up to 1000 characters
     status: str  # open|dismissed|actioned
     created_at: str

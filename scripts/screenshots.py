@@ -138,6 +138,16 @@ def main():
         shot(ad, "a01-admin")
         ad.goto("/admin/orgs")
         shot(ad, "a02-admin-orgs")
+        ad.goto("/admin/reports")
+        shot(ad, "a03-admin-reports")
+
+        # a volunteer with no photo: the deck's "Add a photo" nudge
+        bare = browser.new_context(**pw.devices["iPhone 13"], base_url=url)
+        n = bare.new_page()
+        volunteer_sign_in(n, demo.NO_PHOTO_PHONE)
+        n.wait_for_url("**/deck")
+        n.get_by_role("button", name="Dismiss").click()
+        shot(n, "v10-deck-photo-nudge")
         browser.close()
     server.should_exit = True
     print(f"{len(shots)} screenshots in {a.out}")

@@ -413,7 +413,8 @@ def privacy():
             "How long we keep it, and what stays after you delete",
             "We keep your account until you delete it. Volunteers can delete theirs any "
             "time from Profile; coordinators ask us to delete theirs. Deleting erases your "
-            "name, phone, email, location, neighborhood and the free text you typed. Your "
+            "name, phone, email, location, neighborhood, photo and the free text you "
+            "typed. Your "
             "matches are withdrawn and your future shifts cancelled, and your chat messages "
             'are replaced with "[message removed]".',
             "What remains, without your name: your answers (causes, skills, availability, "

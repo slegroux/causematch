@@ -207,12 +207,46 @@ def index():
     return Redirect("/deck")
 
 
+def PhotoNudge():
+    """Below the deck, until the volunteer adds a photo or says "Not now"."""
+    return Div(
+        P(
+            "Add a photo so nonprofits know who's coming. They see it only after "
+            "you like one of their openings.",
+            cls="text-sm font-semibold text-ink",
+        ),
+        Div(
+            A("Add a photo", href="/me/profile", cls="uk-btn uk-btn-primary px-5"),
+            PlainForm(
+                Button(
+                    "Not now",
+                    type="submit",
+                    cls="inline-flex min-h-11 items-center px-2 text-sm font-semibold "
+                    "text-ink-muted underline underline-offset-4 hover:text-ink",
+                ),
+                action="/deck/photo-nudge/dismiss",
+                method="post",
+            ),
+            cls="flex items-center gap-4",
+        ),
+        cls="mt-6 space-y-3 rounded-3xl border border-line bg-white p-4 shadow-warm",
+    )
+
+
+@ar("/deck/photo-nudge/dismiss", methods=["POST"])
+def dismiss_photo_nudge(req):
+    data.dismiss_photo_nudge(req.scope["uid"])
+    return Redirect("/deck")
+
+
 @ar("/deck")
 def deck(req):
+    me = data.get_profile(req.scope["uid"])
     return Container(
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         DeckArea(req.scope["uid"]),
+        None if me.photo_key or me.photo_nudge_dismissed_at else PhotoNudge(),
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",
     )
