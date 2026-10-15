@@ -12,8 +12,9 @@ from monsterui.all import (
     Label,
     TextPresets,
 )
+from starlette.concurrency import run_in_threadpool
 
-from app import data
+from app import data, notify
 from app.forms import bad_request, str_form
 from app.routes.deck import DeckArea, when
 from app.ui import VolunteerNav
@@ -38,9 +39,12 @@ async def swipe(req):
     try:
         if not re.fullmatch(r"[0-9]{1,19}", raw):
             raise LookupError("not an opening id")
-        data.swipe(uid, int(raw), form["liked"] == "1")
+        m = data.swipe(uid, int(raw), form["liked"] == "1")
     except LookupError:
         pass  # closed or gone since the card was drawn: just show the next one
+    else:
+        if m:
+            await run_in_threadpool(notify.on_new_like, m.id)
     if req.headers.get("HX-Request"):
         return DeckArea(uid)
     return Redirect("/deck")

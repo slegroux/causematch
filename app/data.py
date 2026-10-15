@@ -12,7 +12,6 @@ from apswutils.db import NotFoundError
 
 from app import db as _db
 from app import match as _match
-from app import notify as _notify
 from app.choices import ANY_DISTANCE_KM
 
 
@@ -230,7 +229,7 @@ def decide(coordinator_uid, match_id, accept):
             )
         if accept:
             _sync_fill(o.id)
-            shift = _db.shifts.insert(
+            _db.shifts.insert(
                 _db.Shift(
                     match_id=match_id,
                     starts_at=o.starts_at,
@@ -238,8 +237,6 @@ def decide(coordinator_uid, match_id, accept):
                     created_at=_now(),
                 )
             )
-    if accept:
-        _notify.on_shift_scheduled(shift.id)
 
 
 def _own_match(uid, match_id):
@@ -410,7 +407,6 @@ def add_shift(coordinator_uid, match_id, starts_at):
         )
     except apsw.ConstraintError:
         raise ValueError("that shift is already scheduled") from None
-    _notify.on_shift_scheduled(shift.id)
     return shift
 
 
@@ -870,6 +866,107 @@ def close_opening(coordinator_uid, opening_id):
     if o.org_id not in coordinator_org_ids(coordinator_uid):
         raise PermissionError("not a member of this org")
     _db.openings.update(id=opening_id, status="closed")
+
+
+def notification_claim(kind, key, recipient_id):
+    """Reserve one logical send: the notification id, or None when `key` was already sent.
+
+    A send that failed earlier is reserved again, so a later attempt can retry it.
+    """
+    with _db.db.conn:
+        if not _db.notifications(where="key = ?", where_args=[key]):
+            return _db.notifications.insert(
+                _db.Notification(
+                    kind=kind,
+                    key=key,
+                    recipient_id=recipient_id,
+                    sent_at="",
+                    status="pending",
+                )
+            ).id
+        _db.db.execute(
+            "UPDATE notification SET status = 'pending' "
+            "WHERE key = ? AND status = 'failed'",
+            [key],
+        )
+        if _db.db.conn.changes() != 1:
+            return None
+        return _db.notifications(where="key = ?", where_args=[key])[0].id
+
+
+def notification_done(notification_id, status):
+    _db.notifications.update(id=notification_id, status=status, sent_at=_now())
+
+
+def sms_number(uid):
+    """The volunteer's phone, or None when they opted out, were deleted, or are no volunteer."""
+    p = get_profile(uid)
+    if not p or p.role != "volunteer" or p.sms_opted_out or not p.phone:
+        return None
+    return p.phone
+
+
+def sms_opted_out(uid):
+    """The number replied STOP: remember it so nothing texts it again."""
+    _db.profiles.update(id=uid, sms_opted_out=1)
+
+
+def match_notice(match_id):
+    """{"volunteer_id", "org_id", "org", "opening", "status"} of a match, or None."""
+    try:
+        m = _db.matches[match_id]
+        o = _db.openings[m.opening_id]
+        org = _db.orgs[o.org_id]
+    except NotFoundError:
+        return None
+    return {
+        "volunteer_id": m.volunteer_id,
+        "org_id": org.id,
+        "org": org.name,
+        "opening": o.title,
+        "status": m.status,
+    }
+
+
+def org_pending_count(org_id):
+    return _db.db.execute(
+        "SELECT count(*) FROM match JOIN opening ON opening.id = match.opening_id "
+        "WHERE opening.org_id = ? AND match.status = 'pending'",
+        [org_id],
+    ).fetchone()[0]
+
+
+def org_coordinator_emails(org_id):
+    return [
+        p.email
+        for m in _db.org_members(where="org_id = ?", where_args=[org_id])
+        if (p := get_profile(m.user_id)) and p.email
+    ]
+
+
+def due_reminders(first, last):
+    """[(shift id, volunteer id)] of scheduled shifts of accepted matches starting between
+    `first` and `last` (LA wall clock, "YYYY-MM-DDTHH:MM"), inclusive."""
+    return [
+        (r[0], r[1])
+        for r in _db.db.execute(
+            "SELECT shift.id, match.volunteer_id FROM shift "
+            "JOIN match ON match.id = shift.match_id "
+            "WHERE shift.status = 'scheduled' AND match.status = 'accepted' "
+            "AND shift.starts_at BETWEEN ? AND ? ORDER BY shift.starts_at, shift.id",
+            [first, last],
+        )
+    ]
+
+
+def shift_notice(shift_id):
+    """{"volunteer_id", "org", "opening", "starts_at"} of a shift, or None."""
+    try:
+        sh = _db.shifts[shift_id]
+    except NotFoundError:
+        return None
+    info = match_notice(sh.match_id)
+    return info and {**info, "starts_at": sh.starts_at}
 
 
 # One apsw connection is shared by every request thread (and, later, websockets); apsw

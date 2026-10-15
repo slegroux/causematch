@@ -83,6 +83,7 @@ class Profile:
     onboarded_at: str
     created_at: str
     deleted_at: str
+    sms_opted_out: bool  # the number replied STOP: never text it again
 
 
 class OrgMember:
@@ -136,6 +137,15 @@ class Shift:
     created_at: str
 
 
+class Notification:
+    id: int
+    kind: str  # accepted|message|likes|reminder
+    key: str  # unique per logical event, so a repeat or a throttled send is a no-op
+    recipient_id: int  # the volunteer's profile id; for "likes", the org id
+    sent_at: str  # UTC
+    status: str  # pending|sent|failed|skipped
+
+
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
@@ -150,6 +160,8 @@ matches.create_index(["opening_id", "volunteer_id"], unique=True, if_not_exists=
 messages = db.create(Message, pk="id", transform=True)
 messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id", transform=True)
+notifications = db.create(Notification, pk="id", transform=True)
+notifications.create_index(["key"], unique=True, if_not_exists=True)
 shifts.create_index(["match_id", "starts_at"], unique=True, if_not_exists=True)
 # A shift never outlives its match (and a reused match id never inherits old shifts).
 db.execute(

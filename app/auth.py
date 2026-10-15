@@ -19,6 +19,7 @@ PUBLIC = [
     r"/org/login",
     r"/org/login/send",
     r"/org/login/verify",
+    r"/tasks/reminders",  # not signed in: the scheduler's bearer token guards it
     r"/favicon\.ico",
     r"/static/.*",
 ]

@@ -1,0 +1,412 @@
+"""Notifications: texts to volunteers, email to coordinators; once per event, throttled."""
+
+import logging
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import httpx
+import pytest
+from conftest import coordinator_for, org_sign_in, sign_in
+from starlette.testclient import TestClient
+
+from app import config, data, notify
+from app.db import matches, notifications, openings, orgs, profiles, shifts
+from main import app
+
+TITLE = "Sort and pack pantry boxes"
+BASE = "https://causematch.test"
+T0 = datetime(2027, 3, 1, 18, 0, tzinfo=UTC)  # 10:00 in Los Angeles
+FMT = "%Y-%m-%dT%H:%M"
+TOKEN = "scheduler-secret"
+
+
+class Clock:
+    def __init__(self, monkeypatch):
+        self.at = T0
+        monkeypatch.setattr(notify, "now", lambda: self.at)
+
+    def advance(self, **delta):
+        self.at += timedelta(**delta)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    return Clock(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def clean(monkeypatch):
+    notifications.delete_where()
+    shifts.delete_where()
+    notify.get_sms().sent.clear()
+    monkeypatch.setenv("TASKS_TOKEN", TOKEN)
+
+
+def texts():
+    return notify.get_sms().sent
+
+
+def emails():
+    """Notification emails only (not sign-in links)."""
+    return [m for m in notify.get_emailer().sent if "volunteer interest" in m[1]]
+
+
+def volunteer(name="Zelda"):
+    c = TestClient(app)
+    sign_in(c)
+    c.uid = data.get_or_create_volunteer(c.phone)
+    profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
+    return c
+
+
+def coordinator(org_index=0):
+    uid, email = coordinator_for(org_index)
+    c = TestClient(app)
+    org_sign_in(c, email)
+    c.uid = uid
+    return c
+
+
+def opening():
+    return openings(where="title = ?", where_args=[TITLE])[0]
+
+
+def like(vol, o=None):
+    r = vol.post("/swipe", data={"opening_id": str((o or opening()).id), "liked": "1"})
+    assert r.status_code == 200
+    return matches(where="volunteer_id = ?", where_args=[vol.uid])[-1]
+
+
+def accept(coord, m):
+    r = coord.post(
+        f"/org/matches/{m.id}/decide",
+        data={"decision": "accept"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+
+@pytest.fixture
+def world(clock):
+    class W:
+        pass
+
+    w = W()
+    w.vol, w.coord = volunteer(), coordinator()
+    w.match = like(w.vol)
+    notify.get_emailer().sent.clear()
+    return w
+
+
+@pytest.fixture
+def chat(world):
+    accept(world.coord, world.match)
+    texts().clear()
+    return world
+
+
+def post_reminders(client, **headers):
+    return client.post("/tasks/reminders", headers=headers)
+
+
+# --- accepted ---------------------------------------------------------------------------
+
+
+def test_accept_sends_one_text_with_the_expected_words(world):
+    accept(world.coord, world.match)
+    assert texts() == [
+        (
+            world.vol.phone,
+            f"{orgs()[0].name} said yes to {TITLE}! Chat and details: {BASE}/matches",
+        )
+    ]
+
+
+def test_a_second_accept_attempt_sends_nothing_more(world):
+    accept(world.coord, world.match)
+    accept(world.coord, world.match)
+    notify.on_accepted(world.match.id)
+    assert len(texts()) == 1
+
+
+def test_decline_sends_nothing(world):
+    world.coord.post(
+        f"/org/matches/{world.match.id}/decide", data={"decision": "decline"}
+    )
+    assert texts() == []
+
+
+# --- messages ---------------------------------------------------------------------------
+
+
+def test_coordinator_message_texts_the_volunteer_without_the_message(chat, clock):
+    chat.coord.post(
+        f"/org/chat/{chat.match.id}/send", data={"msg": "secret shift plan"}
+    )
+    [(phone, body)] = texts()
+    assert phone == chat.vol.phone
+    assert (
+        body
+        == f"New message from {orgs()[0].name} on Causematch: {BASE}/chat/{chat.match.id}"
+    )
+    assert "secret" not in body
+
+
+def test_volunteers_own_messages_send_nothing(chat):
+    chat.vol.post(f"/chat/{chat.match.id}/send", data={"msg": "hello"})
+    assert texts() == []
+
+
+def test_message_texts_are_throttled_per_match_for_30_minutes(chat, clock):
+    send = lambda: chat.coord.post(
+        f"/org/chat/{chat.match.id}/send", data={"msg": "hi"}
+    )
+    send()
+    clock.advance(minutes=10)
+    send()
+    assert len(texts()) == 1
+    clock.advance(minutes=30)
+    send()
+    assert len(texts()) == 2
+
+
+# --- likes ------------------------------------------------------------------------------
+
+
+def test_a_like_emails_the_coordinators_without_volunteer_details(clock):
+    coordinator()
+    vol = volunteer("Zelda")
+    like(vol)
+    [(to, subject, body)] = emails()
+    assert to == "coord0@example.org"
+    assert subject == "New volunteer interest on Causematch"
+    assert f"{BASE}/org/inbox" in body and "1 volunteer is waiting" in body
+    assert "Zelda" not in body and vol.phone not in body
+
+
+def test_like_emails_are_throttled_per_org_and_count_the_waiting(clock):
+    coordinator()
+    a, b = volunteer("A"), volunteer("B")
+    like(a)
+    like(b)
+    assert len(emails()) == 1
+    clock.advance(minutes=16)
+    c = volunteer("C")
+    like(c)
+    assert len(emails()) == 2
+    assert "3 volunteers are waiting" in emails()[-1][2]
+
+
+def test_a_pass_or_a_repeat_like_sends_no_email(clock):
+    coordinator()
+    vol = volunteer()
+    vol.post("/swipe", data={"opening_id": str(opening().id), "liked": "0"})
+    assert emails() == []
+
+
+# --- opt-out and deleted ----------------------------------------------------------------
+
+
+def test_opted_out_and_deleted_volunteers_get_no_text(world):
+    profiles.update(id=world.vol.uid, sms_opted_out=1)
+    accept(world.coord, world.match)
+    assert texts() == []
+    other = volunteer("Bea")
+    m = like(other)
+    profiles.update(id=other.uid, deleted_at="2027-01-01T00:00:00")
+    accept(world.coord, m)
+    assert texts() == []
+    assert [n.kind for n in notifications()] == ["likes"]  # only the org's email
+
+
+class StoppedSMS:
+    def send(self, phone, text):
+        raise notify.SMSOptedOut
+
+
+def test_twilio_stop_reply_sets_opted_out_and_is_not_retried(world, monkeypatch):
+    monkeypatch.setattr(notify, "_sms", StoppedSMS())
+    accept(world.coord, world.match)
+    assert profiles[world.vol.uid].sms_opted_out
+    assert [n.status for n in notifications() if n.kind == "accepted"] == ["skipped"]
+    monkeypatch.setattr(notify, "_sms", notify.FakeSMS())
+    notify.on_accepted(world.match.id)
+    assert notify.get_sms().sent == []
+
+
+def test_twilio_sender_maps_error_21610_to_opt_out():
+    def handler(request):
+        return httpx.Response(400, json={"code": 21610, "message": "unsubscribed"})
+
+    sms = notify.TwilioSMS("ACx", "tok", "+13105550000")
+    sms.client = httpx.Client(
+        base_url="https://api.twilio.test/", transport=httpx.MockTransport(handler)
+    )
+    with pytest.raises(notify.SMSOptedOut):
+        sms.send("+13105550123", "hi")
+
+
+def test_twilio_sender_posts_to_and_from_and_body():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(201, json={})
+
+    sms = notify.TwilioSMS("ACx", "tok", "+13105550000")
+    sms.client = httpx.Client(
+        base_url="https://api.twilio.test/", transport=httpx.MockTransport(handler)
+    )
+    sms.send("+13105550123", "hi")
+    assert b"To=%2B13105550123" in seen[0].content and b"Body=hi" in seen[0].content
+    assert b"From=%2B13105550000" in seen[0].content
+
+
+# --- failures ---------------------------------------------------------------------------
+
+
+class BrokenSMS:
+    def send(self, phone, text):
+        raise httpx.ConnectError(f"boom {phone}")
+
+
+def test_failing_sms_never_breaks_accept_or_chat_and_is_recorded(
+    world, monkeypatch, caplog
+):
+    monkeypatch.setattr(notify, "_sms", BrokenSMS())
+    with caplog.at_level(logging.WARNING):
+        accept(world.coord, world.match)
+        r = world.coord.post(
+            f"/org/chat/{world.match.id}/send",
+            data={"msg": "hi"},
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    assert matches[world.match.id].status == "accepted"
+    assert {n.status for n in notifications() if n.kind != "likes"} == {"failed"}
+    assert world.vol.phone not in caplog.text
+
+
+def test_failing_email_never_breaks_a_swipe(clock, monkeypatch):
+    coordinator()
+    monkeypatch.setattr(
+        notify.get_emailer(), "send", lambda *a: (_ for _ in ()).throw(OSError("down"))
+    )
+    vol = volunteer()
+    like(vol)
+    assert [n.status for n in notifications()] == ["failed"]
+
+
+def test_a_failed_send_can_be_retried(world, monkeypatch):
+    monkeypatch.setattr(notify, "_sms", BrokenSMS())
+    accept(world.coord, world.match)
+    monkeypatch.setattr(notify, "_sms", notify.FakeSMS())
+    notify.on_accepted(world.match.id)
+    assert len(texts()) == 1
+
+
+# --- reminders --------------------------------------------------------------------------
+
+
+def test_reminder_endpoint_refuses_without_the_token(anon):
+    assert post_reminders(anon).status_code == 401
+    assert post_reminders(anon, Authorization="Bearer nope").status_code == 401
+    assert post_reminders(anon, Authorization=TOKEN).status_code == 401
+    assert anon.get("/tasks/reminders").status_code in (401, 405)
+    assert (
+        anon.get(
+            "/tasks/reminders", headers={"Authorization": f"Bearer {TOKEN}"}
+        ).status_code
+        == 405
+    )
+    assert texts() == []
+
+
+def test_reminder_endpoint_refuses_everything_when_no_token_is_configured(
+    anon, monkeypatch
+):
+    monkeypatch.delenv("TASKS_TOKEN")
+    assert post_reminders(anon, Authorization="Bearer ").status_code == 401
+    assert post_reminders(anon).status_code == 401
+
+
+def local(clock, **delta):
+    return (clock.at + timedelta(**delta)).astimezone(notify.LA).strftime(FMT)
+
+
+def test_reminders_pick_exactly_the_shifts_in_the_window_and_only_once(
+    world, clock, anon
+):
+    accept(world.coord, world.match)
+    texts().clear()
+    base = shifts()[0]
+    mk = lambda start, status="scheduled": shifts.insert(
+        shifts.cls(
+            match_id=base.match_id, starts_at=start, status=status, created_at="x"
+        )
+    )
+    shifts.update(id=base.id, starts_at=local(clock, hours=24))  # in
+    mk(local(clock, hours=23))  # in (edge)
+    mk(local(clock, hours=25))  # in (edge)
+    mk(local(clock, hours=22, minutes=59))  # too soon
+    mk(local(clock, hours=25, minutes=1))  # too far
+    mk(local(clock, hours=24, minutes=5), status="cancelled")
+    r = post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert r.status_code == 200
+    assert len(texts()) == 3
+    assert all(
+        t.startswith(f"Reminder: {TITLE} with {orgs()[0].name} is tomorrow,")
+        and f"{BASE}/matches" in t
+        for _, t in texts()
+    )
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 3
+
+
+def test_reminders_skip_withdrawn_matches_and_opted_out_volunteers(world, clock, anon):
+    accept(world.coord, world.match)
+    texts().clear()
+    shifts.update(id=shifts()[0].id, starts_at=local(clock, hours=24))
+    profiles.update(id=world.vol.uid, sms_opted_out=1)
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert texts() == []
+
+
+# --- configuration ----------------------------------------------------------------------
+
+
+def test_production_refuses_to_start_without_twilio_email_or_tasks_token():
+    prod = {"CAUSEMATCH_ENV": "production"}
+    with pytest.raises(RuntimeError):
+        notify.make_sms(prod)
+    with pytest.raises(RuntimeError):
+        notify.make_sms({**prod, "TWILIO_ACCOUNT_SID": "a", "TWILIO_AUTH_TOKEN": "b"})
+    with pytest.raises(RuntimeError):
+        notify.make_sms({"CAUSEMATCH_FAKE_SMS": "1", **prod})
+    with pytest.raises(RuntimeError):
+        notify.make_emailer(prod)
+    with pytest.raises(RuntimeError):
+        config.tasks_token(prod)
+    with pytest.raises(RuntimeError):
+        config.tasks_token({"K_SERVICE": "x"})
+    assert config.tasks_token({**prod, "TASKS_TOKEN": "t"}) == "t"
+    assert isinstance(
+        notify.make_sms(
+            {
+                **prod,
+                "TWILIO_ACCOUNT_SID": "a",
+                "TWILIO_AUTH_TOKEN": "b",
+                "TWILIO_FROM_NUMBER": "+13105550000",
+            }
+        ),
+        notify.TwilioSMS,
+    )
+
+
+def test_startup_checks_the_sender_and_the_token():
+    text = (Path(notify.__file__).parent.parent / "main.py").read_text()
+    assert "notify.get_sms()" in text and "tasks_token()" in text
+
+
+def test_phone_numbers_are_masked_in_logs():
+    assert notify.mask("+13105550123") == "***0123"

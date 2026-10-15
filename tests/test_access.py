@@ -73,6 +73,10 @@ ROUTES = {
     ("GET", "/org/chat/{match_id}"): ("coordinator", "own-org"),
     ("POST", "/org/chat/{match_id}/send"): ("coordinator", "own-org"),
     ("WS", "/org/chat/{match_id}/ws"): ("coordinator", "own-org"),
+    ("POST", "/tasks/reminders"): (
+        "public",
+        None,
+    ),  # the scheduler's bearer token guards it
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
 }

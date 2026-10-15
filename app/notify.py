@@ -1,13 +1,22 @@
 import logging
 import os
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 
+from app import data
 from app.config import is_dev, public_base_url
 
 log = logging.getLogger("causematch")
 
 FAKE_CODE = "000000"
+SMS_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+TWILIO_STOPPED = 21610  # the recipient replied STOP
+MESSAGE_WINDOW = 30 * 60  # seconds: at most one new-message text per match per window
+LIKES_WINDOW = 15 * 60  # seconds: at most one new-likes email per org per window
+LA = ZoneInfo("America/Los_Angeles")
+_LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
 
 
@@ -147,9 +156,184 @@ def send_login_link(email, token):
     )
 
 
+class SMSOptedOut(Exception):
+    """The recipient replied STOP."""
+
+
+def mask(phone):
+    """A phone number for logs: never the whole number."""
+    return "***" + phone[-4:]
+
+
+class FakeSMS:
+    """Test and local-dev sender: sends nothing, records (phone, text)."""
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, phone, text):
+        self.sent.append((phone, text))
+        log.warning("FAKE SMS to %s: %s", mask(phone), text)
+
+
+class TwilioSMS:
+    def __init__(self, account_sid, auth_token, from_number):
+        self.from_number = from_number
+        self.client = httpx.Client(
+            base_url=SMS_URL.format(sid=account_sid),
+            auth=(account_sid, auth_token),
+            timeout=10,
+        )
+
+    def send(self, phone, text):
+        r = self.client.post(
+            "", data={"To": phone, "From": self.from_number, "Body": text}
+        )
+        if r.status_code == 400:
+            try:
+                code = r.json().get("code")
+            except ValueError:
+                code = None
+            if code == TWILIO_STOPPED:
+                raise SMSOptedOut
+        r.raise_for_status()
+
+
+def make_sms(env=os.environ):
+    if env.get("CAUSEMATCH_FAKE_SMS") == "1":
+        if not is_dev(env):
+            raise RuntimeError(
+                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development or test"
+            )
+        return FakeSMS()
+    keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")
+    if not all(env.get(k) for k in keys):
+        raise RuntimeError(
+            "Twilio is not configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and "
+            "TWILIO_FROM_NUMBER (or CAUSEMATCH_ENV=development with CAUSEMATCH_FAKE_SMS=1)"
+        )
+    return TwilioSMS(*(env[k] for k in keys))
+
+
+_sms = None
+
+
+def get_sms():
+    global _sms
+    if _sms is None:
+        _sms = make_sms()
+    return _sms
+
+
+def now():
+    """The clock every window and reminder reads; tests replace it."""
+    return datetime.now(UTC)
+
+
+def _window(seconds):
+    return int(now().timestamp() // seconds)
+
+
+def _deliver(kind, key, recipient_id, send):
+    """Run `send` once for `key`, recording the outcome. Never raises.
+
+    Call it from a worker thread and after the DB commit: it makes a network call.
+    """
+    nid = data.notification_claim(kind, key, recipient_id)
+    if nid is None:
+        return False
+    try:
+        send()
+    except SMSOptedOut:
+        data.sms_opted_out(recipient_id)
+        data.notification_done(nid, "skipped")
+        return False
+    except Exception as e:  # noqa: BLE001  a failed notice never fails the user's request
+        log.warning("%s notification failed: %s", kind, type(e).__name__)
+        data.notification_done(nid, "failed")
+        return False
+    data.notification_done(nid, "sent")
+    return True
+
+
+def _text(kind, key, uid, body):
+    phone = data.sms_number(uid)
+    if phone is None:
+        return False
+    return _deliver(kind, key, uid, lambda: get_sms().send(phone, body))
+
+
+def on_accepted(match_id):
+    """Called after a coordinator accepts. Texts the volunteer, once per match."""
+    info = data.match_notice(match_id)
+    if info:
+        _text(
+            "accepted",
+            f"accepted:{match_id}",
+            info["volunteer_id"],
+            f"{info['org']} said yes to {info['opening']}! "
+            f"Chat and details: {public_base_url()}/matches",
+        )
+
+
 def on_new_message(match_id, sender_id):
-    """Called after a chat message is saved. Item 7 texts the other side if they are offline."""
+    """Called after a chat message is saved. Texts the volunteer about a coordinator's
+    message (never its text), at most once per match per 30 minutes."""
+    info = data.match_notice(match_id)
+    if not info or info["volunteer_id"] == sender_id:
+        return
+    _text(
+        "message",
+        f"msg:{match_id}:{_window(MESSAGE_WINDOW)}",
+        info["volunteer_id"],
+        f"New message from {info['org']} on Causematch: {public_base_url()}/chat/{match_id}",
+    )
 
 
-def on_shift_scheduled(shift_id):
-    """Called after a shift is scheduled. Item 7 texts the volunteer 24 hours before it."""
+def on_new_like(match_id):
+    """Called after a volunteer likes an opening. Emails the org's coordinators, at most
+    once per org per 15 minutes."""
+    info = data.match_notice(match_id)
+    if not info or info["status"] != "pending":
+        return
+    org_id = info["org_id"]
+    emails = data.org_coordinator_emails(org_id)
+    if not emails:
+        return
+
+    def send():
+        n = data.org_pending_count(org_id)
+        waiting = "1 volunteer is" if n == 1 else f"{n} volunteers are"
+        for to in emails:
+            get_emailer().send(
+                to,
+                "New volunteer interest on Causematch",
+                f"{waiting} waiting to hear from {info['org']}.\n\n"
+                f"{public_base_url()}/org/inbox",
+            )
+
+    _deliver("likes", f"likes:{org_id}:{_window(LIKES_WINDOW)}", org_id, send)
+
+
+def send_due_reminders():
+    """Text the volunteer of every scheduled shift starting 23 to 25 hours from now, once
+    per shift. How many were sent."""
+    t = now()
+    first, last = (
+        (t + timedelta(hours=h)).astimezone(LA).strftime(_LOCAL_FORMAT)
+        for h in (23, 25)
+    )
+    sent = 0
+    for shift_id, volunteer_id in data.due_reminders(first, last):
+        info = data.shift_notice(shift_id)
+        if not info:
+            continue
+        start = datetime.strptime(info["starts_at"], _LOCAL_FORMAT)
+        sent += _text(
+            "reminder",
+            f"reminder:{shift_id}",
+            volunteer_id,
+            f"Reminder: {info['opening']} with {info['org']} is tomorrow, "
+            f"{start.strftime('%a %b %-d, %-I:%M %p')}. Details: {public_base_url()}/matches",
+        )
+    return sent

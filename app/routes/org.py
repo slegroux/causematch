@@ -29,8 +29,9 @@ from monsterui.all import (
     LabelCheckboxX,
     TextPresets,
 )
+from starlette.concurrency import run_in_threadpool
 
-from app import data
+from app import data, notify
 from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
@@ -501,4 +502,6 @@ async def decide(req, match_id: int):
         return Redirect(
             f"/org/inbox?notice={'full' if 'slots' in str(e) else 'decided'}"
         )
+    if decision == "accept":
+        await run_in_threadpool(notify.on_accepted, match_id)
     return Redirect("/org/inbox")

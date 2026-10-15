@@ -7,7 +7,7 @@ from starlette.staticfiles import StaticFiles
 
 from app import data, notify
 from app.auth import SESSION_MAX_AGE, beforeware, session_secret
-from app.config import is_production, public_base_url, require_env
+from app.config import is_production, public_base_url, require_env, tasks_token
 from app.routes.auth import ar as auth_router
 from app.routes.chat import ar as chat_router
 from app.routes.deck import ar as deck_router
@@ -17,10 +17,13 @@ from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
 from app.routes.pwa import ar as pwa_router
 from app.routes.shifts import ar as shifts_router
+from app.routes.tasks import ar as tasks_router
 
 require_env()  # an undeclared environment never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
 notify.get_emailer()  # ... or sign-in links
+notify.get_sms()  # ... or texts
+tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 app, rt = fast_app(
     before=beforeware,
@@ -62,6 +65,7 @@ for router in (
     chat_router,
     org_router,
     shifts_router,
+    tasks_router,
     pwa_router,
 ):
     router.to_app(app)

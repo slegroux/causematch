@@ -35,3 +35,12 @@ def require_env(env=os.environ):
         raise RuntimeError(
             "CAUSEMATCH_ENV must be set to development, test or production"
         )
+
+
+def tasks_token(env=os.environ):
+    """Bearer token for the scheduler's /tasks/* calls. Required in production; elsewhere
+    "" means those calls are always refused."""
+    token = env.get("TASKS_TOKEN") or ""
+    if not token and is_production(env):
+        raise RuntimeError("TASKS_TOKEN must be set in production")
+    return token
