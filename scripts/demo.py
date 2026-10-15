@@ -344,6 +344,14 @@ def seed(seed_file=None):
         "weekly",
     )
     data.set_volunteer_photo(me, photos.process(drawn_photo()))
+    data.save_profile_details(
+        me,
+        first_name="Sam",
+        last_name="Lee",
+        pronouns="they/them",
+        bio="Weekend hiker and home cook. Happy to lift boxes or walk dogs.",
+        interests=["cooking", "hiking", "animals"],
+    )
     m = data.swipe(me, first.id, True)
     data.decide(coord, m.id, True)
     data.send_message(

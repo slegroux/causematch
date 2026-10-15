@@ -30,6 +30,7 @@ VOLUNTEERED = [("yes", "Yes"), ("no", "No")]
 # Longest accepted value per free-text field.
 LIMITS = {
     "first_name": 80,
+    "last_name": 80,
     "email": 254,
     "neighborhood": 80,
     "other_causes": 300,
@@ -63,6 +64,15 @@ def OnboardingForm(f=None, error=None):
                     value=f.get("first_name", ""),
                     autocomplete="given-name",
                     required=True,
+                ),
+            ),
+            Field(
+                "Last name (optional; a nonprofit sees only its first letter until it "
+                "says yes)",
+                TextInput(
+                    name="last_name",
+                    value=f.get("last_name", ""),
+                    autocomplete="family-name",
                 ),
             ),
             LabelCheckboxX(
@@ -224,6 +234,7 @@ def _sync_onboarding_save(req, form):
     data.save_onboarding(
         req.scope["uid"],
         display_name=f["first_name"],
+        last_name=f["last_name"],
         email=f["email"],
         neighborhood=f["neighborhood"],
         language_other=f["language_other"],

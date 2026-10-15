@@ -99,6 +99,12 @@ class Profile:
     suspended_at: str  # UTC; an admin suspended this account: it cannot sign in
     sms_opted_out: bool  # the number replied STOP: never text it again
     photo_key: str  # volunteers: their Photo, shown as app/routes/photos.py allows
+    last_name: (
+        str  # volunteers, optional: nonprofits see its initial, all of it once accepted
+    )
+    pronouns: str  # optional, free text (choices.PRONOUNS are suggestions)
+    bio: str  # optional, up to choices.MAX_BIO characters
+    interests: str  # JSON list of choices.INTERESTS values
 
 
 class OrgMember:

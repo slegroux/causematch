@@ -124,6 +124,7 @@ ROUTES = {
     ("GET", "/me/profile"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo/remove"): ("volunteer", "own-record"),
+    ("POST", "/me/profile/details"): ("volunteer", "own-record"),
     # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's
     ("GET", "/photos/{key}.jpg"): ("signed-in", "own-record"),
     ("GET", "/photos/thumb/{key}.jpg"): ("signed-in", "own-record"),

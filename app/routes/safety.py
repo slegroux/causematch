@@ -26,6 +26,7 @@ from app.ui import (
     CARD,
     CLOCK,
     NEXT,
+    PERSON,
     SHIELD,
     SIGN_OUT,
     TITLE,
@@ -281,16 +282,15 @@ def profile_page(req):
             Avatar(name, me.photo_key),
             Div(
                 H2(name or "Your profile", cls="font-display text-lg font-extrabold"),
-                A(
-                    "Edit your profile and photo",
-                    href="/me/profile",
-                    cls="inline-flex min-h-11 items-center text-sm font-semibold "
-                    "text-brand-ink underline underline-offset-4",
+                P(
+                    "Your photo, name and interests: Your profile, below.",
+                    cls=TextPresets.muted_sm,
                 ),
             ),
             cls="flex items-center gap-4 p-4 " + CARD,
         ),
         Div(
+            HubRow(PERSON, "Your profile", "/me/profile"),
             HubRow(CLOCK, "History", "/history"),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),
@@ -368,7 +368,9 @@ def privacy():
         P(f"Effective {EFFECTIVE}.", cls=TextPresets.muted_sm),
         Section(
             "What we collect",
-            "Volunteers: your mobile number; your first name; an email if you give one; "
+            "Volunteers: your mobile number; your first name and, if you give them, "
+            "your last name, pronouns, a short bio, your interests and a photo; an "
+            "email if you give one; "
             "your ZIP code (we turn it into an approximate location we never show), your "
             "neighborhood and how far you will travel; the causes and skills you pick, "
             "other causes you type, languages other than English and whether you "

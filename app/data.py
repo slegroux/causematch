@@ -683,6 +683,15 @@ def _first_name(name):
     return parts[0] if parts else "Volunteer"
 
 
+def volunteer_name(first, last, full=False):
+    """What a nonprofit calls a volunteer: "Sam L." until it accepts them, "Sam Lee" once
+    it has (full); just "Sam" when they gave no last name."""
+    first, last = _first_name(first), (last or "").strip()
+    if not last:
+        return first
+    return f"{first} {last}" if full else f"{first} {last[0].upper()}."
+
+
 def _message_row(msg, volunteer_id, names):
     return {
         "id": msg.id,
@@ -831,10 +840,12 @@ def save_onboarding(
     volunteered_last_year="",
     frequency="",
     heard_from,
+    last_name="",
 ):
     _db.profiles.update(
         id=uid,
         display_name=display_name,
+        last_name=last_name or None,
         email=email,
         neighborhood=neighborhood,
         language_other=language_other,
@@ -850,6 +861,21 @@ def save_onboarding(
         frequency=frequency,
         heard_from=heard_from,
         onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+
+
+def save_profile_details(uid, *, first_name, last_name, pronouns, bio, interests):
+    """A volunteer's own name, pronouns, bio and interests (checked by the caller)."""
+    p = get_profile(uid)
+    if p is None or p.role != "volunteer":
+        raise PermissionError("not a volunteer")
+    _db.profiles.update(
+        id=uid,
+        display_name=first_name,
+        last_name=last_name or None,
+        pronouns=pronouns or None,
+        bio=bio or None,
+        interests=json.dumps(list(interests)),
     )
 
 
@@ -1898,6 +1924,7 @@ def delete_account(uid):
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
+            "last_name = NULL, pronouns = NULL, bio = NULL, interests = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
             [_now(), uid],
         )

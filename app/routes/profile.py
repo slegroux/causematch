@@ -1,25 +1,52 @@
-"""The volunteer's own profile, /me/profile: their photo for now.
+"""The volunteer's own profile, /me/profile: their photo, name, pronouns, bio and
+interests.
 
 A photo goes up as a multipart form. static/photo.js first shrinks it in the browser and
 shows it (a blob: preview); without script the form posts the original. Either way the
 server decodes and re-encodes it (app/photos.py) before storing anything.
 """
 
-from fasthtml.common import H1, A, Div, FtResponse, Img, P, Redirect, Script, Span
+import json
+import re
+
+from fasthtml.common import (
+    H1,
+    H2,
+    A,
+    Datalist,
+    Div,
+    FtResponse,
+    Img,
+    Option,
+    P,
+    Redirect,
+    Script,
+    Span,
+    Textarea,
+)
 from fasthtml.common import Button as PlainButton
 from fasthtml.common import Form as PlainForm
-from monsterui.all import Alert, AlertT, Container, FormLabel, TextPresets
+from monsterui.all import (
+    Alert,
+    AlertT,
+    Container,
+    FormLabel,
+    LabelCheckboxX,
+    TextPresets,
+)
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from app import data, photos
-from app.forms import query
+from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
+from app.forms import bad_request, query, str_form
 from app.ui import (
     BACK,
     CARD,
     TITLE,
     Avatar,
     BigButton,
+    Field,
     Icon,
     Router,
     TextInput,
@@ -31,7 +58,14 @@ ar = Router()
 BAD_PHOTO = (
     "We couldn't read that picture. Choose a JPEG, PNG or WebP photo under 6 MB."
 )
-NOTICE = {"saved": "Photo saved.", "removed": "Photo removed."}
+NOTICE = {
+    "saved": "Photo saved.",
+    "removed": "Photo removed.",
+    "details": "Profile saved.",
+}
+MAX_NAME = 80
+# Control characters have no business in a name or a bio (a bio keeps its line breaks)
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 # The types a phone's picker offers; the server decides what it accepts (photos.FORMATS)
 ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif"
 
@@ -70,7 +104,83 @@ def PhotoForm(action, label, button, ident="photo", shrink=True):
     )
 
 
-def ProfilePage(uid, error=None, notice=None):
+def DetailsForm(p, f=None):
+    """Name, pronouns, bio and interests; f: the values just typed, after an error."""
+    f = f or {
+        "first_name": p.display_name or "",
+        "last_name": p.last_name or "",
+        "pronouns": p.pronouns or "",
+        "bio": p.bio or "",
+        "interests": json.loads(p.interests or "[]"),
+    }
+    return PlainForm(
+        H2("About you", cls="font-display text-lg font-extrabold text-ink"),
+        P(
+            "Nonprofits see these after you like one of their openings: your first "
+            "name and last initial, and your full last name once they say yes.",
+            cls=TextPresets.muted_sm,
+        ),
+        Field(
+            "First name",
+            TextInput(
+                name="first_name",
+                value=f["first_name"],
+                maxlength=str(MAX_NAME),
+                autocomplete="given-name",
+                required=True,
+            ),
+        ),
+        Field(
+            "Last name (optional)",
+            TextInput(
+                name="last_name",
+                value=f["last_name"],
+                maxlength=str(MAX_NAME),
+                autocomplete="family-name",
+            ),
+        ),
+        Field(
+            "Pronouns (optional)",
+            TextInput(
+                name="pronouns",
+                value=f["pronouns"],
+                maxlength=str(MAX_PRONOUNS),
+                list="pronoun-suggestions",
+                placeholder="e.g. they/them",
+            ),
+            Datalist(*[Option(value=v) for v in PRONOUNS], id="pronoun-suggestions"),
+        ),
+        Field(
+            f"A short bio (optional, up to {MAX_BIO} characters)",
+            Textarea(
+                f["bio"],
+                name="bio",
+                rows=4,
+                maxlength=str(MAX_BIO),
+                placeholder="What brings you to volunteering?",
+                cls="uk-textarea",
+            ),
+        ),
+        Field(
+            f"Interests (up to {MAX_INTERESTS})",
+            Div(
+                *[
+                    LabelCheckboxX(
+                        label, name="interests", value=v, checked=v in f["interests"]
+                    )
+                    for v, label in INTERESTS
+                ],
+                cls="grid grid-cols-1 gap-y-1 sm:grid-cols-2 sm:gap-x-4",
+            ),
+        ),
+        BigButton("Save profile"),
+        action="/me/profile/details",
+        method="post",
+        cls="space-y-4 p-5 " + CARD,
+    )
+
+
+def ProfilePage(uid, error=None, notice=None, f=None):
     p = data.get_profile(uid)
     return Container(
         VolunteerNav("me"),
@@ -97,9 +207,11 @@ def ProfilePage(uid, error=None, notice=None):
                 ),
                 Div(
                     Span(
-                        p.display_name or "Your profile",
+                        " ".join(n for n in (p.display_name, p.last_name) if n)
+                        or "Your profile",
                         cls="font-display text-lg font-extrabold text-ink",
                     ),
+                    P(p.pronouns, cls="text-sm text-ink-muted") if p.pronouns else None,
                     P(
                         "Nonprofits see your photo only after you like one of their "
                         "openings.",
@@ -128,6 +240,7 @@ def ProfilePage(uid, error=None, notice=None):
             data_photo_card="1",
             cls="space-y-5 p-5 " + CARD,
         ),
+        Div(DetailsForm(p, f), cls="mt-4"),
         Script(src="/static/photo.js", defer=True),
         cls="max-w-md pb-8",
     )
@@ -170,3 +283,41 @@ async def save_photo(req):
 def remove_photo(req):
     data.remove_volunteer_photo(req.scope["uid"])
     return Redirect("/me/profile?notice=removed")
+
+
+def details_error(f):
+    """Why these profile answers can't be saved, or None."""
+    if any(CONTROL.search(v) for k, v in f.items() if k != "interests"):
+        return "Something in that form wasn't recognized. Please try again."
+    if not f["first_name"] or len(f["first_name"]) > MAX_NAME:
+        return f"Enter your first name ({MAX_NAME} characters at most)."
+    if len(f["last_name"]) > MAX_NAME:
+        return f"Keep your last name to {MAX_NAME} characters."
+    if len(f["pronouns"]) > MAX_PRONOUNS:
+        return f"Keep your pronouns to {MAX_PRONOUNS} characters."
+    if len(f["bio"]) > MAX_BIO:
+        return f"Keep your bio to {MAX_BIO} characters."
+    picked = set(f["interests"])
+    if not picked <= {v for v, _ in INTERESTS} or len(picked) > MAX_INTERESTS:
+        return f"Pick up to {MAX_INTERESTS} interests from the list."
+    return None
+
+
+@ar("/me/profile/details", methods=["POST"])
+async def save_details(req):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    f = {
+        k: form.get(k, "").strip()
+        for k in ("first_name", "last_name", "pronouns", "bio")
+    }
+    f["interests"] = list(dict.fromkeys(form.getlist("interests")))
+    return await run_in_threadpool(_sync_save_details, req.scope["uid"], f)
+
+
+def _sync_save_details(uid, f):
+    if error := details_error(f):
+        return FtResponse(ProfilePage(uid, error, f=f), status_code=400)
+    data.save_profile_details(uid, **f)
+    return Redirect("/me/profile?notice=details")
