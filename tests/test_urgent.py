@@ -685,3 +685,177 @@ def test_wave_link_puts_the_card_on_top_or_says_it_ended(shelter, user):
         "That last-minute call has filled or ended."
         in user.get(f"/deck?card={closed}").text
     )
+
+
+# --- auto-accept ------------------------------------------------------------------------
+
+
+def org_emails():
+    return [(to, subject) for to, subject, _ in notify.get_emailer().sent]
+
+
+def test_auto_accept_like_is_in_booked_and_opens_the_chat(shelter, user):
+    call = call_on(shelter, needed=2, starts_at=tomorrow())
+    urgent_calls.update(id=call.id, auto_accept=True)
+    notify.get_emailer().sent.clear()
+    r = user.post(
+        "/swipe",
+        data={"opening_id": str(shelter.opening.id), "liked": "1"},
+        headers={"HX-Request": "true"},
+    )
+    (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert r.headers["HX-Redirect"] == f"/chat/{m.id}?notice=in"
+    assert (m.status, m.decided_by, m.urgent_call_id) == (
+        "accepted",
+        shelter.uid,
+        call.id,
+    )
+    (shift,) = shifts(where="match_id = ?", where_args=[m.id])
+    assert (shift.starts_at, shift.status) == (tomorrow(), "scheduled")
+    chat = user.get(f"/chat/{m.id}?notice=in").text
+    assert "You're in! Your shift is booked." in chat
+    assert org_emails() == [
+        (
+            "coord3@example.org",
+            "A volunteer is in for Walk dogs at the shelter, tomorrow 9 am",
+        )
+    ]
+    assert "1 of 2 found" in notify.get_emailer().sent[0][2]
+    mine = data.my_matches(uid_of(user))[0]
+    assert mine["status"] == "accepted" and mine["starts_at"] == tomorrow()
+    assert "1 of 2 found" in shelter.get("/org").text
+
+
+def test_auto_accept_without_script_redirects_to_the_chat(shelter, user):
+    call = call_on(shelter, needed=1)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    r = user.post(
+        "/swipe",
+        data={"opening_id": str(shelter.opening.id), "liked": "1"},
+        follow_redirects=False,
+    )
+    (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert r.status_code == 303 and r.headers["location"] == f"/chat/{m.id}?notice=in"
+    assert urgent_calls()[0].status == "filled"
+
+
+def test_auto_accept_six_concurrent_likes_accept_exactly_two(shelter):
+    import threading
+
+    call = call_on(shelter, needed=2)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    vols = [opted_in() for _ in range(6)]
+    start = threading.Barrier(len(vols))
+    errors = []
+
+    def like(uid):
+        try:
+            start.wait()
+            data.swipe(uid, shelter.opening.id, True, call_id=call.id)  # its card
+        except Exception as e:  # noqa: BLE001  reported below
+            errors.append(e)
+
+    threads = [threading.Thread(target=like, args=(v,)) for v in vols]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert not errors
+    got = sorted(
+        m.status for m in matches(where="urgent_call_id = ?", where_args=[call.id])
+    )
+    assert got == ["accepted"] * 2 + ["pending"] * 4
+    assert len(shifts()) == 2 and urgent_calls()[0].status == "filled"
+
+
+def test_auto_accept_the_statement_alone_never_overfills(shelter):
+    """Even without the lock: a full call's guard turns a late accept into a no-op."""
+    call = call_on(shelter, needed=1)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    a, b = opted_in(), opted_in()
+    data.swipe(a, shelter.opening.id, True)
+    late = matches.insert(
+        opening_id=shelter.opening.id, volunteer_id=b, status="pending",
+        created_at=data._now(), urgent_call_id=call.id,
+    )  # fmt: skip
+    data._auto_accept(late, urgent_calls[call.id])
+    assert matches[late.id].status == "pending"
+    data._auto_accept(late, urgent_calls[call.id])  # twice changes nothing either
+    assert [m.status for m in matches(order_by="id")].count("accepted") == 1
+
+
+def test_auto_accept_past_n_likes_wait_for_the_org(shelter):
+    call = call_on(shelter, needed=2)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    vols = [opted_in() for _ in range(3)]
+    ms = [data.swipe(v, shelter.opening.id, True) for v in vols]
+    assert [m.status for m in ms] == ["accepted", "accepted", "pending"]
+    assert "Vol" in shelter.get("/org/inbox").text
+    data.decide(shelter.uid, ms[2].id, True)  # the org still may take a third
+    assert matches[ms[2].id].status == "accepted"
+
+
+def test_auto_accept_off_leaves_every_like_pending(shelter):
+    call_on(shelter, needed=2)
+    ms = [data.swipe(opted_in(), shelter.opening.id, True) for _ in range(2)]
+    assert [m.status for m in ms] == ["pending", "pending"] and not shifts()
+
+
+def test_auto_accept_never_takes_a_like_the_org_cannot_see(shelter):
+    """A volunteer the org blocked: their like stays blind and pending, and takes no place."""
+    call = call_on(shelter, needed=1)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    blocked, ok = opted_in(), opted_in()
+    block_volunteer(blocked, shelter.opening.org_id)
+    m = data.swipe(blocked, shelter.opening.id, True)
+    assert (m.status, m.org_blind) == ("pending", 1)
+    assert data.swipe(ok, shelter.opening.id, True).status == "accepted"
+
+
+def test_auto_accept_stops_at_the_opening_slots(shelter):
+    call = call_on(shelter, needed=3)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    openings.update(id=shelter.opening.id, slots=1)
+    first = data.swipe(opted_in(), shelter.opening.id, True)
+    assert first.status == "accepted"
+    assert openings[shelter.opening.id].status == "filled"
+    assert urgent_calls()[0].status == "filled"
+    # the slot guard alone, with the call reopened by hand
+    urgent_calls.update(id=call.id, status="open")
+    late = matches.insert(
+        opening_id=shelter.opening.id, volunteer_id=opted_in(), status="pending",
+        created_at=data._now(), urgent_call_id=call.id,
+    )  # fmt: skip
+    data._auto_accept(late, urgent_calls[call.id])
+    assert matches[late.id].status == "pending"
+
+
+def test_auto_accept_a_like_just_after_it_filled_still_counts_toward_it(shelter):
+    """The card showed the call: the like is for the call's time, pending for the org."""
+    call = call_on(shelter, needed=1, starts_at=tomorrow())
+    urgent_calls.update(id=call.id, auto_accept=True)
+    data.swipe(opted_in(), shelter.opening.id, True)
+    assert urgent_calls()[0].status == "filled"
+    late = data.swipe(opted_in(), shelter.opening.id, True, call_id=call.id)
+    assert (late.status, late.urgent_call_id) == ("pending", call.id)
+    data.decide(shelter.uid, late.id, True)
+    (shift,) = shifts(where="match_id = ?", where_args=[late.id])
+    assert shift.starts_at == tomorrow()
+    # another opening's call, or one that was stopped, is not taken
+    other = opted_in()
+    plain = data.swipe(other, shelter.opening.id, True, call_id=call.id + 1)
+    assert plain.urgent_call_id is None
+
+
+def test_auto_accept_card_carries_its_call(shelter, user):
+    call = call_on(shelter)
+    page = user.get("/deck").text
+    assert f'value="{call.id}" name="call_id"' in page
+    r = user.post(
+        "/swipe",
+        data={"opening_id": str(shelter.opening.id), "liked": "1",
+              "call_id": "x" * 30},
+    )  # fmt: skip
+    assert r.status_code == 200
+    (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert m.urgent_call_id == call.id  # the open call, whatever the form said

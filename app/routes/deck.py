@@ -176,10 +176,13 @@ def RoundButton(label, liked, icon, cls):
     )
 
 
-def SwipeButtons(opening_id, today=False):
+def SwipeButtons(opening_id, today=False, call_id=None):
+    """call_id: the urgent call the card shows, so a like just after it fills still
+    counts toward it."""
     return PlainForm(
         Hidden(name="opening_id", value=str(opening_id)),
         Hidden(name="today", value="1") if today else None,
+        Hidden(name="call_id", value=str(call_id)) if call_id else None,
         RoundButton(
             "Pass",
             "0",
@@ -438,7 +441,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
                 FilterSheet(uid, today, count, view),
                 cls="pointer-events-auto",
             ),
-            SwipeButtons(c["id"], today),
+            SwipeButtons(c["id"], today, c["call_id"]),
             Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
             cls="cm-swipe-buttons pointer-events-none mt-4 flex items-center "
             "justify-center gap-6",

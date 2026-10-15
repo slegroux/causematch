@@ -149,7 +149,7 @@ ROUTES = {
 }
 # Ids that arrive in a form body rather than the path: each needs an OWNERSHIP check too.
 BODY_IDS = {
-    ("POST", "/swipe"): {"opening_id"},
+    ("POST", "/swipe"): {"opening_id", "call_id"},
     ("POST", "/org/openings/new"): {"org_id"},
 }
 PUBLIC_ROUTES = [r for r, (who, _) in ROUTES.items() if who == "public"]

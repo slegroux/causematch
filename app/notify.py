@@ -386,6 +386,30 @@ def on_new_like(match_id):
     _deliver("likes", f"likes:{org_id}", org_id, send, LIKES_WINDOW)
 
 
+def on_auto_accepted(match_id):
+    """Called after a like an urgent call accepted by itself: emails the org's
+    coordinators, once per match. No name: the inbox shows who."""
+    info = data.auto_accept_notice(match_id)
+    if not info:
+        return
+    emails = data.org_coordinator_emails(info["org_id"])
+    if not emails:
+        return
+
+    def send():
+        for to in emails:
+            get_emailer().send(
+                to,
+                f"A volunteer is in for {info['opening']}, {info['when']}",
+                f"A volunteer said yes to your urgent call for {info['opening']}, "
+                f"{info['when']}, and was accepted automatically ({info['found']} of "
+                f"{info['needed']} found). Their shift is booked.\n\n"
+                f"Who and chat: {public_base_url()}/org/inbox",
+            )
+
+    _deliver("auto", f"auto:{match_id}", info["org_id"], send)
+
+
 def send_due_reminders():
     """Text the volunteer of every scheduled shift starting 23 to 25 hours from now, once
     per shift, and retry failed "you're matched" texts and texts the SMS ceiling deferred.

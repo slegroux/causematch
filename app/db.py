@@ -218,7 +218,7 @@ class Shift:
 
 class Notification:
     id: int
-    kind: str  # accepted|message|likes|reminder|urgent
+    kind: str  # accepted|message|likes|reminder|urgent|auto
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
     recipient_id: int  # the volunteer's profile id; for "likes", the org id
     sent_at: str  # UTC; when this stream's last send was claimed

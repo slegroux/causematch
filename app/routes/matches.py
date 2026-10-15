@@ -11,6 +11,7 @@ from monsterui.all import (
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
@@ -64,11 +65,24 @@ def _sync_swipe(req, form):
     try:
         if not re.fullmatch(r"[0-9]{1,19}", raw):
             raise LookupError("not an opening id")
-        m = data.swipe_created(uid, int(raw), form["liked"] == "1", today, view)
+        call = form.get("call_id", "")
+        m = data.swipe_created(
+            uid,
+            int(raw),
+            form["liked"] == "1",
+            today,
+            view,
+            int(call) if re.fullmatch(r"[0-9]{1,18}", call) else None,
+        )
     except LookupError:
         # closed or gone since the card was drawn: say so, and show what's next
         notice = "That opening isn't available any more."
     else:
+        if m and m.status == "accepted":  # an urgent call took them: off to the chat
+            notify.on_auto_accepted(m.id)
+            if req.headers.get("HX-Request"):
+                return Response(headers={"HX-Redirect": f"/chat/{m.id}?notice=in"})
+            return Redirect(f"/chat/{m.id}?notice=in")
         if m:
             notify.on_new_like(m.id)
     if req.headers.get("HX-Request"):

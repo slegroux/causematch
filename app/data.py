@@ -498,6 +498,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "event_url": o.event_url,
                 "urgent": call
                 and urgent_label(call.starts_at, call.needed - _urgent_found(call.id)),
+                "call_id": call and call.id,
             }
         )
     return cards, len(ranked)
@@ -601,13 +602,18 @@ def _match_for(uid, opening_id):
     return found[0] if found else None
 
 
-def _swipe(uid, opening_id, liked, today=False, view=None):
+def _swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
     """Record a swipe; a like makes a pending match. (match, created), match None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
     the opening in their deck (closed, inactive cause, unknown id): the deck they swiped
     in (today, view), or their saved deck, since a card drawn under one may be swiped
     after the other changed.
+
+    A like while the opening has an open urgent call counts toward it, and an
+    auto-accepting call takes it while it has places. call_id: the urgent call the card
+    showed; a like on it just after it filled still counts toward it (for its time),
+    pending for the org.
     """
     if not _is_id(opening_id):
         raise LookupError("no such opening")
@@ -635,8 +641,16 @@ def _swipe(uid, opening_id, liked, today=False, view=None):
             return None, False
         call = _db.urgent_calls(
             where="opening_id = ? AND status = 'open'", where_args=[opening_id]
+        ) or (
+            _db.urgent_calls(
+                where="id = ? AND opening_id = ? AND status = 'filled' "
+                "AND starts_at > ?",
+                where_args=[call_id, opening_id, _local_now()],
+            )
+            if _is_id(call_id)
+            else []
         )
-        return _db.matches.insert(
+        m = _db.matches.insert(
             _db.Match(
                 opening_id=opening_id,
                 volunteer_id=uid,
@@ -646,21 +660,56 @@ def _swipe(uid, opening_id, liked, today=False, view=None):
                 org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id),
                 urgent_call_id=call[0].id if call else None,
             )
-        ), True
+        )
+        if call and call[0].auto_accept and not m.org_blind:
+            _auto_accept(m, call[0])
+        return _db.matches[m.id], True
 
 
-def swipe(uid, opening_id, liked, today=False, view=None):
+def _auto_accept(m, call):
+    """Accept a like on an auto-accepting call while it has places left: the first
+    `needed` likes are in, booked at the call's time; the rest stay pending for the org.
+    One statement decides, so concurrent likes never take more than `needed` (nor more
+    than the opening's slots)."""
+    _db.db.execute(
+        "UPDATE match SET status = 'accepted', decided_at = ?, decided_by = ? "
+        "WHERE id = ? AND status = 'pending' "
+        "AND (SELECT count(*) FROM match WHERE urgent_call_id = ? AND status = 'accepted') "
+        "< (SELECT needed FROM urgent_call WHERE id = ? AND status = 'open' "
+        "AND auto_accept = 1) "
+        "AND (SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted') "
+        "< (SELECT slots FROM opening WHERE id = ?)",
+        [_now(), call.created_by, m.id, call.id, call.id, m.opening_id, m.opening_id],
+    )
+    if _db.db.conn.changes() != 1:
+        return
+    _sync_fill(m.opening_id)
+    _sync_urgent(call.id)
+    _db.shifts.insert(
+        _db.Shift(
+            match_id=m.id,
+            starts_at=call.starts_at,
+            status="scheduled",
+            kind="accept",
+            created_by=call.created_by,
+            created_at=_now(),
+        )
+    )
+
+
+def swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
     """Record a swipe; a like makes a pending match. The match, or None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
     the opening in their deck (closed, inactive cause, unknown id).
     """
-    return _swipe(uid, opening_id, liked, today, view)[0]
+    return _swipe(uid, opening_id, liked, today, view, call_id)[0]
 
 
-def swipe_created(uid, opening_id, liked, today=False, view=None):
-    """Like `swipe`, but the Match only when this call created it (not a pass or a repeat)."""
-    match, created = _swipe(uid, opening_id, liked, today, view)
+def swipe_created(uid, opening_id, liked, today=False, view=None, call_id=None):
+    """Like `swipe`, but the Match only when this call created it (not a pass or a repeat);
+    it is already accepted when an urgent call auto-accepted it."""
+    match, created = _swipe(uid, opening_id, liked, today, view, call_id)
     return match if created and not match.org_blind else None
 
 
@@ -776,7 +825,10 @@ def my_matches(uid):
                 "status": m.status,
                 "title": o.title,
                 "org": org_names.get(o.org_id, ""),
-                "starts_at": o.starts_at,
+                # a like on an urgent call is for the call's shift
+                "starts_at": _db.urgent_calls[m.urgent_call_id].starts_at
+                if m.urgent_call_id
+                else o.starts_at,
                 "neighborhood": o.neighborhood,
                 "event_url": o.event_url,
             }
@@ -2069,6 +2121,25 @@ def urgent_notice(call_id, at):
         "opening_id": o.id,
         "when": urgent_when(call.starts_at, at.astimezone(LA).date()),
         "left": call.needed - _urgent_found(call.id),
+    }
+
+
+def auto_accept_notice(match_id):
+    """What the org's "accepted automatically" email says, or None when the match isn't an
+    auto-accepted like on an urgent call (or the org must not hear of it)."""
+    m = _db.matches[match_id]
+    if m.status != "accepted" or not m.urgent_call_id or m.org_blind:
+        return None
+    call = _db.urgent_calls[m.urgent_call_id]
+    org = _db.orgs[call.org_id]
+    if org.deactivated_at:
+        return None
+    return {
+        "org_id": org.id,
+        "opening": _db.openings[call.opening_id].title,
+        "when": urgent_when(call.starts_at),
+        "found": _urgent_found(call.id),
+        "needed": call.needed,
     }
 
 

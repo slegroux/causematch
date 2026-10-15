@@ -144,6 +144,14 @@ def ChatPage(uid, match_id, role, notice=""):
             ),
             cls="border-b border-line pb-3",
         ),
+        P(
+            "You're in! Your shift is booked. Say hi to the team here.",
+            role="status",
+            cls="mt-3 rounded-2xl bg-cause-parks-soft px-4 py-3 font-bold "
+            "text-cause-parks-ink",
+        )
+        if notice == "in" and role == "volunteer" and head["writable"]
+        else None,
         box,
         Div(
             A("Report", href=f"{rbase}/{match_id}/report", cls=SMALL_LINK),
