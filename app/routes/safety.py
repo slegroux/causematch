@@ -34,7 +34,9 @@ from app.ui import (
     Field,
     Icon,
     Page,
+    Pill,
     Router,
+    SimplePage,
     VolunteerNav,
 )
 
@@ -355,18 +357,21 @@ EFFECTIVE = "October 15, 2026"
 
 def Section(title, *paras):
     return Div(
-        H2(title, cls="text-lg font-semibold mt-6"),
-        *[P(p, cls="mt-2") for p in paras],
+        H2(title, cls="font-display text-lg font-extrabold text-ink mt-6"),
+        *[P(p, cls="mt-2 leading-relaxed") for p in paras],
     )
 
 
 @ar("/privacy", methods=["GET"])
 def privacy():
     contact = contact_email()
-    return Container(
-        H1("Privacy", cls="text-2xl font-bold my-4"),
-        P("Draft, pending legal review.", cls="font-semibold text-red-600"),
-        P(f"Effective {EFFECTIVE}.", cls=TextPresets.muted_sm),
+    return SimplePage(
+        "Privacy",
+        Div(
+            Pill("Draft, pending legal review.", "wait"),
+            P(f"Effective {EFFECTIVE}.", cls=TextPresets.muted_sm),
+            cls="flex flex-wrap items-center gap-3 pt-2",
+        ),
         Section(
             "What we collect",
             "Volunteers: your mobile number; your first name; an email if you give one; "
@@ -437,7 +442,7 @@ def privacy():
             "change when your browser sends a Do Not Track signal.",
         ),
         Div(
-            H2("Questions", cls="text-lg font-semibold mt-6"),
+            H2("Questions", cls="font-display text-lg font-extrabold text-ink mt-6"),
             P(
                 "Write to ",
                 A(contact, href=f"mailto:{contact}", cls=AT.muted),
@@ -446,5 +451,16 @@ def privacy():
             ),
         ),
         P(A("Back", href="/", cls=AT.muted), cls="pt-8"),
-        cls="max-w-md pb-8",
+    )
+
+
+# --- not found -------------------------------------------------------------------------------
+
+
+def not_found(req, exc):
+    """main.py's 404 handler: the shared look, and a way back."""
+    return SimplePage(
+        "Page not found",
+        P("That page doesn't exist, or it moved.", cls="mt-2 text-ink"),
+        P(A("Back to Causematch", href="/", cls=AT.muted), cls="mt-4"),
     )

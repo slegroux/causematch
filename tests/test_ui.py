@@ -405,3 +405,35 @@ def test_upcoming_shifts_say_upcoming_not_unmarked(pages, coord):
     html = coord.get("/org/shifts").text
     upcoming = html.split(">Upcoming</h2>")[1]
     assert "Upcoming" in upcoming and "Not marked yet" not in upcoming
+
+
+# --- admin, privacy and error pages (design item 6) -----------------------------------
+
+
+def test_admin_pages_share_the_top_nav():
+    admin = admin_client()
+    for path, tab in {
+        "/admin": "Admin",
+        "/admin/metrics": "Metrics",
+        "/admin/reports": "Reports",
+        "/admin/orgs": "Orgs",
+        "/admin/claims": "Claims",
+        "/admin/blocks": "Blocks",
+    }.items():
+        html = admin.get(path).text
+        assert 'aria-label="Admin"' in html, path
+        current = re.search(r'<a [^>]*aria-current="page"[^>]*>\s*([A-Za-z]+)', html)
+        assert current and current[1] == tab, path
+    assert 'href="/admin/metrics.csv"' in admin.get("/admin/metrics").text
+
+
+def test_not_found_and_refusal_pages_wear_the_shared_look(anon):
+    r = anon.get("/no-such-page")
+    assert r.status_code == 404
+    assert "Page not found" in r.text and 'href="/"' in r.text
+    assert "uk-theme-warm" in anon.get("/static/theme.js").text  # the page's theme
+    from app import security
+
+    page = security.too_many().body.decode()
+    assert "rounded-3xl" in page and "cause<span class='text-brand'>match" in page
+    assert "Too many tries" in page and "Back to Causematch" in page

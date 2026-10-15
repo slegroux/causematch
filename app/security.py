@@ -126,10 +126,15 @@ def page(status, title, text, headers=None):
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{escape(title)} - Causematch</title>"
         f"<script src='/static/theme.js'></script>{links}</head><body>"
-        "<div class='uk-container max-w-md pb-8'>"
-        f"<h1 class='text-2xl font-bold my-4'>{escape(title)}</h1><p>{escape(text)}</p>"
+        # app/ui.py SimplePage's look, as plain HTML: this page is made outside the routes
+        "<div class='mx-auto max-w-2xl px-4 pb-12'>"
+        "<p class='pt-6 pb-4 font-display text-2xl font-extrabold tracking-tight "
+        "text-ink'>cause<span class='text-brand'>match</span></p>"
+        "<div class='p-6 sm:p-8 rounded-3xl border border-line bg-white shadow-warm'>"
+        "<h1 class='font-display text-2xl font-extrabold text-ink'>"
+        f"{escape(title)}</h1><p class='mt-2 text-ink'>{escape(text)}</p>"
         "<p class='mt-4'><a class='uk-link-muted' href='/'>Back to Causematch</a></p>"
-        "</div></body></html>"
+        "</div></div></body></html>"
     )
     return HTMLResponse(body, status_code=status, headers=headers)
 

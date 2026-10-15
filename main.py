@@ -31,6 +31,7 @@ from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
 from app.routes.pwa import ar as pwa_router
 from app.routes.safety import ar as safety_router
+from app.routes.safety import not_found
 from app.routes.shifts import ar as shifts_router
 from app.routes.tasks import ar as tasks_router
 
@@ -77,6 +78,7 @@ app, rt = fast_app(
     debug=False,  # no traceback pages; security.Guard serves a plain 500 in production
     title="Causematch",
     body_wrap=ui.body_wrap,  # the demo banner; each APIRouter passes it too
+    exception_handlers={404: not_found},  # the shared look instead of a bare "404"
     # Self-hosted, pinned htmx. Not loaded: fasthtml's surreal@main, css-scope-inline@main,
     # pico@latest (unpinned CDN branches the app doesn't use) and fasthtml.js.
     htmx=False,

@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from fasthtml.common import (
+    H1,
     H2,
     A,
     Dd,
@@ -24,7 +25,7 @@ from fasthtml.common import (
     Tr,
 )
 from fasthtml.common import Button as PlainButton
-from monsterui.all import AT, Alert, AlertT, Container, LabelCheckboxX, TextPresets
+from monsterui.all import Alert, AlertT, Container, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, propublica, security
@@ -43,7 +44,7 @@ from app.metrics import (
     pilot_metrics,
 )
 from app.org_import import import_ein
-from app.ui import Router, TextInput
+from app.ui import CARD, Router, TextInput, TopNav
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -55,28 +56,31 @@ def _now():
     return datetime.now(UTC)
 
 
-def AdminPage(title, *content):
-    return Container(
-        Div(
-            A("Admin", href="/admin", cls=AT.muted),
-            A("Metrics", href="/admin/metrics", cls=AT.muted),
-            A("Reports", href="/admin/reports", cls=AT.muted),
-            A("Orgs", href="/admin/orgs", cls=AT.muted),
-            A("Claims", href="/admin/claims", cls=AT.muted),
-            A("Blocks", href="/admin/blocks", cls=AT.muted),
-            A("Download CSV", href="/admin/metrics.csv", cls=AT.muted),
-            Form(
-                PlainButton(
-                    "Sign out", type="submit", cls=AT.muted + " bg-transparent p-0"
-                ),
-                action="/logout",
-                method="post",
+# (key, label, href) of each section of the admin's top nav
+ADMIN_TABS = (
+    ("admin", "Admin", "/admin"),
+    ("metrics", "Metrics", "/admin/metrics"),
+    ("reports", "Reports", "/admin/reports"),
+    ("orgs", "Orgs", "/admin/orgs"),
+    ("claims", "Claims", "/admin/claims"),
+    ("blocks", "Blocks", "/admin/blocks"),
+)
+BOX = "p-4 " + CARD  # one report, block, org or claim
+
+
+def AdminPage(active, title, *content, action=None):
+    """The shared staff header, then the title (with one action beside it) and content."""
+    return Div(
+        TopNav(ADMIN_TABS, active, "Admin", "/admin"),
+        Container(
+            Div(
+                H1(title, cls="font-display text-2xl font-extrabold text-ink"),
+                action,
+                cls="flex flex-wrap items-center justify-between gap-3 pb-4",
             ),
-            cls="flex gap-4 py-3 text-sm",
+            *content,
+            cls="max-w-5xl pt-6 pb-12",
         ),
-        Div(title, cls="text-2xl font-bold my-4"),
-        *content,
-        cls="max-w-7xl pb-8",
     )
 
 
@@ -91,7 +95,7 @@ def cell(metric, c):
 
 def MetricsTable(title, groups):
     return Div(
-        H2(title, cls="text-lg font-semibold mt-6 mb-2"),
+        H2(title, cls="font-display text-lg font-extrabold text-ink mt-6 mb-2"),
         Table(
             Thead(
                 Tr(
@@ -108,7 +112,7 @@ def MetricsTable(title, groups):
                     for name, c in groups.items()
                 ]
             ),
-            cls="uk-table uk-table-divider uk-table-small w-full",
+            cls="uk-table uk-table-divider uk-table-small w-full bg-white",
         ),
         cls="overflow-x-auto",
     )
@@ -116,7 +120,7 @@ def MetricsTable(title, groups):
 
 def Definitions():
     return Div(
-        H2("Definitions", cls="text-lg font-semibold mt-8 mb-2"),
+        H2("Definitions", cls="font-display text-lg font-extrabold text-ink mt-8 mb-2"),
         Dl(
             *[
                 x
@@ -133,11 +137,25 @@ def Definitions():
 @ar("/admin", methods=["GET"])
 def admin_home():
     return AdminPage(
+        "admin",
         "Admin",
-        P(A("Pilot metrics", href="/admin/metrics"), cls="py-2"),
-        P(A("Reports", href="/admin/reports"), cls="py-2"),
-        P(A("Organizations", href="/admin/orgs"), cls="py-2"),
-        P(A("Claims", href="/admin/claims"), cls="py-2"),
+        Div(
+            *[
+                A(
+                    P(name, cls="font-display text-lg font-extrabold text-ink"),
+                    P(what, cls=TextPresets.muted_sm),
+                    href=href,
+                    cls="block p-5 hover:border-brand " + CARD,
+                )
+                for name, what, href in (
+                    ("Pilot metrics", "Rates and counts, by group", "/admin/metrics"),
+                    ("Reports", "What people reported", "/admin/reports"),
+                    ("Organizations", "Verify nonprofits", "/admin/orgs"),
+                    ("Claims", "Requests to manage a nonprofit", "/admin/claims"),
+                )
+            ],
+            cls="grid gap-4 sm:grid-cols-2",
+        ),
     )
 
 
@@ -146,6 +164,7 @@ def admin_metrics():
     m = pilot_metrics(data.metrics_rows(), _now())
     return (
         AdminPage(
+            "metrics",
             "Pilot metrics",
             P(
                 "Aggregates only; the counts sit beneath each figure. A dash means no data "
@@ -169,6 +188,11 @@ def admin_metrics():
                 for kind, title in BREAKDOWNS.items()
             ],
             Definitions(),
+            action=A(
+                "Download CSV",
+                href="/admin/metrics.csv",
+                cls="uk-btn uk-btn-default",
+            ),
         ),
         NO_STORE_HEADER,
     )
@@ -216,7 +240,7 @@ def ReportRow(r):
             else _post(f"/admin/reports/{r['id']}/deactivate", "Deactivate org"),
             cls="flex gap-3 pt-2",
         ),
-        cls="border rounded-lg p-3",
+        cls=BOX,
     )
 
 
@@ -225,6 +249,7 @@ def admin_reports(req):
     rows = data.admin_reports(req.scope["uid"])
     return (
         AdminPage(
+            "reports",
             "Open reports",
             Div(
                 *([ReportRow(r) for r in rows] or [P("No open reports.")]),
@@ -268,6 +293,7 @@ def admin_blocks(req):
     rows = data.admin_blocks(req.scope["uid"])
     return (
         AdminPage(
+            "blocks",
             "Blocks",
             Div(
                 *(
@@ -280,7 +306,7 @@ def admin_blocks(req):
                                 cls="font-semibold",
                             ),
                             _post(f"/admin/blocks/{b['id']}/unblock", "Unblock"),
-                            cls="border rounded-lg p-3",
+                            cls=BOX,
                         )
                         for b in rows
                     ]
@@ -342,13 +368,14 @@ def OrgRow(o, found=None, error=None):
         )
         if found
         else None,
-        cls="border rounded-lg p-3",
+        cls=BOX,
     )
 
 
 def OrgsPage(rows, only=None, found=None, error=None):
     return (
         AdminPage(
+            "orgs",
             "Organizations",
             Div(
                 *[
@@ -456,7 +483,7 @@ def ClaimRow(c, error=None):
             _post(f"/admin/claims/{c['id']}/reject", "Reject"),
             cls="flex gap-3 pt-2",
         ),
-        cls="border rounded-lg p-3",
+        cls=BOX,
     )
 
 
@@ -464,6 +491,7 @@ def ClaimsPage(uid, only=None, error=None):
     rows = data.admin_claims(uid)
     return (
         AdminPage(
+            "claims",
             "Claim requests",
             Div(
                 *(

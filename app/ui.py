@@ -316,25 +316,27 @@ ORG_TABS = (
 )
 
 
-def OrgNav(active, waiting=0):
-    """The nonprofit's header: the wordmark, its sections (the inbox with how many
-    volunteers wait for an answer) and Sign out. One row on a desk, two on a phone."""
+def TopNav(tabs, active, label, home, badges=None):
+    """A staff header (nonprofit, admin): the wordmark, the sections (a tab can carry a
+    count badge) and Sign out. One row on a desk, two on a phone."""
+    badges = badges or {}
 
-    def tab(key, label, href):
+    def tab(key, text, href):
         on = key == active
         return A(
-            label,
+            text,
             Span(
-                str(waiting),
+                str(badges[key]),
                 Span(" waiting", cls="sr-only"),
                 cls="grid h-6 min-w-6 place-items-center rounded-full bg-brand px-1.5 "
                 "text-xs text-white",
             )
-            if key == "inbox" and waiting
+            if badges.get(key)
             else None,
             href=href,
             aria_current="page" if on else None,
-            cls="inline-flex min-h-11 items-center gap-2 rounded-full px-4 font-bold "
+            cls="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full px-4 "
+            "font-bold "
             + (
                 "bg-brand-soft text-brand-ink"
                 if on
@@ -344,7 +346,7 @@ def OrgNav(active, waiting=0):
 
     return Div(
         Div(
-            A(Wordmark(small=True), href="/org", cls="order-1"),
+            A(Wordmark(small=True), href=home, cls="order-1"),
             Form(
                 Button(
                     "Sign out",
@@ -357,8 +359,8 @@ def OrgNav(active, waiting=0):
                 cls="order-2 ml-auto lg:order-3 lg:ml-0",
             ),
             Nav(
-                *[tab(*t) for t in ORG_TABS],
-                aria_label="Organization",
+                *[tab(*t) for t in tabs],
+                aria_label=label,
                 cls="order-3 -mx-2 flex w-full gap-1 overflow-x-auto lg:order-2 "
                 "lg:mx-0 lg:ml-6 lg:w-auto lg:flex-1",
             ),
@@ -369,6 +371,25 @@ def OrgNav(active, waiting=0):
     )
 
 
+def OrgNav(active, waiting=0):
+    """The nonprofit's header; the Inbox tab counts the volunteers waiting for an answer."""
+    return TopNav(ORG_TABS, active, "Organization", "/org", {"inbox": waiting})
+
+
 def OrgShell(active, waiting, *content):
     """A nonprofit page: the top nav, then the content, up to two columns wide on a desk."""
     return Div(OrgNav(active, waiting), Container(*content, cls="max-w-5xl pt-6 pb-12"))
+
+
+def SimplePage(title, *content):
+    """A page outside any signed-in shell (privacy, not found): the wordmark home, then
+    one warm card."""
+    return Div(
+        A(Wordmark(small=True), href="/", cls="inline-flex pt-6 pb-4"),
+        Div(
+            H1(title, cls="font-display text-2xl font-extrabold text-ink"),
+            *content,
+            cls="p-6 sm:p-8 " + CARD,
+        ),
+        cls="mx-auto max-w-2xl px-4 pb-12",
+    )
