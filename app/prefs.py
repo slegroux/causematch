@@ -5,8 +5,9 @@ the answers it already had, so its deck stays as it was until the volunteer edit
 """
 
 import json
+from datetime import date
 
-from app.choices import MAX_MINUTES, MODES
+from app.choices import MAX_FREE_DATES, MAX_MINUTES, MODES
 from app.geo import neighborhood_latlon, round_point, zip_latlon
 
 UNRECOGNIZED = "Something in that form wasn't recognized. Please try again."
@@ -21,6 +22,39 @@ def cause_prefs(profile):
         return {s: LOVE for s in json.loads(profile.causes or "[]")}
     states = {s for s, _ in CAUSE_STATES}
     return {s: v for s, v in json.loads(profile.cause_prefs).items() if v in states}
+
+
+def free_dates(profile, today):
+    """The dates the volunteer said they're free, from today on ("YYYY-MM-DD")."""
+    return sorted(d for d in json.loads(profile.free_dates or "[]") if d >= today)
+
+
+def parse_free_dates(values, today):
+    """(sorted unique dates, error or None) from the form's free_dates (the kept ones and the
+    one typed in). Each must be a date from today on; at most MAX_FREE_DATES."""
+    dates = set()
+    for v in values:
+        if not v:
+            continue
+        try:
+            d = date.fromisoformat(v).isoformat()
+        except ValueError:
+            return [], UNRECOGNIZED
+        if d < today:
+            return [], "Pick a date from today on."
+        dates.add(d)
+    if len(dates) > MAX_FREE_DATES:
+        return [], f"Up to {MAX_FREE_DATES} dates: untick one to add another."
+    return sorted(dates), None
+
+
+def horizon_days(profile):
+    """How far ahead to show shifts, in days; 0 for any time."""
+    return profile.horizon_days or 0
+
+
+def commitment(profile):
+    return profile.commitment or "either"
 
 
 def picked(prefs):

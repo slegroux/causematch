@@ -84,7 +84,7 @@ class Profile:
     skills: str  # JSON list
     language_other: str
     volunteered_last_year: str  # yes|no
-    availability: str  # JSON list
+    availability: str  # JSON list: day slots "mon_morning" (app/match.py day_slots)
     frequency: str
     heard_from: str  # personal|second_degree|public|other
     other_causes: str
@@ -95,6 +95,9 @@ class Profile:
     sms_opted_out: bool  # the number replied STOP: never text it again
     # Match preferences (app/prefs.py), private: nonprofits never see them.
     cause_prefs: str  # JSON {slug: love|open|no}; `causes` keeps love + open
+    free_dates: str  # JSON ["YYYY-MM-DD"], up to 10, future only (pruned when read)
+    horizon_days: int  # 7|14|31; 0 or NULL: any time
+    commitment: str  # one_time|recurring|either (NULL: either)
 
 
 class OrgMember:

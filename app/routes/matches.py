@@ -70,9 +70,10 @@ def _sync_swipe(req, form):
     else:
         if m:
             notify.on_new_like(m.id)
+    today = form.get("today") == "1"  # the deck's "I'm free today" switch
     if req.headers.get("HX-Request"):
-        return DeckArea(uid)
-    return Redirect("/deck")
+        return DeckArea(uid, today)
+    return Redirect("/deck?today=1" if today else "/deck")
 
 
 def MatchRow(m):

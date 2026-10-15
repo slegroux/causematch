@@ -221,7 +221,8 @@ def _volunteer(phone, name, hood, causes, skills, frequency):
 
 def _preferences(uid):
     """ME_PHONE's match preferences: two places (Home in Sawtelle by car, Work Downtown by
-    transit) and three-state causes, so /me/preferences and the cards show them."""
+    transit), three-state causes, a day grid and a free date, so /me/preferences and the
+    cards show them."""
     from app import data
     from app.geo import neighborhood_latlon, zip_latlon
 
@@ -234,7 +235,16 @@ def _preferences(uid):
             "animal-shelters": "love",
             "environment-parks": "open",
         },
-        availability=["weekend_morning", "weekday_evening"],
+        availability=[
+            "tue_evening",
+            "thu_evening",
+            "sat_morning",
+            "sat_afternoon",
+            "sun_morning",
+        ],
+        free_dates=[(datetime.now(LA) + timedelta(days=10)).date().isoformat()],
+        horizon_days=31,
+        commitment="either",
         skills=["physical", "car"],
         frequency="weekly",
         places=[

@@ -17,6 +17,7 @@ from fasthtml.common import Form as PlainForm
 from monsterui.all import Container
 
 from app import data
+from app.forms import query
 from app.ui import (
     CALENDAR,
     CAUSE_CHIP,
@@ -112,9 +113,10 @@ def RoundButton(label, liked, icon, cls):
     )
 
 
-def SwipeButtons(opening_id):
+def SwipeButtons(opening_id, today=False):
     return PlainForm(
         Hidden(name="opening_id", value=str(opening_id)),
+        Hidden(name="today", value="1") if today else None,
         RoundButton(
             "Pass",
             "0",
@@ -137,12 +139,18 @@ def SwipeButtons(opening_id):
     )
 
 
-def EmptyDeck():
+def EmptyDeck(today=False):
     return Div(
         Img(src="/static/img/empty-deck.svg", alt="", cls="mx-auto h-40 w-40"),
-        H2("You're all caught up", cls="font-display text-xl font-extrabold text-ink"),
+        H2(
+            "Nothing in the next 48 hours" if today else "You're all caught up",
+            cls="font-display text-xl font-extrabold text-ink",
+        ),
         P(
-            "You have seen every opening for now. Check back soon.",
+            "No shift you could reach starts that soon. Turn off “I'm free today” to "
+            "see everything."
+            if today
+            else "You have seen every opening for now. Check back soon.",
             cls="mx-auto max-w-xs text-ink-muted",
         ),
         A("See your matches", href="/matches", cls="uk-btn uk-btn-primary mt-2 px-6"),
@@ -151,15 +159,45 @@ def EmptyDeck():
     )
 
 
-def DeckArea(uid):
+def TodaySwitch(today):
+    """ "I'm free today": only shifts starting in the next 48 hours, soonest first. A plain
+    GET form, so it works without script; the button says whether it is on."""
+    return PlainForm(
+        Hidden(name="today", value="0" if today else "1"),
+        Button(
+            Span(
+                Span(
+                    cls="block h-5 w-5 rounded-full bg-white shadow transition "
+                    + ("translate-x-5" if today else "translate-x-0"),
+                ),
+                cls="flex h-6 w-11 items-center rounded-full p-0.5 transition "
+                + ("bg-brand" if today else "bg-gray-500"),
+                aria_hidden="true",
+            ),
+            Span("I'm free today"),
+            type="submit",
+            aria_pressed="true" if today else "false",
+            cls="flex min-h-11 items-center gap-2.5 rounded-full px-1 text-sm font-bold "
+            "text-ink focus-visible:outline focus-visible:outline-2 "
+            "focus-visible:outline-brand",
+        ),
+        action="/deck",
+        method="get",
+        # up into the header row, beside the wordmark, so the card and its buttons still
+        # fit above the tab bar on a phone
+        cls="relative z-10 -mt-12 mb-1 flex justify-end",
+    )
+
+
+def DeckArea(uid, today=False):
     """The top card with its buttons, or the empty state; the unit /swipe swaps."""
-    cards = data.deck(uid, limit=1)
+    cards = data.deck(uid, limit=1, today=today)
     if not cards:
-        return Div(EmptyDeck(), id="deck-area")
+        return Div(EmptyDeck(today), id="deck-area")
     c = cards[0]
     return Div(
         OpeningCard(c),
-        SwipeButtons(c["id"]),
+        SwipeButtons(c["id"], today),
         P(
             "Couldn't save that. Try again.",
             id="swipe-error",
@@ -178,10 +216,12 @@ def index():
 
 @ar("/deck")
 def deck(req):
+    today = query(req, "today") == "1"
     return Container(
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
-        DeckArea(req.scope["uid"]),
+        TodaySwitch(today),
+        DeckArea(req.scope["uid"], today),
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",
     )

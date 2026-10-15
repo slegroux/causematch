@@ -4,6 +4,8 @@ from datetime import datetime
 from math import asin, cos, radians, sin, sqrt
 from zoneinfo import ZoneInfo
 
+from app.choices import DAYS, PARTS
+
 LA = ZoneInfo("America/Los_Angeles")
 EARTH_KM = 6371.0088
 WEIGHTS = {
@@ -87,23 +89,73 @@ def causes_allowed(mine, theirs):
     return not any(mine.get(s) == "no" for s in theirs)
 
 
-def availability_bucket(starts_at):
-    """'weekday_morning' etc. for a Los Angeles wall-clock start (str or datetime)."""
+DAY_KEYS = [d for d, _ in DAYS]
+# The older weekday/weekend buckets, as the day slots each one stands for
+BUCKET_DAYS = {"weekday": DAY_KEYS[:5], "weekend": DAY_KEYS[5:]}
+
+
+def _local(starts_at):
     t = datetime.fromisoformat(starts_at) if isinstance(starts_at, str) else starts_at
-    if t.tzinfo:
-        t = t.astimezone(LA)
+    return t.astimezone(LA) if t.tzinfo else t
+
+
+def availability_slot(starts_at):
+    """'sat_morning' etc. for a Los Angeles wall-clock start (str or datetime)."""
+    t = _local(starts_at)
     part = "morning" if t.hour < 12 else "afternoon" if t.hour < 17 else "evening"
-    return f"{'weekend' if t.weekday() >= 5 else 'weekday'}_{part}"
+    return f"{DAY_KEYS[t.weekday()]}_{part}"
 
 
-def availability_overlap(volunteer_availability, starts_at, recurrence=""):
-    """1.0 when free then; otherwise 0.5 for a flexible opening, else 0.0.
+def availability_bucket(starts_at):
+    """'weekday_morning' etc.: the older, coarser summary of availability_slot."""
+    day, part = availability_slot(starts_at).split("_")
+    return f"{'weekend' if day in BUCKET_DAYS['weekend'] else 'weekday'}_{part}"
 
-    Weekly and monthly openings repeat in the same bucket, so they get no partial credit.
+
+def day_slots(values):
+    """Availability as day slots, in grid order: a slot stays, an older bucket
+    ('weekday_morning') becomes the slots it stands for (Mon-Fri mornings), the rest drops."""
+    want = set()
+    for v in values:
+        kind, _, part = v.partition("_")
+        want.update(f"{d}_{part}" for d in BUCKET_DAYS.get(kind, [kind]))
+    return [f"{d}_{p}" for d in DAY_KEYS for p, _ in PARTS if f"{d}_{p}" in want]
+
+
+def general_buckets(values):
+    """The weekday/weekend buckets any of these slots falls in: what a nonprofit sees."""
+    slots = set(day_slots(values))
+    return [
+        f"{kind}_{p}"
+        for kind, days in BUCKET_DAYS.items()
+        for p, _ in PARTS
+        if any(f"{d}_{p}" in slots for d in days)
+    ]
+
+
+def availability_overlap(
+    volunteer_availability, starts_at, recurrence="", free_dates=()
+):
+    """1.0 when free then (that day and part of the week, or a date they said they're free);
+    otherwise 0.5 for a flexible opening, else 0.0.
+
+    Weekly and monthly openings repeat in the same slot, so they get no partial credit.
     """
-    if availability_bucket(starts_at) in set(volunteer_availability):
+    if availability_slot(starts_at) in day_slots(volunteer_availability):
+        return 1.0
+    if _local(starts_at).date().isoformat() in set(free_dates):
         return 1.0
     return 0.5 if recurrence == "flexible" else 0.0
+
+
+def commitment_fits(commitment, recurrence):
+    """False when the volunteer wants one-time help and the opening repeats, or the other
+    way round. A flexible or unsaid opening fits either."""
+    repeats = recurrence in ("weekly", "monthly")
+    once = recurrence == "one_time"
+    return not (
+        commitment == "one_time" and repeats or commitment == "recurring" and once
+    )
 
 
 def skill_coverage(volunteer_skills, opening_skills):

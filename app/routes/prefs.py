@@ -1,6 +1,8 @@
 """/me/preferences: what a volunteer wants from the deck, editable at any time. Private:
 nonprofits never see these answers."""
 
+from datetime import datetime
+
 from fasthtml.common import (
     H1,
     H2,
@@ -24,7 +26,18 @@ from monsterui.all import Alert, AlertT, Container
 from starlette.concurrency import run_in_threadpool
 
 from app import data, prefs
-from app.choices import AVAILABILITY, FREQUENCY, MAX_MINUTES, MAX_PLACES, MODES, SKILLS
+from app.choices import (
+    COMMITMENT,
+    DAYS,
+    FREQUENCY,
+    HORIZON,
+    MAX_FREE_DATES,
+    MAX_MINUTES,
+    MAX_PLACES,
+    MODES,
+    PARTS,
+    SKILLS,
+)
 from app.forms import bad_request, query, str_form
 from app.geo import neighborhoods
 from app.ui import (
@@ -43,6 +56,10 @@ from app.ui import (
 )
 
 ar = Router()
+
+SLOTS = {f"{d}_{p}" for d, _ in DAYS for p, _ in PARTS}
+CHECK = ("M5 12.5 10 17.5 19.5 7",)
+GRID = "grid grid-cols-[2.75rem_repeat(3,minmax(0,1fr))] items-center gap-2"
 
 UNRECOGNIZED = prefs.UNRECOGNIZED
 NO_CAUSE = "Pick at least one cause you love or are open to."
@@ -144,6 +161,102 @@ def Checks(name, options, checked, cls):
     return Div(
         *[Chip("checkbox", name, v, label, v in checked) for v, label in options],
         cls=cls,
+    )
+
+
+def DayGrid(checked):
+    """7 days x morning / afternoon / evening, each a checkbox named availability."""
+    return Fieldset(
+        Legend("Usually free", cls="sr-only"),
+        Div(
+            Span(),
+            *[
+                Span(label, cls="text-center text-xs font-bold text-ink-muted")
+                for _, label in PARTS
+            ],
+            cls=GRID,
+        ),
+        *[
+            Div(
+                Span(day, cls="font-bold text-ink"),
+                *[
+                    Label(
+                        Input(
+                            type="checkbox",
+                            name="availability",
+                            value=f"{d}_{p}",
+                            checked=f"{d}_{p}" in checked,
+                            cls="peer sr-only uk-checkbox",
+                        ),
+                        Span(
+                            Span(f"{day} {part.lower()}", cls="sr-only"),
+                            Icon(CHECK, size=20, cls="stroke-[3]"),
+                            cls="grid h-11 cursor-pointer place-items-center rounded-xl "
+                            "border border-line bg-white text-transparent transition "
+                            "hover:border-ink-muted peer-checked:border-brand "
+                            "peer-checked:bg-brand peer-checked:text-white "
+                            "peer-focus-visible:outline peer-focus-visible:outline-2 "
+                            "peer-focus-visible:outline-offset-2 "
+                            "peer-focus-visible:outline-brand",
+                        ),
+                        cls="relative block",
+                    )
+                    for p, part in PARTS
+                ],
+                cls=GRID,
+            )
+            for d, day in DAYS
+        ],
+        cls="space-y-2",
+    )
+
+
+def FreeDates(dates):
+    """The dates already given (untick to drop one), and a date field to add one."""
+    return Fieldset(
+        Legend("Specific dates you're free", cls="uk-form-label mb-1.5"),
+        Div(
+            *[
+                Chip(
+                    "checkbox",
+                    "free_dates",
+                    d,
+                    datetime.fromisoformat(d).strftime("%a %b %-d"),
+                    True,
+                )
+                for d in dates
+            ],
+            cls="mb-2 flex flex-wrap gap-2",
+        )
+        if dates
+        else None,
+        Label("Add a date", fr="free_date_new", cls="sr-only"),
+        TextInput(
+            type="date",
+            id="free_date_new",
+            name="free_dates",
+            min=data.local_today(),
+        )
+        if len(dates) < MAX_FREE_DATES
+        else None,
+        P(
+            f"A date counts as free all day. Up to {MAX_FREE_DATES}; past ones drop off.",
+            cls="mt-1.5 text-sm text-ink-muted",
+        ),
+    )
+
+
+def Group(title, cls, name, options, value):
+    """A row of radio chips under a small heading."""
+    return Fieldset(
+        Legend(title, cls="uk-form-label mb-1.5"),
+        Div(
+            *[
+                Chip("radio", name, str(v), label, str(value) == str(v))
+                for v, label in options
+            ],
+            cls=cls,
+        ),
     )
 
 
@@ -268,13 +381,23 @@ def PrefsPage(f, error=None, saved=False):
                 Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
             ),
             Section(
-                "When you're usually free",
-                None,
-                Checks(
-                    "availability",
-                    AVAILABILITY,
-                    f["availability"],
-                    "grid grid-cols-2 gap-2",
+                "When",
+                "Tick the times you're usually free: openings then rank first.",
+                DayGrid(f["availability"]),
+                FreeDates(f["free_dates"]),
+                Group(
+                    "How far ahead to look",
+                    "flex flex-wrap gap-2",
+                    "horizon_days",
+                    HORIZON,
+                    f["horizon_days"],
+                ),
+                Group(
+                    "One-time or recurring",
+                    "grid grid-cols-3 gap-2",
+                    "commitment",
+                    COMMITMENT,
+                    f["commitment"],
                 ),
             ),
             Section(
@@ -341,6 +464,9 @@ def _sync_save(req, form):
             **rated,
         },
         "availability": form.getlist("availability"),
+        "free_dates": [d for d in form.getlist("free_dates") if d],
+        "horizon_days": form.get("horizon_days", "0"),
+        "commitment": form.get("commitment", "either"),
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
         "place_forms": [
@@ -351,15 +477,22 @@ def _sync_save(req, form):
             for i in range(MAX_PLACES)
         ],
     }
+    # the page shows dates as chips, so only valid ones go back into it
+    dates, date_error = prefs.parse_free_dates(f["free_dates"], data.local_today())
+    f["free_dates"] = saved["free_dates"] if date_error else dates
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
-        or not set(f["availability"]) <= {v for v, _ in AVAILABILITY}
+        or not set(f["availability"]) <= SLOTS
+        or f["horizon_days"] not in {str(v) for v, _ in HORIZON}
+        or f["commitment"] not in {v for v, _ in COMMITMENT}
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
         return PrefsPage(f, UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
         return PrefsPage(f, NO_CAUSE)
+    if date_error:
+        return PrefsPage(f, date_error)
     places = []
     for i, pf in enumerate(f["place_forms"]):
         current = saved["places"][i] if i < len(saved["places"]) else None
@@ -371,6 +504,9 @@ def _sync_save(req, form):
     if not places or not f["place_forms"][0]["where"].strip():
         return PrefsPage(f, NO_PLACE)
     data.save_preferences(
-        uid, **{k: v for k, v in f.items() if k != "place_forms"}, places=places
+        uid,
+        **{k: v for k, v in f.items() if k not in ("place_forms", "horizon_days")},
+        horizon_days=int(f["horizon_days"]),
+        places=places,
     )
     return Redirect("/me/preferences?saved=1")

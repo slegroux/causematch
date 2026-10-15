@@ -19,7 +19,7 @@ SAVE = {
     f"cause_{FOOD}": "love",
     f"cause_{PARKS}": "open",
     f"cause_{ANIMALS}": "no",
-    "availability": ["weekday_evening", "weekend_morning"],
+    "availability": ["tue_evening", "sat_morning"],
     "skills": ["admin", "media"],
     "frequency": "monthly",
     # the sign-up place, unchanged: conftest's FORM says Chinatown
@@ -91,7 +91,8 @@ def test_page_shows_the_onboarding_answers(user):
     # FORM in conftest: food loved, free weekend mornings, has a car, weekly
     for name, value in (
         (f"cause_{FOOD}", "love"),
-        ("availability", "weekend_morning"),
+        ("availability", "sat_morning"),  # weekend mornings, as day slots
+        ("availability", "sun_morning"),
         ("skills", "car"),
         ("frequency", "weekly"),
     ):
@@ -107,7 +108,7 @@ def test_saving_stores_every_answer(user):
     p = profile_of(user)
     assert json.loads(p.cause_prefs) == {FOOD: "love", PARKS: "open", ANIMALS: "no"}
     assert json.loads(p.causes) == [FOOD, PARKS]  # love + open, for the metrics
-    assert json.loads(p.availability) == ["weekday_evening", "weekend_morning"]
+    assert json.loads(p.availability) == ["tue_evening", "sat_morning"]
     assert json.loads(p.skills) == ["admin", "media"]
     assert p.frequency == "monthly"
     html = user.get("/me/preferences?saved=1").text

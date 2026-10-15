@@ -101,6 +101,7 @@ def main():
             ("v07-history", "/history"),
             ("v08-profile", "/profile"),
             ("v09-preferences", "/me/preferences"),
+            ("v10-deck-free-today", "/deck?today=1"),
         ):
             v.goto(path)
             shot(v, name, full_page=name != "v06-chat")

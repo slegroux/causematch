@@ -39,6 +39,11 @@ def _local_now():
     return datetime.now(LA).strftime("%Y-%m-%dT%H:%M")
 
 
+def local_today():
+    """Today's date in Los Angeles, "YYYY-MM-DD"."""
+    return datetime.now(LA).date().isoformat()
+
+
 # The travel minutes a sign-up radius stood for (app/routes/onboarding.py TRAVEL).
 RADIUS_MINUTES = {8: 15, 16: 30, 25: 45}
 TRAVEL_PHRASE = {
@@ -84,13 +89,17 @@ def _places(me):
     ]
 
 
-def _deck_openings(uid):
+TODAY_HOURS = 48  # "I'm free today": shifts starting this soon
+
+
+def _deck_openings(uid, today=False):
     """[(opening, active cause labels, km, (place, km, minutes) or None)] this volunteer
     could still swipe on.
 
     swipe() checks visibility with this same function, so whatever hides an opening
     from the deck (closed, past, inactive cause, a cause that is "not for me", out of
-    reach of every place) also stops a like sent by id. The place is the one quickest to
+    reach of every place, past the volunteer's horizon) also stops a like sent by id.
+    today: only shifts starting in the next TODAY_HOURS. The place is the one quickest to
     reach the opening from; it and km are None for a remote opening or when the volunteer
     has no place.
     """
@@ -101,6 +110,9 @@ def _deck_openings(uid):
     me = _db.profiles[uid]
     mine = _prefs.cause_prefs(me)
     places = _places(me)
+    start = datetime.now(LA)
+    days = TODAY_HOURS / 24 if today else _prefs.horizon_days(me)
+    until = (start + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M") if days else None
     # Only verified, active orgs the volunteer has not blocked. An org that blocked the
     # volunteer stays visible: hiding it would tell them.
     shown = {
@@ -118,7 +130,7 @@ def _deck_openings(uid):
         where_args=["open", _local_now()],
         order_by="starts_at",
     ):
-        if o.org_id not in shown:
+        if o.org_id not in shown or (until and o.starts_at > until):
             continue
         cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
         if not cause_labels or o.id in seen:
@@ -165,8 +177,9 @@ def _distance_label(km):
     return None if km is None else "< 1 km" if km < 1 else f"{round(km)} km"
 
 
-def deck(uid, limit=20):
-    """Cards for open openings with an active cause, best fit first.
+def deck(uid, limit=20, today=False):
+    """Cards for open openings with an active cause, best fit first. today ("I'm free
+    today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
 
     Cards carry the distance rounded to whole km and the estimated travel time from the
     nearest place, never coordinates.
@@ -176,18 +189,27 @@ def deck(uid, limit=20):
     rated = {s: v for s, v in _prefs.cause_prefs(me).items() if s in active}
     mine = rated, json.loads(me.skills or "[]")
     free = json.loads(me.availability or "[]")
+    dates = _prefs.free_dates(me, local_today())
+    commitment = _prefs.commitment(me)
     org_names = {o.id: o.name for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
-    for o, cause_labels, km, near in _deck_openings(uid):
+    for o, cause_labels, km, near in _deck_openings(uid, today):
+        when = _match.availability_overlap(free, o.starts_at, o.recurrence, dates)
+        if not _match.commitment_fits(commitment, o.recurrence):
+            when /= 2
         fit = _match.score(
             causes=(mine[0], set(json.loads(o.causes or "[]")) & active),
             skills=(mine[1], json.loads(o.skills or "[]")),
             distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
-            availability=_match.availability_overlap(free, o.starts_at, o.recurrence),
+            availability=when,
             reply=rates.get(o.org_id, 0.5),
         )
-        ranked.append((-round(fit, 6), o.starts_at, o.id, o, cause_labels, near))
+        if today:  # ignores fit: the soonest, then the nearest
+            key = (o.starts_at, km if km is not None else 0, o.id)
+        else:
+            key = (-round(fit, 6), o.starts_at, o.id)
+        ranked.append((*key, o, cause_labels, near))
     ranked.sort(key=lambda r: r[:3])
     return [
         {
@@ -439,7 +461,9 @@ def org_inbox(coordinator_uid):
                 "opening": r["title"],
                 "first_name": name[0] if name else "A volunteer",
                 "causes": [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
-                "availability": json.loads(r["availability"] or "[]"),
+                "availability": _match.general_buckets(
+                    json.loads(r["availability"] or "[]")
+                ),
                 "neighborhood": r["neighborhood"],
                 "frequency": r["frequency"],
                 "full": bool(r["full"]),
@@ -905,14 +929,28 @@ def preferences(uid):
     p = _db.profiles[uid]
     return {
         "causes": _prefs.cause_prefs(p),
-        "availability": json.loads(p.availability or "[]"),
+        "availability": _match.day_slots(json.loads(p.availability or "[]")),
+        "free_dates": _prefs.free_dates(p, local_today()),
+        "horizon_days": _prefs.horizon_days(p),
+        "commitment": _prefs.commitment(p),
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
         "places": _places(p),
     }
 
 
-def save_preferences(uid, *, causes, availability, skills, frequency, places):
+def save_preferences(
+    uid,
+    *,
+    causes,
+    availability,
+    skills,
+    frequency,
+    places,
+    free_dates=(),
+    horizon_days=0,
+    commitment="either",
+):
     """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
     (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
     ones. The profile's own point follows the first place."""
@@ -925,6 +963,9 @@ def save_preferences(uid, *, causes, availability, skills, frequency, places):
             cause_prefs=json.dumps(causes),
             causes=json.dumps(_prefs.picked(causes)),
             availability=json.dumps(list(availability)),
+            free_dates=json.dumps(sorted(free_dates)),
+            horizon_days=horizon_days,
+            commitment=commitment,
             skills=json.dumps(list(skills)),
             frequency=frequency,
             lat=places[0]["lat"],
@@ -1978,6 +2019,7 @@ def delete_account(uid):
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
+            "free_dates = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
             [_now(), uid],
         )

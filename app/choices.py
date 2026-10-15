@@ -12,6 +12,27 @@ AVAILABILITY = [
     ("weekend_evening", "Weekend evenings"),
 ]
 
+# The day grid: 7 days x 3 parts, stored as "mon_morning" ... "sun_evening" (21 slots).
+# AVAILABILITY above is the older weekday/weekend summary: onboarding still asks it, and the
+# nonprofit sees it (app/match.py general_buckets).
+DAYS = [
+    ("mon", "Mon"),
+    ("tue", "Tue"),
+    ("wed", "Wed"),
+    ("thu", "Thu"),
+    ("fri", "Fri"),
+    ("sat", "Sat"),
+    ("sun", "Sun"),
+]
+PARTS = [("morning", "Morning"), ("afternoon", "Afternoon"), ("evening", "Evening")]
+MAX_FREE_DATES = 10
+HORIZON = [(7, "This week"), (14, "2 weeks"), (31, "A month"), (0, "Any time")]  # days
+COMMITMENT = [
+    ("one_time", "One-time"),
+    ("recurring", "Recurring"),
+    ("either", "Either"),
+]
+
 SKILLS = [
     ("physical", "Physical work / lifting"),
     ("car", "A car, happy to drive"),
