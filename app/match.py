@@ -109,7 +109,8 @@ def availability_slot(starts_at):
 
 
 def availability_bucket(starts_at):
-    """'weekday_morning' etc.: the older, coarser summary of availability_slot."""
+    """'weekday_morning' etc.: the older, coarser summary of availability_slot. Kept for
+    compatibility (tests/test_match_unit.py); the app ranks by availability_slot."""
     day, part = availability_slot(starts_at).split("_")
     return f"{'weekend' if day in BUCKET_DAYS['weekend'] else 'weekday'}_{part}"
 

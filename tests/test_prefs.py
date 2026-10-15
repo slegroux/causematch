@@ -5,6 +5,7 @@ import importlib
 import itertools
 import json
 import random
+from datetime import datetime
 
 import apsw
 import pytest
@@ -13,6 +14,7 @@ from app import data, match
 from app.db import Opening, causes, db, now, openings, orgs, profiles
 
 cause_prefs_migration = importlib.import_module("app.migrations.0010_cause_prefs")
+day_slots_migration = importlib.import_module("app.migrations.0011_day_slots")
 
 FOOD, PARKS, ANIMALS = "food-insecurity", "environment-parks", "animal-shelters"
 SAVE = {
@@ -241,30 +243,97 @@ def test_cause_fit_values():
     assert match.cause_fit({}, set()) == 0
 
 
-def test_a_migrated_profile_keeps_its_deck_order(bare):
-    """Legacy shape (causes, no cause_prefs) → the migration → the same deck, in order."""
+# The deck as app/data.py and app/match.py ranked it at d4906d4, before preferences,
+# copied here as an oracle: jaccard causes, the radius as both gate and distance scale,
+# weekday/weekend buckets, and its weights.
+OLD_WEIGHTS = {"causes": 0.35, "skills": 0.20, "distance": 0.20, "availability": 0.15,
+               "reply": 0.10}  # fmt: skip
+
+
+def old_bucket(starts_at):
+    t = datetime.fromisoformat(starts_at)
+    part = "morning" if t.hour < 12 else "afternoon" if t.hour < 17 else "evening"
+    return f"{'weekend' if t.weekday() >= 5 else 'weekday'}_{part}"
+
+
+def old_titles(p, rows):
+    """d4906d4's _deck_openings + deck() order for profile p, no swipes, no reply history."""
+    active = {c.slug for c in causes() if c.active}
+    mine = set(json.loads(p.causes)) & active
+    ranked = []
+    for o in rows:
+        theirs = set(json.loads(o.causes)) & active
+        if not theirs:
+            continue
+        km = None
+        if not o.remote:
+            if None in (o.lat, o.lon):
+                continue
+            km = match.haversine_km(p.lat, p.lon, o.lat, o.lon)
+            if p.radius_km and p.radius_km < 60 and km > p.radius_km:
+                continue
+        union = mine | theirs
+        wanted = set(json.loads(o.skills))
+        fit = (
+            OLD_WEIGHTS["causes"] * (len(mine & theirs) / len(union) if union else 0)
+            + OLD_WEIGHTS["skills"]
+            * (len(wanted & set(json.loads(p.skills))) / len(wanted) if wanted else 0.5)
+            + OLD_WEIGHTS["distance"]
+            * (1.0 if o.remote else max(0.0, 1 - km / p.radius_km))
+            + OLD_WEIGHTS["availability"]
+            * (
+                1.0
+                if old_bucket(o.starts_at) in json.loads(p.availability)
+                else 0.5
+                if o.recurrence == "flexible"
+                else 0.0
+            )
+            + OLD_WEIGHTS["reply"] * 0.5
+        )
+        ranked.append((-round(fit, 6), o.starts_at, o.id, o.title))
+    return [t for *_, t in sorted(ranked)]
+
+
+def test_a_migrated_profile_keeps_its_deck_order(bare, monkeypatch):
+    """A profile in the d4906d4 shape ranks exactly as d4906d4 did, before and after the
+    0010/0011 migrations. The weights are pinned to d4906d4's (item 4 reweighted the deck
+    for everyone, on purpose), so this checks every term and the gate, not the weights."""
+    monkeypatch.setattr(match, "WEIGHTS", {**OLD_WEIGHTS, "work": 0, "language": 0})
     rng = random.Random(7)
     combos = [[FOOD], [PARKS], [ANIMALS], [FOOD, PARKS], [FOOD, ANIMALS]]
-    for i in range(30):
+    for i in range(60):
+        kind = rng.random()
         add(
             f"o{i}",
             cause=rng.choice(combos),
-            km=rng.uniform(0.2, 29),
-            starts_at=f"2099-01-{rng.randint(1, 28):02d}T{rng.randint(7, 20):02d}:00",
+            km=rng.uniform(0.2, 26),  # some past the 16 km radius below
+            starts_at=f"2099-01-{rng.randint(1, 28):02d}T{rng.randint(7, 21):02d}:00",
             skills=json.dumps(
                 rng.sample(["car", "admin", "physical"], rng.randint(0, 2))
             ),
+            recurrence=rng.choice(["one_time", "weekly", "flexible"]),
+            remote=kind < 0.1,
+            **({"lat": None, "lon": None} if kind < 0.05 else {}),
         )
     uid = uid_of(bare)
     profiles.update(
-        id=uid, causes=json.dumps([FOOD, ANIMALS]), cause_prefs=None, skills='["car"]'
+        id=uid,
+        causes=json.dumps([FOOD, ANIMALS]),
+        cause_prefs=None,
+        availability='["weekend_morning", "weekday_evening"]',
+        skills='["car"]',
+        radius_km=16,
     )
-    before = titles(bare)
-    assert len(before) == 30
+    want = old_titles(profiles[uid], openings(where="status = 'open'"))
+    assert 30 < len(want) < 60  # the gate hides some, remote ones are kept
+    assert titles(bare) == want  # read in the legacy shape
     with db.conn:
         cause_prefs_migration.up(db.conn)
-    assert json.loads(profiles[uid].cause_prefs) == {FOOD: "love", ANIMALS: "love"}
-    assert titles(bare) == before
+        day_slots_migration.up(db.conn)
+    p = profiles[uid]
+    assert json.loads(p.cause_prefs) == {FOOD: "love", ANIMALS: "love"}
+    assert "sat_morning" in json.loads(p.availability)
+    assert titles(bare) == want  # and migrated
 
 
 def test_the_migration_adds_the_column_to_an_old_table(tmp_path):

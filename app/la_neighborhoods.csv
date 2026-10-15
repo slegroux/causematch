@@ -1,360 +1,361 @@
 # Los Angeles County Countywide Statistical Areas (CSAs), with a centroid each.
 # Source: County of Los Angeles eGIS, https://public.gis.lacounty.gov/public/rest/services/LACounty_Dynamic/Political_Boundaries/MapServer/23
 # License: eGIS Terms of Use, https://egis-lacounty.hub.arcgis.com/pages/terms-of-use (copy, publish, adapt; no endorsement)
+# Fetched 2026-10-15: 355 land areas (the layer is live and unversioned)
 # Regenerate with scripts/build_la_neighborhoods.py
 name,lat,lon
-"Acton",34.4814,-118.2161
-"Adams-Normandie",34.0291,-118.3024
-"Agoura Hills",34.1510,-118.7609
-"Agua Dulce",34.4979,-118.3239
-"Alhambra",34.0840,-118.1355
-"Alsace",34.0296,-118.3625
-"Altadena",34.1935,-118.1357
-"Anaverde",34.5357,-118.1339
-"Angeles National Forest (Los Angeles)",34.2752,-118.2790
-"Angeles National Forest (unincorporated)",34.3236,-118.0008
-"Angelino Heights",34.0681,-118.2519
-"Arcadia",34.1342,-118.0373
-"Arcadia (unincorporated)",34.1080,-118.0172
-"Arleta",34.2415,-118.4317
-"Artesia",33.8676,-118.0807
-"Athens Village",33.9198,-118.2737
-"Athens-Westmont",33.9340,-118.3025
-"Atwater Village",34.1196,-118.2584
-"Avalon",33.3342,-118.3313
-"Avocado Heights",34.0409,-117.9911
-"Azusa",34.1386,-117.9124
-"Azusa (unincorporated)",34.1232,-117.8971
-"Baldwin Hills",34.0148,-118.3561
-"Baldwin Park",34.0828,-117.9722
-"Bandini Islands",34.0066,-118.2059
-"Bassett",34.0571,-117.9774
-"Bel Air",34.0987,-118.4604
-"Bell",33.9800,-118.1797
-"Bell Gardens",33.9663,-118.1549
-"Bellflower",33.8880,-118.1271
-"Beverly Crest",34.1130,-118.4244
-"Beverly Hills",34.0785,-118.4021
-"Beverlywood",34.0449,-118.3944
-"Bouquet Canyon",34.5955,-118.3634
-"Boyle Heights",34.0382,-118.2053
-"Bradbury",34.1535,-117.9684
-"Brentwood",34.0851,-118.4858
-"Brookside",34.0589,-118.3364
-"Burbank",34.1879,-118.3235
-"Cadillac-Corning",34.0426,-118.3818
-"Calabasas",34.1378,-118.6686
-"Canoga Park",34.2081,-118.6009
-"Canyon Country",34.4549,-118.4342
-"Carson",33.8374,-118.2559
-"Carthay",34.0713,-118.3729
-"Castaic",34.6111,-118.6288
-"Central",34.0165,-118.2581
-"Century City",34.0527,-118.4194
-"Century Palms/Cove",33.9327,-118.2679
-"Cerritos",33.8678,-118.0685
-"Cerritos (unincorporated)",33.8795,-118.0934
-"Chatsworth",34.2566,-118.5961
-"Cheviot Hills",34.0413,-118.4088
-"Chinatown",34.0615,-118.2410
-"Claremont",34.1260,-117.7154
-"Claremont (unincorporated)",34.1520,-117.7090
-"Cloverdale/Cochran",34.0389,-118.3561
-"Commerce",33.9964,-118.1520
-"Compton",33.8930,-118.2275
-"Country Club Park",34.0543,-118.3256
-"Covina",34.0903,-117.8818
-"Covina (Charter Oak)",34.1007,-117.8652
-"Covina (unincorporated)",34.0756,-117.8758
-"Crenshaw District",34.0231,-118.3359
-"Crestview",34.0497,-118.3787
-"Cudahy",33.9631,-118.1829
-"Culver City",34.0057,-118.3969
-"Del Aire",33.9228,-118.3723
-"Del Rey (Los Angeles)",33.9898,-118.4242
-"Del Rey (unincorporated)",33.9825,-118.4123
-"Del Sur",34.7643,-118.2841
-"Desert View Highlands",34.5902,-118.1535
-"Diamond Bar",33.9991,-117.8162
-"Downey",33.9378,-118.1311
-"Downtown",34.0447,-118.2577
-"Duarte",34.1609,-117.9506
-"Duarte (unincorporated)",34.1241,-117.9934
-"Eagle Rock",34.1353,-118.2052
-"East Covina",34.0881,-117.8353
-"East Hollywood",34.0922,-118.2926
-"East Lancaster",34.6676,-117.9961
-"East Los Angeles",34.0327,-118.1692
-"East Pasadena",34.1377,-118.0775
-"East Rancho Dominguez",33.8948,-118.1956
-"East Whittier",33.9244,-117.9888
-"Echo Park",34.0821,-118.2550
-"El Camino Village",33.8884,-118.3350
-"El Monte",34.0740,-118.0291
-"El Monte (unincorporated)",34.0634,-118.0605
-"El Segundo",33.9167,-118.4020
-"El Sereno",34.0811,-118.1776
-"Elizabeth Lake",34.6745,-118.3870
-"Elysian Park",34.0783,-118.2404
-"Elysian Valley",34.0928,-118.2378
-"Encino",34.1559,-118.5017
-"Exposition",34.0267,-118.3498
-"Exposition Park",34.0186,-118.2979
-"Faircrest Heights",34.0388,-118.3717
-"Figueroa Park Square",33.9324,-118.2867
-"Florence-Firestone (Los Angeles)",33.9749,-118.2674
-"Florence-Firestone (unincorporated)",33.9681,-118.2446
-"Franklin Canyon",34.1080,-118.4139
-"Gardena",33.8944,-118.3073
-"Glassell Park",34.1183,-118.2316
-"Glendale",34.1820,-118.2468
-"Glendora",34.1449,-117.8468
-"Glendora (unincorporated)",34.1553,-117.8490
-"Gramercy Place",33.9513,-118.3094
-"Granada Hills",34.2910,-118.5042
-"Green Meadows",33.9507,-118.2632
-"Hacienda Heights",34.0001,-117.9783
-"Hancock Park",34.0698,-118.3289
-"Harbor City",33.7820,-118.2965
-"Harbor Gateway (Los Angeles)",33.8667,-118.2946
-"Harbor Gateway (unincorporated)",33.8527,-118.2981
-"Harbor Pines",33.7826,-118.3047
-"Harvard Heights",34.0436,-118.3046
-"Harvard Park",33.9819,-118.2980
-"Hawaiian Gardens",33.8303,-118.0728
-"Hawthorne",33.9147,-118.3477
-"Hawthorne (unincorporated)",33.9110,-118.3305
-"Hermosa Beach",33.8652,-118.3966
-"Hi Vista",34.6894,-117.7551
-"Hidden Hills",34.1637,-118.6611
-"Highland Park",34.1122,-118.1872
-"Historic Filipinotown",34.0702,-118.2711
-"Hollywood",34.1003,-118.3540
-"Hollywood Hills",34.1205,-118.3464
-"Huntington Park",33.9800,-118.2167
-"Hyde Park",33.9831,-118.3280
-"Industry",34.0174,-117.9266
-"Inglewood",33.9566,-118.3445
-"Irwindale",34.1121,-117.9637
-"Jefferson Park",34.0244,-118.3228
-"Kagel/Lopez Canyons",34.3103,-118.3700
-"Kinneloa Mesa",34.1809,-118.0865
-"Koreatown",34.0546,-118.3043
-"La Canada Flintridge",34.2096,-118.2001
-"La Crescenta-Montrose",34.2322,-118.2353
-"La Habra Heights",33.9602,-117.9510
-"La Habra Heights (unincorporated)",33.9479,-117.9593
-"La Mirada",33.9025,-118.0093
-"La Puente",34.0323,-117.9534
-"La Rambla",33.7402,-118.3023
-"La Verne",34.1207,-117.7702
-"La Verne (unincorporated)",34.1444,-117.7464
-"Ladera Heights",33.9971,-118.3741
-"Lafayette Square",34.0433,-118.3349
-"Lake Balboa",34.1990,-118.4982
-"Lake Hughes",34.6620,-118.4291
-"Lake Los Angeles",34.6210,-117.8707
-"Lake Manor",34.2383,-118.6518
-"Lakeview Terrace",34.2747,-118.3739
-"Lakewood",33.8471,-118.1221
-"Lakewood (unincorporated)",33.8410,-118.0598
-"Lancaster",34.7018,-118.1739
-"Lawndale",33.8885,-118.3532
-"Leimert Park",34.0061,-118.3246
-"Lennox",33.9380,-118.3586
-"Leona Valley",34.6256,-118.3068
-"Lincoln Heights",34.0811,-118.2054
-"Little Armenia",34.0945,-118.3049
-"Little Bangladesh",34.0654,-118.3004
-"Little Tokyo",34.0470,-118.2417
-"Littlerock",34.5311,-117.9781
-"Littlerock/Juniper Hills",34.4635,-117.9193
-"Littlerock/Pearblossom",34.5344,-117.8978
-"Llano",34.4913,-117.7449
-"Lomita",33.7933,-118.3175
-"Long Beach",33.8276,-118.1122
-"Long Beach - Bixby Knolls",33.8328,-118.1866
-"Long Beach - Central",33.7893,-118.1791
-"Long Beach - Downtown",33.7722,-118.1933
-"Long Beach - Eastside",33.8093,-118.1207
-"Long Beach - Harbor Industrial",33.7616,-118.2157
-"Long Beach - Midshore",33.7721,-118.1674
-"Long Beach - North Long Beach",33.8653,-118.1805
-"Long Beach - Southeast",33.7657,-118.1257
-"Long Beach - Westside",33.8077,-118.2147
-"Long Beach - Wrigley",33.8053,-118.1961
-"Longwood",34.0362,-118.3437
-"Los Feliz",34.1317,-118.2996
-"Lynwood",33.9240,-118.2017
-"Lynwood (unincorporated)",33.9245,-118.1765
-"Malibu",34.0368,-118.7839
-"Manchester Square",33.9673,-118.3112
-"Mandeville Canyon",34.0918,-118.5086
-"Manhattan Beach",33.8894,-118.3973
-"Mar Vista",34.0133,-118.4370
-"Marina del Rey",33.9766,-118.4478
-"Marina Peninsula",33.9725,-118.4606
-"Maywood",33.9886,-118.1877
-"Melrose",34.0828,-118.3345
-"Mid-city",34.0494,-118.3542
-"Miracle Mile (Los Angeles)",34.0594,-118.3534
-"Miracle Mile (unincorporated)",34.0759,-118.3579
-"Mission Hills",34.2670,-118.4575
-"Monrovia",34.1650,-117.9921
-"Monrovia (unincorporated)",34.1230,-118.0033
-"Montebello",34.0155,-118.1108
-"Monterey Park",34.0497,-118.1326
-"Mt. Washington",34.0995,-118.2164
-"Newhall",34.3470,-118.5265
-"North Hills",34.2387,-118.4782
-"North Hollywood",34.1900,-118.3907
-"North Lancaster",34.7638,-118.1353
-"North Whittier",34.0360,-118.0071
-"Northeast San Gabriel",34.1154,-118.0793
-"Northridge",34.2373,-118.5285
-"Norwalk",33.9069,-118.0829
-"Pacific Palisades",34.0462,-118.5315
-"Pacoima",34.2657,-118.4167
-"Padua Hills",34.1443,-117.7037
-"Palisades Highlands",34.0900,-118.5488
-"Palmdale",34.5944,-118.1056
-"Palmdale (unincorporated)",34.6142,-118.0157
-"Palms",34.0238,-118.4128
-"Palos Verdes Estates",33.7872,-118.3975
-"Palos Verdes Peninsula",33.7836,-118.3446
-"Panorama City",34.2244,-118.4445
-"Paramount",33.8977,-118.1652
-"Park La Brea",34.0697,-118.3556
-"Pasadena",34.1597,-118.1388
-"Pearblossom/Llano",34.4942,-117.8991
-"Pellissier Village",34.0354,-118.0302
-"Pico Rivera",33.9902,-118.0888
-"Pico-Union",34.0457,-118.2804
-"Placerita Canyon",34.3823,-118.4713
-"Playa Del Rey",33.9610,-118.4465
-"Playa Vista",33.9795,-118.4145
-"Pomona",34.0585,-117.7626
-"Pomona (unincorporated)",34.0565,-117.8207
-"Porter Ranch",34.2797,-118.5570
-"Quartz Hill",34.6525,-118.2186
-"Rancho Dominguez",33.8583,-118.2185
-"Rancho Palos Verdes",33.7553,-118.3636
-"Rancho Park",34.0365,-118.4291
-"Redondo Beach",33.8572,-118.3767
-"Regent Square",34.0327,-118.3832
-"Reseda",34.1989,-118.5385
-"Reseda Ranch",34.2150,-118.5526
-"Reynier Village",34.0363,-118.3870
-"Rolling Hills",33.7600,-118.3471
-"Rolling Hills Estates",33.7783,-118.3509
-"Roosevelt",34.7333,-117.9617
-"Rosemead",34.0689,-118.0823
-"Rosewood",33.9046,-118.2498
-"Rosewood/East Gardena",33.8935,-118.2749
-"Rosewood/West Rancho Dominguez",33.8985,-118.2611
-"Rowland Heights",33.9674,-117.8717
-"San Clemente Island",32.9001,-118.4853
-"San Dimas",34.1082,-117.8090
-"San Fernando",34.2886,-118.4362
-"San Francisquito Canyon/Bouquet Canyon",34.5323,-118.4341
-"San Gabriel",34.0948,-118.0991
-"San Jose Hills",34.0123,-117.9042
-"San Marino",34.1224,-118.1133
-"San Pasqual",34.1392,-118.1026
-"San Pedro",33.7367,-118.2848
-"Sand Canyon",34.4002,-118.4026
-"Santa Catalina Island",33.3839,-118.4372
-"Santa Clarita",34.4199,-118.4989
-"Santa Fe Springs",33.9330,-118.0625
-"Santa Monica",34.0230,-118.4819
-"Santa Monica Mountains",34.0876,-118.7411
-"Saugus",34.4775,-118.4790
-"Saugus/Canyon Country",34.4779,-118.4304
-"Shadow Hills",34.2544,-118.3596
-"Sherman Oaks",34.1524,-118.4391
-"Sierra Madre",34.1687,-118.0504
-"Signal Hill",33.8030,-118.1683
-"Silverlake",34.0957,-118.2702
-"South Antelope Valley",34.4990,-118.0841
-"South Carthay",34.0569,-118.3749
-"South Edwards",34.7959,-117.9543
-"South El Monte",34.0494,-118.0483
-"South El Monte (unincorporated)",34.0420,-118.0270
-"South Gate",33.9448,-118.1926
-"South Park",33.9997,-118.2743
-"South Pasadena",34.1102,-118.1573
-"South San Gabriel",34.0476,-118.0881
-"South Whittier",33.9336,-118.0312
-"Southeast Antelope Valley",34.5265,-118.0325
-"St Elmo Village",34.0429,-118.3423
-"Stevenson Ranch",34.3649,-118.6015
-"Studio City",34.1374,-118.3892
-"Sun Valley",34.2275,-118.3554
-"Sun Village",34.5727,-117.9379
-"Sunland",34.2550,-118.3293
-"Sunrise Village",34.0103,-118.0605
-"Sycamore Square",34.0581,-118.3437
-"Sylmar",34.3132,-118.4473
-"Tarzana",34.1571,-118.5491
-"Temple City",34.1022,-118.0580
-"Temple-Beaudry",34.0698,-118.2679
-"Thai Town",34.1020,-118.3044
-"Toluca Lake",34.1505,-118.3577
-"Toluca Terrace",34.1667,-118.3585
-"Toluca Woods",34.1597,-118.3576
-"Torrance",33.8346,-118.3416
-"Tujunga",34.2512,-118.2885
-"Twin Lakes/Oat Mountain",34.3141,-118.6107
-"Universal City",34.1386,-118.3518
-"University Hills",34.0680,-118.1684
-"University Park",34.0279,-118.2788
-"Val Verde",34.4441,-118.6734
-"Valencia",34.4145,-118.6255
-"Valinda",34.0400,-117.9301
-"Valley Glen",34.1825,-118.4266
-"Valley Village",34.1635,-118.3952
-"Van Nuys",34.2010,-118.4628
-"Venice",33.9938,-118.4622
-"Vermont Knolls",33.9683,-118.2948
-"Vermont Square",33.9994,-118.2981
-"Vermont Vista",33.9544,-118.2821
-"Vernon",34.0019,-118.2106
-"Vernon Central",34.0004,-118.2515
-"Victoria Park",34.0441,-118.3246
-"View Heights",33.9850,-118.3482
-"View Park/Windsor Hills",33.9956,-118.3484
-"Walnut",34.0335,-117.8594
-"Walnut (unincorporated)",34.0160,-117.8461
-"Walnut Park",33.9683,-118.2220
-"Watts",33.9404,-118.2412
-"Wellington Square",34.0358,-118.3336
-"West Adams",34.0356,-118.3079
-"West Antelope Valley",34.7604,-118.5808
-"West Carson",33.8251,-118.2927
-"West Chatsworth",34.2249,-118.6601
-"West Covina",34.0554,-117.9113
-"West Hills",34.2115,-118.6361
-"West Hollywood",34.0883,-118.3717
-"West LA",34.0573,-118.4569
-"West Los Angeles",34.0408,-118.4504
-"West Puente Valley",34.0436,-117.9588
-"West Rancho Dominguez",33.8903,-118.2629
-"West Vernon",34.0002,-118.3002
-"West Whittier/Los Nietos",33.9759,-118.0693
-"Westchester",33.9522,-118.4062
-"Westfield/Academy Hills",33.7763,-118.3569
-"Westhills",34.1927,-118.6621
-"Westlake",34.0571,-118.2722
-"Westlake Village",34.1369,-118.8220
-"Westwood",34.0659,-118.4381
-"White Fence Farms",34.6256,-118.1714
-"Whittier",33.9680,-118.0192
-"Whittier (unincorporated)",34.0036,-118.0258
-"Whittier Narrows",34.0337,-118.0619
-"Wholesale District",34.0416,-118.2330
-"Willowbrook",33.9166,-118.2515
-"Wilmington",33.7859,-118.2533
-"Wilshire Center",34.0685,-118.2954
-"Winnetka",34.2132,-118.5760
-"Wiseburn",33.9095,-118.3657
-"Woodland Hills",34.1664,-118.6045
+Acton,34.4814,-118.2161
+Adams-Normandie,34.0291,-118.3024
+Agoura Hills,34.1510,-118.7609
+Agua Dulce,34.4979,-118.3239
+Alhambra,34.0840,-118.1355
+Alsace,34.0296,-118.3625
+Altadena,34.1935,-118.1357
+Anaverde,34.5357,-118.1339
+Angeles National Forest (Los Angeles),34.2752,-118.2790
+Angeles National Forest (unincorporated),34.3236,-118.0008
+Angelino Heights,34.0681,-118.2519
+Arcadia,34.1342,-118.0373
+Arcadia (unincorporated),34.1080,-118.0172
+Arleta,34.2415,-118.4317
+Artesia,33.8676,-118.0807
+Athens Village,33.9198,-118.2737
+Athens-Westmont,33.9340,-118.3025
+Atwater Village,34.1196,-118.2584
+Avalon,33.3342,-118.3313
+Avocado Heights,34.0409,-117.9911
+Azusa,34.1386,-117.9124
+Azusa (unincorporated),34.1232,-117.8971
+Baldwin Hills,34.0148,-118.3561
+Baldwin Park,34.0828,-117.9722
+Bandini Islands,34.0066,-118.2059
+Bassett,34.0571,-117.9774
+Bel Air,34.0987,-118.4604
+Bell,33.9800,-118.1797
+Bell Gardens,33.9663,-118.1549
+Bellflower,33.8880,-118.1271
+Beverly Crest,34.1130,-118.4244
+Beverly Hills,34.0785,-118.4021
+Beverlywood,34.0449,-118.3944
+Bouquet Canyon,34.5955,-118.3634
+Boyle Heights,34.0382,-118.2053
+Bradbury,34.1535,-117.9684
+Brentwood,34.0851,-118.4858
+Brookside,34.0589,-118.3364
+Burbank,34.1879,-118.3235
+Cadillac-Corning,34.0426,-118.3818
+Calabasas,34.1378,-118.6686
+Canoga Park,34.2081,-118.6009
+Canyon Country,34.4549,-118.4342
+Carson,33.8374,-118.2559
+Carthay,34.0713,-118.3729
+Castaic,34.6111,-118.6288
+Central,34.0165,-118.2581
+Century City,34.0527,-118.4194
+Century Palms/Cove,33.9327,-118.2679
+Cerritos,33.8678,-118.0685
+Cerritos (unincorporated),33.8795,-118.0934
+Chatsworth,34.2566,-118.5961
+Cheviot Hills,34.0413,-118.4088
+Chinatown,34.0615,-118.2410
+Claremont,34.1260,-117.7154
+Claremont (unincorporated),34.1520,-117.7090
+Cloverdale/Cochran,34.0389,-118.3561
+Commerce,33.9964,-118.1520
+Compton,33.8930,-118.2275
+Country Club Park,34.0543,-118.3256
+Covina,34.0903,-117.8818
+Covina (Charter Oak),34.1007,-117.8652
+Covina (unincorporated),34.0756,-117.8758
+Crenshaw District,34.0231,-118.3359
+Crestview,34.0497,-118.3787
+Cudahy,33.9631,-118.1829
+Culver City,34.0057,-118.3969
+Del Aire,33.9228,-118.3723
+Del Rey (Los Angeles),33.9898,-118.4242
+Del Rey (unincorporated),33.9825,-118.4123
+Del Sur,34.7643,-118.2841
+Desert View Highlands,34.5902,-118.1535
+Diamond Bar,33.9991,-117.8162
+Downey,33.9378,-118.1311
+Downtown,34.0447,-118.2577
+Duarte,34.1609,-117.9506
+Duarte (unincorporated),34.1241,-117.9934
+Eagle Rock,34.1353,-118.2052
+East Covina,34.0881,-117.8353
+East Hollywood,34.0922,-118.2926
+East Lancaster,34.6676,-117.9961
+East Los Angeles,34.0327,-118.1692
+East Pasadena,34.1377,-118.0775
+East Rancho Dominguez,33.8948,-118.1956
+East Whittier,33.9244,-117.9888
+Echo Park,34.0821,-118.2550
+El Camino Village,33.8884,-118.3350
+El Monte,34.0740,-118.0291
+El Monte (unincorporated),34.0634,-118.0605
+El Segundo,33.9167,-118.4020
+El Sereno,34.0811,-118.1776
+Elizabeth Lake,34.6745,-118.3870
+Elysian Park,34.0783,-118.2404
+Elysian Valley,34.0928,-118.2378
+Encino,34.1559,-118.5017
+Exposition,34.0267,-118.3498
+Exposition Park,34.0186,-118.2979
+Faircrest Heights,34.0388,-118.3717
+Figueroa Park Square,33.9324,-118.2867
+Florence-Firestone (Los Angeles),33.9749,-118.2674
+Florence-Firestone (unincorporated),33.9681,-118.2446
+Franklin Canyon,34.1080,-118.4139
+Gardena,33.8944,-118.3073
+Glassell Park,34.1183,-118.2316
+Glendale,34.1820,-118.2468
+Glendora,34.1449,-117.8468
+Glendora (unincorporated),34.1553,-117.8490
+Gramercy Place,33.9513,-118.3094
+Granada Hills,34.2910,-118.5042
+Green Meadows,33.9507,-118.2632
+Hacienda Heights,34.0001,-117.9783
+Hancock Park,34.0698,-118.3289
+Harbor City,33.7820,-118.2965
+Harbor Gateway (Los Angeles),33.8667,-118.2946
+Harbor Gateway (unincorporated),33.8527,-118.2981
+Harbor Pines,33.7826,-118.3047
+Harvard Heights,34.0436,-118.3046
+Harvard Park,33.9819,-118.2980
+Hawaiian Gardens,33.8303,-118.0728
+Hawthorne,33.9147,-118.3477
+Hawthorne (unincorporated),33.9110,-118.3305
+Hermosa Beach,33.8652,-118.3966
+Hi Vista,34.6894,-117.7551
+Hidden Hills,34.1637,-118.6611
+Highland Park,34.1122,-118.1872
+Historic Filipinotown,34.0702,-118.2711
+Hollywood,34.1003,-118.3540
+Hollywood Hills,34.1205,-118.3464
+Huntington Park,33.9800,-118.2167
+Hyde Park,33.9831,-118.3280
+Industry,34.0174,-117.9266
+Inglewood,33.9566,-118.3445
+Irwindale,34.1121,-117.9637
+Jefferson Park,34.0244,-118.3228
+Kagel/Lopez Canyons,34.3103,-118.3700
+Kinneloa Mesa,34.1809,-118.0865
+Koreatown,34.0546,-118.3043
+La Canada Flintridge,34.2096,-118.2001
+La Crescenta-Montrose,34.2322,-118.2353
+La Habra Heights,33.9602,-117.9510
+La Habra Heights (unincorporated),33.9479,-117.9593
+La Mirada,33.9025,-118.0093
+La Puente,34.0323,-117.9534
+La Rambla,33.7402,-118.3023
+La Verne,34.1207,-117.7702
+La Verne (unincorporated),34.1444,-117.7464
+Ladera Heights,33.9971,-118.3741
+Lafayette Square,34.0433,-118.3349
+Lake Balboa,34.1990,-118.4982
+Lake Hughes,34.6620,-118.4291
+Lake Los Angeles,34.6210,-117.8707
+Lake Manor,34.2383,-118.6518
+Lakeview Terrace,34.2747,-118.3739
+Lakewood,33.8471,-118.1221
+Lakewood (unincorporated),33.8410,-118.0598
+Lancaster,34.7018,-118.1739
+Lawndale,33.8885,-118.3532
+Leimert Park,34.0061,-118.3246
+Lennox,33.9380,-118.3586
+Leona Valley,34.6256,-118.3068
+Lincoln Heights,34.0811,-118.2054
+Little Armenia,34.0945,-118.3049
+Little Bangladesh,34.0654,-118.3004
+Little Tokyo,34.0470,-118.2417
+Littlerock,34.5311,-117.9781
+Littlerock/Juniper Hills,34.4635,-117.9193
+Littlerock/Pearblossom,34.5344,-117.8978
+Llano,34.4913,-117.7449
+Lomita,33.7933,-118.3175
+Long Beach,33.8276,-118.1122
+Long Beach - Bixby Knolls,33.8328,-118.1866
+Long Beach - Central,33.7893,-118.1791
+Long Beach - Downtown,33.7722,-118.1933
+Long Beach - Eastside,33.8093,-118.1207
+Long Beach - Harbor Industrial,33.7616,-118.2157
+Long Beach - Midshore,33.7721,-118.1674
+Long Beach - North Long Beach,33.8653,-118.1805
+Long Beach - Southeast,33.7657,-118.1257
+Long Beach - Westside,33.8077,-118.2147
+Long Beach - Wrigley,33.8053,-118.1961
+Longwood,34.0362,-118.3437
+Los Feliz,34.1317,-118.2996
+Lynwood,33.9240,-118.2017
+Lynwood (unincorporated),33.9245,-118.1765
+Malibu,34.0368,-118.7839
+Manchester Square,33.9673,-118.3112
+Mandeville Canyon,34.0918,-118.5086
+Manhattan Beach,33.8894,-118.3973
+Mar Vista,34.0133,-118.4370
+Marina del Rey,33.9766,-118.4478
+Marina Peninsula,33.9725,-118.4606
+Maywood,33.9886,-118.1877
+Melrose,34.0828,-118.3345
+Mid-city,34.0494,-118.3542
+Miracle Mile (Los Angeles),34.0594,-118.3534
+Miracle Mile (unincorporated),34.0759,-118.3579
+Mission Hills,34.2670,-118.4575
+Monrovia,34.1650,-117.9921
+Monrovia (unincorporated),34.1230,-118.0033
+Montebello,34.0155,-118.1108
+Monterey Park,34.0497,-118.1326
+Mt. Washington,34.0995,-118.2164
+Newhall,34.3470,-118.5265
+North Hills,34.2387,-118.4782
+North Hollywood,34.1900,-118.3907
+North Lancaster,34.7638,-118.1353
+North Whittier,34.0360,-118.0071
+Northeast San Gabriel,34.1154,-118.0793
+Northridge,34.2373,-118.5285
+Norwalk,33.9069,-118.0829
+Pacific Palisades,34.0462,-118.5315
+Pacoima,34.2657,-118.4167
+Padua Hills,34.1443,-117.7037
+Palisades Highlands,34.0900,-118.5488
+Palmdale,34.5944,-118.1056
+Palmdale (unincorporated),34.6142,-118.0157
+Palms,34.0238,-118.4128
+Palos Verdes Estates,33.7872,-118.3975
+Palos Verdes Peninsula,33.7836,-118.3446
+Panorama City,34.2244,-118.4445
+Paramount,33.8977,-118.1652
+Park La Brea,34.0697,-118.3556
+Pasadena,34.1597,-118.1388
+Pearblossom/Llano,34.4942,-117.8991
+Pellissier Village,34.0354,-118.0302
+Pico Rivera,33.9902,-118.0888
+Pico-Union,34.0457,-118.2804
+Placerita Canyon,34.3823,-118.4713
+Playa Del Rey,33.9610,-118.4465
+Playa Vista,33.9795,-118.4145
+Pomona,34.0585,-117.7626
+Pomona (unincorporated),34.0565,-117.8207
+Porter Ranch,34.2797,-118.5570
+Quartz Hill,34.6525,-118.2186
+Rancho Dominguez,33.8583,-118.2185
+Rancho Palos Verdes,33.7553,-118.3636
+Rancho Park,34.0365,-118.4291
+Redondo Beach,33.8572,-118.3767
+Regent Square,34.0327,-118.3832
+Reseda,34.1989,-118.5385
+Reseda Ranch,34.2150,-118.5526
+Reynier Village,34.0363,-118.3870
+Rolling Hills,33.7600,-118.3471
+Rolling Hills Estates,33.7783,-118.3509
+Roosevelt,34.7333,-117.9617
+Rosemead,34.0689,-118.0823
+Rosewood,33.9046,-118.2498
+Rosewood/East Gardena,33.8935,-118.2749
+Rosewood/West Rancho Dominguez,33.8985,-118.2611
+Rowland Heights,33.9674,-117.8717
+San Clemente Island,32.9001,-118.4853
+San Dimas,34.1082,-117.8090
+San Fernando,34.2886,-118.4362
+San Francisquito Canyon/Bouquet Canyon,34.5323,-118.4341
+San Gabriel,34.0948,-118.0991
+San Jose Hills,34.0123,-117.9042
+San Marino,34.1224,-118.1133
+San Pasqual,34.1392,-118.1026
+San Pedro,33.7367,-118.2848
+Sand Canyon,34.4002,-118.4026
+Santa Catalina Island,33.3839,-118.4372
+Santa Clarita,34.4199,-118.4989
+Santa Fe Springs,33.9330,-118.0625
+Santa Monica,34.0230,-118.4819
+Santa Monica Mountains,34.0876,-118.7411
+Saugus,34.4775,-118.4790
+Saugus/Canyon Country,34.4779,-118.4304
+Shadow Hills,34.2544,-118.3596
+Sherman Oaks,34.1524,-118.4391
+Sierra Madre,34.1687,-118.0504
+Signal Hill,33.8030,-118.1683
+Silverlake,34.0957,-118.2702
+South Antelope Valley,34.4990,-118.0841
+South Carthay,34.0569,-118.3749
+South Edwards,34.7959,-117.9543
+South El Monte,34.0494,-118.0483
+South El Monte (unincorporated),34.0420,-118.0270
+South Gate,33.9448,-118.1926
+South Park,33.9997,-118.2743
+South Pasadena,34.1102,-118.1573
+South San Gabriel,34.0476,-118.0881
+South Whittier,33.9336,-118.0312
+Southeast Antelope Valley,34.5265,-118.0325
+St Elmo Village,34.0429,-118.3423
+Stevenson Ranch,34.3649,-118.6015
+Studio City,34.1374,-118.3892
+Sun Valley,34.2275,-118.3554
+Sun Village,34.5727,-117.9379
+Sunland,34.2550,-118.3293
+Sunrise Village,34.0103,-118.0605
+Sycamore Square,34.0581,-118.3437
+Sylmar,34.3132,-118.4473
+Tarzana,34.1571,-118.5491
+Temple City,34.1022,-118.0580
+Temple-Beaudry,34.0698,-118.2679
+Thai Town,34.1020,-118.3044
+Toluca Lake,34.1505,-118.3577
+Toluca Terrace,34.1667,-118.3585
+Toluca Woods,34.1597,-118.3576
+Torrance,33.8346,-118.3416
+Tujunga,34.2512,-118.2885
+Twin Lakes/Oat Mountain,34.3141,-118.6107
+Universal City,34.1386,-118.3518
+University Hills,34.0680,-118.1684
+University Park,34.0279,-118.2788
+Val Verde,34.4441,-118.6734
+Valencia,34.4145,-118.6255
+Valinda,34.0400,-117.9301
+Valley Glen,34.1825,-118.4266
+Valley Village,34.1635,-118.3952
+Van Nuys,34.2010,-118.4628
+Venice,33.9938,-118.4622
+Vermont Knolls,33.9683,-118.2948
+Vermont Square,33.9994,-118.2981
+Vermont Vista,33.9544,-118.2821
+Vernon,34.0019,-118.2106
+Vernon Central,34.0004,-118.2515
+Victoria Park,34.0441,-118.3246
+View Heights,33.9850,-118.3482
+View Park/Windsor Hills,33.9956,-118.3484
+Walnut,34.0335,-117.8594
+Walnut (unincorporated),34.0160,-117.8461
+Walnut Park,33.9683,-118.2220
+Watts,33.9404,-118.2412
+Wellington Square,34.0358,-118.3336
+West Adams,34.0356,-118.3079
+West Antelope Valley,34.7604,-118.5808
+West Carson,33.8251,-118.2927
+West Chatsworth,34.2249,-118.6601
+West Covina,34.0554,-117.9113
+West Hills,34.2115,-118.6361
+West Hollywood,34.0883,-118.3717
+West LA,34.0573,-118.4569
+West Los Angeles,34.0408,-118.4504
+West Puente Valley,34.0436,-117.9588
+West Rancho Dominguez,33.8903,-118.2629
+West Vernon,34.0002,-118.3002
+West Whittier/Los Nietos,33.9759,-118.0693
+Westchester,33.9522,-118.4062
+Westfield/Academy Hills,33.7763,-118.3569
+Westhills,34.1927,-118.6621
+Westlake,34.0571,-118.2722
+Westlake Village,34.1369,-118.8220
+Westwood,34.0659,-118.4381
+White Fence Farms,34.6256,-118.1714
+Whittier,33.9680,-118.0192
+Whittier (unincorporated),34.0036,-118.0258
+Whittier Narrows,34.0337,-118.0619
+Wholesale District,34.0416,-118.2330
+Willowbrook,33.9166,-118.2515
+Wilmington,33.7859,-118.2533
+Wilshire Center,34.0685,-118.2954
+Winnetka,34.2132,-118.5760
+Wiseburn,33.9095,-118.3657
+Woodland Hills,34.1664,-118.6045

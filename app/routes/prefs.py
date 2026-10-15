@@ -44,7 +44,7 @@ from app.choices import (
     SKILLS,
 )
 from app.forms import bad_request, query, str_form
-from app.geo import neighborhoods
+from app.geo import neighborhoods, round_point
 from app.ui import (
     BACK,
     CARD,
@@ -244,7 +244,7 @@ def FreeDates(dates):
         TextInput(
             type="date",
             id="free_date_new",
-            name="free_dates",
+            name="free_date_new",
             min=data.local_today(),
         )
         if len(dates) < MAX_FREE_DATES
@@ -548,7 +548,7 @@ def _sync_save(req, form):
             **rated,
         },
         "availability": form.getlist("availability"),
-        "free_dates": [d for d in form.getlist("free_dates") if d],
+        "free_dates": form.getlist("free_dates"),
         "horizon_days": form.get("horizon_days", "0"),
         "commitment": form.get("commitment", "either"),
         "setting": form.get("setting", "either"),
@@ -572,8 +572,17 @@ def _sync_save(req, form):
         ],
     }
     # the page shows dates as chips, so only valid ones go back into it
-    dates, date_error = prefs.parse_free_dates(f["free_dates"], data.local_today())
+    dates, date_error = prefs.parse_free_dates(
+        f["free_dates"], form.get("free_date_new", ""), data.local_today()
+    )
     f["free_dates"] = saved["free_dates"] if date_error else dates
+    # resolved from what was posted; an error page shows at most the rounded point
+    posted = [dict(pf) for pf in f["place_forms"]]
+    for pf in f["place_forms"]:
+        point = round_point(pf["lat"], pf["lon"]) if pf["lat"] or pf["lon"] else None
+        pf["lat"], pf["lon"] = (
+            (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
+        )
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
         or not set(f["availability"]) <= SLOTS
@@ -596,7 +605,7 @@ def _sync_save(req, form):
     if date_error:
         return PrefsPage(f, date_error)
     places = []
-    for i, pf in enumerate(f["place_forms"]):
+    for i, pf in enumerate(posted):
         current = saved["places"][i] if i < len(saved["places"]) else None
         place, error = prefs.resolve_place(pf, current, i)
         if error:

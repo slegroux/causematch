@@ -156,7 +156,8 @@ def _deck_openings(uid, today=False, p=None):
         cause_labels = [labels[s] for s in slugs if s in labels]
         if not cause_labels or o.id in seen:
             continue
-        if not _match.causes_allowed(p["causes"], slugs):
+        # a "not for me" of a cause that is inactive now waits for it to come back
+        if not _match.causes_allowed(p["causes"], [s for s in slugs if s in labels]):
             continue
         if "causes" in only and not any(
             p["causes"].get(s) in (_prefs.LOVE, _prefs.OPEN)
@@ -188,11 +189,6 @@ def _when_ok(p, o):
         p["availability"], o.starts_at, o.recurrence, p["free_dates"]
     )
     return free > 0 and _match.commitment_fits(p["commitment"], o.recurrence)
-
-
-def deck_count(uid, today=False):
-    """How many cards the deck holds now."""
-    return len(_deck_openings(uid, today))
 
 
 def record_empty_deck(uid, today=False):
@@ -390,12 +386,18 @@ SURPRISE_EVERY = 8  # "Surprise me": about one card in this many is from outside
 
 
 def deck(uid, limit=20, today=False):
+    """deck_and_count()'s cards."""
+    return deck_and_count(uid, limit, today)[0]
+
+
+def deck_and_count(uid, limit=20, today=False):
     """Cards for open openings with an active cause, best fit first. today ("I'm free
     today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
 
     With "Surprise me", every SURPRISE_EVERY-th card the volunteer meets (counted by their
     swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
-    distance rounded to whole km and the travel estimate, never coordinates.
+    distance rounded to whole km and the travel estimate, never coordinates. Returns
+    (cards, how many the deck holds in all).
     """
     me = _db.profiles[uid]
     p = _deck_prefs(me)
@@ -423,8 +425,8 @@ def deck(uid, limit=20, today=False):
             work=_match.work_fit(p["work"], _work_of(o)),
             language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
         )
-        if today:  # ignores fit: the soonest, then the nearest
-            key = (o.starts_at, km if km is not None else 0, o.id)
+        if today:  # ignores fit: the soonest, then the nearest; remote after in-person
+            key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
             key = (-round(fit, 6), o.starts_at, o.id)
         ranked.append((*key, o, cause_labels, slugs, near))
@@ -460,7 +462,7 @@ def deck(uid, limit=20, today=False):
                 "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd),
             }
         )
-    return cards
+    return cards, len(ranked)
 
 
 MAX_WHY = 4

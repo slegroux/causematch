@@ -17,7 +17,12 @@ def up(conn):
         "SELECT id, causes FROM profile WHERE cause_prefs IS NULL AND causes IS NOT NULL"
     ).fetchall()
     for pid, causes in rows:
-        conn.execute(
-            "UPDATE profile SET cause_prefs = ? WHERE id = ?",
-            [json.dumps({s: "love" for s in json.loads(causes)}), pid],
-        )
+        try:
+            picked = json.loads(causes)
+        except ValueError:
+            continue  # a malformed row keeps reading as it did; it must not stop startup
+        if isinstance(picked, list):
+            conn.execute(
+                "UPDATE profile SET cause_prefs = ? WHERE id = ?",
+                [json.dumps({s: "love" for s in picked}), pid],
+            )

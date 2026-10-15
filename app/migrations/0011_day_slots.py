@@ -28,6 +28,12 @@ def up(conn):
         "SELECT id, availability FROM profile WHERE availability IS NOT NULL"
     ).fetchall()
     for pid, raw in rows:
-        new = json.dumps(slots(json.loads(raw)))
+        try:
+            values = json.loads(raw)
+        except ValueError:
+            continue  # a malformed row keeps reading as it did; it must not stop startup
+        if not isinstance(values, list):
+            continue
+        new = json.dumps(slots(values))
         if new != raw:
             conn.execute("UPDATE profile SET availability = ? WHERE id = ?", [new, pid])

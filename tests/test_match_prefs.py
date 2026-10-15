@@ -7,9 +7,20 @@ from datetime import datetime, timedelta
 import pytest
 
 from app import data, geo, match
-from app.db import Opening, db, deck_empties, now, openings, orgs, places, profiles
+from app.db import (
+    Opening,
+    causes,
+    db,
+    deck_empties,
+    now,
+    openings,
+    orgs,
+    places,
+    profiles,
+)
 from app.metrics import pilot_metrics
 
+cause_prefs_migration = importlib.import_module("app.migrations.0010_cause_prefs")
 day_slots_migration = importlib.import_module("app.migrations.0011_day_slots")
 
 DOWNTOWN = geo.neighborhood_latlon("Downtown")[1]
@@ -372,8 +383,15 @@ def test_when_commitment_one_time_ranks_a_one_off_above_a_weekly(bare):
 
 def test_when_free_dates_are_future_only_and_at_most_ten(bare):
     yesterday = ahead(days=-1)[:10]
-    r = save(bare, when_form(free_dates=[yesterday]))
+    r = save(bare, when_form(free_date_new=yesterday))
     assert r.status_code == 200 and "from today on" in r.text
+    r = save(bare, when_form(free_date_new=ahead(days=400)[:10]))
+    assert r.status_code == 200 and "within the next year" in r.text
+    for odd in ("20991231", "2099-1-5", "9999-12-31"):
+        r = save(bare, when_form(free_date_new=odd))
+        assert r.status_code == 200 and ("wasn't" in r.text or "next year" in r.text), (
+            odd
+        )
     eleven = [ahead(days=i + 1)[:10] for i in range(11)]
     r = save(bare, when_form(free_dates=eleven))
     assert "Up to 10 dates" in r.text
@@ -889,3 +907,81 @@ def test_empty_deck_views_are_counted_for_the_metrics(bare):
     ]
     m = pilot_metrics(data.metrics_rows())
     assert m["empty_deck"] == {"views": 2, "volunteers": 1}
+
+
+# --- review fixes (items 1-3) ----------------------------------------------------------------
+
+
+def test_when_a_kept_date_that_passed_drops_silently_and_a_new_one_is_added(bare):
+    """A chip for a date that passed while the page was open doesn't block the save."""
+    soon = ahead(days=3)[:10]
+    r = save(bare, when_form(free_dates=[ahead(days=-1)[:10]], free_date_new=soon))
+    assert r.status_code == 303
+    assert json.loads(profiles[uid_of(bare)].free_dates) == [soon]
+
+
+def test_when_free_today_orders_by_start_not_fit(bare):
+    """Within the 48 hours the soonest shift leads even when it fits far worse."""
+    save(bare, when_form(availability=[], **{"cause_animal-shelters": "open"}))
+    later = ahead(hours=30)
+    add("sooner, poor fit", KOREATOWN, starts_at=ahead(hours=4),
+        causes=json.dumps([ANIMALS]))  # fmt: skip
+    add("later, best fit", DOWNTOWN, starts_at=later, first_timer_ok=True)
+    assert list(cards(bare)) == ["later, best fit", "sooner, poor fit"]  # by fit
+    today = [c["title"] for c in data.deck(uid_of(bare), 5, today=True)]
+    assert today == ["sooner, poor fit", "later, best fit"]
+
+
+def test_when_free_today_breaks_a_tie_by_distance_then_remote(bare):
+    save(bare, when_form())
+    t = ahead(hours=6)
+    add("remote", DOWNTOWN, starts_at=t, remote=True)
+    add("farther", KOREATOWN, starts_at=t)
+    add("nearer", DOWNTOWN, starts_at=t)
+    today = [c["title"] for c in data.deck(uid_of(bare), 5, today=True)]
+    assert today == ["nearer", "farther", "remote"]
+
+
+def test_place_an_error_page_echoes_only_a_rounded_point(bare):
+    r = save(
+        bare,
+        place_fields(1, "Home", "My location", lat="34.056789", lon="-118.234561"),
+        **{"cause_food-insecurity": "no"},  # an error after the place was read
+    )
+    assert r.status_code == 200 and "at least one cause" in r.text
+    assert "056789" not in r.text and "234561" not in r.text
+    assert 'value="34.06"' in r.text and 'value="-118.23"' in r.text
+    r = save(bare, place_fields(1, "Home", "My location", lat="40.712345", lon="-74.0"))
+    assert "isn't in Los Angeles County" in r.text and "712345" not in r.text
+
+
+def test_dealbreaker_an_inactive_not_for_me_does_not_hide_an_active_cause(bare):
+    (dead,) = [c for c in causes() if not c.active][:1]
+    save(bare, when_form())
+    profiles.update(
+        id=uid_of(bare),
+        cause_prefs=json.dumps({FOOD: "love", dead.slug: "no"}),
+    )
+    add("food and the paused cause", DOWNTOWN, causes=json.dumps([FOOD, dead.slug]))
+    assert list(cards(bare)) == ["food and the paused cause"]
+
+
+def test_migrations_skip_a_malformed_row(tmp_path):
+    import apsw
+
+    conn = apsw.Connection(str(tmp_path / "odd.db"))
+    conn.execute(
+        "CREATE TABLE profile (id INTEGER PRIMARY KEY, causes TEXT, availability TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO profile VALUES (1, 'not json', 'null'), (2, 'null', '{]'), "
+        "(3, '[\"food-insecurity\"]', '[\"weekday_morning\"]')"
+    )
+    cause_prefs_migration.up(conn)
+    day_slots_migration.up(conn)
+    rows = conn.execute(
+        "SELECT id, cause_prefs, availability FROM profile ORDER BY id"
+    ).fetchall()
+    assert rows[0] == (1, None, "null") and rows[1] == (2, None, "{]")
+    assert json.loads(rows[2][1]) == {"food-insecurity": "love"}
+    assert json.loads(rows[2][2])[0] == "mon_morning"

@@ -14,10 +14,12 @@ for commercial or personal use, without implying the County's endorsement.
 Run: uv run python scripts/build_la_neighborhoods.py
 """
 
+import csv
 import json
 import urllib.parse
 import urllib.request
 from collections import Counter
+from datetime import date
 from itertools import pairwise
 from pathlib import Path
 
@@ -83,16 +85,19 @@ def main():
         lat, lon = centroid(rings)
         rows.append((name + suffix if names[name] > 1 else name, lat, lon))
     rows.sort(key=lambda r: r[0].lower())
-    with OUT.open("w") as f:
+    with OUT.open("w", newline="") as f:
         f.write(
             "# Los Angeles County Countywide Statistical Areas (CSAs), with a centroid each.\n"
             f"# Source: County of Los Angeles eGIS, {LAYER}\n"
             f"# License: eGIS Terms of Use, {TERMS} (copy, publish, adapt; no endorsement)\n"
+            f"# Fetched {date.today().isoformat()}: {len(rows)} land areas (the layer is "
+            "live and unversioned)\n"
             "# Regenerate with scripts/build_la_neighborhoods.py\n"
-            "name,lat,lon\n"
         )
+        out = csv.writer(f, lineterminator="\n")
+        out.writerow(["name", "lat", "lon"])
         for name, lat, lon in rows:
-            f.write(f'"{name}",{lat:.4f},{lon:.4f}\n')
+            out.writerow([name, f"{lat:.4f}", f"{lon:.4f}"])
     print(f"{len(rows)} areas -> {OUT}")
 
 

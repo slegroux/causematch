@@ -5,11 +5,13 @@ the answers it already had, so its deck stays as it was until the volunteer edit
 """
 
 import json
-from datetime import date
+import re
+from datetime import date, timedelta
 
 from app.choices import DEFAULT_DEALBREAKERS, MAX_FREE_DATES, MAX_MINUTES, MODES
 from app.geo import neighborhood_latlon, round_point, zip_latlon
 
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UNRECOGNIZED = "Something in that form wasn't recognized. Please try again."
 LOVE, OPEN, NO = "love", "open", "no"
 CAUSE_STATES = [(LOVE, "Love"), (OPEN, "Open to it"), (NO, "Not for me")]
@@ -29,20 +31,26 @@ def free_dates(profile, today):
     return sorted(d for d in json.loads(profile.free_dates or "[]") if d >= today)
 
 
-def parse_free_dates(values, today):
-    """(sorted unique dates, error or None) from the form's free_dates (the kept ones and the
-    one typed in). Each must be a date from today on; at most MAX_FREE_DATES."""
-    dates = set()
-    for v in values:
-        if not v:
-            continue
-        try:
-            d = date.fromisoformat(v).isoformat()
-        except ValueError:
-            return [], UNRECOGNIZED
-        if d < today:
-            return [], "Pick a date from today on."
-        dates.add(d)
+FREE_DATES_AHEAD = 366  # days: a free date further out than a year is a typo
+
+
+def parse_free_dates(kept, new, today):
+    """(sorted unique dates, error or None) from the form: the dates kept as chips and the
+    one typed in. Kept dates that have passed since the page loaded drop silently; a new one
+    must be from today on and within FREE_DATES_AHEAD days. At most MAX_FREE_DATES."""
+    last = (date.fromisoformat(today) + timedelta(days=FREE_DATES_AHEAD)).isoformat()
+    if not all(ISO_DATE.fullmatch(d) for d in [*kept, *([new] if new else [])]):
+        return [], UNRECOGNIZED
+    try:
+        for d in [*kept, new or today]:
+            date.fromisoformat(d)
+    except ValueError:
+        return [], UNRECOGNIZED
+    if new and new < today:
+        return [], "Pick a date from today on."
+    if new and new > last:
+        return [], "Pick a date within the next year."
+    dates = {d for d in kept if today <= d <= last} | ({new} if new else set())
     if len(dates) > MAX_FREE_DATES:
         return [], f"Up to {MAX_FREE_DATES} dates: untick one to add another."
     return sorted(dates), None

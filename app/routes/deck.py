@@ -312,8 +312,8 @@ def DeckArea(uid, today=False):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet comes last, so swipe.js finds the swipe form first; it sits over the
     card's top corner."""
-    cards = data.deck(uid, limit=1, today=today)
-    sheet = FilterSheet(uid, today, data.deck_count(uid, today))
+    cards, count = data.deck_and_count(uid, limit=1, today=today)
+    sheet = FilterSheet(uid, today, count)
     if not cards:
         data.record_empty_deck(uid, today)
         relax = data.relaxations(uid, today)

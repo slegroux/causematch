@@ -49,8 +49,9 @@ def neighborhood_latlon(name):
     return _neighborhoods().get(" ".join(name.split()).casefold())
 
 
-# Los Angeles County's bounding box, with a margin: a device location outside it is refused.
-LA_BOX = (33.2, 34.9, -119.0, -117.6)  # lat min, lat max, lon min, lon max
+# Los Angeles County's bounding box, islands included (San Clemente Island reaches 32.8),
+# with a margin: a device location outside it is refused.
+LA_BOX = (32.7, 34.9, -119.0, -117.6)  # lat min, lat max, lon min, lon max
 
 
 def round_point(lat, lon):
