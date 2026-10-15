@@ -10,9 +10,11 @@ from fasthtml.common import (
     P,
     Redirect,
     Response,
+    Span,
     Textarea,
     Ul,
 )
+from fasthtml.common import Button as PlainButton
 from fasthtml.common import Form as PlainForm
 from monsterui.all import AT, Button, ButtonT, Container, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
@@ -21,7 +23,21 @@ from app import data
 from app.choices import SHARED_WITH_NONPROFIT
 from app.config import contact_email
 from app.forms import bad_request, str_form
-from app.ui import Choice, Field, Page, VolunteerNav, body_wrap
+from app.ui import (
+    CARD,
+    CLOCK,
+    NEXT,
+    SHIELD,
+    SIGN_OUT,
+    TITLE,
+    TRASH,
+    Choice,
+    Field,
+    Icon,
+    Page,
+    VolunteerNav,
+    body_wrap,
+)
 
 ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
@@ -232,28 +248,64 @@ def block_volunteer_save(req, match_id: int):
 # --- account deletion ------------------------------------------------------------------------
 
 
+def HubRow(icon, label, href=None, danger=False):
+    """One row of the Me hub: a link, or (without href) a sign-out button."""
+    cls = (
+        "flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left font-bold "
+        "hover:bg-cream " + ("text-red-700" if danger else "text-ink")
+    )
+    inner = (
+        Span(
+            Icon(icon, size=20),
+            cls="grid h-9 w-9 shrink-0 place-items-center rounded-full "
+            + ("bg-red-50" if danger else "bg-sand"),
+        ),
+        Span(label, cls="flex-1"),
+        Icon(NEXT, size=18, cls="text-ink-muted"),
+    )
+    if href:
+        return A(*inner, href=href, cls=cls)
+    return PlainForm(
+        PlainButton(*inner, type="submit", cls=cls), action="/logout", method="post"
+    )
+
+
 @ar("/profile", methods=["GET"])
 def profile_page(req):
+    name = (data.get_profile(req.scope["uid"]).display_name or "").strip()
     return Container(
         VolunteerNav("me"),
-        H1("Your profile", cls="text-2xl font-bold my-4"),
+        H1("Me", cls=TITLE),
+        Div(
+            Span(
+                (name[:1] or "?").upper(),
+                aria_hidden="true",
+                cls="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand "
+                "font-display text-2xl font-extrabold text-white",
+            ),
+            Div(
+                H2(name or "Your profile", cls="font-display text-lg font-extrabold"),
+                P(
+                    "Profile & preferences: editing them here is coming soon.",
+                    cls=TextPresets.muted_sm,
+                ),
+            ),
+            cls="flex items-center gap-4 p-4 " + CARD,
+        ),
+        Div(
+            HubRow(CLOCK, "History", "/history"),
+            HubRow(SHIELD, "Privacy policy", "/privacy"),
+            HubRow(SIGN_OUT, "Sign out"),
+            cls="mt-4 divide-y divide-line overflow-hidden " + CARD,
+        ),
+        Div(
+            HubRow(TRASH, "Delete my account", "/profile/delete", danger=True),
+            cls="mt-4 overflow-hidden " + CARD,
+        ),
         P(
             "Deleting your account removes your name, phone, email and location and "
             "withdraws your matches.",
-            cls=TextPresets.muted_sm + " mb-4",
-        ),
-        A(
-            "Delete my account",
-            href="/profile/delete",
-            cls="uk-btn " + ButtonT.destructive,
-        ),
-        P(A("Privacy policy", href="/privacy", cls=AT.muted), cls="pt-8"),
-        P(A("History", href="/history", cls=AT.muted), cls="pt-2"),
-        PlainForm(
-            Button("Sign out", cls=ButtonT.default),
-            action="/logout",
-            method="post",
-            cls="pt-4",
+            cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
         cls="max-w-md pb-8",
     )
@@ -263,19 +315,25 @@ def profile_page(req):
 def delete_confirm(req):
     return Container(
         VolunteerNav("me"),
-        H1("Delete your account?", cls="text-2xl font-bold my-4"),
-        Ul(
-            Li("Your name, phone, email and location are erased."),
-            Li("Your pending and accepted matches are withdrawn and shifts cancelled."),
-            Li('Your chat messages are replaced with "[message removed]".'),
-            Li("You are signed out everywhere. This can't be undone."),
-            cls="uk-list uk-list-disc pb-4",
-        ),
-        PlainForm(
-            Button("Delete my account", cls=ButtonT.destructive),
-            A("Keep it", href="/profile", cls=AT.muted + " ml-4"),
-            action="/profile/delete",
-            method="post",
+        H1("Delete your account?", cls=TITLE),
+        Div(
+            Ul(
+                Li("Your name, phone, email and location are erased."),
+                Li(
+                    "Your pending and accepted matches are withdrawn and shifts cancelled."
+                ),
+                Li('Your chat messages are replaced with "[message removed]".'),
+                Li("You are signed out everywhere. This can't be undone."),
+                cls="uk-list uk-list-disc",
+            ),
+            PlainForm(
+                Button("Delete my account", cls=ButtonT.destructive),
+                A("Keep it", href="/profile", cls=AT.muted + " ml-4"),
+                action="/profile/delete",
+                method="post",
+                cls="flex items-center pt-2",
+            ),
+            cls="space-y-3 p-5 " + CARD,
         ),
         cls="max-w-md pb-8",
     )

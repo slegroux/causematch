@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import H1, A, APIRouter, Div, P, Redirect, Response
+from fasthtml.common import H1, H2, A, APIRouter, Div, P, Redirect, Response, Span
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     AT,
@@ -8,10 +8,7 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
-    Card,
     Container,
-    DivFullySpaced,
-    Label,
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
@@ -19,7 +16,17 @@ from starlette.concurrency import run_in_threadpool
 from app import data, notify
 from app.forms import bad_request, query, str_form
 from app.routes.deck import DeckArea, when
-from app.ui import VolunteerNav, body_wrap
+from app.ui import (
+    CALENDAR,
+    CARD,
+    CHAT,
+    HEART,
+    TITLE,
+    Icon,
+    Pill,
+    VolunteerNav,
+    body_wrap,
+)
 
 ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
@@ -29,6 +36,12 @@ STATUS = {
     "declined": "Not this time",
     "withdrawn": "Withdrawn",
 }
+TONE = {"pending": "wait", "accepted": "good", "declined": "off", "withdrawn": "off"}
+# a small link that is still a 44 px tap target
+SMALL_LINK = (
+    "inline-flex min-h-11 items-center font-semibold text-ink-muted underline "
+    "underline-offset-4 hover:text-ink"
+)
 
 
 NOTICE = {
@@ -63,21 +76,51 @@ def _sync_swipe(req, form):
 
 
 def MatchRow(m):
-    return Card(
-        DivFullySpaced(P(m["title"], cls="font-semibold"), Label(STATUS[m["status"]])),
-        P(m["org"], cls=TextPresets.muted_sm),
-        P(f"{when(m['starts_at'])} - {m['neighborhood']}", cls=TextPresets.muted_sm),
-        A("Chat", href=f"/chat/{m['id']}", cls=AT.muted + " mr-4")
+    return Div(
+        Div(
+            Pill(STATUS[m["status"]], TONE[m["status"]]),
+            Pill("Blocked", "off") if m["blocked"] else None,
+            cls="flex flex-wrap gap-1.5",
+        ),
+        H2(m["title"], cls="font-display text-lg font-extrabold leading-snug text-ink"),
+        P(m["org"], cls="text-sm font-semibold text-ink-muted"),
+        P(
+            Icon(CALENDAR, size=16, cls="text-ink-muted"),
+            Span(f"{when(m['starts_at'])} · {m['neighborhood']}"),
+            cls="flex items-center gap-2 text-sm text-ink",
+        ),
+        A(
+            Icon(CHAT, size=18),
+            "Chat",
+            href=f"/chat/{m['id']}",
+            cls="uk-btn uk-btn-primary mt-2 w-full gap-2",
+        )
         if m["status"] == "accepted"
         else None,
-        A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=AT.muted + " mr-4")
-        if m["status"] in ("pending", "accepted")
-        else None,
-        A("Report", href=f"/matches/{m['id']}/report", cls=AT.muted + " mr-4"),
-        Label("Blocked")
-        if m["blocked"]
-        else A("Block", href=f"/matches/{m['id']}/block", cls=AT.muted),
-        cls="w-full",
+        Div(
+            A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
+            if m["status"] in ("pending", "accepted")
+            else None,
+            A("Report", href=f"/matches/{m['id']}/report", cls=SMALL_LINK),
+            None
+            if m["blocked"]
+            else A("Block", href=f"/matches/{m['id']}/block", cls=SMALL_LINK),
+            cls="mt-1 flex flex-wrap gap-x-5 border-t border-line pt-1 text-sm",
+        ),
+        cls="w-full space-y-1.5 p-4 " + CARD,
+    )
+
+
+def NoMatches():
+    return Div(
+        Span(
+            Icon(HEART, size=28),
+            cls="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-soft "
+            "text-brand",
+        ),
+        P("No matches yet. Like an opening to start one.", cls="text-ink-muted"),
+        A("Find openings", href="/deck", cls="uk-btn uk-btn-primary px-6"),
+        cls="space-y-3 px-6 py-10 text-center " + CARD,
     )
 
 
@@ -87,14 +130,14 @@ def matches_page(req):
     notice = query(req, "notice")
     return Container(
         VolunteerNav("matches"),
-        H1("Your matches", cls="text-2xl font-bold my-4"),
-        Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
-        A("History", href="/history", cls=AT.muted + " block pb-4"),
         Div(
-            *(
-                [MatchRow(m) for m in rows]
-                or [P("No matches yet. Like an opening to start one.")]
-            ),
+            H1("Your matches", cls=TITLE),
+            A("History", href="/history", cls=SMALL_LINK + " text-sm"),
+            cls="flex items-center justify-between gap-4",
+        ),
+        Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
+        Div(
+            *([MatchRow(m) for m in rows] or [NoMatches()]),
             cls="flex flex-col gap-4 pb-8",
         ),
         cls="max-w-md pb-8",
@@ -111,16 +154,23 @@ def withdraw_confirm(req, match_id: int):
         return Redirect("/matches")
     return Container(
         VolunteerNav("matches"),
-        H1(f"Withdraw from {m['title']}?", cls="text-2xl font-bold my-4"),
-        P(
-            "You won't be able to like this opening again.",
-            cls=TextPresets.muted_sm + " mb-4",
-        ),
-        PlainForm(
-            Button("Withdraw", cls=ButtonT.destructive),
-            A("Keep it", href="/matches", cls=AT.muted + " ml-4"),
-            action=f"/matches/{m['id']}/withdraw",
-            method="post",
+        Div(
+            H1(
+                f"Withdraw from {m['title']}?",
+                cls="font-display text-xl font-extrabold leading-snug text-ink",
+            ),
+            P(
+                "You won't be able to like this opening again.",
+                cls=TextPresets.muted_sm,
+            ),
+            PlainForm(
+                Button("Withdraw", cls=ButtonT.destructive),
+                A("Keep it", href="/matches", cls=AT.muted + " ml-4"),
+                action=f"/matches/{m['id']}/withdraw",
+                method="post",
+                cls="flex items-center pt-2",
+            ),
+            cls="mt-4 space-y-3 p-5 " + CARD,
         ),
         cls="max-w-md pb-8",
     )

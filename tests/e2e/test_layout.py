@@ -59,3 +59,20 @@ def test_swipe_buttons_are_big_round_targets(se_page):
         assert box["width"] >= 56 and box["height"] >= 56, (name, box)
         # above the tab bar, so a thumb reaches them without scrolling
         assert box["y"] + box["height"] <= SE["height"] - 64, (name, box)
+
+
+def test_the_chat_composer_is_in_view_above_the_tab_bar(se_page):
+    p = sign_in_page(se_page, "(310) 555-0162")
+    match_id = accepted_match(p.id)
+    for i in range(30):  # a history taller than the screen
+        data.send_message(p.id, match_id, f"Message number {i}")
+    se_page.goto(f"/chat/{match_id}")
+    se_page.evaluate("window.scrollTo(0, 0)")
+    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+    for field in (
+        se_page.get_by_label("Message"),
+        se_page.get_by_role("button", name="Send"),
+    ):
+        box = field.bounding_box()
+        assert box["y"] + box["height"] <= bar["y"], (box, bar)
+        assert box["height"] >= 44, box

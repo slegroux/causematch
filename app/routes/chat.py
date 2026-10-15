@@ -4,22 +4,24 @@ from fasthtml.common import (
     H1,
     A,
     APIRouter,
+    Button,
     Div,
     P,
     Redirect,
     Response,
     Script,
+    Span,
     to_xml,
 )
 from fasthtml.common import Form as PlainForm
-from monsterui.all import AT, Button, ButtonT, Container, TextPresets
+from monsterui.all import AT, Container, TextPresets
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
-from app.ui import TextInput, VolunteerNav, body_wrap
+from app.ui import BACK, SEND, Icon, TextInput, VolunteerNav, body_wrap
 
 ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 log = logging.getLogger("causematch")
@@ -36,11 +38,19 @@ MAX_SOCKETS = 20  # one user's sockets overall
 
 def Bubble(m, viewer_uid):
     mine = m["sender_uid"] == viewer_uid
+    # theirs on the left in white, mine on the right in the brand's soft tint
     return Div(
-        P("You" if mine else m["sender"], cls=TextPresets.muted_sm),
-        P(m["body"], cls="whitespace-pre-wrap break-words"),
-        cls="rounded-lg p-3 max-w-[85%] "
-        + ("self-end bg-secondary" if mine else "self-start border"),
+        P(
+            "You" if mine else m["sender"],
+            cls="text-xs font-bold " + ("text-brand-ink" if mine else "text-ink-muted"),
+        ),
+        P(m["body"], cls="whitespace-pre-wrap break-words text-ink"),
+        cls="max-w-[85%] rounded-2xl px-4 py-2.5 shadow-sm "
+        + (
+            "self-end rounded-br-md bg-brand-soft"
+            if mine
+            else "self-start rounded-bl-md border border-line bg-white"
+        ),
     )
 
 
@@ -65,9 +75,10 @@ def ChatPage(uid, match_id, role, notice=""):
         Div(
             *[Bubble(m, uid) for m in msgs],
             id="messages",
-            cls="flex flex-col gap-2 overflow-y-auto max-h-[60vh] py-2",
+            cls="flex max-h-[55vh] flex-col gap-2 overflow-y-auto py-3",
         ),
         ChatError(NOTICES.get(notice, "")),
+        # cm-composer (static/theme.css): sticks to the bottom, above the tab bar
         PlainForm(
             TextInput(
                 name="msg",
@@ -75,23 +86,48 @@ def ChatPage(uid, match_id, role, notice=""):
                 required=True,
                 autocomplete="off",
                 aria_label="Message",
+                placeholder="Write a message",
+                cls="flex-1",
             ),
-            Button("Send", cls=ButtonT.primary),
+            Button(
+                Icon(SEND, size=20),
+                Span("Send", cls="sr-only"),
+                type="submit",
+                cls="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand "
+                "text-white shadow-warm hover:bg-brand-strong focus-visible:outline "
+                "focus-visible:outline-4 focus-visible:outline-offset-2 "
+                "focus-visible:outline-brand/40",
+            ),
             action=f"{base}/{match_id}/send",
             method="post",
             ws_send=True,
-            cls="flex gap-2 mt-2",
+            cls="cm-composer z-20 flex items-center gap-2 bg-cream py-2",
         )
         if head["writable"]
-        else P("This match was withdrawn, so the chat is read-only."),
+        else P(
+            "This match was withdrawn, so the chat is read-only.",
+            cls="rounded-2xl bg-sand px-4 py-3 text-sm text-ink-muted",
+        ),
         hx_ext="ws" if head["writable"] else None,
         ws_connect=f"{base}/{match_id}/ws" if head["writable"] else None,
     )
     return Container(
         VolunteerNav("matches") if role == "volunteer" else None,
-        A(f"Back to {back[1].lower()}", href=back[0], cls=AT.muted + " text-sm"),
-        H1(head["title"], cls="text-2xl font-bold my-2"),
-        P(f"{head['org']} - {head['other']}", cls=TextPresets.muted_sm + " mb-2"),
+        A(
+            Icon(BACK, size=18),
+            f"Back to {back[1].lower()}",
+            href=back[0],
+            cls="-ml-1 inline-flex min-h-11 items-center gap-1 text-sm font-semibold "
+            "text-ink-muted hover:text-ink",
+        ),
+        Div(
+            H1(
+                head["title"],
+                cls="font-display text-xl font-extrabold leading-snug text-ink",
+            ),
+            P(f"{head['org']} - {head['other']}", cls=TextPresets.muted_sm),
+            cls="border-b border-line pb-3",
+        ),
         box,
         Div(
             A("Report", href=f"{rbase}/{match_id}/report", cls=AT.muted + " mr-4"),

@@ -182,6 +182,27 @@ PEOPLE = (
     "M20 20v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.15a3.5 3.5 0 0 1 0 6.7",
 )
 
+CHAT = ("M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12Z",)
+SEND = ("M22 2 11 13", "M22 2 15 22l-4-9-9-4Z")
+BACK = ("m15 6-6 6 6 6",)
+NEXT = ("m9 6 6 6-6 6",)
+CLOCK = ("M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M12 7v5l3 2")
+SHIELD = ("M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6Z",)
+SIGN_OUT = ("M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3", "M10 17l-5-5 5-5", "M5 12h11")
+TRASH = (
+    "M4 7h16M10 11v6M14 11v6M9 7V4h6v3",
+    "M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12",
+)
+# A status pill's tones; literal class strings, so Tailwind's scan of app/ finds them
+PILL = {
+    "wait": "bg-cause-food-soft text-cause-food-ink",
+    "good": "bg-cause-parks-soft text-cause-parks-ink",
+    "info": "bg-cause-homeless-soft text-cause-homeless-ink",
+    "off": "bg-sand text-ink-muted",
+}
+TITLE = "font-display text-2xl font-extrabold text-ink my-4"  # a volunteer page's H1
+CARD = "rounded-3xl border border-line bg-white shadow-warm"
+
 
 def Icon(paths, size=24, filled=False, cls=""):
     """A line icon in the current text color; decorative, so hidden from screen readers."""
@@ -197,6 +218,16 @@ def Icon(paths, size=24, filled=False, cls=""):
         stroke_linejoin="round",
         aria_hidden="true",
         cls=f"shrink-0 {cls}".strip(),
+    )
+
+
+def Pill(text, tone):
+    """A status: a dot and a word or two on a soft tint (PILL)."""
+    return Span(
+        Span(cls="h-1.5 w-1.5 rounded-full bg-current", aria_hidden="true"),
+        text,
+        cls="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs "
+        "font-bold " + PILL[tone],
     )
 
 

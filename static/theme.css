@@ -199,3 +199,12 @@ body:has(.cm-tabbar) {
 .cm-toast {
   bottom: calc(4.75rem + env(safe-area-inset-bottom));
 }
+/* The chat composer (app/routes/chat.py) stays in reach while the history scrolls: at the
+   bottom of the screen, or just above the volunteer's tab bar. */
+.cm-composer {
+  position: sticky;
+  bottom: 0;
+}
+body:has(.cm-tabbar) .cm-composer {
+  bottom: calc(4rem + env(safe-area-inset-bottom));
+}

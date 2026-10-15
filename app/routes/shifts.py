@@ -6,11 +6,8 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
-    Card,
     Container,
-    DivFullySpaced,
     Form,
-    Label,
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
@@ -18,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from app import data
 from app.forms import bad_request, query, str_form
 from app.routes.deck import when
-from app.ui import Field, Page, TextInput, VolunteerNav, body_wrap
+from app.ui import CARD, TITLE, Field, Page, Pill, TextInput, VolunteerNav, body_wrap
 
 ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
@@ -27,6 +24,7 @@ SHIFT_STATUS = {
     "completed": "Attended",
     "no_show": "No-show",
 }
+SHIFT_TONE = {"scheduled": "wait", "completed": "good", "no_show": "off"}
 NOTICE = {
     "unavailable": (
         "That didn't go through. A shift can be marked once it has started, corrected "
@@ -36,19 +34,18 @@ NOTICE = {
 }
 
 
-def ShiftCard(s, *actions, for_org=True, status=None):
-    """for_org=True: a coordinator's card, naming the volunteer; else the org's name."""
-    return Card(
-        DivFullySpaced(
-            P(s["title"], cls="font-semibold"),
-            Label(status or SHIFT_STATUS[s["status"]]),
-        ),
+def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
+    """for_org=True: a coordinator's card, naming the volunteer; else the org's name.
+    status and tone override the pill's text and color (PILL in app/ui.py)."""
+    return Div(
+        Pill(status or SHIFT_STATUS[s["status"]], tone or SHIFT_TONE[s["status"]]),
+        P(s["title"], cls="font-bold leading-snug text-ink"),
         P(
             f"{when(s['starts_at'])} - {s['first_name'] if for_org else s['org']}",
             cls=TextPresets.muted_sm,
         ),
         *actions,
-        cls="w-full",
+        cls="w-full space-y-2 p-4 " + CARD,
     )
 
 
@@ -90,7 +87,7 @@ def repeat_of(s):
 
 def Section(title, rows, empty):
     return Div(
-        H2(title, cls="text-xl font-semibold"),
+        H2(title, cls="font-display text-lg font-extrabold text-ink"),
         *(rows or [P(empty, cls=TextPresets.muted_sm)]),
         cls="flex flex-col gap-3 pb-6",
     )
@@ -245,10 +242,13 @@ def history(req):
     mine = data.my_shifts(req.scope["uid"])
     return Container(
         VolunteerNav("me"),
-        H1("Your history", cls="text-2xl font-bold my-4"),
+        H1("Your history", cls=TITLE),
         Section(
             "Upcoming",
-            [ShiftCard(s, for_org=False, status="Scheduled") for s in mine["upcoming"]],
+            [
+                ShiftCard(s, for_org=False, status="Scheduled", tone="info")
+                for s in mine["upcoming"]
+            ],
             "No upcoming shifts. Like an opening to get one.",
         ),
         Section(
