@@ -564,3 +564,12 @@ def test_org_and_admin_refusals_wear_the_shared_look(coord):
     )
     r = coord.post("/org/matches/1/decide", data={"decision": "maybe"})
     assert r.status_code == 400 and "Something was missing" in r.text
+
+
+def test_admin_metrics_show_the_empty_deck_count(user):
+    admin = admin_client()
+    assert "Empty decks: 0 views by 0 volunteers" in admin.get("/admin/metrics").text
+    for o in openings():
+        openings.update(id=o.id, status="closed")
+    assert "seen every opening" in user.get("/deck").text
+    assert "Empty decks: 1 views by 1 volunteers" in admin.get("/admin/metrics").text

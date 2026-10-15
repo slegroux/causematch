@@ -178,6 +178,12 @@ def admin_metrics():
                 "coordinators add shifts.",
                 cls=TextPresets.muted_sm,
             ),
+            P(
+                f"Empty decks: {m['empty_deck']['views']} views by "
+                f"{m['empty_deck']['volunteers']} volunteers (filters that left nothing "
+                "to swipe).",
+                cls="mt-4 font-semibold text-ink",
+            ),
             *[
                 MetricsTable(
                     title,

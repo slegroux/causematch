@@ -994,7 +994,9 @@ def test_place_an_error_page_echoes_only_a_rounded_point(bare):
     assert "isn't in Los Angeles County" in r.text and "712345" not in r.text
 
 
-def test_dealbreaker_an_inactive_not_for_me_does_not_hide_an_active_cause(bare):
+def test_dealbreaker_an_inactive_not_for_me_does_not_hide_an_active_cause(
+    homelessness_off, bare
+):
     (dead,) = [c for c in causes() if not c.active][:1]
     save(bare, when_form())
     profiles.update(

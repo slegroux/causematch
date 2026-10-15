@@ -87,7 +87,7 @@ def test_me_links_to_preferences(user):
     assert 'href="/me/preferences"' in user.get("/profile").text
 
 
-def test_page_shows_the_onboarding_answers(user):
+def test_page_shows_the_onboarding_answers(homelessness_off, user):
     html = user.get("/me/preferences").text
     assert "Preferences" in html and "Only you see these" in html
     # FORM in conftest: food loved, free weekend mornings, has a car, weekly
@@ -147,7 +147,7 @@ def test_at_least_one_cause_must_be_loved_or_open(user):
     assert json.loads(profile_of(user).cause_prefs) == {FOOD: "love"}
 
 
-def test_a_rating_of_an_inactive_cause_is_kept(user):
+def test_a_rating_of_an_inactive_cause_is_kept(homelessness_off, user):
     (dead,) = [c for c in causes() if not c.active][:1]
     profiles.update(
         id=uid_of(user), cause_prefs=json.dumps({FOOD: "love", dead.slug: "open"})
@@ -346,3 +346,8 @@ def test_the_migration_adds_the_column_to_an_old_table(tmp_path):
     cause_prefs_migration.up(conn)  # a second run changes nothing
     rows = conn.execute("SELECT id, cause_prefs FROM profile ORDER BY id").fetchall()
     assert rows == [(1, '{"food-insecurity": "love"}'), (2, None), (3, "{}")]
+
+
+def test_homelessness_services_is_offered_now_that_it_is_active(user):
+    html = user.get("/me/preferences").text
+    assert 'name="cause_homelessness-services" value="love"' in html
