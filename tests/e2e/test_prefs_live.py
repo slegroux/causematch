@@ -81,6 +81,10 @@ def test_changing_distance_in_the_sheet_reloads_the_deck_with_the_new_count(phon
     sheet = phone.locator("summary")
     assert sheet.inner_text().startswith("2 openings")  # then ", filters" for readers
     sheet.click()
+    # the open sheet's button is above the tab bar on a small phone
+    show = phone.get_by_role("button", name="Show openings").bounding_box()
+    bar = phone.get_by_role("navigation", name="Main").bounding_box()
+    assert show["y"] + show["height"] <= bar["y"], (show, bar)
     phone.locator("label:has(input[name=max_minutes][value='45'])").click()
     phone.get_by_role("button", name="Show openings").click()
     phone.wait_for_load_state("networkidle")

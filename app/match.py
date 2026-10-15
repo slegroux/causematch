@@ -226,10 +226,15 @@ def work_matches(mine, theirs):
     ]
 
 
+def languages_shared(mine, theirs):
+    """The known languages both name. "other" is never a match: two "other"s may differ."""
+    return (set(mine) & set(theirs)) - {"other"}
+
+
 def language_fit(mine, theirs):
     """1 when the volunteer speaks a language the opening says helps, else 0.5: a language
     helps, it is never required."""
-    return 1.0 if set(mine) & set(theirs) else 0.5
+    return 1.0 if languages_shared(mine, theirs) else 0.5
 
 
 def score(

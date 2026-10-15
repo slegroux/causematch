@@ -31,6 +31,7 @@ BASE = {
     "availability": ["sat_morning"],
     "frequency": "weekly",
     "only_distance": "only",  # the default: a place's travel time is a limit
+    "sections": ["work", "only"],  # as the page sends: its checkboxes count
 }
 
 
@@ -794,35 +795,61 @@ def test_filter_sheet_shows_the_count_and_the_current_answers(bare):
     assert "Travel from Home" in page
 
 
-def test_filter_sheet_saves_distance_causes_and_this_week(bare):
+def test_filter_sheet_narrows_this_visit_and_saves_nothing(bare):
     downtown_15(bare)
-    add("pasadena", PASADENA)
-    add("in 10 days", DOWNTOWN, starts_at=ahead(days=10, at="10:00"))
+    add("downtown soon", DOWNTOWN, starts_at=ahead(days=3, at="10:00"))
+    pasadena = add("pasadena", PASADENA)  # 17 km: past 15 min by car
+    add("animals", DOWNTOWN, causes=json.dumps([ANIMALS]))
+    assert ">2 openings<" in bare.get("/deck").text  # downtown soon, animals
     r = bare.post(
         "/deck/filters",
-        data={"max_minutes": "45", "causes": [FOOD, PARKS]},
+        data={"max_minutes": "45", "causes": [FOOD]},
         follow_redirects=False,
     )
     assert r.status_code == 303 and r.headers["location"] == "/deck"
-    (pl,) = places(where="user_id = ?", where_args=[uid_of(bare)])
-    assert pl.max_minutes == 45
-    assert json.loads(profiles[uid_of(bare)].cause_prefs)[ANIMALS] == "no"
-    assert set(cards(bare)) == {"pasadena", "in 10 days"}
-    r = bare.post(
-        "/deck/filters",
-        data={"max_minutes": "45", "causes": [FOOD], "this_week": "1", "today": "1"},
-        follow_redirects=False,
-    )
-    assert r.headers["location"] == "/deck?today=1"
-    assert profiles[uid_of(bare)].horizon_days == 7
-    assert set(cards(bare)) == set()  # pasadena is past this week too (2099)
+    page = bare.get("/deck").text
+    assert ">2 openings<" in page and "Filtered" in page  # downtown soon, pasadena
+    bare.post("/deck/filters", data={"max_minutes": "45", "causes": [FOOD],
+                                     "this_week": "1"})  # fmt: skip
+    assert ">1 opening<" in bare.get("/deck").text
+    # nothing saved: ratings, the place and the horizon are as they were
+    p = profiles[uid_of(bare)]
+    assert json.loads(p.cause_prefs) == {FOOD: "love"}
+    assert json.loads(p.causes) == [FOOD]
+    assert places(where="user_id = ?", where_args=[uid_of(bare)])[0].max_minutes == 15
+    assert not p.horizon_days
+    assert set(cards(bare)) == {"downtown soon", "animals"}
+    # a card the view shows can be liked, though the saved deck hides it
+    bare.post("/deck/filters", data={"max_minutes": "45", "causes": [FOOD]})
+    r = bare.post("/swipe", data={"opening_id": pasadena, "liked": "1"},
+                  headers={"HX-Request": "true"})  # fmt: skip
+    assert "isn't available" not in r.text
+    assert data.my_matches(uid_of(bare))[0]["title"] == "pasadena"
+    r = bare.post("/deck/filters", data={"clear": "1"}, follow_redirects=False)
+    page = bare.get("/deck").text
+    assert ">2 openings<" in page and "Filtered" not in page
 
 
-def test_filter_sheet_ticking_a_ruled_out_cause_opens_it(bare):
+def test_filter_sheet_offers_only_causes_that_are_not_ruled_out(bare):
     downtown_15(bare, **{"cause_animal-shelters": "no"})
-    bare.post("/deck/filters", data={"max_minutes": "15", "causes": [FOOD, ANIMALS]})
-    rated = json.loads(profiles[uid_of(bare)].cause_prefs)
-    assert rated[FOOD] == "love" and rated[ANIMALS] == "open"
+    page = bare.get("/deck").text
+    assert 'name="causes" value="food-insecurity" checked' in page
+    assert 'name="causes" value="animal-shelters"' not in page
+
+
+def test_filter_sheet_minutes_show_only_while_distance_limits(bare):
+    downtown_15(bare)
+    assert 'name="max_minutes"' in bare.get("/deck").text
+    save(bare, prefer_all(**place_fields(1, "Home", "Downtown")))
+    assert 'name="max_minutes"' not in bare.get("/deck").text
+
+
+def test_filter_sheet_is_reset_by_saving_preferences(bare):
+    downtown_15(bare)
+    bare.post("/deck/filters", data={"max_minutes": "60", "causes": [FOOD]})
+    assert "Filtered" in bare.get("/deck").text
+    downtown_15(bare)
+    assert "Filtered" not in bare.get("/deck").text
 
 
 @pytest.mark.parametrize(
@@ -835,17 +862,21 @@ def test_filter_sheet_unknown_values_are_refused(bare, bad):
     assert r.status_code == 400
 
 
-def test_filter_sheet_on_a_sign_up_profile_saves_its_home_first(bare):
-    """No saved place yet: the sign-up Home becomes a row, then gets the new time."""
+def test_filter_sheet_on_a_sign_up_profile_creates_no_place(bare):
     profiles.update(id=uid_of(bare), radius_km=16)
     bare.post("/deck/filters", data={"max_minutes": "60", "causes": [FOOD]})
-    (pl,) = places(where="user_id = ?", where_args=[uid_of(bare)])
-    assert (pl.label, pl.mode, pl.max_minutes, pl.area) == (
-        "Home",
-        "car",
-        60,
-        "Chinatown",
-    )
+    assert places() == []
+    assert "Filtered" in bare.get("/deck").text
+
+
+def test_empty_deck_with_a_filter_offers_to_clear_it(bare):
+    downtown_15(bare)
+    add("animals", DOWNTOWN, causes=json.dumps([ANIMALS]))
+    bare.post("/deck/filters", data={"max_minutes": "15", "causes": [FOOD]})
+    page = bare.get("/deck").text
+    assert "Clear filters: 1 more" in page
+    bare.post("/deck/relax", data={"key": "clear_view"})
+    assert "Filtered" not in bare.get("/deck").text
 
 
 def test_empty_deck_names_the_change_that_adds_most(bare):
@@ -890,16 +921,24 @@ def test_empty_deck_with_nothing_to_relax_suggests_nothing(bare):
     assert "more</button>" not in page and "You're all caught up" in page
 
 
-def test_empty_deck_relax_with_a_stale_key_changes_nothing(bare):
+@pytest.mark.parametrize("key", ["only_when", "widen:9:45", "widen:0:x", "widen:0:20"])
+def test_empty_deck_relax_with_a_stale_key_changes_nothing(bare, key):
     downtown_15(bare)
-    r = bare.post("/deck/relax", data={"key": "only_when"}, follow_redirects=False)
+    r = bare.post("/deck/relax", data={"key": key}, follow_redirects=False)
     assert r.status_code == 303
     assert json.loads(profiles[uid_of(bare)].dealbreakers) == ["distance"]
+    assert places(where="user_id = ?", where_args=[uid_of(bare)])[0].max_minutes == 15
+    with pytest.raises(ValueError):
+        data.apply_relaxation(uid_of(bare), key)
 
 
-def test_empty_deck_views_are_counted_for_the_metrics(bare):
+def test_empty_deck_views_are_counted_once_an_hour(bare):
     downtown_15(bare)
     bare.get("/deck")
+    bare.get("/deck")  # a refresh within the hour
+    assert len(deck_empties()) == 1
+    (row,) = deck_empties()
+    deck_empties.update(id=row.id, at="2020-01-01T00:00:00+00:00")
     bare.get("/deck?today=1")
     assert [(e.volunteer_id, bool(e.today)) for e in deck_empties()] == [
         (uid_of(bare), False),
@@ -985,3 +1024,82 @@ def test_migrations_skip_a_malformed_row(tmp_path):
     assert rows[0] == (1, None, "null") and rows[1] == (2, None, "{]")
     assert json.loads(rows[2][1]) == {"food-insecurity": "love"}
     assert json.loads(rows[2][2])[0] == "mon_morning"
+
+
+# --- review fixes (items 4-6) ----------------------------------------------------------------
+
+
+def test_free_today_cards_can_be_swiped_under_the_when_dealbreaker(bare):
+    """The 48-hour deck ignores the volunteer's times; liking its card must count."""
+    t = ahead(hours=3)
+    elsewhere = (
+        "mon_morning" if match.availability_slot(t) != "mon_morning" else "tue_evening"
+    )
+    save(bare, work_form(only_when="only", availability=[elsewhere]))
+    oid = add("in 3 hours", DOWNTOWN, starts_at=t)
+    add("in 5 hours", DOWNTOWN, starts_at=ahead(hours=5))
+    assert oid not in {c["id"] for c in data.deck(uid_of(bare), 5)}  # hidden normally
+    r = bare.post("/swipe", data={"opening_id": oid, "liked": "1", "today": "1"},
+                  headers={"HX-Request": "true"})  # fmt: skip
+    assert data.my_matches(uid_of(bare))[0]["title"] == "in 3 hours"
+    assert "in 5 hours" in r.text and "isn't available" not in r.text
+    with pytest.raises(LookupError):  # outside today mode it stays hidden
+        data.swipe(uid_of(bare), add("in 4 hours", DOWNTOWN,
+                                     starts_at=ahead(hours=4)), True)  # fmt: skip
+
+
+def test_a_swipe_that_does_not_count_says_so(bare):
+    save(bare, work_form())
+    gone = add("gone", DOWNTOWN, status="closed")
+    add("next", DOWNTOWN)
+    r = bare.post("/swipe", data={"opening_id": gone, "liked": "1"},
+                  headers={"HX-Request": "true"})  # fmt: skip
+    assert "isn't available any more" in r.text and "next" in r.text
+
+
+def test_a_stale_form_keeps_what_it_does_not_carry(bare):
+    """A page loaded before items 3-5 (no horizon, kind of work, only-show fields) must
+    not reset them when saved."""
+    save(bare, work_form(only_causes="only", horizon_days="14", commitment="recurring",
+                         setting="outdoor", languages=["es"], surprise="1"))  # fmt: skip
+    old = {k: v for k, v in BASE.items() if k not in ("only_distance", "sections")}
+    r = bare.post("/me/preferences", data={**old, **place_fields(1, "Home", "Downtown")},
+                  follow_redirects=False)  # fmt: skip
+    assert r.status_code == 303
+    p = profiles[uid_of(bare)]
+    assert json.loads(p.dealbreakers) == ["causes", "distance"]
+    assert (p.horizon_days, p.commitment, p.setting) == (14, "recurring", "outdoor")
+    assert json.loads(p.languages) == ["es"] and p.surprise and p.orientation_ok
+
+
+def test_another_language_is_never_a_match(bare):
+    assert match.language_fit(["other"], ["other"]) == 0.5
+    assert match.languages_shared(["other", "es"], ["other", "es"]) == {"es"}
+    save(bare, work_form(languages=["other"]))
+    add("needs another language", DOWNTOWN, languages='["other"]')
+    (c,) = data.deck(uid_of(bare), 5)
+    assert not any("helps" in w["text"] for w in c["why"])
+
+
+def test_languages_are_stored_once(bare):
+    save(bare, work_form(languages=["es", "es", "ko", "es"]))
+    assert json.loads(profiles[uid_of(bare)].languages) == ["es", "ko"]
+
+
+def test_why_chips_show_a_loved_cause_first(bare):
+    save(bare, work_form(**{"cause_food-insecurity": "open",
+                            "cause_animal-shelters": "love"}))  # fmt: skip
+    add("three causes", DOWNTOWN, causes=json.dumps([PARKS, FOOD, ANIMALS]))
+    (c,) = data.deck(uid_of(bare), 5)
+    assert [w["text"] for w in c["why"][:2]] == ["♥ Animal shelters", "Food insecurity"]
+
+
+def test_why_first_timer_chip_comes_after_matches_unless_wanted(bare):
+    save(bare, work_form(setting="outdoor", languages=["es"], availability=[]))
+    add("trail", DOWNTOWN, first_timer_ok=True, setting="outdoor", languages='["es"]')
+    (c,) = data.deck(uid_of(bare), 5)
+    assert [w["text"] for w in c["why"]][2:] == ["Outdoors", "Spanish helps"]
+    save(bare, work_form(setting="outdoor", languages=["es"], first_timer="1",
+                         availability=[]))  # fmt: skip
+    (c,) = data.deck(uid_of(bare), 5)
+    assert [w["text"] for w in c["why"]][2:] == ["First-timer friendly", "Outdoors"]

@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, when
+from app.routes.deck import DeckArea, deck_view, when
 from app.ui import (
     CALENDAR,
     CARD,
@@ -61,18 +61,21 @@ async def swipe(req):
 def _sync_swipe(req, form):
     uid = req.scope["uid"]
     raw = form.get("opening_id", "")
+    today = form.get("today") == "1"  # the deck's "I'm free today" switch
+    view = deck_view(req)
+    notice = None
     try:
         if not re.fullmatch(r"[0-9]{1,19}", raw):
             raise LookupError("not an opening id")
-        m = data.swipe_created(uid, int(raw), form["liked"] == "1")
+        m = data.swipe_created(uid, int(raw), form["liked"] == "1", today, view)
     except LookupError:
-        pass  # closed or gone since the card was drawn: just show the next one
+        # closed or gone since the card was drawn: say so, and show what's next
+        notice = "That opening isn't available any more."
     else:
         if m:
             notify.on_new_like(m.id)
-    today = form.get("today") == "1"  # the deck's "I'm free today" switch
     if req.headers.get("HX-Request"):
-        return DeckArea(uid, today)
+        return DeckArea(uid, today, view, notice)
     return Redirect("/deck?today=1" if today else "/deck")
 
 

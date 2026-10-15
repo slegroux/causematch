@@ -393,7 +393,12 @@ def test_counters_live_in_the_database_so_a_restart_keeps_them(anon):
 # --- rate limits: in memory -----------------------------------------------------------------
 
 
-def test_swipes_are_throttled_per_user(user):
+def test_swipes_are_throttled_per_user(user, monkeypatch):
+    # a stopped clock: however slow the 31 requests are, no token refills between them
+    take = security.take_token
+    monkeypatch.setattr(
+        security, "take_token", lambda name, uid: take(name, uid, 1000.0)
+    )
     codes = [
         user.post("/swipe", data={"opening_id": "x", "liked": "0"}).status_code
         for _ in range(31)

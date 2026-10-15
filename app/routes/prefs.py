@@ -414,6 +414,7 @@ def PrefsPage(f, error=None, saved=False):
                 "Kind of work",
                 "Openings that say they fit rank higher; ones that don't say aren't held "
                 "back.",
+                Hidden(name="sections", value="work"),
                 Group(
                     "Indoors or outdoors",
                     "grid grid-cols-3 gap-2",
@@ -466,6 +467,7 @@ def PrefsPage(f, error=None, saved=False):
                 "Only show, or prefer?",
                 "Prefer ranks what fits first and still shows the rest. Only show hides "
                 "what doesn't fit. Causes that are not for you are always hidden.",
+                Hidden(name="sections", value="only"),
                 *[
                     Group(
                         label,
@@ -549,18 +551,32 @@ def _sync_save(req, form):
         },
         "availability": form.getlist("availability"),
         "free_dates": form.getlist("free_dates"),
-        "horizon_days": form.get("horizon_days", "0"),
-        "commitment": form.get("commitment", "either"),
-        "setting": form.get("setting", "either"),
-        "effort": form.get("effort", "any"),
-        "group_size": form.get("group_size", "any"),
-        "first_timer": form.get("first_timer") == "1",
-        "orientation_ok": form.get("orientation_ok") == "1",
-        "languages": form.getlist("languages"),
+        # A field the form doesn't carry keeps its saved value: a page loaded before a
+        # section existed must not reset it. Radios always send one; a section's
+        # checkboxes count only when its "sections" marker came with the form.
+        "horizon_days": form.get("horizon_days", str(saved["horizon_days"])),
+        "commitment": form.get("commitment", saved["commitment"]),
+        "setting": form.get("setting", saved["setting"]),
+        "effort": form.get("effort", saved["effort"]),
+        "group_size": form.get("group_size", saved["group_size"]),
+        **(
+            {
+                "first_timer": form.get("first_timer") == "1",
+                "orientation_ok": form.get("orientation_ok") == "1",
+                "languages": form.getlist("languages"),
+            }
+            if "work" in form.getlist("sections")
+            else {k: saved[k] for k in ("first_timer", "orientation_ok", "languages")}
+        ),
         "dealbreakers": [
-            key for key, _ in DEALBREAKERS if form.get(f"only_{key}") == "only"
+            key
+            for key, _ in DEALBREAKERS
+            if form.get(f"only_{key}", "only" if key in saved["dealbreakers"] else "")
+            == "only"
         ],
-        "surprise": form.get("surprise") == "1",
+        "surprise": form.get("surprise") == "1"
+        if "only" in form.getlist("sections")
+        else saved["surprise"],
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
         "place_forms": [
@@ -620,4 +636,7 @@ def _sync_save(req, form):
         horizon_days=int(f["horizon_days"]),
         places=places,
     )
+    req.session.pop(
+        "deck_view", None
+    )  # the deck's filter sheet starts again from these
     return Redirect("/me/preferences?saved=1")

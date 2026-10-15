@@ -192,7 +192,10 @@ def _when_ok(p, o):
 
 
 def record_empty_deck(uid, today=False):
-    _db.deck_empties.insert(_db.DeckEmpty(volunteer_id=uid, today=today, at=_now()))
+    """Log an empty deck, once per volunteer per hour: refreshing doesn't inflate it."""
+    hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
+    if not _db.deck_empties.count_where("volunteer_id = ? AND at > ?", [uid, hour_ago]):
+        _db.deck_empties.insert(_db.DeckEmpty(volunteer_id=uid, today=today, at=_now()))
 
 
 TIERS = [m for m, _ in MAX_MINUTES if m]  # 15, 30, 45, 60; then any distance
@@ -318,31 +321,46 @@ def apply_relaxation(uid, key):
             )
 
 
-def save_quick_filters(uid, *, max_minutes, shown, this_week):
-    """The deck's filter sheet: the main place's travel time (None: unchanged), which
-    causes show (unticked: not for me; ticked: as rated, a "not for me" becoming open), and
-    this week only."""
-    me = _db.profiles[uid]
-    causes = _prefs.cause_prefs(me)
-    if shown:  # nothing ticked changes nothing: an empty deck helps no one
+def _viewed(p, view):
+    """_deck_prefs() narrowed by the deck's filter sheet, for this visit only: the saved
+    preferences never change. view: {"max_minutes", "causes", "this_week"} or None.
+    max_minutes sets the main place's reach (only while distance is a dealbreaker), causes
+    lists the ones to show (the others are hidden like "not for me"), this_week caps the
+    horizon at 7 days."""
+    if not view:
+        return p
+    q = {**p, "causes": dict(p["causes"])}
+    if view.get("causes") is not None:
         for c in active_causes():
-            if c.slug not in shown:
-                causes[c.slug] = _prefs.NO
-            elif causes.get(c.slug) == _prefs.NO:
-                causes[c.slug] = _prefs.OPEN
-    horizon = (
-        7 if this_week else (0 if _prefs.horizon_days(me) == 7 else me.horizon_days)
+            if c.slug not in view["causes"]:
+                q["causes"][c.slug] = _prefs.NO
+    if view.get("this_week") and not 0 < p["horizon_days"] <= 7:
+        q["horizon_days"] = 7
+    minutes = view.get("max_minutes")
+    if minutes is not None and p["places"] and "distance" in p["dealbreakers"]:
+        reach = _match.reach_km(p["places"][0]["mode"], minutes)
+        q["places"] = [
+            {
+                **p["places"][0],
+                "max_minutes": minutes,
+                "reach_km": reach,
+                "scale_km": reach or ANY_DISTANCE_KM,
+            },
+            *p["places"][1:],
+        ]
+    return q
+
+
+def view_relaxation(uid, today, view):
+    """{"key": "clear_view", ...}: clearing the filter sheet, when that adds cards."""
+    me = _db.profiles[uid]
+    p = _deck_prefs(me)
+    more = len(_deck_openings(uid, today, p)) - len(
+        _deck_openings(uid, today, _viewed(p, view))
     )
-    with _db.db.conn:
-        rows = _saved_places(uid) if max_minutes is not None else []
-        if rows:
-            _db.places.update(id=rows[0].id, max_minutes=max_minutes)
-        _db.profiles.update(
-            id=uid,
-            cause_prefs=json.dumps(causes),
-            causes=json.dumps(_prefs.picked(causes)),
-            horizon_days=horizon,
-        )
+    return (
+        {"key": "clear_view", "label": "Clear filters", "more": more} if more else None
+    )
 
 
 def _org_reply_rates():
@@ -385,22 +403,22 @@ def _work_of(o):
 SURPRISE_EVERY = 8  # "Surprise me": about one card in this many is from outside love
 
 
-def deck(uid, limit=20, today=False):
+def deck(uid, limit=20, today=False, view=None):
     """deck_and_count()'s cards."""
-    return deck_and_count(uid, limit, today)[0]
+    return deck_and_count(uid, limit, today, view)[0]
 
 
-def deck_and_count(uid, limit=20, today=False):
+def deck_and_count(uid, limit=20, today=False, view=None):
     """Cards for open openings with an active cause, best fit first. today ("I'm free
     today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
 
     With "Surprise me", every SURPRISE_EVERY-th card the volunteer meets (counted by their
     swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
     distance rounded to whole km and the travel estimate, never coordinates. Returns
-    (cards, how many the deck holds in all).
+    (cards, how many the deck holds in all). view: the filter sheet's (see _viewed).
     """
     me = _db.profiles[uid]
-    p = _deck_prefs(me)
+    p = _viewed(_deck_prefs(me), view)
     active = {c.slug for c in _db.causes() if c.active}
     rated = {s: v for s, v in p["causes"].items() if s in active}
     loved = {s for s, v in rated.items() if v == _prefs.LOVE}
@@ -482,12 +500,15 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     """1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on a
     cause chip (drawn in its color). Its causes always come first, so there is at least one.
     """
+    order = {_prefs.LOVE: 0, _prefs.OPEN: 1}
     why = [
         {
             "text": ("♥ " if rated.get(s) == _prefs.LOVE else "") + label,
             "slug": s,
         }
-        for s, label in zip(slugs, cause_labels)
+        for s, label in sorted(
+            zip(slugs, cause_labels), key=lambda sl: order.get(rated.get(sl[0]), 2)
+        )
     ][:2]
     more = []
     if surprise:
@@ -503,13 +524,16 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     elif _match.availability_slot(o.starts_at) in _match.day_slots(p["availability"]):
         day, part = _match.availability_slot(o.starts_at).split("_")
         more.append(f"You're free {day.title()} {part}s")
-    if o.first_timer_ok:
+    wanted = p["work"]["first_timer"]
+    if o.first_timer_ok and wanted:
         more.append("First-timer friendly")
     for k in _match.work_matches(p["work"], _work_of(o)):
         more.append(WORK_WORDS[(k, getattr(o, k))])
-    helps = set(spoken) & set(json.loads(o.languages or "[]"))
+    helps = _match.languages_shared(spoken, json.loads(o.languages or "[]"))
     if helps:
         more.append(f"{LANGUAGE_NAMES[min(helps)]} helps")
+    if o.first_timer_ok and not wanted:  # a fact about it, after what matches
+        more.append("First-timer friendly")
     return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
 
 
@@ -537,11 +561,13 @@ def _match_for(uid, opening_id):
     return found[0] if found else None
 
 
-def _swipe(uid, opening_id, liked):
+def _swipe(uid, opening_id, liked, today=False, view=None):
     """Record a swipe; a like makes a pending match. (match, created), match None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
-    the opening in their deck (closed, inactive cause, unknown id).
+    the opening in their deck (closed, inactive cause, unknown id): the deck they swiped
+    in (today, view), or their saved deck, since a card drawn under one may be swiped
+    after the other changed.
     """
     if not _is_id(opening_id):
         raise LookupError("no such opening")
@@ -550,7 +576,11 @@ def _swipe(uid, opening_id, liked):
             where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
         ):
             return _match_for(uid, opening_id), False
-        if opening_id not in {o.id for o, *_ in _deck_openings(uid)}:
+        p = _deck_prefs(_db.profiles[uid])
+        seen = {o.id for o, *_ in _deck_openings(uid, False, p)}
+        if (today or view) and opening_id not in seen:
+            seen |= {o.id for o, *_ in _deck_openings(uid, today, _viewed(p, view))}
+        if opening_id not in seen:
             raise LookupError("no such opening")
         _db.swipes.insert(
             _db.Swipe(
@@ -574,18 +604,18 @@ def _swipe(uid, opening_id, liked):
         ), True
 
 
-def swipe(uid, opening_id, liked):
+def swipe(uid, opening_id, liked, today=False, view=None):
     """Record a swipe; a like makes a pending match. The match, or None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
     the opening in their deck (closed, inactive cause, unknown id).
     """
-    return _swipe(uid, opening_id, liked)[0]
+    return _swipe(uid, opening_id, liked, today, view)[0]
 
 
-def swipe_created(uid, opening_id, liked):
+def swipe_created(uid, opening_id, liked, today=False, view=None):
     """Like `swipe`, but the Match only when this call created it (not a pass or a repeat)."""
-    match, created = _swipe(uid, opening_id, liked)
+    match, created = _swipe(uid, opening_id, liked, today, view)
     return match if created and not match.org_blind else None
 
 
@@ -1266,7 +1296,7 @@ def save_preferences(
             group_size=group_size,
             first_timer=first_timer,
             orientation_ok=orientation_ok,
-            languages=json.dumps(list(languages)),
+            languages=json.dumps(sorted(set(languages))),
             dealbreakers=json.dumps(list(dealbreakers)),
             surprise=surprise,
             skills=json.dumps(list(skills)),

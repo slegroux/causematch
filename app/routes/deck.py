@@ -232,16 +232,35 @@ SLIDERS = (
 )
 
 
-def FilterSheet(uid, today, count):
+VIEW = "deck_view"  # the session key of the filter sheet's choices (data._viewed)
+
+
+def deck_view(req):
+    """The filter sheet's choices for this visit, or None."""
+    return req.session.get(VIEW)
+
+
+def FilterSheet(uid, today, count, view):
     """The deck's quick filters, in a <details> over the card's top corner (no script):
-    the main place's travel time, which causes show, and this week only. Its button says
-    how many cards the deck holds."""
+    the main place's travel time, which causes show, and this week only. They narrow this
+    visit's deck and change no saved preference. Its button says how many cards the deck
+    holds."""
+    view = view or {}
     f = data.preferences(uid)
     main = f["places"][0] if f["places"] else None
+    minutes = view.get("max_minutes", main and main["max_minutes"])
+    allowed = [c for c in data.active_causes() if f["causes"].get(c.slug) != prefs.NO]
+    shown = view.get("causes", [c.slug for c in allowed])
     return Details(
         Summary(
             Icon(SLIDERS, size=18),
             Span(f"{count} opening{'' if count == 1 else 's'}"),
+            Span(
+                "Filtered",
+                cls="rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-ink",
+            )
+            if view
+            else None,
             Span(", filters", cls="sr-only"),
             cls="flex h-11 cursor-pointer list-none items-center gap-2 rounded-full "
             "border border-line bg-white/95 px-4 text-sm font-bold text-ink shadow-warm "
@@ -249,42 +268,45 @@ def FilterSheet(uid, today, count):
         ),
         PlainForm(
             Hidden(name="today", value="1") if today else None,
+            P(
+                "Just for this visit. To keep a change, edit ",
+                A(
+                    "your preferences",
+                    href="/me/preferences",
+                    cls="font-bold text-brand-ink underline",
+                ),
+                ".",
+                cls="text-sm text-ink-muted",
+            ),
+            # minutes only limit the deck while distance is "Only show"
             Fieldset(
                 Legend(f"Travel from {main['label']}, up to (minutes)", cls=LEGEND),
                 Div(
                     *[
-                        Chip(
-                            "radio",
-                            "max_minutes",
-                            str(v),
-                            label,
-                            main["max_minutes"] == v,
-                        )
+                        Chip("radio", "max_minutes", str(v), label, minutes == v)
                         for v, label in MAX_MINUTES
                     ],
                     cls="grid grid-cols-5 gap-1.5",
                 ),
             )
-            if main
+            if main and "distance" in f["dealbreakers"]
             else None,
             Fieldset(
                 Legend("Causes", cls=LEGEND),
                 Div(
                     *[
-                        Chip(
-                            "checkbox",
-                            "causes",
-                            c.slug,
-                            c.label,
-                            f["causes"].get(c.slug) != prefs.NO,
-                        )
-                        for c in data.active_causes()
+                        Chip("checkbox", "causes", c.slug, c.label, c.slug in shown)
+                        for c in allowed
                     ],
                     cls="flex flex-wrap gap-2",
                 ),
             ),
             Chip(
-                "checkbox", "this_week", "1", "Only this week", f["horizon_days"] == 7
+                "checkbox",
+                "this_week",
+                "1",
+                "Only this week",
+                bool(view.get("this_week")) or f["horizon_days"] == 7,
             ),
             Div(
                 Button(
@@ -292,11 +314,15 @@ def FilterSheet(uid, today, count):
                     type="submit",
                     cls="uk-btn uk-btn-primary h-11 flex-1",
                 ),
-                A(
-                    "All preferences",
-                    href="/me/preferences",
+                Button(
+                    "Clear",
+                    type="submit",
+                    name="clear",
+                    value="1",
                     cls="uk-btn uk-btn-default h-11",
-                ),
+                )
+                if view
+                else None,
                 cls="flex gap-2",
             ),
             action="/deck/filters",
@@ -308,18 +334,26 @@ def FilterSheet(uid, today, count):
     )
 
 
-def DeckArea(uid, today=False):
+def DeckArea(uid, today=False, view=None, notice=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet comes last, so swipe.js finds the swipe form first; it sits over the
-    card's top corner."""
-    cards, count = data.deck_and_count(uid, limit=1, today=today)
-    sheet = FilterSheet(uid, today, count)
+    card's top corner. notice: a line above the card (a swipe that didn't count)."""
+    cards, count = data.deck_and_count(uid, limit=1, today=today, view=view)
+    sheet = FilterSheet(uid, today, count, view)
+    note = (
+        P(notice, role="status", cls="mb-2 text-center text-sm font-semibold text-ink")
+        if notice
+        else None
+    )
     if not cards:
         data.record_empty_deck(uid, today)
-        relax = data.relaxations(uid, today)
-        return Div(EmptyDeck(today, relax), sheet, id="deck-area", cls="relative")
+        relax = (view and data.view_relaxation(uid, today, view)) or data.relaxations(
+            uid, today
+        )
+        return Div(note, EmptyDeck(today, relax), sheet, id="deck-area", cls="relative")
     c = cards[0]
     return Div(
+        note,
         OpeningCard(c),
         SwipeButtons(c["id"], today),
         P(
@@ -347,7 +381,7 @@ def deck(req):
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         TodaySwitch(today),
-        DeckArea(req.scope["uid"], today),
+        DeckArea(req.scope["uid"], today, deck_view(req)),
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",
     )
@@ -363,17 +397,19 @@ async def filters_save(req):
 
 def _sync_filters(req, form):
     minutes = form.get("max_minutes")
-    shown = set(form.getlist("causes"))
+    shown = form.getlist("causes")
     if (
         minutes is not None and minutes not in {str(m) for m, _ in MAX_MINUTES}
-    ) or not shown <= {c.slug for c in data.active_causes()}:
+    ) or not set(shown) <= {c.slug for c in data.active_causes()}:
         return bad_request()
-    data.save_quick_filters(
-        req.scope["uid"],
-        max_minutes=None if minutes is None else int(minutes),
-        shown=shown,
-        this_week=form.get("this_week") == "1",
-    )
+    if form.get("clear") == "1":
+        req.session.pop(VIEW, None)
+    else:  # this visit only: the session, never the saved preferences
+        req.session[VIEW] = {
+            **({"max_minutes": int(minutes)} if minutes is not None else {}),
+            "causes": sorted(set(shown)),
+            "this_week": form.get("this_week") == "1",
+        }
     return Redirect("/deck?today=1" if form.get("today") == "1" else "/deck")
 
 
@@ -386,8 +422,11 @@ async def relax(req):
 
 
 def _sync_relax(req, form):
-    try:
-        data.apply_relaxation(req.scope["uid"], form.get("key", ""))
-    except ValueError:
-        pass  # no longer on offer (the deck changed since): just show it again
+    if form.get("key") == "clear_view":
+        req.session.pop(VIEW, None)
+    else:
+        try:
+            data.apply_relaxation(req.scope["uid"], form.get("key", ""))
+        except ValueError:
+            pass  # no longer on offer (the deck changed since): it shows again, as is
     return Redirect("/deck?today=1" if form.get("today") == "1" else "/deck")
