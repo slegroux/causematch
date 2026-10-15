@@ -272,9 +272,15 @@ def pilot_metrics(rows, now=None):
         "intro": list(INTRO),
         "heard_from": list(HEARD_FROM),
     }
+    empty = rows.get("empty_decks", [])
     out = {
         "overall": _group(swipes, matches, shifts, vols, now),
         "labels": {c["slug"]: c["label"] for c in rows["causes"]},
+        # how often filters left nothing to swipe (plan risk: over-filtering)
+        "empty_deck": {
+            "views": len(empty),
+            "volunteers": len({r["volunteer_id"] for r in empty}),
+        },
     }
     for kind, ks in keys.items():
         groups = {

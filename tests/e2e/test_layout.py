@@ -205,3 +205,89 @@ def test_the_homelessness_note_stands_out_only_for_that_cause(browser, live_url)
     cause.select_option("food-insecurity")
     assert note.evaluate(weight) < 700 and box.evaluate(border) == "1px"
     page.context.close()
+
+
+def test_the_save_bar_covers_nothing_at_the_bottom_of_preferences(se_page):
+    sign_in_page(se_page, "(310) 555-0163")
+    se_page.goto("/me/preferences")
+    se_page.evaluate("window.scrollTo(0, document.scrollingElement.scrollHeight)")
+    save = se_page.get_by_role("button", name="Save preferences").bounding_box()
+    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+    assert save["y"] + save["height"] <= bar["y"], (save, bar)
+    # the last section's last control is above the save button, not under it
+    last = se_page.locator("label:has(input[name=skills])").last.bounding_box()
+    assert last["y"] + last["height"] <= save["y"], (last, save)
+
+
+def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(se_page):
+    """The tallest card in practice: a two-line title and place, and four why-chips."""
+    from datetime import datetime, timedelta
+
+    from app.db import Opening, now, profiles
+
+    p = sign_in_page(se_page, "(310) 555-0164")
+    for o in openings():
+        openings.update(id=o.id, status="closed")
+    saturday = datetime.now(data.LA) + timedelta(weeks=1)
+    saturday += timedelta(days=(5 - saturday.weekday()) % 7)
+    openings.insert(
+        Opening(
+            org_id=orgs()[0].id,
+            title="Sample: Support special events and community outreach",
+            about="",
+            causes='["environment-parks"]',
+            skills="[]",
+            lat=34.05,
+            lon=-118.25,
+            neighborhood="Sepulveda Basin (Encino / Van Nuys)",
+            remote=False,
+            starts_at=saturday.strftime("%Y-%m-%dT09:00"),
+            recurrence="one_time",
+            slots=6,
+            status="open",
+            created_at=now(),
+            first_timer_ok=True,
+        )
+    )
+    profiles.update(
+        id=p.id,
+        lat=34.06,
+        lon=-118.24,
+        radius_km=60,
+        cause_prefs='{"environment-parks": "love"}',
+        availability='["sat_morning"]',
+    )
+    (card,) = data.deck(p.id, 5)
+    assert len(card["why"]) == 4
+    se_page.goto("/deck")
+    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+    for name in ("Pass", "Like"):
+        box = se_page.get_by_role("button", name=name).bounding_box()
+        assert box["y"] + box["height"] <= bar["y"], (name, box, bar)
+
+
+def test_onboarding_fills_and_submits_on_a_small_phone(se_page):
+    se_page.goto("/login")
+    se_page.get_by_label("Mobile number").fill("(310) 555-0165")
+    se_page.get_by_role("button", name="Text me a code").click()
+    se_page.get_by_label("Code").fill("000000")
+    se_page.get_by_role("button", name="Sign in").click()
+    se_page.wait_for_url("**/onboarding")
+    width = se_page.evaluate(
+        "[document.scrollingElement.scrollWidth, window.innerWidth]"
+    )
+    assert width[0] <= width[1], width
+    se_page.locator("input[name=first_name]").fill("Sam")
+    se_page.get_by_text("I'm 18 or older").click()
+    se_page.get_by_label("Neighborhood or ZIP").fill("90012")
+    se_page.locator(
+        "label:has(input[name='cause_food-insecurity'][value=love])"
+    ).click()
+    se_page.locator("label:has(input[name=availability][value=sat_morning])").click()
+    se_page.locator("select[name=heard_from]").select_option("public")
+    se_page.get_by_text("I agree", exact=True).click()
+    start = se_page.get_by_role("button", name="Start swiping")
+    box = start.bounding_box()
+    assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
+    start.click()
+    se_page.wait_for_url("**/deck")

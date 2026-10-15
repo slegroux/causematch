@@ -4,7 +4,9 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from conftest import FORM, ORIGIN, coordinator_for, sign_in
@@ -116,13 +118,12 @@ def test_extra_onboarding_fields_are_stored(new_user):
         "/onboarding",
         data={
             **FORM,
-            "skills": ["language"],
-            "language_other": "Spanish",
+            "other_causes": "rescue owls",
             "volunteered_last_year": "yes",
         },
     )
     (p,) = profiles(where="phone = ?", where_args=[new_user.phone])
-    assert p.language_other == "Spanish" and p.volunteered_last_year == "yes"
+    assert p.other_causes == "rescue owls" and p.volunteered_last_year == "yes"
 
 
 def test_bad_volunteered_value_rejected(new_user):
@@ -393,7 +394,11 @@ def test_counters_live_in_the_database_so_a_restart_keeps_them(anon):
 # --- rate limits: in memory -----------------------------------------------------------------
 
 
-def test_swipes_are_throttled_per_user(user):
+def test_swipes_are_throttled_per_user(user, monkeypatch):
+    # a stopped clock for the bucket: however slow the 31 requests are, no token refills
+    # between them (security's own `time` only: the event loop keeps the real one)
+    stopped = SimpleNamespace(monotonic=lambda: 1000.0, time=time.time)
+    monkeypatch.setattr(security, "time", stopped)
     codes = [
         user.post("/swipe", data={"opening_id": "x", "liked": "0"}).status_code
         for _ in range(31)

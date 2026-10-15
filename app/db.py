@@ -65,6 +65,12 @@ class Opening:
     reply_channel: str  # email|text|either
     adult_confirmed: bool  # 18+ and no one-to-one contact with vulnerable people
     created_at: str
+    # Kind of work, all optional ("" or NULL: not said)
+    setting: str  # indoor|outdoor
+    effort: str  # light|moderate|active
+    group_size: str  # solo|small|big
+    first_timer_ok: bool
+    languages: str  # JSON list of choices.LANGUAGES keys that help
 
 
 class Profile:
@@ -84,7 +90,9 @@ class Profile:
     skills: str  # JSON list
     language_other: str
     volunteered_last_year: str  # yes|no
-    availability: str  # JSON list
+    # JSON list: day slots "mon_morning", or the weekday/weekend buckets onboarding still
+    # writes until it moves to the grid (app/match.py day_slots reads both)
+    availability: str
     frequency: str
     heard_from: str  # personal|second_degree|public|other
     other_causes: str
@@ -93,6 +101,21 @@ class Profile:
     deleted_at: str
     suspended_at: str  # UTC; an admin suspended this account: it cannot sign in
     sms_opted_out: bool  # the number replied STOP: never text it again
+    # Match preferences (app/prefs.py), private: nonprofits never see them.
+    cause_prefs: str  # JSON {slug: love|open|no}; `causes` keeps love + open
+    free_dates: str  # JSON ["YYYY-MM-DD"], up to 10, future only (pruned when read)
+    horizon_days: int  # 7|14|31; 0 or NULL: any time
+    commitment: str  # one_time|recurring|either (NULL: either)
+    setting: str  # indoor|outdoor; NULL or "either": no preference
+    effort: str  # light|moderate|active; NULL or "any"
+    group_size: str  # solo|small|big; NULL or "any"
+    first_timer: bool  # prefers first-timer friendly openings
+    orientation_ok: bool  # False hides openings with a separate orientation; NULL: True
+    languages: str  # JSON list of choices.LANGUAGES keys
+    dealbreakers: (
+        str  # JSON subset of choices.DEALBREAKERS: these filter; NULL: distance
+    )
+    surprise: bool  # about 1 card in 8 from outside the loved causes
 
 
 class OrgMember:
@@ -251,6 +274,36 @@ class RateEvent:
 
 rate_events = db.create(RateEvent, pk="id", transform=True)
 rate_events.create_index(["key", "at"], if_not_exists=True)
+
+
+class DeckEmpty:
+    """One view of an empty deck, for the pilot metrics (app/metrics_rows.py)."""
+
+    id: int
+    volunteer_id: int
+    today: bool  # with "I'm free today" on
+    at: str  # UTC
+
+
+deck_empties = db.create(DeckEmpty, pk="id", transform=True)
+
+
+class Place:
+    """Where a volunteer helps from (up to 2), private: never shown to anyone else. A ZIP or
+    neighborhood centroid, or a device location rounded to 2 decimals; never an address."""
+
+    id: int
+    user_id: int
+    label: str  # Home | Work | the volunteer's own, up to 20 characters
+    lat: float
+    lon: float
+    area: str  # shown back to the volunteer only: "Mar Vista", "90066", "My location"
+    mode: str  # car|transit|bike|walk (app/match.py MODE_KMH)
+    max_minutes: int  # 0: any distance
+
+
+places = db.create(Place, pk="id", transform=True)
+places.create_index(["user_id"], if_not_exists=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

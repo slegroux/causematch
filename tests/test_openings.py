@@ -469,3 +469,55 @@ def test_a_homelessness_opening_still_needs_the_adults_only_confirmation(coord):
     assert re.search(r'<form[^>]*class="[^"]*\bcm-homeless\b', r.text)
     assert NOTE in r.text and "background check" in r.text
     assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+
+
+def test_kind_of_work_fields_are_optional_and_stored(coord):
+    post(coord)
+    (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    assert (o.setting, o.effort, o.group_size, o.first_timer_ok, o.languages) == (
+        "",
+        "",
+        "",
+        False,
+        "[]",
+    )
+    post(
+        coord,
+        title="Trail day",
+        setting="outdoor",
+        effort="active",
+        group_size="big",
+        first_timer_ok="1",
+        languages=["es", "ko"],
+    )
+    (o,) = openings(where="title = ?", where_args=["Trail day"])
+    assert (o.setting, o.effort, o.group_size, o.first_timer_ok, o.languages) == (
+        "outdoor",
+        "active",
+        "big",
+        True,
+        '["es", "ko"]',
+    )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"setting": "underwater"},
+        {"effort": "extreme"},
+        {"group_size": "crowd"},
+        {"first_timer_ok": "yes"},
+        {"languages": ["klingon"]},
+    ],
+)
+def test_kind_of_work_unknown_values_are_rejected(coord, over):
+    r = post(coord, **over)
+    assert r.status_code == 200 and "wasn't recognized" in r.text
+    assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+
+
+def test_kind_of_work_form_offers_the_fields(coord):
+    html = coord.get("/org/openings/new").text
+    for name in ("setting", "effort", "group_size", "first_timer_ok", "languages"):
+        assert f'name="{name}"' in html
+    assert "Good for first-timers" in html and "Spanish" in html

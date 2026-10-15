@@ -13,7 +13,7 @@
   }
 
   function button(c, liked) {
-    var form = c.parentNode.querySelector("form");
+    var form = c.parentNode.querySelector('form[action="/swipe"]');
     return form && form.querySelector('button[name="liked"][value="' + liked + '"]');
   }
 

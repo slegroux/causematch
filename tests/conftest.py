@@ -46,6 +46,7 @@ from app.db import (
     blocks,
     causes,
     claim_requests,
+    deck_empties,
     ensure_causes,
     login_tokens,
     matches,
@@ -54,6 +55,7 @@ from app.db import (
     openings,
     org_members,
     orgs,
+    places,
     profiles,
     rate_events,
     reports,
@@ -86,6 +88,8 @@ def fresh_db():
         retained_phones,
         claim_requests,
         rate_events,
+        places,
+        deck_empties,
     ):
         table.delete_where()
     security.reset_buckets()
@@ -108,13 +112,12 @@ _phones = itertools.count(3105550100)
 FORM = {
     "first_name": "Sam",
     "adult": "1",
-    "zip": "90012",
+    "place1_where": "90012",  # Home: Chinatown's ZIP, by car within 30 minutes
+    "place1_mode": "car",
+    "place1_minutes": "30",
     "neighborhood": "Chinatown",
-    "travel": "30",
-    "causes": ["food-insecurity"],
-    "availability": ["weekend_morning"],
-    "skills": ["car"],
-    "frequency": "weekly",
+    "cause_food-insecurity": "love",
+    "availability": ["sat_morning", "sun_morning"],
     "heard_from": "public",
     "consent": "1",
 }
@@ -144,11 +147,15 @@ def deck_titles(user):
 
 @pytest.fixture
 def user(new_user):
-    """Signed in and onboarded."""
+    """Signed in and onboarded, then: a car and weekly help set in Me, and Home as a
+    profile from before places reads it (the sign-up point, at any distance), so that every
+    seeded opening is in reach and a test can move the volunteer through the profile's
+    lat, lon and radius_km. Places, onboarding and radius have their own tests."""
     r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
     assert r.headers["location"] == "/deck"
-    # Wide enough that every seeded opening is in reach; radius has its own tests.
-    profiles.update(id=data.get_or_create_volunteer(new_user.phone), radius_km=60)
+    uid = data.get_or_create_volunteer(new_user.phone)
+    places.delete_where("user_id = ?", [uid])
+    profiles.update(id=uid, radius_km=60, skills='["car"]', frequency="weekly")
     return new_user
 
 

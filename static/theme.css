@@ -253,3 +253,12 @@ form.cm-homeless .cm-adult-box {
   border-color: hsl(var(--cm-brand));
   background-color: hsl(var(--cm-brand-soft));
 }
+/* A long form's save button (preferences, onboarding) stays in reach: at the bottom of the
+   screen, or just above the volunteer's tab bar. */
+.cm-savebar {
+  position: sticky;
+  bottom: env(safe-area-inset-bottom);
+}
+body:has(.cm-tabbar) .cm-savebar {
+  bottom: calc(4rem + env(safe-area-inset-bottom));
+}

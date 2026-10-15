@@ -5,18 +5,26 @@ from fasthtml.common import (
     H2,
     A,
     Button,
+    Details,
     Div,
+    Fieldset,
     Hidden,
     Img,
+    Legend,
     P,
     Redirect,
     Script,
     Span,
+    Summary,
 )
 from fasthtml.common import Form as PlainForm
 from monsterui.all import Container
+from starlette.concurrency import run_in_threadpool
 
-from app import data
+from app import data, prefs
+from app.choices import MAX_MINUTES
+from app.forms import bad_request, query, str_form
+from app.routes.prefs import Chip
 from app.ui import (
     CALENDAR,
     CAUSE_CHIP,
@@ -61,7 +69,24 @@ def CauseArt(slug):
         src=f"/static/img/causes/{slug}.svg",
         alt="",
         draggable="false",  # a mouse drag moves the card, not a ghost of the image
-        cls="pointer-events-none block h-36 w-full object-cover",
+        # shorter on a short phone, so the buttons stay above the tab bar
+        cls="pointer-events-none block h-36 w-full object-cover "
+        "[@media(max-height:740px)]:h-24",
+    )
+
+
+def WhyChip(w):
+    """One reason the card is shown: a cause in its color (♥ when loved), else a sand chip."""
+    if w["slug"]:
+        return CauseChip(w["slug"], w["text"])
+    tone = (
+        "bg-brand-soft text-brand-ink"
+        if w["text"] == "Surprise pick"
+        else "bg-sand text-ink"
+    )
+    return Span(
+        w["text"],
+        cls=f"inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold {tone}",
     )
 
 
@@ -70,10 +95,7 @@ def OpeningCard(c):
     return Div(
         CauseArt(c["slugs"][0]) if c["slugs"] else None,
         Div(
-            Div(
-                *[CauseChip(s, label) for s, label in zip(c["slugs"], c["causes"])],
-                cls="flex flex-wrap gap-1.5",
-            ),
+            Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
             H2(
                 c["title"],
                 cls="font-display text-xl font-extrabold leading-tight text-ink",
@@ -109,9 +131,10 @@ def RoundButton(label, liked, icon, cls):
     )
 
 
-def SwipeButtons(opening_id):
+def SwipeButtons(opening_id, today=False):
     return PlainForm(
         Hidden(name="opening_id", value=str(opening_id)),
+        Hidden(name="today", value="1") if today else None,
         RoundButton(
             "Pass",
             "0",
@@ -134,29 +157,205 @@ def SwipeButtons(opening_id):
     )
 
 
-def EmptyDeck():
+def EmptyDeck(today=False, relax=None):
+    """Nothing to swipe. relax: data.relaxations(), the one change that adds most cards."""
     return Div(
         Img(src="/static/img/empty-deck.svg", alt="", cls="mx-auto h-40 w-40"),
-        H2("You're all caught up", cls="font-display text-xl font-extrabold text-ink"),
+        H2(
+            "Nothing in the next 48 hours" if today else "You're all caught up",
+            cls="font-display text-xl font-extrabold text-ink",
+        ),
         P(
-            "You have seen every opening for now. Check back soon.",
+            "No shift you could reach starts that soon. Turn off “I'm free today” to "
+            "see everything."
+            if today
+            else "You have seen every opening for now. Check back soon.",
             cls="mx-auto max-w-xs text-ink-muted",
         ),
-        A("See your matches", href="/matches", cls="uk-btn uk-btn-primary mt-2 px-6"),
+        PlainForm(
+            Hidden(name="key", value=relax["key"]),
+            Hidden(name="today", value="1") if today else None,
+            Button(
+                f"{relax['label']}: {relax['more']} more",
+                type="submit",
+                cls="uk-btn uk-btn-primary mt-2 px-6",
+            ),
+            action="/deck/relax",
+            method="post",
+        )
+        if relax
+        else None,
+        A(
+            "See your matches",
+            href="/matches",
+            cls="uk-btn mt-2 px-6 " + ("uk-btn-default" if relax else "uk-btn-primary"),
+        ),
         cls="space-y-3 rounded-3xl border border-line bg-white px-6 py-10 text-center "
         "shadow-warm",
     )
 
 
-def DeckArea(uid):
-    """The top card with its buttons, or the empty state; the unit /swipe swaps."""
-    cards = data.deck(uid, limit=1)
+def TodaySwitch(today):
+    """ "I'm free today": only shifts starting in the next 48 hours, soonest first. A plain
+    GET form, so it works without script; the button says whether it is on."""
+    return PlainForm(
+        Hidden(name="today", value="0" if today else "1"),
+        Button(
+            Span(
+                Span(
+                    cls="block h-5 w-5 rounded-full bg-white shadow transition "
+                    + ("translate-x-5" if today else "translate-x-0"),
+                ),
+                cls="flex h-6 w-11 items-center rounded-full p-0.5 transition "
+                + ("bg-brand" if today else "bg-gray-500"),
+                aria_hidden="true",
+            ),
+            Span("I'm free today"),
+            type="submit",
+            aria_pressed="true" if today else "false",
+            cls="flex min-h-11 items-center gap-2.5 rounded-full px-1 text-sm font-bold "
+            "text-ink focus-visible:outline focus-visible:outline-2 "
+            "focus-visible:outline-brand",
+        ),
+        action="/deck",
+        method="get",
+        # up into the header row, beside the wordmark, so the card and its buttons still
+        # fit above the tab bar on a phone
+        cls="relative z-10 -mt-12 mb-1 flex justify-end",
+    )
+
+
+LEGEND = "mb-1.5 text-sm font-bold text-ink"
+SLIDERS = (
+    "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1",
+    "M15 4v4M9 10v4M17 16v4",
+)
+
+
+VIEW = "deck_view"  # the session key of the filter sheet's choices (data._viewed)
+
+
+def deck_view(req):
+    """The filter sheet's choices for this visit, or None."""
+    return req.session.get(VIEW)
+
+
+def FilterSheet(uid, today, count, view):
+    """The deck's quick filters, in a <details> over the card's top corner (no script):
+    the main place's travel time, which causes show, and this week only. They narrow this
+    visit's deck and change no saved preference. Its button says how many cards the deck
+    holds."""
+    view = view or {}
+    f = data.preferences(uid)
+    main = f["places"][0] if f["places"] else None
+    minutes = view.get("max_minutes", main and main["max_minutes"])
+    allowed = [c for c in data.active_causes() if f["causes"].get(c.slug) != prefs.NO]
+    shown = view.get("causes", [c.slug for c in allowed])
+    return Details(
+        Summary(
+            Icon(SLIDERS, size=18),
+            Span(f"{count} opening{'' if count == 1 else 's'}"),
+            Span(
+                "Filtered",
+                cls="rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-ink",
+            )
+            if view
+            else None,
+            Span(", filters", cls="sr-only"),
+            cls="flex h-11 cursor-pointer list-none items-center gap-2 rounded-full "
+            "border border-line bg-white/95 px-4 text-sm font-bold text-ink shadow-warm "
+            "[&::-webkit-details-marker]:hidden",
+        ),
+        PlainForm(
+            Hidden(name="today", value="1") if today else None,
+            P(
+                "Just for this visit. To keep a change, edit ",
+                A(
+                    "your preferences",
+                    href="/me/preferences",
+                    cls="font-bold text-brand-ink underline",
+                ),
+                ".",
+                cls="text-sm text-ink-muted",
+            ),
+            # minutes only limit the deck while distance is "Only show"
+            Fieldset(
+                Legend(f"Travel from {main['label']}, up to (minutes)", cls=LEGEND),
+                Div(
+                    *[
+                        Chip("radio", "max_minutes", str(v), label, minutes == v)
+                        for v, label in MAX_MINUTES
+                    ],
+                    cls="grid grid-cols-5 gap-1.5",
+                ),
+            )
+            if main and "distance" in f["dealbreakers"]
+            else None,
+            Fieldset(
+                Legend("Causes", cls=LEGEND),
+                Div(
+                    *[
+                        Chip("checkbox", "causes", c.slug, c.label, c.slug in shown)
+                        for c in allowed
+                    ],
+                    cls="flex flex-wrap gap-2",
+                ),
+            ),
+            Chip(
+                "checkbox",
+                "this_week",
+                "1",
+                "Only this week",
+                bool(view.get("this_week")) or f["horizon_days"] == 7,
+            ),
+            Div(
+                Button(
+                    "Show openings",
+                    type="submit",
+                    cls="uk-btn uk-btn-primary h-11 flex-1",
+                ),
+                Button(
+                    "Clear",
+                    type="submit",
+                    name="clear",
+                    value="1",
+                    cls="uk-btn uk-btn-default h-11",
+                )
+                if view
+                else None,
+                cls="flex gap-2",
+            ),
+            action="/deck/filters",
+            method="post",
+            cls="absolute right-0 top-full z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] "
+            "space-y-4 rounded-3xl border border-line bg-white p-5 shadow-warm",
+        ),
+        cls="absolute right-3 top-3 z-20",
+    )
+
+
+def DeckArea(uid, today=False, view=None, notice=None):
+    """The top card with its buttons, or the empty state; the unit /swipe swaps. The
+    filter sheet comes last, so swipe.js finds the swipe form first; it sits over the
+    card's top corner. notice: a line above the card (a swipe that didn't count)."""
+    cards, count = data.deck_and_count(uid, limit=1, today=today, view=view)
+    sheet = FilterSheet(uid, today, count, view)
+    note = (
+        P(notice, role="status", cls="mb-2 text-center text-sm font-semibold text-ink")
+        if notice
+        else None
+    )
     if not cards:
-        return Div(EmptyDeck(), id="deck-area")
+        data.record_empty_deck(uid, today)
+        relax = (view and data.view_relaxation(uid, today, view)) or data.relaxations(
+            uid, today
+        )
+        return Div(note, EmptyDeck(today, relax), sheet, id="deck-area", cls="relative")
     c = cards[0]
     return Div(
+        note,
         OpeningCard(c),
-        SwipeButtons(c["id"]),
+        SwipeButtons(c["id"], today),
         P(
             "Couldn't save that. Try again.",
             id="swipe-error",
@@ -164,7 +363,9 @@ def DeckArea(uid):
             hidden=True,
             cls="mt-3 text-center text-sm font-semibold text-red-700",
         ),
+        sheet,
         id="deck-area",
+        cls="relative",
     )
 
 
@@ -175,10 +376,57 @@ def index():
 
 @ar("/deck")
 def deck(req):
+    today = query(req, "today") == "1"
     return Container(
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
-        DeckArea(req.scope["uid"]),
+        TodaySwitch(today),
+        DeckArea(req.scope["uid"], today, deck_view(req)),
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",
     )
+
+
+@ar("/deck/filters", methods=["POST"])
+async def filters_save(req):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    return await run_in_threadpool(_sync_filters, req, form)
+
+
+def _sync_filters(req, form):
+    minutes = form.get("max_minutes")
+    shown = form.getlist("causes")
+    if (
+        minutes is not None and minutes not in {str(m) for m, _ in MAX_MINUTES}
+    ) or not set(shown) <= {c.slug for c in data.active_causes()}:
+        return bad_request()
+    if form.get("clear") == "1":
+        req.session.pop(VIEW, None)
+    else:  # this visit only: the session, never the saved preferences
+        req.session[VIEW] = {
+            **({"max_minutes": int(minutes)} if minutes is not None else {}),
+            "causes": sorted(set(shown)),
+            "this_week": form.get("this_week") == "1",
+        }
+    return Redirect("/deck?today=1" if form.get("today") == "1" else "/deck")
+
+
+@ar("/deck/relax", methods=["POST"])
+async def relax(req):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    return await run_in_threadpool(_sync_relax, req, form)
+
+
+def _sync_relax(req, form):
+    if form.get("key") == "clear_view":
+        req.session.pop(VIEW, None)
+    else:
+        try:
+            data.apply_relaxation(req.scope["uid"], form.get("key", ""))
+        except ValueError:
+            pass  # no longer on offer (the deck changed since): it shows again, as is
+    return Redirect("/deck?today=1" if form.get("today") == "1" else "/deck")

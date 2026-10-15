@@ -28,7 +28,16 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
 from app.auth import normalize_phone
-from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
+from app.choices import (
+    AVAILABILITY,
+    EFFORT,
+    FREQUENCY,
+    GROUP,
+    LANGUAGES,
+    MAX_OPENING_SKILLS,
+    SETTING,
+    SKILLS,
+)
 from app.forms import query, str_form
 from app.geo import zip_latlon
 from app.routes.shifts import RepeatForm
@@ -246,6 +255,37 @@ def Group(title, *fields):
     )
 
 
+FIRST_TIMERS = "Good for first-timers: no experience needed"
+
+
+def KindOfWork(f):
+    """The opening's optional kind-of-work fields; volunteers who want it rank it higher."""
+    return (
+        Field(
+            "Indoors or outdoors? (optional)",
+            Choice("setting", SETTING, f.get("setting", ""), "Not said"),
+        ),
+        Field(
+            "How physically active? (optional)",
+            Choice("effort", EFFORT, f.get("effort", ""), "Not said"),
+        ),
+        Field(
+            "Group size (optional)",
+            Choice("group_size", GROUP, f.get("group_size", ""), "Not said"),
+        ),
+        LabelCheckboxX(
+            FIRST_TIMERS,
+            name="first_timer_ok",
+            value="1",
+            checked=bool(f.get("first_timer_ok")),
+        ),
+        Field(
+            "Languages that help (optional)",
+            Checks("languages", LANGUAGES, f.get("languages", ())),
+        ),
+    )
+
+
 def OpeningForm(uid, f=None, error=None):
     f = f or {}
     my_orgs = data.coordinator_orgs(uid)
@@ -368,6 +408,7 @@ def OpeningForm(uid, f=None, error=None):
                 cls="cm-adult-box space-y-3 rounded-2xl border border-line p-4",
             ),
         ),
+        Group("Kind of work", *KindOfWork(f)),
         Group(
             "Reaching you",
             Field(
@@ -455,6 +496,11 @@ def _sync_new_opening_save(req, form):
         "orientation_required": text("orientation_required"),
         "reply_channel": text("reply_channel"),
         "adult_only_ok": form.get("adult_only_ok"),
+        "setting": text("setting"),
+        "effort": text("effort"),
+        "group_size": text("group_size"),
+        "first_timer_ok": form.get("first_timer_ok"),
+        "languages": form.getlist("languages"),
     }
 
     def fail(msg):
@@ -500,6 +546,14 @@ def _sync_new_opening_save(req, form):
         return fail("Something in that form wasn't recognized. Please try again.")
     if f["orientation_required"] not in {v for v, _ in ORIENTATION}:
         return fail("Please say whether an orientation is required.")
+    if (
+        f["setting"] not in {v for v, _ in SETTING} | {""}
+        or f["effort"] not in {v for v, _ in EFFORT} | {""}
+        or f["group_size"] not in {v for v, _ in GROUP} | {""}
+        or f["first_timer_ok"] not in (None, "1")
+        or not set(f["languages"]) <= {v for v, _ in LANGUAGES}
+    ):
+        return fail("Something in that form wasn't recognized. Please try again.")
     if f["reply_channel"] not in {
         v for v, _ in reply_options(bool(profile.contact_phone))
     }:
@@ -527,6 +581,11 @@ def _sync_new_opening_save(req, form):
             skills=f["skills"],
             notes=f["notes"],
             reply_channel=f["reply_channel"],
+            setting=f["setting"],
+            effort=f["effort"],
+            group_size=f["group_size"],
+            first_timer_ok=f["first_timer_ok"] == "1",
+            languages=f["languages"],
         )
     except PermissionError:
         return Refusal(403)

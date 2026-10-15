@@ -167,6 +167,15 @@ def first_start(typical_time, i=0, today=None):
     return f"{date}T{hour:02d}:{minute:02d}"
 
 
+# A sample opening's kind of work, guessed from its cause (the seed file doesn't say):
+# (setting, effort, group size). A demo stand-in; real nonprofits fill these in.
+WORK_BY_CAUSE = {
+    "environment-parks": ("outdoor", "active", "big"),
+    "food-insecurity": ("indoor", "moderate", "small"),
+    "animal-shelters": ("", "moderate", "small"),
+}
+
+
 def load_orgs(orgs):
     """Insert the seed file's nonprofits as verified orgs with sample openings."""
     from app.choices import SKILLS
@@ -193,6 +202,7 @@ def load_orgs(orgs):
                     ntee_code=o.get("ntee_code") or "",
                 )
             )
+            setting, effort, group = WORK_BY_CAUSE.get(o["cause"], ("", "", ""))
             for x in o.get("openings", []):
                 openings.insert(
                     Opening(
@@ -214,6 +224,11 @@ def load_orgs(orgs):
                         reply_channel="email",
                         adult_confirmed=True,
                         created_at=now(),
+                        setting=setting,
+                        effort=effort,
+                        group_size=group,
+                        first_timer_ok=i % 2 == 0,
+                        languages=json.dumps(["es"] if i % 3 == 0 else []),
                     )
                 )
                 i += 1
@@ -238,6 +253,47 @@ def _volunteer(phone, name, hood, causes, skills, frequency):
         heard_from="personal",
     )
     return uid
+
+
+def _preferences(uid):
+    """ME_PHONE's match preferences: two places (Home in Sawtelle by car, Work Downtown by
+    transit), three-state causes, a day grid and a free date, so /me/preferences and the
+    cards show them."""
+    from app import data
+    from app.geo import neighborhood_latlon, zip_latlon
+
+    home = zip_latlon("90025")  # Sawtelle
+    work = neighborhood_latlon("Downtown")[1]
+    data.save_preferences(
+        uid,
+        causes={
+            "food-insecurity": "love",
+            "animal-shelters": "love",
+            "environment-parks": "open",
+        },
+        availability=[
+            "tue_evening",
+            "thu_evening",
+            "sat_morning",
+            "sat_afternoon",
+            "sun_morning",
+        ],
+        free_dates=[(datetime.now(LA) + timedelta(days=10)).date().isoformat()],
+        horizon_days=31,
+        commitment="either",
+        setting="either",
+        effort="active",
+        first_timer=True,
+        languages=["es"],
+        skills=["physical", "car"],
+        frequency="weekly",
+        places=[
+            {"label": "Home", "lat": home[0], "lon": home[1], "area": "Sawtelle",
+             "mode": "car", "max_minutes": 45},
+            {"label": "Work", "lat": work[0], "lon": work[1], "area": "Downtown",
+             "mode": "transit", "max_minutes": 30},
+        ],
+    )  # fmt: skip
 
 
 def _past_shift(match_id, coordinator, days_ago, status):
@@ -328,6 +384,7 @@ def seed(seed_file=None):
     )
     if pending:
         data.swipe(me, pending.id, True)
+    _preferences(me)
     return {"org": org.name, "match_id": m.id, "coordinator_id": coord}
 
 

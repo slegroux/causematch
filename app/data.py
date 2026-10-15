@@ -13,7 +13,8 @@ from apswutils.db import NotFoundError
 
 from app import db as _db
 from app import match as _match
-from app.choices import ANY_DISTANCE_KM
+from app import prefs as _prefs
+from app.choices import ANY_DISTANCE_KM, DEFAULT_DEALBREAKERS, LANGUAGES, MAX_MINUTES
 from app.config import phone_hash_key
 from app.metrics_rows import fetch_rows
 
@@ -38,18 +39,100 @@ def _local_now():
     return datetime.now(LA).strftime("%Y-%m-%dT%H:%M")
 
 
-def _deck_openings(uid):
-    """[(opening, active cause labels, distance_km or None)] this volunteer could still swipe on.
+def local_today():
+    """Today's date in Los Angeles, "YYYY-MM-DD"."""
+    return datetime.now(LA).date().isoformat()
+
+
+# The travel minutes a sign-up radius stood for (app/routes/onboarding.py TRAVEL).
+RADIUS_MINUTES = {8: 15, 16: 30, 25: 45}
+LANGUAGE_NAMES = dict(LANGUAGES)
+TRAVEL_PHRASE = {
+    "car": "by car",
+    "transit": "by transit",
+    "bike": "by bike",
+    "walk": "on foot",
+}
+
+
+def _places(me):
+    """The volunteer's places, as match.best_place takes them; scale_km scales the distance
+    score. A profile with no saved place has one, Home: its sign-up ZIP by car, reaching
+    exactly its radius, so its deck stays as it was."""
+    rows = _db.places(where="user_id = ?", where_args=[me.id], order_by="id")
+    if rows:
+        return [
+            {
+                **{k: getattr(p, k) for k in ("id", "label", "lat", "lon", "area")},
+                "mode": p.mode,
+                "max_minutes": p.max_minutes,
+                "reach_km": (reach := _match.reach_km(p.mode, p.max_minutes)),
+                "scale_km": reach or ANY_DISTANCE_KM,
+            }
+            for p in rows
+        ]
+    if None in (me.lat, me.lon):
+        return []
+    radius = me.radius_km
+    gated = bool(radius) and radius < ANY_DISTANCE_KM
+    return [
+        {
+            "id": None,
+            "label": "Home",
+            "lat": me.lat,
+            "lon": me.lon,
+            "area": me.neighborhood or "My sign-up ZIP",
+            "mode": "car",
+            "max_minutes": RADIUS_MINUTES.get(radius, 0) if gated else 0,
+            "reach_km": radius if gated else None,
+            "scale_km": radius,
+        }
+    ]
+
+
+TODAY_HOURS = 48  # "I'm free today": shifts starting this soon
+
+
+def _deck_prefs(me):
+    """Everything about the volunteer that shapes the deck, read once. relaxations()
+    changes one value of a copy and counts what the deck would hold."""
+    return {
+        "causes": _prefs.cause_prefs(me),
+        "places": _places(me),
+        "horizon_days": _prefs.horizon_days(me),
+        "dealbreakers": _prefs.dealbreakers(me),
+        "availability": json.loads(me.availability or "[]"),
+        "free_dates": _prefs.free_dates(me, local_today()),
+        "commitment": _prefs.commitment(me),
+        "work": _prefs.work(me),
+        "orientation_ok": _prefs.orientation_ok(me),
+    }
+
+
+def _deck_openings(uid, today=False, p=None):
+    """[(opening, active cause labels, km, (place, km, minutes) or None)] this volunteer
+    could still swipe on.
 
     swipe() checks visibility with this same function, so whatever hides an opening
-    from the deck (closed, past, inactive cause, out of radius) also stops a like sent
-    by id. Distance is None for a remote opening or when either side has no location.
+    from the deck (closed, past, inactive cause, a cause that is "not for me", past the
+    volunteer's horizon, a dealbreaker: out of reach of every place, ...) also stops a like
+    sent by id. today: only shifts starting in the next TODAY_HOURS, whatever the
+    volunteer's times. The place is the one quickest to reach the opening from; it and km
+    are None for a remote opening or when the volunteer has no place. p: _deck_prefs(),
+    read here when not given.
     """
     labels = {c.slug: c.label for c in _db.causes() if c.active}
     seen = {
         s.opening_id for s in _db.swipes(where="volunteer_id = ?", where_args=[uid])
     }
-    me = _db.profiles[uid]
+    p = p or _deck_prefs(_db.profiles[uid])
+    only = p["dealbreakers"]
+    places = p["places"]
+    if "distance" not in only:  # rank by distance, but show every place's reach
+        places = [{**pl, "reach_km": None} for pl in places]
+    start = datetime.now(LA)
+    days = TODAY_HOURS / 24 if today else p["horizon_days"]
+    until = (start + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M") if days else None
     # Only verified, active orgs the volunteer has not blocked. An org that blocked the
     # volunteer stays visible: hiding it would tell them.
     shown = {
@@ -67,25 +150,217 @@ def _deck_openings(uid):
         where_args=["open", _local_now()],
         order_by="starts_at",
     ):
-        if o.org_id not in shown:
+        if o.org_id not in shown or (until and o.starts_at > until):
             continue
-        cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
+        slugs = json.loads(o.causes or "[]")
+        cause_labels = [labels[s] for s in slugs if s in labels]
         if not cause_labels or o.id in seen:
             continue
-        km = None
+        # a "not for me" of a cause that is inactive now waits for it to come back
+        if not _match.causes_allowed(p["causes"], [s for s in slugs if s in labels]):
+            continue
+        if "causes" in only and not any(
+            p["causes"].get(s) in (_prefs.LOVE, _prefs.OPEN)
+            for s in slugs
+            if s in labels
+        ):
+            continue  # only loved and open causes
+        if o.orientation_required == "separate" and not p["orientation_ok"]:
+            continue
+        if "when" in only and not today and not _when_ok(p, o):
+            continue
+        if "work" in only and not _match.work_allowed(p["work"], _work_of(o)):
+            continue
+        near = None
         if not o.remote:
             if None in (o.lat, o.lon):
                 continue  # an in-person opening with no place cannot be ranked or gated
-            if None not in (me.lat, me.lon):
-                km = _match.haversine_km(me.lat, me.lon, o.lat, o.lon)
-                if (
-                    me.radius_km
-                    and me.radius_km < ANY_DISTANCE_KM
-                    and km > me.radius_km
-                ):
-                    continue
-        out.append((o, cause_labels, km))
+            if places:
+                near = _match.best_place(places, o.lat, o.lon)
+                if near is None:
+                    continue  # out of reach of every place
+        out.append((o, cause_labels, near and near[1], near))
     return out
+
+
+def _when_ok(p, o):
+    """The "when" dealbreaker: free then (or a flexible opening), and the commitment fits."""
+    free = _match.availability_overlap(
+        p["availability"], o.starts_at, o.recurrence, p["free_dates"]
+    )
+    return free > 0 and _match.commitment_fits(p["commitment"], o.recurrence)
+
+
+def record_empty_deck(uid, today=False):
+    """Log an empty deck, once per volunteer per hour: refreshing doesn't inflate it."""
+    hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
+    if not _db.deck_empties.count_where("volunteer_id = ? AND at > ?", [uid, hour_ago]):
+        _db.deck_empties.insert(_db.DeckEmpty(volunteer_id=uid, today=today, at=_now()))
+
+
+TIERS = [m for m, _ in MAX_MINUTES if m]  # 15, 30, 45, 60; then any distance
+
+
+def _wider(place):
+    """The travel times past this place's reach, shortest first, in minutes (0: any)."""
+    if place["reach_km"] is None:
+        return []
+    return [
+        m for m in TIERS if _match.reach_km(place["mode"], m) > place["reach_km"]
+    ] + [0]
+
+
+def _relaxed(p, key):
+    """A copy of _deck_prefs() with one preference loosened (keys: _relaxation_labels)."""
+    q = {**p, "dealbreakers": [d for d in p["dealbreakers"] if f"only_{d}" != key]}
+    if key == "horizon":
+        q["horizon_days"] = 0
+    elif key.startswith("widen:"):
+        i, to = map(int, key.split(":")[1:])
+        reach = _match.reach_km(p["places"][i]["mode"], to)
+        q["places"] = [
+            {
+                **pl,
+                "max_minutes": to,
+                "reach_km": reach,
+                "scale_km": reach or ANY_DISTANCE_KM,
+            }
+            if j == i
+            else pl
+            for j, pl in enumerate(p["places"])
+        ]
+    return q
+
+
+def _relaxation_labels(p):
+    """{key: label} of the changes that could add cards. widen:<place>:<minutes> for each
+    wider travel time of each place, then the horizon and the dealbreakers."""
+    out = {}
+    if "distance" in p["dealbreakers"]:
+        for i, pl in enumerate(p["places"]):
+            who = f" {pl['label']}" if len(p["places"]) > 1 else ""
+            for to in _wider(pl):
+                reach = f"{to} min" if to else "any distance"
+                out[f"widen:{i}:{to}"] = f"Widen{who} to {reach}"
+    if p["horizon_days"]:
+        out["horizon"] = "Look further ahead"
+    names = {
+        "causes": "Show every cause you haven't ruled out",
+        "when": "Show any time",
+        "work": "Show any kind of work",
+    }
+    for d, label in names.items():
+        if d in p["dealbreakers"]:
+            out[f"only_{d}"] = label
+    return out
+
+
+def relaxations(uid, today=False):
+    """{"key", "label", "more"}: the one change that adds the most cards, or None. For a
+    place, only its shortest wider travel time that adds any is offered."""
+    p = _deck_prefs(_db.profiles[uid])
+    base = len(_deck_openings(uid, today, p))
+    best, widened = None, set()
+    for key, label in _relaxation_labels(p).items():
+        place = key.split(":")[1] if key.startswith("widen:") else None
+        if place in widened:
+            continue
+        more = len(_deck_openings(uid, today, _relaxed(p, key))) - base
+        if more > 0 and place is not None:
+            widened.add(place)
+        if more > 0 and (best is None or more > best["more"]):
+            best = {"key": key, "label": label, "more": more}
+    return best
+
+
+def _saved_places(uid):
+    """The volunteer's places as rows, saving the sign-up Home first when there are none."""
+    me = _db.profiles[uid]
+    places = _places(me)
+    if places and places[0]["id"] is None:
+        home = places[0]
+        _db.places.insert(
+            _db.Place(
+                user_id=uid,
+                label=home["label"],
+                lat=home["lat"],
+                lon=home["lon"],
+                area=home["area"],
+                mode=home["mode"],
+                # the sign-up travel time, or the shortest that reaches as far
+                max_minutes=home["max_minutes"]
+                or next(
+                    (
+                        m
+                        for m in TIERS
+                        if home["reach_km"] is not None
+                        and _match.reach_km(home["mode"], m) >= home["reach_km"]
+                    ),
+                    0,
+                ),
+            )
+        )
+    return _db.places(where="user_id = ?", where_args=[uid], order_by="id")
+
+
+def apply_relaxation(uid, key):
+    """Loosen one preference, as relaxations() offered it. ValueError for an unknown key."""
+    me = _db.profiles[uid]
+    p = _deck_prefs(me)
+    if key not in _relaxation_labels(p):
+        raise ValueError("not a relaxation on offer")
+    with _db.db.conn:
+        if key.startswith("widen:"):
+            i, to = map(int, key.split(":")[1:])
+            _db.places.update(id=_saved_places(uid)[i].id, max_minutes=to)
+        elif key == "horizon":
+            _db.profiles.update(id=uid, horizon_days=0)
+        else:
+            _db.profiles.update(
+                id=uid, dealbreakers=json.dumps(_relaxed(p, key)["dealbreakers"])
+            )
+
+
+def _viewed(p, view):
+    """_deck_prefs() narrowed by the deck's filter sheet, for this visit only: the saved
+    preferences never change. view: {"max_minutes", "causes", "this_week"} or None.
+    max_minutes sets the main place's reach (only while distance is a dealbreaker), causes
+    lists the ones to show (the others are hidden like "not for me"), this_week caps the
+    horizon at 7 days."""
+    if not view:
+        return p
+    q = {**p, "causes": dict(p["causes"])}
+    if view.get("causes") is not None:
+        for c in active_causes():
+            if c.slug not in view["causes"]:
+                q["causes"][c.slug] = _prefs.NO
+    if view.get("this_week") and not 0 < p["horizon_days"] <= 7:
+        q["horizon_days"] = 7
+    minutes = view.get("max_minutes")
+    if minutes is not None and p["places"] and "distance" in p["dealbreakers"]:
+        reach = _match.reach_km(p["places"][0]["mode"], minutes)
+        q["places"] = [
+            {
+                **p["places"][0],
+                "max_minutes": minutes,
+                "reach_km": reach,
+                "scale_km": reach or ANY_DISTANCE_KM,
+            },
+            *p["places"][1:],
+        ]
+    return q
+
+
+def view_relaxation(uid, today, view):
+    """{"key": "clear_view", ...}: clearing the filter sheet, when that adds cards."""
+    me = _db.profiles[uid]
+    p = _deck_prefs(me)
+    more = len(_deck_openings(uid, today, p)) - len(
+        _deck_openings(uid, today, _viewed(p, view))
+    )
+    return (
+        {"key": "clear_view", "label": "Clear filters", "more": more} if more else None
+    )
 
 
 def _org_reply_rates():
@@ -116,44 +391,150 @@ def _distance_label(km):
     return None if km is None else "< 1 km" if km < 1 else f"{round(km)} km"
 
 
-def deck(uid, limit=20):
-    """Cards for open openings with an active cause, best fit first.
+def _work_of(o):
+    return {
+        "setting": o.setting,
+        "effort": o.effort,
+        "group_size": o.group_size,
+        "first_timer_ok": bool(o.first_timer_ok),
+    }
 
-    Cards carry the distance rounded to whole km, never coordinates.
+
+SURPRISE_EVERY = 8  # "Surprise me": about one card in this many is from outside love
+
+
+def deck(uid, limit=20, today=False, view=None):
+    """deck_and_count()'s cards."""
+    return deck_and_count(uid, limit, today, view)[0]
+
+
+def deck_and_count(uid, limit=20, today=False, view=None):
+    """Cards for open openings with an active cause, best fit first. today ("I'm free
+    today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
+
+    With "Surprise me", every SURPRISE_EVERY-th card the volunteer meets (counted by their
+    swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
+    distance rounded to whole km and the travel estimate, never coordinates. Returns
+    (cards, how many the deck holds in all). view: the filter sheet's (see _viewed).
     """
     me = _db.profiles[uid]
+    p = _viewed(_deck_prefs(me), view)
     active = {c.slug for c in _db.causes() if c.active}
-    mine = set(json.loads(me.causes or "[]")) & active, json.loads(me.skills or "[]")
-    free = json.loads(me.availability or "[]")
+    rated = {s: v for s, v in p["causes"].items() if s in active}
+    loved = {s for s, v in rated.items() if v == _prefs.LOVE}
+    skills = json.loads(me.skills or "[]")
+    spoken = _prefs.languages(me)
     org_names = {o.id: o.name for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
-    for o, cause_labels, km in _deck_openings(uid):
-        fit = _match.score(
-            causes=(mine[0], set(json.loads(o.causes or "[]")) & active),
-            skills=(mine[1], json.loads(o.skills or "[]")),
-            distance=_match.distance_score(km, me.radius_km, o.remote),
-            availability=_match.availability_overlap(free, o.starts_at, o.recurrence),
-            reply=rates.get(o.org_id, 0.5),
+    for o, cause_labels, km, near in _deck_openings(uid, today, p):
+        slugs = [s for s in json.loads(o.causes or "[]") if s in active]
+        when = _match.availability_overlap(
+            p["availability"], o.starts_at, o.recurrence, p["free_dates"]
         )
-        ranked.append((-round(fit, 6), o.starts_at, o.id, o, cause_labels, km))
+        if not _match.commitment_fits(p["commitment"], o.recurrence):
+            when /= 2
+        fit = _match.score(
+            causes=(rated, set(slugs)),
+            skills=(skills, json.loads(o.skills or "[]")),
+            distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
+            availability=when,
+            reply=rates.get(o.org_id, 0.5),
+            work=_match.work_fit(p["work"], _work_of(o)),
+            language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
+        )
+        if today:  # ignores fit: the soonest, then the nearest; remote after in-person
+            key = (o.starts_at, km if km is not None else float("inf"), o.id)
+        else:
+            key = (-round(fit, 6), o.starts_at, o.id)
+        ranked.append((*key, o, cause_labels, slugs, near))
     ranked.sort(key=lambda r: r[:3])
-    return [
+    pool = [r[3:] for r in ranked]
+    seen = _db.swipes.count_where("volunteer_id = ?", [uid])
+    surprise = bool(me.surprise) and bool(loved) and not today
+    cards = []
+    while pool and len(cards) < limit:
+        pick, odd = 0, False
+        if surprise and (seen + len(cards)) % SURPRISE_EVERY == SURPRISE_EVERY - 1:
+            outside = [i for i, r in enumerate(pool) if not loved & set(r[2])]
+            if outside:
+                pick, odd = outside[0], True
+        o, cause_labels, slugs, near = pool.pop(pick)
+        cards.append(
+            {
+                "id": o.id,
+                "title": o.title,
+                "org": org_names.get(o.org_id, ""),
+                "causes": cause_labels,
+                # the same active causes as slugs, in the same order (art and chips)
+                "slugs": slugs,
+                "starts_at": o.starts_at,
+                "neighborhood": o.neighborhood,
+                "slots": o.slots,
+                "remote": bool(o.remote),
+                "distance": _distance_label(near and near[1]),
+                "travel": near
+                and f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} "
+                f"from {near[0]['label']}",
+                "surprise": odd,
+                "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd),
+            }
+        )
+    return cards, len(ranked)
+
+
+MAX_WHY = 4
+WORK_WORDS = {
+    ("setting", "indoor"): "Indoors",
+    ("setting", "outdoor"): "Outdoors",
+    ("effort", "light"): "Light work",
+    ("effort", "moderate"): "Moderate work",
+    ("effort", "active"): "Active work",
+    ("group_size", "solo"): "On your own",
+    ("group_size", "small"): "Small group",
+    ("group_size", "big"): "Big group",
+}
+
+
+def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
+    """1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on a
+    cause chip (drawn in its color). Its causes always come first, so there is at least one.
+    """
+    order = {_prefs.LOVE: 0, _prefs.OPEN: 1}
+    why = [
         {
-            "id": o.id,
-            "title": o.title,
-            "org": org_names.get(o.org_id, ""),
-            "causes": cause_labels,
-            # the same active causes as slugs, in the same order (the card's art and chips)
-            "slugs": [s for s in json.loads(o.causes or "[]") if s in active],
-            "starts_at": o.starts_at,
-            "neighborhood": o.neighborhood,
-            "slots": o.slots,
-            "remote": bool(o.remote),
-            "distance": _distance_label(km),
+            "text": ("♥ " if rated.get(s) == _prefs.LOVE else "") + label,
+            "slug": s,
         }
-        for *_, o, cause_labels, km in ranked[:limit]
-    ]
+        for s, label in sorted(
+            zip(slugs, cause_labels), key=lambda sl: order.get(rated.get(sl[0]), 2)
+        )
+    ][:2]
+    more = []
+    if surprise:
+        more.append("Surprise pick")
+    if near:
+        more.append(
+            f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} from {near[0]['label']}"
+        )
+    elif o.remote:
+        more.append("Remote")
+    if o.starts_at[:10] in p["free_dates"]:
+        more.append("You're free that day")
+    elif _match.availability_slot(o.starts_at) in _match.day_slots(p["availability"]):
+        day, part = _match.availability_slot(o.starts_at).split("_")
+        more.append(f"You're free {day.title()} {part}s")
+    wanted = p["work"]["first_timer"]
+    if o.first_timer_ok and wanted:
+        more.append("First-timer friendly")
+    for k in _match.work_matches(p["work"], _work_of(o)):
+        more.append(WORK_WORDS[(k, getattr(o, k))])
+    helps = _match.languages_shared(spoken, json.loads(o.languages or "[]"))
+    if helps:
+        more.append(f"{LANGUAGE_NAMES[min(helps)]} helps")
+    if o.first_timer_ok and not wanted:  # a fact about it, after what matches
+        more.append("First-timer friendly")
+    return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
 
 
 def _accepted(opening_id):
@@ -180,11 +561,13 @@ def _match_for(uid, opening_id):
     return found[0] if found else None
 
 
-def _swipe(uid, opening_id, liked):
+def _swipe(uid, opening_id, liked, today=False, view=None):
     """Record a swipe; a like makes a pending match. (match, created), match None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
-    the opening in their deck (closed, inactive cause, unknown id).
+    the opening in their deck (closed, inactive cause, unknown id): the deck they swiped
+    in (today, view), or their saved deck, since a card drawn under one may be swiped
+    after the other changed.
     """
     if not _is_id(opening_id):
         raise LookupError("no such opening")
@@ -193,7 +576,11 @@ def _swipe(uid, opening_id, liked):
             where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
         ):
             return _match_for(uid, opening_id), False
-        if opening_id not in {o.id for o, *_ in _deck_openings(uid)}:
+        p = _deck_prefs(_db.profiles[uid])
+        seen = {o.id for o, *_ in _deck_openings(uid, False, p)}
+        if (today or view) and opening_id not in seen:
+            seen |= {o.id for o, *_ in _deck_openings(uid, today, _viewed(p, view))}
+        if opening_id not in seen:
             raise LookupError("no such opening")
         _db.swipes.insert(
             _db.Swipe(
@@ -217,18 +604,18 @@ def _swipe(uid, opening_id, liked):
         ), True
 
 
-def swipe(uid, opening_id, liked):
+def swipe(uid, opening_id, liked, today=False, view=None):
     """Record a swipe; a like makes a pending match. The match, or None for a pass.
 
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
     the opening in their deck (closed, inactive cause, unknown id).
     """
-    return _swipe(uid, opening_id, liked)[0]
+    return _swipe(uid, opening_id, liked, today, view)[0]
 
 
-def swipe_created(uid, opening_id, liked):
+def swipe_created(uid, opening_id, liked, today=False, view=None):
     """Like `swipe`, but the Match only when this call created it (not a pass or a repeat)."""
-    match, created = _swipe(uid, opening_id, liked)
+    match, created = _swipe(uid, opening_id, liked, today, view)
     return match if created and not match.org_blind else None
 
 
@@ -386,7 +773,9 @@ def org_inbox(coordinator_uid):
                 "opening": r["title"],
                 "first_name": name[0] if name else "A volunteer",
                 "causes": [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
-                "availability": json.loads(r["availability"] or "[]"),
+                "availability": _match.general_buckets(
+                    json.loads(r["availability"] or "[]")
+                ),
                 "neighborhood": r["neighborhood"],
                 "frequency": r["frequency"],
                 "full": bool(r["full"]),
@@ -824,26 +1213,109 @@ def save_onboarding(
     volunteered_last_year="",
     frequency="",
     heard_from,
+    cause_prefs=None,
+    place=None,
 ):
-    _db.profiles.update(
-        id=uid,
-        display_name=display_name,
-        email=email,
-        neighborhood=neighborhood,
-        language_other=language_other,
-        volunteered_last_year=volunteered_last_year,
-        adult_attested=True,
-        lat=lat,
-        lon=lon,
-        radius_km=radius_km,
-        causes=json.dumps(list(causes)),
-        other_causes=other_causes,
-        availability=json.dumps(list(availability)),
-        skills=json.dumps(list(skills)),
-        frequency=frequency,
-        heard_from=heard_from,
-        onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    """cause_prefs: {slug: love|open|no} (default: causes, all loved). place: the Home
+    place (label, lat, lon, area, mode, max_minutes), saved as the volunteer's first place;
+    without one, the profile's lat, lon and radius_km read as Home."""
+    rated = (
+        cause_prefs if cause_prefs is not None else dict.fromkeys(causes, _prefs.LOVE)
     )
+    with _db.db.conn:
+        _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
+        if place:
+            _db.places.insert(_db.Place(user_id=uid, **place))
+        _db.profiles.update(
+            id=uid,
+            display_name=display_name,
+            email=email,
+            neighborhood=neighborhood,
+            language_other=language_other,
+            volunteered_last_year=volunteered_last_year,
+            adult_attested=True,
+            lat=lat,
+            lon=lon,
+            radius_km=radius_km,
+            causes=json.dumps(_prefs.picked(rated)),
+            cause_prefs=json.dumps(rated),
+            other_causes=other_causes,
+            availability=json.dumps(list(availability)),
+            skills=json.dumps(list(skills)),
+            frequency=frequency,
+            heard_from=heard_from,
+            onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+
+
+def preferences(uid):
+    """The volunteer's match preferences, as /me/preferences shows them."""
+    p = _db.profiles[uid]
+    return {
+        "causes": _prefs.cause_prefs(p),
+        "availability": _match.day_slots(json.loads(p.availability or "[]")),
+        "free_dates": _prefs.free_dates(p, local_today()),
+        "horizon_days": _prefs.horizon_days(p),
+        "commitment": _prefs.commitment(p),
+        **_prefs.work(p),
+        "orientation_ok": _prefs.orientation_ok(p),
+        "languages": _prefs.languages(p),
+        "dealbreakers": _prefs.dealbreakers(p),
+        "surprise": bool(p.surprise),
+        "skills": json.loads(p.skills or "[]"),
+        "frequency": p.frequency or "",
+        "places": _places(p),
+    }
+
+
+def save_preferences(
+    uid,
+    *,
+    causes,
+    availability,
+    skills,
+    frequency,
+    places,
+    free_dates=(),
+    horizon_days=0,
+    commitment="either",
+    setting="either",
+    effort="any",
+    group_size="any",
+    first_timer=False,
+    orientation_ok=True,
+    languages=(),
+    dealbreakers=DEFAULT_DEALBREAKERS,
+    surprise=False,
+):
+    """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
+    (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
+    ones. The profile's own point follows the first place."""
+    with _db.db.conn:
+        _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
+        for p in places:
+            _db.places.insert(_db.Place(user_id=uid, **p))
+        _db.profiles.update(
+            id=uid,
+            cause_prefs=json.dumps(causes),
+            causes=json.dumps(_prefs.picked(causes)),
+            availability=json.dumps(list(availability)),
+            free_dates=json.dumps(sorted(free_dates)),
+            horizon_days=horizon_days,
+            commitment=commitment,
+            setting=setting,
+            effort=effort,
+            group_size=group_size,
+            first_timer=first_timer,
+            orientation_ok=orientation_ok,
+            languages=json.dumps(sorted(set(languages))),
+            dealbreakers=json.dumps(list(dealbreakers)),
+            surprise=surprise,
+            skills=json.dumps(list(skills)),
+            frequency=frequency,
+            lat=places[0]["lat"],
+            lon=places[0]["lon"],
+        )
 
 
 TOKEN_MINUTES = 15
@@ -1027,8 +1499,14 @@ def create_opening(
     notes,
     reply_channel,
     skills=(),
+    setting="",
+    effort="",
+    group_size="",
+    first_timer_ok=False,
+    languages=(),
 ):
-    """Opening id. Only an org member may post; the status always starts open.
+    """Opening id. Only an org member may post; the status always starts open. The kind
+    of work (setting ... languages) is optional: "" is not said.
 
     ValueError without coordinates: an in-person opening needs a place to be ranked.
     """
@@ -1058,6 +1536,11 @@ def create_opening(
             reply_channel=reply_channel,
             adult_confirmed=True,
             created_at=_now(),
+            setting=setting,
+            effort=effort,
+            group_size=group_size,
+            first_timer_ok=first_timer_ok,
+            languages=json.dumps(sorted(set(languages))),
         )
     ).id
 
@@ -1918,10 +2401,12 @@ def delete_account(uid):
             [uid],
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         _db.db.execute(
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
+            "free_dates = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
             [_now(), uid],
         )

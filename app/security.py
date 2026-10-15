@@ -100,12 +100,17 @@ def csp():
     )
 
 
+# The pages whose "Use my location" button (static/geo.js) may ask for the device location.
+GEOLOCATION_PATHS = ("/me/preferences", "/onboarding")
+
+
 def security_headers(path):
+    geo = "(self)" if path in GEOLOCATION_PATHS else "()"
     h = {
         "Content-Security-Policy": csp(),
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+        "Permissions-Policy": f"camera=(), microphone=(), geolocation={geo}, payment=()",
         "X-Frame-Options": "DENY",
     }
     if is_production():

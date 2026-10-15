@@ -25,6 +25,7 @@ from app.forms import bad_request, str_form
 from app.ui import (
     CARD,
     CLOCK,
+    HEART,
     NEXT,
     SHIELD,
     SIGN_OUT,
@@ -294,6 +295,7 @@ def profile_page(req):
             cls="flex items-center gap-4 p-4 " + CARD,
         ),
         Div(
+            HubRow(HEART, "Preferences", "/me/preferences"),
             HubRow(CLOCK, "History", "/history"),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),
@@ -375,11 +377,16 @@ def privacy():
         Section(
             "What we collect",
             "Volunteers: your mobile number; your first name; an email if you give one; "
-            "your ZIP code (we turn it into an approximate location we never show), your "
-            "neighborhood and how far you will travel; the causes and skills you pick, "
-            "other causes you type, languages other than English and whether you "
-            "volunteered last year; when you are free and how often you'd like to help; "
-            "how you heard of Causematch; and your confirmation that you are 18 or over.",
+            "the neighborhood you show nonprofits; the other causes you type and whether "
+            "you volunteered last year; how you heard of Causematch; and your "
+            "confirmation that you are 18 or over.",
+            "Your match preferences: up to two places you help from (each a neighborhood "
+            "or ZIP area, or your device's location rounded to about 1 km: never an "
+            "address), how you get there and how far you'd go; how much you care about "
+            "each cause; when you're usually free and specific free dates; how far ahead "
+            "to look and one-time or recurring; the kind of work, languages and skills "
+            "you pick; how often you'd like to help; and which of these only show or only "
+            "rank openings.",
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
@@ -400,6 +407,13 @@ def privacy():
             "reporter wrote, and the pilot's aggregate statistics.",
         ),
         Section(
+            "Your preferences are private",
+            "Only you see your preferences. They decide which openings you see and in "
+            "what order; no nonprofit sees your places, ratings, dates or the rest. A "
+            "nonprofit you like sees only what the paragraph above lists: the causes you "
+            "love or are open to, and a general summary of when you're free.",
+        ),
+        Section(
             "Who else handles your data",
             "Twilio sends your sign-in codes and our texts. Our email provider (Resend) "
             "sends coordinators' sign-in links and notices. Google Cloud hosts the app and "
@@ -417,11 +431,14 @@ def privacy():
             "How long we keep it, and what stays after you delete",
             "We keep your account until you delete it. Volunteers can delete theirs any "
             "time from Me; coordinators ask us to delete theirs. Deleting erases your "
-            "name, phone, email, location, neighborhood and the free text you typed. Your "
+            "name, phone, email, places, specific free dates, neighborhood and the free "
+            "text you typed. Your "
             "matches are withdrawn and your future shifts cancelled, and your chat messages "
             'are replaced with "[message removed]".',
-            "What remains, without your name: your answers (causes, skills, availability, "
-            "how often, how you heard of us), your likes and your match and shift history "
+            "What remains, without your name: your answers (causes and how you rated "
+            "them, skills, when you're usually free, how often, the other preferences "
+            "above except your places, and how you heard of us), your likes and your "
+            "match and shift history "
             "including attendance, kept for the pilot's statistics. The nonprofit keeps its "
             "own messages to you. Reports you filed stay with the details you wrote, and "
             "reports about you stay.",
@@ -433,8 +450,9 @@ def privacy():
         ),
         Section(
             "Seeing or correcting your data",
-            f"You can't edit your answers in the app yet. Write to {contact} and we'll "
-            "send you what we hold or fix it, or delete your account and sign up again.",
+            "You can change your match preferences any time in Me, under Preferences. "
+            f"For anything else, write to {contact} and we'll send you what we hold or "
+            "fix it, or delete your account and sign up again.",
         ),
         Section(
             "Do Not Track",

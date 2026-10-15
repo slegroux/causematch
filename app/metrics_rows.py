@@ -21,8 +21,18 @@ def _causes(rows):
     return [{**r, "causes": json.loads(r["causes"] or "[]")} for r in rows]
 
 
+def _empty_decks(q):
+    """Views of an empty deck; none for a database from before they were counted."""
+    if not q(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'deck_empty'"
+    ):
+        return []
+    return q("SELECT volunteer_id, today FROM deck_empty")
+
+
 def fetch_rows(q):
     return {
+        "empty_decks": _empty_decks(q),
         "causes": [
             {
                 "slug": c["slug"],
