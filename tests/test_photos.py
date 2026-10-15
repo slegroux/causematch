@@ -957,9 +957,10 @@ def test_the_childs_memory_is_capped(monkeypatch, crafted):
     code, out, report, err = run_capped(raw, "volunteer", cap, monkeypatch)
     assert int(report["ready"]["as_limit"]) == cap  # got past the imports, capped
     assert code != 0 and out == b"" and "done" not in report, err
-    assert b"memory" in err.lower(), (
-        err
-    )  # MemoryError, or libjpeg's "Insufficient memory"
+    # libjpeg's failed allocation reaches Pillow as a decoder error ("broken data
+    # stream"), so the worker refuses the picture (exit 2), or Python raises
+    # MemoryError (exit 1): either way the same bytes decoded above, uncapped
+    assert "refused" in report or b"MemoryError" in err, err
     with pytest.raises(photos.BadPhoto):
         photos.process(raw, "volunteer")
     print(
