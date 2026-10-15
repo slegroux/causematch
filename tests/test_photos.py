@@ -12,7 +12,7 @@ import zlib
 from pathlib import Path
 
 import pytest
-from conftest import TestClient, sign_in
+from conftest import FORM, TestClient, sign_in
 from PIL import ExifTags, Image
 from test_claim import admin_client
 
@@ -522,7 +522,30 @@ def crafted(tmp_path_factory):
     out = tmp_path_factory.mktemp("crafted")
     subprocess.run([sys.executable, "-c", GENERATE, str(out)], check=True)
     (out / "many-scans.jpg").write_bytes(repeat_last_scan(out / "grey-prog.jpg", 50))
+    (out / "one-dc-scan.jpg").write_bytes(
+        first_scan_only((out / "prog-444.jpg").read_bytes())
+    )
+    (out / "one-component-scan.jpg").write_bytes(
+        one_component_scan((out / "7000.jpg").read_bytes())
+    )
     return out
+
+
+def first_scan_only(raw):
+    """A progressive JPEG cut after its first scan (a DC scan over every component):
+    one scan, but libjpeg still keeps the whole-image coefficient buffer."""
+    _, end = scan_bounds(raw)[0]
+    return raw[:end] + b"\xff\xd9"
+
+
+def one_component_scan(raw):
+    """A baseline JPEG whose only scan names 1 of its 3 components (non-interleaved):
+    libjpeg buffers the whole image's coefficients for it too."""
+    start, _ = scan_bounds(raw)[0]
+    length = int.from_bytes(raw[start + 2 : start + 4], "big")
+    component, tables = raw[start + 5], raw[start + 6]
+    header = b"\xff\xda\x00\x08\x01" + bytes([component, tables, 0, 63, 0])
+    return raw[:start] + header + raw[start + 2 + length :]
 
 
 def scan_bounds(raw):
@@ -575,6 +598,8 @@ def peak_mb(path, kind):
         ("prog-cmyk.jpg", "volunteer", "refused"),  # was +527 MB
         ("many-scans.jpg", "volunteer", "refused"),  # 56 scans, before any decoding
         ("prog-12mp.jpg", "card", "ok"),  # 12 MP x 3 components: at the budget
+        ("one-dc-scan.jpg", "volunteer", "refused"),  # progressive with one scan
+        ("one-component-scan.jpg", "volunteer", "refused"),  # SOF0, 1 of 3 in its scan
     ],
 )
 def test_a_huge_bitmap_never_costs_more_than_200_mb(crafted, name, kind, expected):
@@ -669,14 +694,14 @@ def test_scans_are_counted_by_the_marker_stream():
     Image.new("RGB", (64, 64), (9, 9, 9)).save(progressive, "JPEG", progressive=True)
     raw = progressive.getvalue()
     n = len(scan_bounds(raw))
-    assert n > 1 and photos.jpeg_scans(raw) == n
-    assert photos.jpeg_scans(jpeg((64, 64))) == 1
+    assert n > 1 and photos.jpeg_frame(raw) == (0xC2, n, 3)  # first: DC of all three
+    assert photos.jpeg_frame(jpeg((64, 64))) == (0xC0, 1, 3)
     # stray bytes before a marker don't hide the scans after them from the count
     start, _ = scan_bounds(raw)[1]
-    assert photos.jpeg_scans(raw[:start] + b"\x00\x00" + raw[start:]) == n
+    assert photos.jpeg_frame(raw[:start] + b"\x00\x00" + raw[start:]).scans == n
     s, e = scan_bounds(raw)[-1]
     many = raw[:e] + raw[s:e] * 60 + raw[e:]
-    assert photos.jpeg_scans(many) == photos.MAX_SCANS + 1  # stops counting there
+    assert photos.jpeg_frame(many).scans == photos.MAX_SCANS + 1  # stops counting there
     with pytest.raises(photos.BadPhoto, match="scans"):
         photos.process(many)
 
@@ -690,6 +715,7 @@ def test_an_upload_waits_at_most_a_few_seconds_for_a_decode_slot(user, monkeypat
             photos.process(jpeg())
         r = upload(user, jpeg())
         assert r.status_code == 503 and "Try again in a minute" in r.text
+        assert r.headers["retry-after"] == "30"
     finally:
         photos._decoding.release()
         photos._decoding.release()
@@ -712,12 +738,43 @@ def test_after_a_block_the_org_sees_no_profile_details(user, coord, blocker):
     else:
         data.block_volunteer(_coord_uid(), m.id)
     profiles.update(id=uid, bio="Edited after the block.")
+    # answering onboarding again can't push new answers to the org either
+    r = user.post(
+        "/onboarding",
+        data={**FORM, "first_name": "Renamed", "neighborhood": "Echo Park NEW"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/deck"
+    assert profiles[uid].neighborhood == "Chinatown"
     rows = [r for box in data.org_inbox(_coord_uid()).values() for r in box]
     assert rows, "the past match stays listed"
     for page in ("/org/inbox", f"/org/chat/{m.id}", f"/org/matches/{m.id}/report"):
         html = coord.get(page).text
-        for hidden in ("Early riser.", "Edited after", "they/them", "Cooking", "Lee"):
+        for hidden in (
+            "Early riser.",
+            "Edited after",
+            "they/them",
+            "Cooking",
+            "Lee",
+            "Chinatown",  # the answers too: the volunteer can still change them
+            "Food insecurity",
+            "Weekend mornings",
+            "Renamed",
+        ):
             assert hidden not in html, (page, hidden)
         assert "/photos/" not in html, page
     (row,) = rows
     assert row["name"] == "Sam" and row["bio"] is None and row["interests"] == []
+    assert (row["neighborhood"], row["frequency"]) == (None, None)
+    assert row["causes"] == [] and row["availability"] == []
+
+
+def test_only_baseline_extended_and_progressive_jpegs_are_read():
+    raw = jpeg((64, 64))
+    sof = raw.index(b"\xff\xc0")
+    for marker in (0xC3, 0xC5, 0xC9, 0xCB):  # lossless, hierarchical, arithmetic
+        crafted = raw[: sof + 1] + bytes([marker]) + raw[sof + 2 :]
+        assert photos.jpeg_frame(crafted).sof == marker
+        with pytest.raises(photos.BadPhoto, match="unsupported"):
+            photos.process(crafted)
+    assert photos.jpeg_frame(one_component_scan(raw)) == (0xC0, 1, 1)

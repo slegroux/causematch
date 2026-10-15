@@ -154,6 +154,7 @@ def test_the_organization_page_saves_logo_photo_about_and_website(coord):
         {"about": "x", "website": "http://example.org"},
         {"about": "x", "website": "javascript:alert(1)"},
         {"about": "x" * 1001, "website": ""},
+        {"about": "We sort food.\u202e", "website": ""},
     ],
 )
 def test_bad_details_are_refused_and_change_nothing(coord, form):

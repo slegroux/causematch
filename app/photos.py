@@ -76,12 +76,19 @@ def is_key(key):
     )
 
 
-def jpeg_scans(raw):
-    """How many scans (SOS segments) a JPEG's top-level marker stream holds, counting at
-    most MAX_SCANS + 1. Segments are skipped by their length, so a thumbnail inside EXIF
-    doesn't count; entropy-coded data and stray bytes are skipped up to the next real
-    marker, the way libjpeg reads them."""
-    i, n, scans = 2, len(raw), 0
+# The JPEG frames libjpeg decodes here: baseline, extended and progressive Huffman. Not
+# lossless (SOF3: no draft scaling, 4 bytes a sample), hierarchical or arithmetic ones.
+SOF_OK = (0xC0, 0xC1, 0xC2)
+SOF_ANY = {*range(0xC0, 0xD0)} - {0xC4, 0xC8, 0xCC}  # 0xC4 DHT, 0xC8 JPG, 0xCC DAC
+JpegFrame = namedtuple("JpegFrame", "sof scans first_ns")
+
+
+def jpeg_frame(raw):
+    """(the first SOF marker, the number of scans, the components in the first scan) of
+    a JPEG's top-level marker stream, counting at most MAX_SCANS + 1 scans. Segments are
+    skipped by their length, so a thumbnail inside EXIF doesn't count; entropy-coded data
+    and stray bytes are skipped up to the next real marker, the way libjpeg reads them."""
+    i, n, sof, scans, first_ns = 2, len(raw), None, 0, 0
     while i + 4 <= n and scans <= MAX_SCANS:
         if raw[i] != 0xFF:  # stray bytes: libjpeg skips to the next marker, so do we
             if (i := raw.find(b"\xff", i)) == -1:
@@ -96,6 +103,10 @@ def jpeg_scans(raw):
         if 0xD0 <= marker <= 0xD7 or marker == 0x01:  # no length
             i += 2
             continue
+        if marker in SOF_ANY and sof is None:
+            sof = marker
+        if marker == 0xDA and scans == 0 and i + 4 < n:
+            first_ns = raw[i + 4]  # FF DA, a 2-byte length, then Ns
         i += 2 + int.from_bytes(raw[i + 2 : i + 4], "big")
         if marker != 0xDA:
             continue
@@ -108,50 +119,77 @@ def jpeg_scans(raw):
         else:
             break
         i = j
-    return scans
+    return JpegFrame(sof, scans, first_ns)
+
+
+def _check(raw):
+    """(width, height, a JPEG?) from the header alone, or BadPhoto for a picture with
+    more pixels, components or scans than may be decoded safely. Nothing is decoded, so
+    this runs before taking a decode slot."""
+    try:
+        with Image.open(io.BytesIO(raw), formats=FORMATS) as probe:
+            w, h = probe.size
+            jpeg = probe.format in ("JPEG", "MPO")
+            if w * h > MAX_PIXELS.get(probe.format, MAX_PIXELS_OTHER):
+                raise BadPhoto("too many pixels")
+            if jpeg:
+                frame = jpeg_frame(raw)
+                if frame.sof not in SOF_OK:
+                    raise BadPhoto("an unsupported kind of JPEG")
+                if frame.scans > MAX_SCANS:
+                    raise BadPhoto("too many scans")
+                # libjpeg keeps a whole-image coefficient buffer when the frame is
+                # progressive or a scan covers fewer than all components
+                bands = len(probe.getbands())
+                multi = (
+                    frame.sof == 0xC2
+                    or frame.scans > 1
+                    or frame.first_ns < bands
+                    or bool(probe.info.get("progressive"))
+                )
+                if multi and w * h * bands > MAX_COEFFICIENTS:
+                    raise BadPhoto("too many coefficients for a multi-scan JPEG")
+            probe.verify()  # structure only; a verified image can't be used after
+    except (
+        Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,  # BadPhoto too
+        EOFError,
+    ) as e:
+        if isinstance(e, BadPhoto):
+            raise
+        raise BadPhoto("not a readable picture") from e
+    return w, h, jpeg
 
 
 def _open(raw):
-    """The decoded image, upright, at most WORK_PIXELS; BadPhoto for anything else,
-    including a picture with more pixels, components or scans than may be decoded
-    safely; Busy when no decode slot frees up within WAIT seconds."""
+    """The decoded image, upright, at most WORK_PIXELS; BadPhoto for anything _check
+    refuses or Pillow can't read; Busy when no decode slot frees up within WAIT seconds."""
+    w, h, jpeg = _check(raw)
     if not _decoding.acquire(timeout=WAIT):
         raise Busy("both decode slots are taken")
     try:
-        try:
-            with Image.open(io.BytesIO(raw), formats=FORMATS) as probe:
-                w, h = probe.size  # from the header: nothing is decoded yet
-                jpeg = probe.format in ("JPEG", "MPO")
-                if w * h > MAX_PIXELS.get(probe.format, MAX_PIXELS_OTHER):
-                    raise BadPhoto("too many pixels")
-                if jpeg:
-                    scans = jpeg_scans(raw)
-                    if scans > MAX_SCANS:
-                        raise BadPhoto("too many scans")
-                    if scans > 1 and w * h * len(probe.getbands()) > MAX_COEFFICIENTS:
-                        raise BadPhoto("too many coefficients for a multi-scan JPEG")
-                probe.verify()  # structure only; a verified image can't be used after
-            scale = min(1, (WORK_PIXELS / (w * h)) ** 0.5)
-            size = (max(1, math.ceil(w * scale)), max(1, math.ceil(h * scale)))
-            im = Image.open(io.BytesIO(raw), formats=FORMATS)
-            if jpeg:
-                im.draft("RGB", size)  # decodes straight to a smaller scale
-            im.load()
-            if im.mode not in ("RGB", "RGBA"):
-                im = im.convert("RGBA")  # palette, grey, 1-bit: before resampling
-            im.thumbnail(size, Image.Resampling.LANCZOS, reducing_gap=3.0)
-            return ImageOps.exif_transpose(im)
-        except (
-            Image.DecompressionBombError,
-            UnidentifiedImageError,
-            OSError,
-            SyntaxError,
-            ValueError,  # BadPhoto too
-            EOFError,
-        ) as e:
-            if isinstance(e, BadPhoto):
-                raise
-            raise BadPhoto("not a readable picture") from e
+        scale = min(1, (WORK_PIXELS / (w * h)) ** 0.5)
+        size = (max(1, math.ceil(w * scale)), max(1, math.ceil(h * scale)))
+        im = Image.open(io.BytesIO(raw), formats=FORMATS)
+        if jpeg:
+            im.draft("RGB", size)  # decodes straight to a smaller scale
+        im.load()
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA")  # palette, grey, 1-bit: before resampling
+        im.thumbnail(size, Image.Resampling.LANCZOS, reducing_gap=3.0)
+        return ImageOps.exif_transpose(im)
+    except (
+        Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+        EOFError,
+    ) as e:
+        raise BadPhoto("not a readable picture") from e
     finally:
         _decoding.release()
 

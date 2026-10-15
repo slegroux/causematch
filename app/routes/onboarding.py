@@ -185,6 +185,8 @@ async def onboarding_save(req):
 
 
 def _sync_onboarding_save(req, form):
+    if data.get_profile(req.scope["uid"]).onboarded_at:
+        return Redirect("/deck")  # answered once; later edits go through /me/profile
     text = lambda k: form.get(k, "").strip()
     f = {
         **{k: text(k) for k in LIMITS},
@@ -209,7 +211,7 @@ def _sync_onboarding_save(req, form):
         return fail("One of your answers is too long. Please shorten it.")
     if not f["first_name"]:
         return fail("Please enter your first name.")
-    if hidden_chars(f["first_name"]) or hidden_chars(f["last_name"]):
+    if any(hidden_chars(f[k]) for k in LIMITS):
         return fail("Something in that form wasn't recognized. Please try again.")
     if f["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", f["email"]):
         return fail("That email doesn't look right. Leave it blank to skip.")

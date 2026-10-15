@@ -30,7 +30,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data, photos
-from app.forms import bad_request, https_url, query, str_form
+from app.forms import bad_request, hidden_chars, https_url, query, str_form
 from app.routes.profile import BAD_PHOTO, BUSY, PhotoForm, read_photo
 from app.ui import CARD, EventLink, Field, LogoBadge, Router, TextInput
 
@@ -175,6 +175,8 @@ def _sync_save_details(uid, org_id, form):
     error = None
     if len(f["about"]) > MAX_ABOUT:
         error = f"Keep the about text to {MAX_ABOUT} characters."
+    elif hidden_chars(f["about"], multiline=True):
+        error = "Something in the about text wasn't recognized. Please try again."
     elif f["website"] and not website:
         error = BAD_LINK
     try:
@@ -212,6 +214,7 @@ async def _upload(req, authorize, save, page, done):
             return FtResponse(
                 await run_in_threadpool(page, BUSY if busy else BAD_PHOTO),
                 status_code=503 if busy else 400,
+                headers={"Retry-After": "30"} if busy else None,
             )
         except PermissionError:
             return Response("Forbidden", status_code=403)

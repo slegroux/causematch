@@ -6,6 +6,7 @@ typed, so a handler takes user input from here (or from the path), never from a 
 """
 
 import re
+import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
 from fasthtml.common import Response
@@ -32,21 +33,41 @@ def query(req, name):
 
 # Characters that reorder how text is drawn: they let "good.org" display for another host
 BIDI = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
-# What no name or bio needs: bidi controls, zero-width characters, and control characters
-# (a bio keeps its line breaks and tabs)
-HIDDEN = re.compile(
-    "[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff"
-    "\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]"
-)
+# Characters that show as nothing (Hangul and braille fillers are letters or symbols to
+# Unicode, so their category doesn't catch them)
+FILLERS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
+# Format, control, private-use, unassigned and surrogate code points, and the line and
+# paragraph separators: none belongs in a name or a bio
+HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cn", "Cs", "Zl", "Zp"})
+ZWJ = "\u200d"
+MAX_MARKS = 3  # combining marks on one character; more is "Zalgo" text
 HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 
 
 def hidden_chars(text, multiline=False):
     """True when `text` holds a character that would hide, reorder or break what is
-    shown; a line break or tab is fine only in multiline text."""
-    return bool(HIDDEN.search(text)) or (
-        not multiline and any(c in text for c in "\t\n\r")
-    )
+    shown: a format or control character (bidi controls, zero-width spaces, tags), a
+    private-use or unassigned code point, a filler, a line separator, or more than
+    MAX_MARKS combining marks in a row. Multiline text may hold line breaks and tabs, and
+    a zero-width joiner between two characters (emoji like the rainbow flag use one)."""
+    marks = 0
+    for i, c in enumerate(text):
+        category = unicodedata.category(c)
+        if c in "\n\r\t" or c == ZWJ:
+            inside = 0 < i < len(text) - 1 and not (
+                text[i - 1].isspace() or text[i + 1].isspace()
+            )
+            if not multiline or (c == ZWJ and not inside):
+                return True
+        elif category in HIDDEN_CATEGORIES or c in FILLERS:
+            return True
+        if category in ("Mn", "Me"):
+            marks += 1
+            if marks > MAX_MARKS:
+                return True
+        else:
+            marks = 0
+    return False
 
 
 def https_url(raw):

@@ -278,7 +278,7 @@ async def save_photo(req):
         return FtResponse(page, status_code=400)
     except photos.Busy:
         page = await run_in_threadpool(ProfilePage, uid, BUSY)
-        return FtResponse(page, status_code=503)
+        return FtResponse(page, status_code=503, headers={"Retry-After": "30"})
     await run_in_threadpool(data.set_volunteer_photo, uid, processed)
     return Redirect("/me/profile?notice=saved")
 

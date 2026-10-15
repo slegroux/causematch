@@ -386,8 +386,10 @@ def org_inbox(coordinator_uid):
     )
     out = {"pending": [], "decided": [], "past": []}
     for r in rows:
-        # A past match after a block keeps what the org saw at the time it ended (first
-        # name, answers), but none of the profile, which the volunteer may still edit.
+        # After a block either way the row shows the first name and nothing else of the
+        # volunteer: every other field is read live and the volunteer may still edit it.
+        # (The first name is live too, but checked like every name: no hidden characters,
+        # 80 at most.)
         blocked = bool(r["blocked"])
         out[
             {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
@@ -411,10 +413,14 @@ def org_inbox(coordinator_uid):
                     for i in json.loads(r["interests"] or "[]")
                     if i in interests
                 ],
-                "causes": [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
-                "availability": json.loads(r["availability"] or "[]"),
-                "neighborhood": r["neighborhood"],
-                "frequency": r["frequency"],
+                "causes": []
+                if blocked
+                else [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
+                "availability": []
+                if blocked
+                else json.loads(r["availability"] or "[]"),
+                "neighborhood": None if blocked else r["neighborhood"],
+                "frequency": None if blocked else r["frequency"],
                 "full": bool(r["full"]),
                 "weekly": r["recurrence"] == "weekly",
             }
@@ -790,8 +796,14 @@ def chat_header(uid, match_id):
         other = decider.display_name if decider and decider.display_name else org
     else:
         volunteer = get_profile(m.volunteer_id)
-        # what photo_for hides (a block, above all) hides the last name too
-        seen = bool(volunteer) and _sees_volunteer(get_profile(uid), volunteer.id)
+        # what photo_for hides hides the last name too, and so does a block with the
+        # org of this match (photo_for looks at all of the coordinator's orgs)
+        seen = (
+            bool(volunteer)
+            and not _org_blocked_volunteer(volunteer.id, o.org_id)
+            and not _volunteer_blocked_org(volunteer.id, o.org_id)
+            and _sees_volunteer(get_profile(uid), volunteer.id)
+        )
         other = volunteer_name(
             volunteer.display_name if volunteer else "",
             volunteer.last_name if seen else "",
