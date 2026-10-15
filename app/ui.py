@@ -67,12 +67,7 @@ def VolunteerNav():
             A("Openings", href="/deck", cls=AT.muted),
             A("Matches", href="/matches", cls=AT.muted),
             Form(
-                A(
-                    "Sign out",
-                    href="#",
-                    cls=AT.muted,
-                    onclick="this.closest('form').submit()",
-                ),
+                Button("Sign out", type="submit", cls=AT.muted + " bg-transparent p-0"),
                 action="/logout",
                 method="post",
             ),

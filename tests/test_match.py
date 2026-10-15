@@ -1,11 +1,15 @@
+import threading
+from datetime import datetime, timedelta
+
 import pytest
 from conftest import coordinator_for, org_sign_in, sign_in
 from starlette.testclient import TestClient
 
 from app import data
-from app.db import matches, openings, orgs, profiles, swipes
+from app.db import db, matches, openings, profiles, swipes
 from main import app
 
+FMT = "%Y-%m-%dT%H:%M"
 TITLE = "Sort and pack pantry boxes"  # org 0, status open, 6 slots
 
 
@@ -238,8 +242,14 @@ def test_coordinator_inbox_accept_and_volunteer_sees_it(user, coord):
     )
     assert r.status_code == 303
     assert "Accepted" in user.get("/matches").text
-    again = coord.post(f"/org/matches/{mid}/decide", data={"decision": "decline"})
-    assert again.status_code == 409
+    again = coord.post(
+        f"/org/matches/{mid}/decide",
+        data={"decision": "decline"},
+        follow_redirects=False,
+    )
+    assert again.headers["location"] == "/org/inbox?notice=decided"
+    assert "already decided" in coord.get(again.headers["location"]).text
+    assert matches[mid].status == "accepted"
 
 
 def test_other_org_coordinator_gets_403_and_empty_inbox(user):
@@ -287,11 +297,320 @@ def test_inbox_never_shows_contact_or_location(user, coord):
         "118.6543",
     ):
         assert secret not in html, secret
-    assert set(data.org_inbox(orgs() and coord_uid(coord))["decided"][0]) == {
+    assert set(data.org_inbox(coordinator_for(0)[0])["decided"][0]) == {
         "id", "status", "opening", "first_name", "causes",
-        "availability", "neighborhood", "frequency",
+        "availability", "neighborhood", "frequency", "full",
     }  # fmt: skip
 
 
-def coord_uid(coord):
-    return data.coordinator_by_email(f"coord{0}@example.org")
+# --- review fixes -----------------------------------------------------------
+
+
+def accept_one(oid, name="Sam"):
+    v = volunteer(name)
+    coord, _ = coordinator_for(0)
+    m = data.swipe(v.uid, oid, True)
+    data.decide(coord, m.id, True)
+    return v, m
+
+
+def test_withdraw_from_a_closed_opening_keeps_it_closed():
+    oid = opening().id
+    v, m = accept_one(oid)
+    coord, _ = coordinator_for(0)
+    data.close_opening(coord, oid)
+    data.withdraw(v.uid, m.id)
+    assert openings[oid].status == "closed"
+    assert oid not in [c["id"] for c in data.deck(volunteer().uid, limit=50)]
+
+
+def test_accepting_into_a_closed_opening_keeps_it_closed_even_when_full():
+    oid = one_slot_opening()
+    v = volunteer()
+    coord, _ = coordinator_for(0)
+    m = data.swipe(v.uid, oid, True)
+    data.close_opening(coord, oid)
+    data.decide(coord, m.id, True)
+    assert openings[oid].status == "closed"
+
+
+def test_withdraw_keeps_the_decision_time_and_sets_withdrawn_at():
+    v, m = accept_one(opening().id)
+    before = matches[m.id]
+    assert before.decided_at and not before.withdrawn_at
+    data.withdraw(v.uid, m.id)
+    after = matches[m.id]
+    assert after.decided_at == before.decided_at
+    assert after.decided_by == before.decided_by and after.withdrawn_at
+    p = volunteer()  # a pending match that is withdrawn was never decided
+    pm = data.swipe(p.uid, opening("Serve a weekend lunch line").id, True)
+    data.withdraw(p.uid, pm.id)
+    assert not matches[pm.id].decided_at and matches[pm.id].withdrawn_at
+
+
+class _Clock:
+    def __init__(self, at):
+        self.at = at
+
+    def __call__(self):
+        return self.at
+
+
+def test_past_openings_leave_the_deck_and_cannot_be_liked(monkeypatch):
+    v = volunteer()
+    first = opening()
+    start = datetime.fromisoformat(first.starts_at)
+    monkeypatch.setattr(data, "_local_now", _Clock(start.strftime(FMT)))
+    assert first.id in [c["id"] for c in data.deck(v.uid, limit=50)]  # starting now
+    minute_later = (start + timedelta(minutes=1)).strftime(FMT)
+    monkeypatch.setattr(data, "_local_now", _Clock(minute_later))
+    assert first.id not in [c["id"] for c in data.deck(v.uid, limit=50)]
+    with pytest.raises(LookupError):
+        data.swipe(v.uid, first.id, True)
+    assert len(matches()) == 0
+
+
+def test_local_now_is_los_angeles_wall_clock():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    la = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%dT%H")
+    assert data._local_now().startswith(la)
+
+
+@pytest.mark.parametrize("big", ["99999999999999999999", str(2**63)])
+def test_ids_past_sqlite_integers_are_refused_not_500(user, coord, big):
+    r = user.post("/swipe", data={"opening_id": big, "liked": "1"})
+    assert r.status_code < 500
+    assert user.post(f"/matches/{big}/withdraw").status_code == 403
+    r = coord.post(f"/org/matches/{big}/decide", data={"decision": "accept"})
+    assert r.status_code == 403
+    assert len(matches()) == 0
+
+
+@pytest.mark.parametrize("liked", ["yes", "", "2", "true"])
+def test_liked_must_be_zero_or_one(user, liked):
+    r = user.post("/swipe", data={"opening_id": opening().id, "liked": liked})
+    assert r.status_code == 400 and len(swipes()) == 0
+
+
+def test_full_opening_shows_full_and_a_late_accept_gets_a_notice(user, coord):
+    oid = one_slot_opening()
+    other = volunteer("Pat")
+    data.swipe(other.uid, oid, True)
+    user.post("/swipe", data={"opening_id": oid, "liked": "1"})
+    first, second = (m.id for m in matches(order_by="id"))
+    coord.post(f"/org/matches/{first}/decide", data={"decision": "accept"})
+    html = coord.get("/org/inbox").text
+    assert "Full" in html and f"/org/matches/{second}/decide" in html
+    r = coord.post(
+        f"/org/matches/{second}/decide",
+        data={"decision": "accept"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/org/inbox?notice=full"
+    assert "is full" in coord.get(r.headers["location"]).text
+    assert "<h1" in html
+
+
+def test_swipe_buttons_work_without_htmx(user):
+    html = user.get("/deck").text
+    assert 'action="/swipe"' in html and 'method="post"' in html
+    r = user.post(
+        "/swipe", data={"opening_id": opening().id, "liked": "1"}, follow_redirects=True
+    )
+    assert r.status_code == 200 and "data-swipe-card" in r.text
+    assert len(matches()) == 1
+
+
+def test_no_inline_event_handlers_on_any_page(user, coord):
+    import re
+
+    for client, paths in (
+        (user, ["/deck", "/matches"]),
+        (coord, ["/org", "/org/inbox", "/org/openings/new"]),
+        (TestClient(app), ["/login", "/org/login"]),
+    ):
+        for path in paths:
+            html = client.get(path).text
+            assert not re.search(r"\son[a-z]+\s*=", html), path
+            assert "javascript:" not in html, path
+
+
+def test_no_unpinned_third_party_scripts():
+    html = TestClient(app).get("/login").text
+    for bad in ("surreal@main", "css-scope-inline@main", "pico@latest", "htmx.org@"):
+        assert bad not in html
+    assert "/static/vendor/htmx-2.0.7.min.js" in html
+    assert TestClient(app).get("/static/vendor/htmx-2.0.7.min.js").status_code == 200
+
+
+def test_consent_text_is_what_the_inbox_shows(new_user, coord):
+    from html import unescape
+
+    from conftest import FORM
+
+    from app.choices import SHARED_WITH_NONPROFIT
+
+    user = new_user
+    onboarding = unescape(user.get("/onboarding").text)
+    user.post("/onboarding", data=FORM)
+    # the consent promises exactly these things ...
+    assert SHARED_WITH_NONPROFIT in onboarding
+    for promised in ("first name", "causes", "availability", "neighborhood"):
+        assert promised in SHARED_WITH_NONPROFIT
+    assert "Never your phone, email or exact location" in SHARED_WITH_NONPROFIT
+    # ... and the inbox shows exactly those, nothing private
+    uid = data.get_or_create_volunteer(user.phone)
+    profiles.update(
+        id=uid,
+        display_name="Sam Surname",
+        email="sam.secret@example.com",
+        lat=34.0123456,
+        lon=-118.6543210,
+        neighborhood="Chinatown",
+        causes='["food-insecurity"]',
+        availability='["weekend_morning"]',
+        frequency="weekly",
+    )
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    html = coord.get("/org/inbox").text
+    for shown in ("Sam", "Food insecurity", "Weekend mornings", "Chinatown", "weekly"):
+        assert shown in html
+    for private in (
+        user.phone,
+        user.phone[2:],
+        "sam.secret",
+        "Surname",
+        "34.0123",
+        "118.654",
+    ):
+        assert private not in html
+    (row,) = data.org_inbox(coordinator_for(0)[0])["pending"]
+    assert set(row) == {
+        "id", "status", "opening", "first_name", "causes",
+        "availability", "neighborhood", "frequency", "full",
+    }  # fmt: skip
+
+
+def test_org_inbox_is_one_query_per_page_not_per_row():
+    coord, _ = coordinator_for(0)
+    for i in range(5):
+        v = volunteer(f"V{i}")
+        data.swipe(v.uid, opening().id, True)
+    seen = []
+
+    def trace(cursor, sql, bindings):
+        seen.append(sql)
+        return True
+
+    db.conn.exec_trace = trace
+    try:
+        box = data.org_inbox(coord)
+    finally:
+        db.conn.exec_trace = None
+    assert len(box["pending"]) == 5
+    assert len([q for q in seen if "FROM match" in q]) == 1, seen
+
+
+def test_inbox_excludes_other_orgs_and_deleted_volunteers():
+    other_coord, _ = coordinator_for(1)
+    v, gone = volunteer("Here"), volunteer("Gone")
+    data.swipe(v.uid, opening().id, True)
+    data.swipe(gone.uid, opening().id, True)
+    profiles.update(id=gone.uid, deleted_at="2026-10-15T00:00:00")
+    assert data.org_inbox(other_coord) == {"pending": [], "decided": []}
+    names = [r["first_name"] for r in data.org_inbox(coordinator_for(0)[0])["pending"]]
+    assert names == ["Here"]
+
+
+# --- concurrency (the data layer shares one apsw connection) ---------------
+
+
+def run_threads(target, n):
+    errors = []
+    barrier = threading.Barrier(n)
+
+    def wrap(i):
+        try:
+            barrier.wait()
+            target(i)
+        except Exception as e:  # noqa: BLE001
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=wrap, args=(i,)) for i in range(n)]
+    [t.start() for t in threads]
+    [t.join(timeout=60) for t in threads]
+    assert not any(t.is_alive() for t in threads)
+    return errors
+
+
+def test_concurrent_swipes_by_different_volunteers_all_succeed():
+    vols = [volunteer(f"V{i}") for i in range(12)]
+    oid = opening().id
+    errors = run_threads(lambda i: data.swipe(vols[i].uid, oid, True), 12)
+    assert errors == [] and len(matches()) == 12
+
+
+def test_concurrent_decide_withdraw_and_sign_in_do_not_collide():
+    oid = one_slot_opening()
+    vols = [volunteer(f"V{i}") for i in range(6)]
+    ms = [data.swipe(v.uid, oid, True) for v in vols]
+    coord, _ = coordinator_for(0)
+
+    def work(i):
+        if i < 6:
+            try:
+                data.decide(coord, ms[i].id, True)
+            except ValueError:
+                pass  # lost the race for the one slot
+        elif i < 12:
+            try:
+                data.withdraw(vols[i - 6].uid, ms[i - 6].id)
+            except ValueError:
+                pass
+        else:
+            data.get_or_create_volunteer(f"+1310555{9000 + i}")
+
+    errors = run_threads(work, 18)
+    assert errors == []
+    assert data._accepted(oid) <= 1
+
+
+def test_twenty_concurrent_swipes_over_http_with_sign_ins_in_flight(live_url):
+    import httpx
+
+    def login(phone):
+        c = httpx.Client(base_url=live_url)
+        c.post("/login/send", data={"phone": phone})
+        r = c.post("/login/verify", data={"code": "000000"})
+        return c, r
+
+    clients = []
+    for i in range(20):
+        c, r = login(f"310555{8000 + i}")
+        assert r.status_code == 303 or r.status_code == 200
+        uid = data.get_or_create_volunteer(f"+1310555{8000 + i}")
+        profiles.update(
+            id=uid, display_name=f"V{i}", onboarded_at="2026-01-01T00:00:00"
+        )
+        clients.append(c)
+    oid = opening().id
+    codes = []
+
+    def work(i):
+        if i < 20:
+            r = clients[i].post(
+                "/swipe",
+                data={"opening_id": oid, "liked": "1"},
+                headers={"HX-Request": "true"},
+            )
+        else:
+            _, r = login(f"310555{7000 + i}")
+        codes.append(r.status_code)
+
+    errors = run_threads(work, 28)
+    assert errors == [] and max(codes) < 500, codes
+    assert len(matches()) == 20
+    for c in clients:
+        c.close()

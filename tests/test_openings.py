@@ -42,7 +42,7 @@ def post(c, **over):
 
 
 def test_posted_opening_reaches_deck(coord, user):
-    r = post(coord)
+    r = post(coord, starts_at=future(2))  # soonest, so it is the one card shown
     assert r.status_code == 303 and r.headers["location"] == "/org"
     dash = coord.get("/org")
     assert "Saturday fridge restock" in dash.text and "open" in dash.text
@@ -52,7 +52,8 @@ def test_posted_opening_reaches_deck(coord, user):
 
 
 def test_closing_removes_it_from_the_deck(coord, user):
-    post(coord)
+    post(coord, starts_at=future(2))
+    assert "Saturday fridge restock" in user.get("/deck").text  # positive control
     (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
     assert (
         coord.post(f"/org/openings/{o.id}/close", follow_redirects=False).status_code
@@ -204,7 +205,7 @@ def test_coordinator_of_two_orgs_picks_the_org(coord):
 
 
 def test_opening_latlon_never_rendered(coord, user):
-    post(coord)
+    post(coord, starts_at=future(2))
     (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
     pages = [
         coord.get("/org").text,

@@ -4,6 +4,7 @@ from fasthtml.common import APIRouter, Div, Input, P, Redirect, Response
 from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
 
 from app import data
+from app.choices import AVAILABILITY, FREQUENCY, SHARED_WITH_NONPROFIT
 from app.geo import zip_latlon
 from app.ui import Checks, Choice, Field, Page
 
@@ -17,13 +18,6 @@ TRAVEL = [  # (value, label, radius_km)
     ("30", "Up to 30 min", 16),
     ("45", "Up to 45 min", 25),
     ("any", "Any distance", 60),
-]
-AVAILABILITY = [
-    ("weekday_morning", "Weekday mornings"),
-    ("weekday_afternoon", "Weekday afternoons"),
-    ("weekday_evening", "Weekday evenings"),
-    ("weekend_morning", "Weekend mornings"),
-    ("weekend_afternoon", "Weekend afternoons"),
 ]
 SKILLS = [
     ("physical", "Physical work / lifting"),
@@ -43,11 +37,6 @@ LIMITS = {
     "other_causes": 300,
     "language_other": 80,
 }
-FREQUENCY = [
-    ("once", "Once, to try it"),
-    ("monthly", "About monthly"),
-    ("weekly", "About weekly"),
-]
 HEARD_FROM = [
     ("personal", "I know the founders personally"),
     ("second_degree", "A friend sent it to me"),
@@ -56,8 +45,7 @@ HEARD_FROM = [
 ]
 CONSENT = (
     "I agree to the privacy policy. Causematch uses my answers to match me with "
-    "openings, and shares my first name only with a nonprofit after I like their "
-    "opening. My exact location is never shared. I can delete my account at any time."
+    f"openings. {SHARED_WITH_NONPROFIT} I can delete my account at any time."
 )
 INTRO = (
     "Tell us what you care about and when you're free, then swipe through openings "

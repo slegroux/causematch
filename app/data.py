@@ -5,6 +5,7 @@ import json
 import secrets
 import threading
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import apsw
 from apswutils.db import NotFoundError
@@ -36,12 +37,29 @@ def start(demo):
         seed_demo()
 
 
+LA = ZoneInfo("America/Los_Angeles")
+
+
+def _local_now():
+    """Wall clock in Los Angeles, the zone openings' starts_at are stored in."""
+    return datetime.now(LA).strftime("%Y-%m-%dT%H:%M")
+
+
 def _deck_openings(uid):
-    """[(opening, active cause labels)] this volunteer could still swipe on, soonest first."""
+    """[(opening, active cause labels)] this volunteer could still swipe on, soonest first.
+
+    swipe() checks visibility with this same function, so whatever hides an opening
+    from the deck (closed, past, inactive cause, and later radius and blocks) also
+    stops a like sent by id.
+    """
     labels = {c.slug: c.label for c in causes() if c.active}
     seen = {s.opening_id for s in swipes(where="volunteer_id = ?", where_args=[uid])}
     out = []
-    for o in openings(where="status = ?", where_args=["open"], order_by="starts_at"):
+    for o in openings(
+        where="status = ? AND starts_at >= ?",
+        where_args=["open", _local_now()],
+        order_by="starts_at",
+    ):
         cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
         if cause_labels and o.id not in seen:
             out.append((o, cause_labels))
@@ -69,6 +87,17 @@ def _accepted(opening_id):
     return matches.count_where("opening_id = ? AND status = 'accepted'", [opening_id])
 
 
+def _sync_fill(opening_id):
+    """open <-> filled from accepted count vs slots; a closed opening stays closed."""
+    db.execute(
+        "UPDATE opening SET status = CASE WHEN "
+        "(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted') "
+        ">= slots THEN 'filled' ELSE 'open' END "
+        "WHERE id = ? AND status IN ('open', 'filled')",
+        [opening_id, opening_id],
+    )
+
+
 def _match_for(uid, opening_id):
     found = matches(
         where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
@@ -82,6 +111,8 @@ def swipe(uid, opening_id, liked):
     Repeating a swipe changes nothing. LookupError when the volunteer could not see
     the opening in their deck (closed, inactive cause, unknown id).
     """
+    if not 0 <= opening_id < 2**63:  # past SQLite's integers: no such opening
+        raise LookupError("no such opening")
     with db.conn:
         if swipes(
             where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
@@ -137,8 +168,8 @@ def decide(coordinator_uid, match_id, accept):
             raise ValueError(
                 "already decided" if now_status != "pending" else "no slots left"
             )
-        if accept and _accepted(o.id) >= (o.slots or 0):
-            openings.update(id=o.id, status="filled")
+        if accept:
+            _sync_fill(o.id)
 
 
 def withdraw(uid, match_id):
@@ -152,10 +183,8 @@ def withdraw(uid, match_id):
             raise PermissionError("not your match")
         if m.status not in ("pending", "accepted"):
             raise ValueError("already " + m.status)
-        matches.update(id=match_id, status="withdrawn", decided_at=_now())
-        o = openings[m.opening_id]
-        if o.status == "filled" and _accepted(o.id) < (o.slots or 0):
-            openings.update(id=o.id, status="open")
+        matches.update(id=match_id, status="withdrawn", withdrawn_at=_now())
+        _sync_fill(m.opening_id)
 
 
 def my_matches(uid):
@@ -180,32 +209,39 @@ def my_matches(uid):
 def org_inbox(coordinator_uid):
     """{"pending": [...], "decided": [...]} for this coordinator's orgs only.
 
-    Each row carries what the volunteer agreed to share: first name, causes,
-    availability, neighborhood, frequency. Never phone, email, location or surname.
+    Each row carries what the volunteer agreed to share (see choices.SHARED_WITH_NONPROFIT):
+    first name, causes, availability, neighborhood, frequency. One query selects only
+    those columns, so phone, email, location and surname never leave SQLite.
     """
-    mine = set(coordinator_org_ids(coordinator_uid))
     labels = {c.slug: c.label for c in causes()}
+    rows = db.query(
+        "SELECT m.id, m.status, o.title, p.display_name, p.causes, p.availability, "
+        "p.neighborhood, p.frequency, "
+        "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
+        "AND a.status = 'accepted') >= o.slots AS full "
+        "FROM match m JOIN opening o ON o.id = m.opening_id "
+        "JOIN profile p ON p.id = m.volunteer_id "
+        "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
+        "AND p.deleted_at IS NULL AND m.status IN ('pending', 'accepted', 'declined') "
+        "ORDER BY m.id DESC",
+        [coordinator_uid],
+    )
     out = {"pending": [], "decided": []}
-    for m in matches(
-        where="status IN ('pending', 'accepted', 'declined')", order_by="id DESC"
-    ):
-        o = openings[m.opening_id]
-        v = get_profile(m.volunteer_id)
-        if o.org_id not in mine or v is None:
-            continue
-        row = {
-            "id": m.id,
-            "status": m.status,
-            "opening": o.title,
-            "first_name": (v.display_name or "").split(maxsplit=1)[0]
-            if (v.display_name or "").strip()
-            else "A volunteer",
-            "causes": [labels.get(s, s) for s in json.loads(v.causes or "[]")],
-            "availability": json.loads(v.availability or "[]"),
-            "neighborhood": v.neighborhood,
-            "frequency": v.frequency,
-        }
-        out["pending" if m.status == "pending" else "decided"].append(row)
+    for r in rows:
+        name = (r["display_name"] or "").split(maxsplit=1)
+        out["pending" if r["status"] == "pending" else "decided"].append(
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "opening": r["title"],
+                "first_name": name[0] if name else "A volunteer",
+                "causes": [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
+                "availability": json.loads(r["availability"] or "[]"),
+                "neighborhood": r["neighborhood"],
+                "frequency": r["frequency"],
+                "full": bool(r["full"]),
+            }
+        )
     return out
 
 

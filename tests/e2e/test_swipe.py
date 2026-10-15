@@ -1,75 +1,51 @@
 import re
-import socket
-import threading
-import time
 
-import httpx
 import pytest
-import uvicorn
 from conftest import coordinator_for
 
 from app import notify
 from app.db import matches, openings, profiles
-from main import app
 
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture
-def base_url():
-    """The real app on a free port, in this process so it shares the test DB and the fakes."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 15
-    while not server.started:
-        assert thread.is_alive() and time.monotonic() < deadline, "server did not start"
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(timeout=10)
-    assert not thread.is_alive()
-
-
 TITLE = "Sort and pack pantry boxes"  # the soonest seeded opening, so the top card
+EXTERNAL = re.compile(r"^(?!http://127\.0\.0\.1)(https?|wss?)://")
+blocked = []
 
 
-CDN = re.compile(
-    r"^https://"
-)  # the glob 'https://**' doesn't match; unrouted CDN loads hang
-_htmx = {}
-
-
-def fetch_htmx(base_url):
-    """The htmx script the app's pages link to. Fetched up front: a blocking fetch
-    inside a route handler stalls the page load."""
-    if not _htmx:
-        page = httpx.get(f"{base_url}/login").text
-        url = re.search(r'src="([^"]*htmx\.org@[^"]*htmx\.js)"', page).group(1)
-        _htmx[url] = httpx.get(url, follow_redirects=True, timeout=30).text
-    return _htmx
-
-
-def cdn(route):
-    """Serve htmx, the one CDN script the swipe flow needs, and empty stubs for the
-    rest: the flow is behavioural, so unstyled markup is enough, and the test needs no
-    other network. (abort() hangs the page load here, so stub instead.)"""
-    body = _htmx.get(route.request.url, "")
-    route.fulfill(body=body, content_type="application/javascript")
+def no_network(route):
+    """Every request that leaves the machine gets an empty reply (abort() hangs the
+    page load here) and is recorded. The app's own assets are all local, so the flow
+    must work with the network gone; only styling (Tailwind, Franken UI) is missing."""
+    blocked.append(route.request.url)
+    route.fulfill(body="")
 
 
 @pytest.fixture
-def phone_context(browser, playwright, base_url):
-    ctx = browser.new_context(**playwright.devices["iPhone 13"], base_url=base_url)
-    fetch_htmx(base_url)
-    ctx.route(CDN, cdn)
+def phone_context(browser, playwright, live_url):
+    blocked.clear()
+    ctx = browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
+    ctx.route(EXTERNAL, no_network)
     yield ctx
     ctx.close()
+    # the only external loads are the MonsterUI/Tailwind assets, never htmx or scripts of ours
+    assert not [u for u in blocked if "htmx" in u or "surreal" in u or "pico" in u], (
+        blocked
+    )
+
+
+def sign_in_page(page, phone):
+    page.goto("/login")
+    page.get_by_label("Mobile number").fill(phone)
+    page.get_by_role("button", name="Text me a code").click()
+    page.get_by_label("Code").fill("000000")
+    page.get_by_role("button", name="Sign in").click()
+    page.wait_for_url("**/onboarding")
+    e164 = "+1" + re.sub(r"\D", "", phone)
+    (p,) = profiles(where="phone = ?", where_args=[e164])
+    profiles.update(id=p.id, display_name="Sam", onboarded_at="2026-01-01T00:00:00")
+    return p
 
 
 def touch_drag(page, selector, dx):
@@ -88,18 +64,31 @@ def touch_drag(page, selector, dx):
     send("touchEnd", x + dx)
 
 
+def settle(page):
+    """swipe.js ignores input for 400 ms after a card swaps in (a double tap's tail)."""
+    page.wait_for_timeout(450)
+
+
+def coordinator_page(browser, live_url):
+    _, email = coordinator_for(0)
+    ctx = browser.new_context(base_url=live_url)
+    ctx.route(EXTERNAL, no_network)
+    page = ctx.new_page()
+    page.goto("/org/login")
+    page.get_by_label("Email").fill(email)
+    page.get_by_role("button", name="Email me a link").click()
+    _, _, body = notify.get_emailer().sent[-1]
+    token = re.search(r"token=([\w-]+)", body).group(1)
+    page.goto(f"/org/login/verify?token={token}")
+    page.get_by_role("button", name="Sign in").click()
+    return page
+
+
 def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
-    phone_context, browser, base_url
+    phone_context, browser, live_url
 ):
     page = phone_context.new_page()
-    page.goto("/login")
-    page.get_by_label("Mobile number").fill("(310) 555-0142")
-    page.get_by_role("button", name="Text me a code").click()
-    page.get_by_label("Code").fill("000000")
-    page.get_by_role("button", name="Sign in").click()
-    page.wait_for_url("**/onboarding")
-    (p,) = profiles(where="phone = ?", where_args=["+13105550142"])
-    profiles.update(id=p.id, display_name="Sam", onboarded_at="2026-01-01T00:00:00")
+    p = sign_in_page(page, "(310) 555-0142")
 
     page.goto("/deck")
     assert page.viewport_size["width"] == 390
@@ -108,12 +97,14 @@ def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
     page.get_by_text("Serve a weekend lunch line").wait_for()  # the next card
     (m,) = matches()
     assert m.status == "pending" and m.volunteer_id == p.id
+    settle(page)
 
-    # a short, below-threshold drag does nothing
+    # a short, below-threshold drag does nothing and the card snaps back
     touch_drag(page, "[data-swipe-card]", 20)
-    page.wait_for_timeout(300)
+    page.wait_for_timeout(200)
     assert page.get_by_text("Serve a weekend lunch line").is_visible()
     assert len(matches()) == 1
+    assert page.locator("[data-swipe-card]").evaluate("e => e.style.transform") == ""
 
     # a left drag passes: no match
     touch_drag(page, "[data-swipe-card]", -200)
@@ -121,17 +112,7 @@ def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
     assert len(matches()) == 1
 
     # the coordinator accepts in their own browser
-    _, email = coordinator_for(0)
-    coord_ctx = browser.new_context(base_url=base_url)
-    coord_ctx.route(CDN, cdn)
-    coord = coord_ctx.new_page()
-    coord.goto("/org/login")
-    coord.get_by_label("Email").fill(email)
-    coord.get_by_role("button", name="Email me a link").click()
-    _, _, body = notify.get_emailer().sent[-1]
-    token = re.search(r"token=([\w-]+)", body).group(1)
-    coord.goto(f"/org/login/verify?token={token}")
-    coord.get_by_role("button", name="Sign in").click()
+    coord = coordinator_page(browser, live_url)
     coord.goto("/org/inbox")
     coord.get_by_text("Sam").wait_for()
     coord.get_by_role("button", name="Accept").click()
@@ -145,15 +126,61 @@ def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
 
 def test_buttons_do_the_same_as_the_drag(phone_context):
     page = phone_context.new_page()
-    page.goto("/login")
-    page.get_by_label("Mobile number").fill("(310) 555-0143")
-    page.get_by_role("button", name="Text me a code").click()
-    page.get_by_label("Code").fill("000000")
-    page.get_by_role("button", name="Sign in").click()
-    (p,) = profiles(where="phone = ?", where_args=["+13105550143"])
-    profiles.update(id=p.id, display_name="Alex", onboarded_at="2026-01-01T00:00:00")
+    sign_in_page(page, "(310) 555-0143")
     page.goto("/deck")
     page.get_by_role("button", name="Like").click()
     page.get_by_text("Serve a weekend lunch line").wait_for()
     (m,) = matches()
     assert m.status == "pending"
+    # a second tap straight after the swap is the tail of a double tap: ignored
+    page.get_by_role("button", name="Like").click()
+    page.wait_for_timeout(300)
+    assert len(matches()) == 1
+
+
+def test_mouse_drag_works_too(phone_context):
+    page = phone_context.new_page()
+    sign_in_page(page, "(310) 555-0144")
+    page.goto("/deck")
+    box = page.locator("[data-swipe-card]").bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 220, y, steps=10)
+    page.mouse.up()
+    page.get_by_text("Serve a weekend lunch line").wait_for()
+    assert [m.status for m in matches()] == ["pending"]
+
+
+def test_buttons_work_with_javascript_off(browser, live_url):
+    ctx = browser.new_context(base_url=live_url, java_script_enabled=False)
+    ctx.route(EXTERNAL, no_network)
+    page = ctx.new_page()
+    page.goto("/login")
+    page.get_by_label("Mobile number").fill("(310) 555-0145")
+    page.get_by_role("button", name="Text me a code").click()
+    page.get_by_label("Code").fill("000000")
+    page.get_by_role("button", name="Sign in").click()
+    (p,) = profiles(where="phone = ?", where_args=["+13105550145"])
+    profiles.update(id=p.id, display_name="Jo", onboarded_at="2026-01-01T00:00:00")
+    page.goto("/deck")
+    page.get_by_role("button", name="Like").click()
+    page.get_by_text("Serve a weekend lunch line").wait_for()
+    assert [m.volunteer_id for m in matches()] == [p.id]
+    ctx.close()
+
+
+def test_failed_request_snaps_the_card_back(phone_context):
+    page = phone_context.new_page()
+    sign_in_page(page, "(310) 555-0146")
+    page.goto("/deck")
+    page.route("**/swipe", lambda r: r.fulfill(status=500, body="boom"))
+    page.get_by_text(TITLE).wait_for()
+    touch_drag(page, "[data-swipe-card]", 200)
+    page.get_by_text("Couldn't save that").wait_for()
+    assert page.locator("[data-swipe-card]").evaluate("e => e.style.transform") == ""
+    assert page.get_by_text(TITLE).is_visible() and len(matches()) == 0
+    page.unroute("**/swipe")
+    settle(page)
+    page.get_by_role("button", name="Like").click()  # and it is usable again
+    page.get_by_text("Serve a weekend lunch line").wait_for()

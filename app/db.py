@@ -1,7 +1,8 @@
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastlite import database
 
@@ -113,6 +114,7 @@ class Match:
     created_at: str
     decided_at: str
     decided_by: int
+    withdrawn_at: str
 
 
 causes = db.create(Cause, pk="slug", transform=True)
@@ -144,6 +146,14 @@ CAUSES = [
     Cause("homelessness-services", "Homelessness services", "house", 4, False),
 ]
 
+LA = ZoneInfo("America/Los_Angeles")
+
+
+def _soon(days, hhmm):
+    """Local wall-clock start `days` from today, so demo openings never go stale."""
+    return f"{(datetime.now(LA) + timedelta(days=days)).date()}T{hhmm}"
+
+
 # All names, places and openings below are invented.
 ORGS = [
     ("Westside Pantry Collective", ["food-insecurity"], 34.0522, -118.4437),
@@ -174,7 +184,7 @@ OPENINGS = [
         "Sawtelle",
         34.0386,
         -118.4457,
-        "2026-11-07T09:00",
+        _soon(7, "09:00"),
         6,
         "open",
     ),
@@ -186,7 +196,7 @@ OPENINGS = [
         "Downtown LA",
         34.0407,
         -118.2468,
-        "2026-11-08T11:00",
+        _soon(8, "11:00"),
         4,
         "open",
     ),
@@ -198,7 +208,7 @@ OPENINGS = [
         "Highland Park",
         34.1114,
         -118.1925,
-        "2026-11-14T08:30",
+        _soon(14, "08:30"),
         10,
         "open",
     ),
@@ -210,7 +220,7 @@ OPENINGS = [
         "Boyle Heights",
         34.0335,
         -118.2087,
-        "2026-11-09T10:00",
+        _soon(9, "10:00"),
         5,
         "open",
     ),
@@ -222,7 +232,7 @@ OPENINGS = [
         "Baldwin Hills",
         34.0100,
         -118.3500,
-        "2026-11-15T09:30",
+        _soon(15, "09:30"),
         8,
         "open",
     ),
@@ -234,7 +244,7 @@ OPENINGS = [
         "Echo Park",
         34.0782,
         -118.2606,
-        "2026-11-21T13:00",
+        _soon(21, "13:00"),
         2,
         "open",
     ),
@@ -246,7 +256,7 @@ OPENINGS = [
         "Van Nuys",
         34.1867,
         -118.4486,
-        "2026-11-10T14:00",
+        _soon(10, "14:00"),
         6,
         "open",
     ),
@@ -258,7 +268,7 @@ OPENINGS = [
         "Sawtelle",
         34.0386,
         -118.4457,
-        "2026-11-01T09:00",
+        _soon(1, "09:00"),
         0,
         "closed",
     ),

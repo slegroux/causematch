@@ -43,9 +43,12 @@ def SwipeButtons(opening_id):
         Hidden(name="opening_id", value=str(opening_id)),
         Button("Pass", name="liked", value="0", cls=ButtonT.default + " flex-1"),
         Button("Like", name="liked", value="1", cls=ButtonT.primary + " flex-1"),
+        action="/swipe",
+        method="post",
         hx_post="/swipe",
         hx_target="#deck-area",
         hx_swap="outerHTML",
+        hx_disabled_elt="find button",
         cls="flex gap-3 mt-4",
     )
 
@@ -60,7 +63,17 @@ def DeckArea(uid):
             id="deck-area",
         )
     c = cards[0]
-    return Div(OpeningCard(c), SwipeButtons(c["id"]), id="deck-area")
+    return Div(
+        OpeningCard(c),
+        SwipeButtons(c["id"]),
+        P(
+            "Couldn't save that. Try again.",
+            id="swipe-error",
+            role="alert",
+            hidden=True,
+        ),
+        id="deck-area",
+    )
 
 
 @ar("/")

@@ -1,12 +1,21 @@
 import json
+from datetime import datetime, timedelta
 
 from app import data
+from app.data import LA
 from app.db import Opening, now, openings, orgs
+
+
+def soon(days):
+    """Local start time `days` from now, so the tests never age out."""
+    return (datetime.now(LA) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M")
+
 
 SEEN = "Sort and pack pantry boxes"  # positive control: an open, active-cause opening
 
 
-def add_opening(title, causes, starts_at="2026-12-01T09:00", status="open", **kw):
+def add_opening(title, causes, starts_at=None, status="open", **kw):
+    starts_at = starts_at or soon(90)
     return openings.insert(
         Opening(
             org_id=orgs()[0].id,
@@ -51,7 +60,7 @@ def test_mixed_cause_opening_shows_only_active_label(user):
     add_opening(
         "Mixed cause shift",
         ["food-insecurity", "homelessness-services"],
-        starts_at="2026-01-01T09:00",
+        starts_at=soon(1),
     )
     r = user.get("/deck")
     assert "Mixed cause shift" in r.text
@@ -60,12 +69,12 @@ def test_mixed_cause_opening_shows_only_active_label(user):
 
 
 def test_deck_is_soonest_first_and_limited():
-    add_opening("Earliest shift", ["food-insecurity"], starts_at="2026-01-01T09:00")
-    add_opening("Second shift", ["food-insecurity"], starts_at="2026-01-02T09:00")
+    add_opening("Earliest shift", ["food-insecurity"], starts_at=soon(1))
+    add_opening("Second shift", ["food-insecurity"], starts_at=soon(2))
     add_opening(
         "Skipped closed",
         ["food-insecurity"],
-        starts_at="2025-12-31T09:00",
+        starts_at=soon(0.5),
         status="closed",
     )
     titles = [c["title"] for c in data.deck(0, limit=2)]

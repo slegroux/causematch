@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fasthtml.common import (
+    H1,
     H2,
     A,
     APIRouter,
@@ -30,8 +31,8 @@ from monsterui.all import (
 
 from app import data
 from app.auth import normalize_phone
+from app.choices import AVAILABILITY, FREQUENCY
 from app.geo import city_zip_latlon
-from app.routes.onboarding import AVAILABILITY, FREQUENCY
 from app.ui import Choice, Field, Page
 
 ar = APIRouter()
@@ -399,9 +400,23 @@ def label_of(options, value):
     return dict(options).get(value, "")
 
 
+INBOX_STATUS = {"pending": "Waiting", "accepted": "Accepted", "declined": "Declined"}
+INBOX_NOTICE = {
+    "decided": "Someone already decided that one.",
+    "full": "That opening is full. You can decline instead, or post another opening.",
+}
+
+
 def InboxRow(m):
+    accept = (
+        Label("Full")
+        if m["full"]
+        else Button("Accept", name="decision", value="accept", cls=ButtonT.primary)
+    )
     return Card(
-        DivFullySpaced(P(m["first_name"], cls="font-semibold"), Label(m["status"])),
+        DivFullySpaced(
+            P(m["first_name"], cls="font-semibold"), Label(INBOX_STATUS[m["status"]])
+        ),
         P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm),
         P("Causes: " + (", ".join(m["causes"]) or "none given")),
         P(
@@ -411,7 +426,7 @@ def InboxRow(m):
         P(f"Neighborhood: {m['neighborhood'] or 'not given'}"),
         P(f"Wants to help: {label_of(FREQUENCY, m['frequency']) or 'not given'}"),
         PlainForm(
-            Button("Accept", name="decision", value="accept", cls=ButtonT.primary),
+            accept,
             Button("Decline", name="decision", value="decline", cls=ButtonT.default),
             action=f"/org/matches/{m['id']}/decide",
             method="post",
@@ -424,10 +439,13 @@ def InboxRow(m):
 
 
 @ar("/org/inbox", methods=["GET"])
-def inbox(req):
+def inbox(req, notice: str = ""):
     box = data.org_inbox(req.scope["uid"])
     return Container(
-        P("Volunteer inbox", cls="text-2xl font-bold my-4"),
+        H1("Volunteer inbox", cls="text-2xl font-bold my-4"),
+        Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
+        if notice in INBOX_NOTICE
+        else None,
         H2("Waiting for you", cls="text-xl font-semibold"),
         Div(
             *([InboxRow(m) for m in box["pending"]] or [P("No one is waiting.")]),
@@ -451,5 +469,7 @@ def decide(req, match_id: int, decision: str):
     except PermissionError:
         return Response("Forbidden", status_code=403)
     except ValueError as e:
-        return Response(str(e).capitalize(), status_code=409)
+        return Redirect(
+            f"/org/inbox?notice={'full' if 'slots' in str(e) else 'decided'}"
+        )
     return Redirect("/org/inbox")

@@ -27,6 +27,8 @@ STATUS = {
 @ar("/swipe", methods=["POST"])
 def swipe(req, opening_id: int, liked: str):
     uid = req.scope["uid"]
+    if liked not in ("0", "1"):
+        return Response("Bad request", status_code=400)
     try:
         data.swipe(uid, opening_id, liked == "1")
     except LookupError:

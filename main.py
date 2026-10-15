@@ -26,7 +26,13 @@ app, rt = fast_app(
     sess_https_only=is_production(),
     max_age=SESSION_MAX_AGE,
     title="Causematch",
+    # Self-hosted, pinned htmx. Not loaded: fasthtml's surreal@main, css-scope-inline@main,
+    # pico@latest (unpinned CDN branches the app doesn't use) and fasthtml.js.
+    htmx=False,
+    surreal=False,
+    pico=False,
     hdrs=(
+        Script(src="/static/vendor/htmx-2.0.7.min.js"),
         *Theme.blue.headers(),
         Link(rel="manifest", href="/static/manifest.webmanifest"),
         Link(rel="icon", href="/favicon.ico", sizes="48x48"),

@@ -15,8 +15,12 @@ os.environ.pop("K_SERVICE", None)
 
 import itertools
 import re
+import socket
+import threading
+import time
 
 import pytest
+import uvicorn
 from starlette.testclient import TestClient
 
 from app import data, notify
@@ -132,3 +136,24 @@ def coord():
     org_sign_in(c, email)
     c.org_id = orgs()[0].id
     return c
+
+
+@pytest.fixture
+def live_url():
+    """The real app on a free port, in this process so it shares the test DB and the fakes."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while not server.started:
+        assert thread.is_alive() and time.monotonic() < deadline, "server did not start"
+        time.sleep(0.05)
+    yield f"http://127.0.0.1:{port}"
+    server.should_exit = True
+    thread.join(timeout=10)
+    assert not thread.is_alive()
