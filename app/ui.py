@@ -41,7 +41,12 @@ DEMO_NOTICE = "Demo: sample openings, not affiliated with these organizations"
 
 def PrivacyFooter():
     return P(
-        A("Privacy", href="/privacy", cls=AT.muted), cls=TextPresets.muted_sm + " pt-8"
+        A(
+            "Privacy",
+            href="/privacy",
+            cls=AT.muted + " inline-flex min-h-11 items-center",
+        ),
+        cls=TextPresets.muted_sm + " pt-6",
     )
 
 
@@ -57,7 +62,21 @@ def Page(title, *content, error=None, intro=None):
 
 
 def Field(label, *inputs):
-    return Div(FormLabel(label), *inputs, cls="space-y-2")
+    """A label and its field. A lone input, select or textarea gets an id from its name
+    (unless it has one), and the label points at it: tapping the label focuses the field,
+    and a screen reader reads them together."""
+    fields = [
+        x for x in inputs if getattr(x, "tag", None) in ("input", "select", "textarea")
+    ]
+    first = fields[0] if len(fields) == 1 else None
+    target = None
+    if first is not None:
+        target = first.attrs.get("id") or (
+            f"field-{first.attrs['name']}" if first.attrs.get("name") else None
+        )
+        if target:
+            first.attrs["id"] = target
+    return Div(FormLabel(label, fr=target), *inputs, cls="space-y-2")
 
 
 def TextInput(**kwargs):
@@ -374,7 +393,11 @@ def TopNav(tabs, active, label, home, badges=None):
 
     return Div(
         Div(
-            A(Wordmark(small=True), href=home, cls="order-1"),
+            A(
+                Wordmark(small=True),
+                href=home,
+                cls="order-1 inline-flex min-h-11 items-center",
+            ),
             Form(
                 Button(
                     "Sign out",

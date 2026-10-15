@@ -88,7 +88,11 @@ def ClaimForm(values=None, error=None):
         error=error,
         intro="Ask to manage your nonprofit's volunteer openings.",
         aside=P(
-            A("Already have access? Sign in", href="/org/login", cls=AT.muted),
+            A(
+                "Already have access? Sign in",
+                href="/org/login",
+                cls=AT.muted + " inline-flex min-h-11 items-center",
+            ),
             cls="pt-6 text-center text-sm",
         ),
     )

@@ -189,10 +189,7 @@ def SwipeButtons(opening_id, today=False):
         hx_target="#deck-area",
         hx_swap="outerHTML",
         hx_disabled_elt="find button",
-        # cm-swipe-buttons (static/theme.css): a tall card scrolls under them, so Pass
-        # and Like stay in reach above the tab bar; the gap between them still drags
-        cls="cm-swipe-buttons pointer-events-none mt-4 flex items-center "
-        "justify-center gap-12",
+        cls="flex items-center justify-center gap-12",
     )
 
 
@@ -279,8 +276,9 @@ def deck_view(req):
     return req.session.get(VIEW)
 
 
-def FilterSheet(uid, today, count, view):
-    """The deck's quick filters, in a <details> over the card's top corner (no script):
+def FilterSheet(uid, today, count, view, beside=False):
+    """The deck's quick filters, in a <details> (no script) whose round button sits left of
+    Pass and Like (beside=True) or under the empty deck, opening upwards:
     the main place's travel time, which causes show, and this week only. They hold until
     cleared and change no saved preference. Its button says how many cards the deck
     holds."""
@@ -292,18 +290,21 @@ def FilterSheet(uid, today, count, view):
     shown = [c.slug for c in allowed if c.slug not in view.get("hidden", [])]
     return Details(
         Summary(
-            Icon(SLIDERS, size=18),
-            Span(f"{count} opening{'' if count == 1 else 's'}"),
+            Icon(SLIDERS, size=20),
+            # the count as a badge; its full words for a screen reader
             Span(
-                "Filtered",
-                cls="rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-ink",
-            )
-            if view
-            else None,
+                str(count),
+                aria_hidden="true",
+                cls="absolute -right-1 -top-1 grid h-6 min-w-6 place-items-center "
+                "rounded-full bg-ink px-1.5 text-xs font-bold text-cream",
+            ),
+            Span(f"{count} opening{'' if count == 1 else 's'}", cls="sr-only"),
+            Span("Filtered", cls="sr-only") if view else None,
             Span(", filters", cls="sr-only"),
-            cls="flex h-11 cursor-pointer list-none items-center gap-2 rounded-full "
-            "border border-line bg-white/95 px-4 text-sm font-bold text-ink shadow-warm "
-            "[&::-webkit-details-marker]:hidden",
+            cls="relative grid h-12 w-12 cursor-pointer list-none place-items-center "
+            "rounded-full border bg-white text-ink shadow-warm "
+            "[&::-webkit-details-marker]:hidden "
+            + ("border-2 border-brand text-brand-ink" if view else "border-line"),
         ),
         PlainForm(
             Hidden(name="today", value="1") if today else None,
@@ -362,23 +363,27 @@ def FilterSheet(uid, today, count, view):
                 )
                 if view
                 else None,
-                cls="flex gap-2",
+                # stays in view at the bottom when a short screen scrolls the sheet
+                cls="sticky -bottom-5 -mx-5 -mb-5 flex gap-2 bg-white px-5 pt-2 pb-5",
             ),
             action="/deck/filters",
             method="post",
-            cls="absolute right-0 top-full z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] "
-            "space-y-4 rounded-3xl border border-line bg-white p-5 shadow-warm",
+            # never taller than the room above the buttons: a short screen scrolls it
+            cls="absolute bottom-full z-30 mb-2 max-h-[calc(100dvh-15rem)] "
+            "w-[min(22rem,calc(100vw-2rem))] overflow-y-auto "
+            + ("left-0 " if beside else "left-1/2 -translate-x-1/2 ")
+            + "space-y-4 rounded-3xl border border-line bg-white p-5 shadow-warm",
         ),
-        cls="absolute right-3 top-3 z-20",
+        cls="relative z-20",
     )
 
 
 def DeckArea(uid, today=False, view=None, notice=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
-    filter sheet comes last, so swipe.js finds the swipe form first; it sits over the
-    card's top corner. notice: a line above the card (a swipe that didn't count)."""
+    filter sheet's round button sits left of Pass and Like, clear of the picture and
+    adding no height (swipe.js finds the swipe form by its action). notice: a line above
+    the card (a swipe that didn't count)."""
     cards, count = data.deck_and_count(uid, limit=1, today=today, view=view)
-    sheet = FilterSheet(uid, today, count, view)
     note = (
         P(notice, role="status", cls="mb-2 text-center text-sm font-semibold text-ink")
         if notice
@@ -387,12 +392,29 @@ def DeckArea(uid, today=False, view=None, notice=None):
     if not cards:
         data.record_empty_deck(uid, today)
         relax = data.relaxations(uid, today, view)
-        return Div(note, EmptyDeck(today, relax), sheet, id="deck-area", cls="relative")
+        return Div(
+            note,
+            EmptyDeck(today, relax),
+            Div(FilterSheet(uid, today, count, view), cls="mt-3 flex justify-center"),
+            id="deck-area",
+            cls="relative",
+        )
     c = cards[0]
     return Div(
         note,
         OpeningCard(c),
-        SwipeButtons(c["id"], today),
+        # cm-swipe-buttons (static/theme.css): a tall card scrolls under this row, so Pass
+        # and Like stay in reach above the tab bar; the gaps between them still drag
+        Div(
+            Div(
+                FilterSheet(uid, today, count, view, beside=True),
+                cls="pointer-events-auto",
+            ),
+            SwipeButtons(c["id"], today),
+            Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
+            cls="cm-swipe-buttons pointer-events-none mt-4 flex items-center "
+            "justify-center gap-6",
+        ),
         P(
             "Couldn't save that. Try again.",
             id="swipe-error",
@@ -400,7 +422,6 @@ def DeckArea(uid, today=False, view=None, notice=None):
             hidden=True,
             cls="mt-3 text-center text-sm font-semibold text-red-700",
         ),
-        sheet,
         id="deck-area",
         cls="relative",
     )

@@ -13,13 +13,11 @@ from fasthtml.common import (
     Img,
     P,
     Redirect,
-    Response,
     Script,
     Textarea,
 )
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
-    AT,
     Alert,
     AlertT,
     Button,
@@ -34,10 +32,12 @@ from app.routes.profile import BAD_PHOTO, BUSY, PhotoForm, read_photo
 from app.ui import (
     CARD,
     ORG_TITLE,
+    SMALL_LINK,
     EventLink,
     Field,
     LogoBadge,
     OrgShell,
+    Refusal,
     Router,
     TextInput,
 )
@@ -196,7 +196,7 @@ def _sync_save_details(uid, org_id, form):
             )
         data.set_org_details(uid, org_id, f["about"], website)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect("/org/organization?notice=saved")
 
 
@@ -209,7 +209,7 @@ async def _upload(req, authorize, save, page, done):
     try:
         await run_in_threadpool(authorize)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     raw = await read_photo(req)
     kind = "logo" if req.url.path.endswith("/logo") else "card"
     try:
@@ -225,11 +225,11 @@ async def _upload(req, authorize, save, page, done):
                 headers={"Retry-After": "30"} if busy else None,
             )
         except PermissionError:
-            return Response("Forbidden", status_code=403)
+            return Refusal(403)
     try:
         await run_in_threadpool(save, processed)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect(done)
 
 
@@ -272,7 +272,7 @@ def OpeningMediaPage(uid, opening_id, error=None, link=None, notice=""):
     return OrgShell(
         "openings",
         data.org_waiting(uid),
-        A("Back to your openings", href="/org", cls=AT.muted + " inline-block pb-2"),
+        A("Back to your openings", href="/org", cls=SMALL_LINK + " mb-2 text-sm"),
         H1(o.title, cls=ORG_TITLE + " pb-4"),
         Alert(error, cls=AlertT.error + " mb-4") if error else None,
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
@@ -321,7 +321,7 @@ def opening_media(req, opening_id: int):
             req.scope["uid"], opening_id, notice=query(req, "notice")
         )
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
 
 
 @ar("/org/openings/{opening_id}/photo", methods=["POST"])
@@ -355,5 +355,5 @@ def _sync_save_link(uid, opening_id, raw):
             )
         data.set_opening_link(uid, opening_id, url)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect(f"/org/openings/{opening_id}/media?notice=saved")

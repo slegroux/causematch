@@ -79,7 +79,8 @@ def test_changing_distance_in_the_sheet_reloads_the_deck_with_the_new_count(phon
     world(p.id, 15)  # Downtown and Koreatown are in reach, Pasadena is not
     phone.goto("/deck")
     sheet = phone.locator("summary")
-    assert sheet.inner_text().startswith("2 openings")  # then ", filters" for readers
+    # a round button: the count as a badge, "2 openings, filters" for a screen reader
+    assert "2 openings" in sheet.inner_text()
     sheet.click()
     # the open sheet's button is above the tab bar on a small phone
     show = phone.get_by_role("button", name="Show openings").bounding_box()
@@ -88,8 +89,8 @@ def test_changing_distance_in_the_sheet_reloads_the_deck_with_the_new_count(phon
     phone.locator("label:has(input[name=max_minutes][value='45'])").click()
     phone.get_by_role("button", name="Show openings").click()
     phone.wait_for_load_state("networkidle")
-    assert phone.locator("summary").inner_text().startswith("3 openings")
-    # the sheet stays on the card's corner: the swipe buttons still work under it
+    assert "3 openings" in phone.locator("summary").inner_text()
+    # the sheet's button sits beside the swipe buttons, which still work
     phone.get_by_role("button", name="Pass").click()
     expect(phone.locator("summary")).to_contain_text("2 openings")
 

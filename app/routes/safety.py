@@ -15,7 +15,16 @@ from fasthtml.common import (
 )
 from fasthtml.common import Button as PlainButton
 from fasthtml.common import Form as PlainForm
-from monsterui.all import AT, Button, ButtonT, Container, LabelCheckboxX, TextPresets
+from monsterui.all import (
+    AT,
+    Alert,
+    AlertT,
+    Button,
+    ButtonT,
+    Container,
+    LabelCheckboxX,
+    TextPresets,
+)
 from starlette.concurrency import run_in_threadpool
 
 from app import data
@@ -27,6 +36,7 @@ from app.ui import (
     CLOCK,
     HEART,
     NEXT,
+    ORG_TITLE,
     PERSON,
     SHIELD,
     SIGN_OUT,
@@ -37,7 +47,8 @@ from app.ui import (
     Choice,
     Field,
     Icon,
-    Page,
+    OrgShell,
+    Refusal,
     Router,
     SimplePage,
     VolunteerNav,
@@ -48,9 +59,25 @@ ar = Router()
 BAD_REPORT = "Choose a reason. Details can be up to 1000 characters."
 
 
-def ReportPage(action, back, target, error=None, f=None):
+def Shell(uid, back, title, *content, error=None):
+    """A report or block page in the side's own shell: the nonprofit's top nav when it
+    goes back to the inbox, else the volunteer's tab bar."""
+    org = back.startswith("/org")
+    body = (
+        H1(title, cls=(ORG_TITLE + " pb-4") if org else TITLE),
+        Alert(error, cls=AlertT.error + " mb-4") if error else None,
+        Div(*content, cls="space-y-3 p-5 " + CARD),
+    )
+    if org:
+        return OrgShell("inbox", data.org_waiting(uid), Div(*body, cls="max-w-md"))
+    return Container(VolunteerNav("matches"), *body, cls="max-w-md pb-8")
+
+
+def ReportPage(uid, action, back, target, error=None, f=None):
     f = f or {}
-    return Page(
+    return Shell(
+        uid,
+        back,
         f"Report {target}",
         PlainForm(
             Field(
@@ -75,7 +102,7 @@ def ReportPage(action, back, target, error=None, f=None):
             ),
             Button("Send report", cls=ButtonT.primary + " w-full"),
             P("A Causematch admin reads every report.", cls=TextPresets.muted_sm),
-            A("Cancel", href=back, cls=AT.muted),
+            A("Cancel", href=back, cls=SMALL_LINK),
             action=action,
             method="post",
             cls="space-y-3",
@@ -84,15 +111,18 @@ def ReportPage(action, back, target, error=None, f=None):
     )
 
 
-def BlockPage(action, back, title, effects):
-    return Page(
+def BlockPage(uid, action, back, title, effects):
+    return Shell(
+        uid,
+        back,
         title,
-        Ul(*[Li(e) for e in effects], cls="uk-list uk-list-disc pb-4"),
+        Ul(*[Li(e) for e in effects], cls="uk-list uk-list-disc"),
         PlainForm(
             Button("Block", cls=ButtonT.destructive),
-            A("Cancel", href=back, cls=AT.muted + " ml-4"),
+            A("Cancel", href=back, cls=SMALL_LINK),
             action=action,
             method="post",
+            cls="flex items-center gap-4 pt-2",
         ),
     )
 
@@ -119,13 +149,13 @@ def _submit_sync(uid, match_id, f, report, block, done, page):
         if f["also_block"] == "1":
             block(uid, match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError as e:
         error = str(e).capitalize() if str(e).startswith("you can") else BAD_REPORT
         try:
             return page(uid, match_id, error, f)
         except PermissionError:
-            return Response("Forbidden", status_code=403)
+            return Refusal(403)
     return Redirect(done)
 
 
@@ -141,8 +171,8 @@ def report_org_page(req, match_id: int):
     try:
         org = _org_of(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
-    return ReportPage(f"/matches/{match_id}/report", "/matches", org)
+        return Refusal(403)
+    return ReportPage(req.scope["uid"], f"/matches/{match_id}/report", "/matches", org)
 
 
 @ar("/matches/{match_id}/report", methods=["POST"])
@@ -154,7 +184,7 @@ async def report_org_save(req, match_id: int):
         data.block_org,
         "/matches?notice=reported",
         lambda uid, mid, error, f: ReportPage(
-            f"/matches/{mid}/report", "/matches", _org_of(uid, mid), error, f
+            uid, f"/matches/{mid}/report", "/matches", _org_of(uid, mid), error, f
         ),
     )
 
@@ -164,8 +194,9 @@ def block_org_page(req, match_id: int):
     try:
         org = _org_of(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return BlockPage(
+        req.scope["uid"],
         f"/matches/{match_id}/block",
         "/matches",
         f"Block {org}?",
@@ -183,7 +214,7 @@ def block_org_save(req, match_id: int):
     try:
         data.block_org(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect("/matches?notice=blocked")
 
 
@@ -199,8 +230,10 @@ def report_volunteer_page(req, match_id: int):
     try:
         who = _volunteer_of(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
-    return ReportPage(f"/org/matches/{match_id}/report", "/org/inbox", who)
+        return Refusal(403)
+    return ReportPage(
+        req.scope["uid"], f"/org/matches/{match_id}/report", "/org/inbox", who
+    )
 
 
 @ar("/org/matches/{match_id}/report", methods=["POST"])
@@ -212,6 +245,7 @@ async def report_volunteer_save(req, match_id: int):
         data.block_volunteer,
         "/org/inbox?notice=reported",
         lambda uid, mid, error, f: ReportPage(
+            uid,
             f"/org/matches/{mid}/report",
             "/org/inbox",
             _volunteer_of(uid, mid),
@@ -226,8 +260,9 @@ def block_volunteer_page(req, match_id: int):
     try:
         who = _volunteer_of(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return BlockPage(
+        req.scope["uid"],
         f"/org/matches/{match_id}/block",
         "/org/inbox",
         f"Block {who}?",
@@ -245,7 +280,7 @@ def block_volunteer_save(req, match_id: int):
     try:
         data.block_volunteer(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect("/org/inbox?notice=blocked")
 
 
@@ -342,7 +377,7 @@ def delete_save(req, sess):
     try:
         data.delete_account(req.scope["uid"])
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     sess.clear()
     return Redirect("/login")
 
@@ -474,7 +509,7 @@ def privacy():
                 cls="mt-2",
             ),
         ),
-        P(A("Back", href="/", cls=AT.muted), cls="pt-8"),
+        P(A("Back", href="/", cls=SMALL_LINK), cls="pt-6"),
     )
 
 

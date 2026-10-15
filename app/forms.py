@@ -9,8 +9,6 @@ import re
 import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
-from fasthtml.common import Response
-
 MAX_URL = 500
 
 
@@ -23,7 +21,10 @@ async def str_form(req):
 
 
 def bad_request():
-    return Response("Bad request", status_code=400)
+    """A 400 in the shared look (app/ui.py Refusal), not a bare word."""
+    from app.ui import Refusal  # imported here: app.ui imports this module
+
+    return Refusal(400)
 
 
 def query(req, name):

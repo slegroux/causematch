@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Response, Span
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Span
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -25,6 +25,7 @@ from app.ui import (
     EventLink,
     Icon,
     Pill,
+    Refusal,
     Router,
     VolunteerNav,
 )
@@ -150,7 +151,7 @@ def withdraw_confirm(req, match_id: int):
     try:
         m = data.my_match(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     if m["status"] not in ("pending", "accepted"):
         return Redirect("/matches")
     return Container(
@@ -182,7 +183,7 @@ def withdraw(req, match_id: int):
     try:
         data.withdraw(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError:
         pass  # already withdrawn or declined: nothing to do
     return Redirect("/matches")

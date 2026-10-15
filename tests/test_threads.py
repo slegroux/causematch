@@ -16,7 +16,10 @@ def test_data_layer_survives_concurrent_threads():
     def work(n):
         try:
             barrier.wait()
-            for i in range(150):
+            # 60 rounds of 16 threads is plenty to interleave every call; the deck
+            # ranks every opening, and each round adds 16, so more rounds only add time
+            # that a loaded machine can push past the join below (it timed out once).
+            for i in range(60):
                 data.get_profile(uid)
                 data.org_openings(uid)
                 data.deck(uid)
@@ -36,6 +39,7 @@ def test_data_layer_survives_concurrent_threads():
 
     threads = [threading.Thread(target=work, args=(n,)) for n in range(16)]
     [t.start() for t in threads]
-    [t.join(timeout=120) for t in threads]
+    # the join only catches a deadlock: generous, so a slow machine isn't one
+    [t.join(timeout=240) for t in threads]
     assert not any(t.is_alive() for t in threads)
     assert errors == [] and replays == []

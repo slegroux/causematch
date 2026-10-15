@@ -1,7 +1,6 @@
 from fasthtml.common import H1, H2, A, Div, P, Redirect
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
-    AT,
     Alert,
     AlertT,
     Button,
@@ -18,6 +17,7 @@ from app.routes.deck import when
 from app.ui import (
     CARD,
     ORG_TITLE,
+    SMALL_LINK,
     TITLE,
     Field,
     OrgShell,
@@ -227,7 +227,7 @@ def ShiftForm(uid, match_id, head, error=None, value=""):
                 ),
                 Div(
                     Button("Schedule", cls=ButtonT.primary),
-                    A("Cancel", href="/org/inbox", cls=AT.muted),
+                    A("Cancel", href="/org/inbox", cls=SMALL_LINK),
                     cls="flex items-center gap-4",
                 ),
                 action=f"/org/matches/{match_id}/shifts/new",

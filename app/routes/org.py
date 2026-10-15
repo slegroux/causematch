@@ -148,11 +148,15 @@ def OpeningRow(o, counts):
     return Div(
         Div(
             Pill(status, tone),
+            # a 44 px target around a small pill
             A(
-                f"{pending} waiting for you",
+                Span(
+                    f"{pending} waiting for you",
+                    cls="rounded-full bg-brand px-2.5 py-1 text-xs font-bold text-white "
+                    "group-hover:bg-brand-strong",
+                ),
                 href="/org/inbox",
-                cls="inline-flex items-center rounded-full bg-brand px-2.5 py-1 text-xs "
-                "font-bold text-white hover:bg-brand-strong",
+                cls="group -my-2 inline-flex min-h-11 items-center",
             )
             if pending
             else None,

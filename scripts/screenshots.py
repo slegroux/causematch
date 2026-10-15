@@ -108,6 +108,7 @@ def main():
             ("v09-preferences", "/me/preferences"),
             ("v10-deck-free-today", "/deck?today=1"),
             ("v12-my-profile", "/me/profile"),
+            ("v13-report", f"/matches/{info['match_id']}/report"),
         ):
             v.goto(path)
             shot(v, name, full_page=name != "v06-chat")
@@ -128,6 +129,7 @@ def main():
             ("o04-new-opening", "/org/openings/new"),
             ("o05-shifts", "/org/shifts"),
             ("o06-chat", f"/org/chat/{info['match_id']}"),
+            ("o10-block", f"/org/matches/{info['match_id']}/block"),
             ("o07-privacy", "/privacy"),
             ("o08-organization", "/org/organization"),
             ("o09-opening-media", f"/org/openings/{info['opening_id']}/media"),

@@ -7,7 +7,6 @@ from fasthtml.common import (
     Div,
     P,
     Redirect,
-    Response,
     Script,
     Span,
     to_xml,
@@ -25,6 +24,8 @@ from app.ui import (
     SEND,
     SMALL_LINK,
     Icon,
+    OrgShell,
+    Refusal,
     Router,
     TextInput,
     VolunteerHeader,
@@ -119,8 +120,7 @@ def ChatPage(uid, match_id, role, notice=""):
         hx_ext="ws" if head["writable"] else None,
         ws_connect=f"{base}/{match_id}/ws" if head["writable"] else None,
     )
-    return Container(
-        VolunteerNav("matches") if role == "volunteer" else None,
+    content = (
         A(
             Icon(BACK, size=18),
             f"Back to {back[1].lower()}",
@@ -151,8 +151,10 @@ def ChatPage(uid, match_id, role, notice=""):
             cls="flex gap-x-5 pt-2 text-sm",
         ),
         Script(src="/static/chat.js", defer=True),
-        cls="max-w-md pb-8",
     )
+    if role == "coordinator":  # the nonprofit's own top nav, from the inbox
+        return OrgShell("inbox", data.org_waiting(uid), Div(*content, cls="max-w-md"))
+    return Container(VolunteerNav("matches"), *content, cls="max-w-md pb-8")
 
 
 def _chat_page(req, match_id, role, notice):
@@ -162,7 +164,7 @@ def _chat_page(req, match_id, role, notice):
             raise PermissionError("wrong side")
         return ChatPage(uid, match_id, role, notice)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
 
 
 def _match_id(ws):
@@ -305,7 +307,7 @@ async def _post(req, match_id, role, base):
             raise PermissionError("wrong side")
         await _deliver(uid, match_id, msg)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError:
         return Redirect(f"{base}/{match_id}?notice={_notice_for(msg)}")
     return Redirect(f"{base}/{match_id}")

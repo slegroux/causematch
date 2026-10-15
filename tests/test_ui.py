@@ -582,3 +582,44 @@ def test_admin_metrics_show_the_empty_deck_count(user):
         openings.update(id=o.id, status="closed")
     assert "seen every opening" in user.get("/deck").text
     assert "Empty decks: 1 views by 1 volunteers" in admin.get("/admin/metrics").text
+
+
+class Labels(HTMLParser):
+    """Every label's `for`, every id, and the text-like fields with how they are named."""
+
+    def __init__(self):
+        super().__init__()
+        self.fors, self.ids, self.fields, self.wrapped = [], [], [], 0
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if a.get("id"):
+            self.ids.append(a["id"])
+        if tag == "label":
+            if a.get("for"):
+                self.fors.append(a["for"])
+            else:
+                self.wrapped += 1
+        if tag in ("input", "select", "textarea") and a.get("type") not in (
+            "hidden",
+            "submit",
+            "checkbox",
+            "radio",
+        ):
+            self.fields.append(
+                (a.get("name"), a.get("id"), a.get("aria-label"), self.wrapped)
+            )
+
+    def handle_endtag(self, tag):
+        if tag == "label" and self.wrapped:
+            self.wrapped -= 1
+
+
+def test_every_label_points_at_a_field_and_every_field_is_named(pages):
+    for client, path in pages:
+        p = Labels()
+        p.feed(client.get(path).text)
+        assert len(p.ids) == len(set(p.ids)), (path, "duplicate ids")
+        assert set(p.fors) <= set(p.ids), (path, set(p.fors) - set(p.ids))
+        for name, ident, aria, wrapped in p.fields:
+            assert aria or wrapped or ident in p.fors, (path, name)
