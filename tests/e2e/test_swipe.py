@@ -1,9 +1,8 @@
 import re
 
 import pytest
-from conftest import coordinator_for
+from helpers import coordinator_page
 
-from app import notify
 from app.db import matches, openings, profiles
 
 pytestmark = pytest.mark.e2e
@@ -67,21 +66,6 @@ def touch_drag(page, selector, dx):
 def settle(page):
     """swipe.js ignores input for 400 ms after a card swaps in (a double tap's tail)."""
     page.wait_for_timeout(450)
-
-
-def coordinator_page(browser, live_url):
-    _, email = coordinator_for(0)
-    ctx = browser.new_context(base_url=live_url)
-    ctx.route(EXTERNAL, no_network)
-    page = ctx.new_page()
-    page.goto("/org/login")
-    page.get_by_label("Email").fill(email)
-    page.get_by_role("button", name="Email me a link").click()
-    _, _, body = notify.get_emailer().sent[-1]
-    token = re.search(r"token=([\w-]+)", body).group(1)
-    page.goto(f"/org/login/verify?token={token}")
-    page.get_by_role("button", name="Sign in").click()
-    return page
 
 
 def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
