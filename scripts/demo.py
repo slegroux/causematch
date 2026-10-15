@@ -219,6 +219,33 @@ def _volunteer(phone, name, hood, causes, skills, frequency):
     return uid
 
 
+def _preferences(uid):
+    """ME_PHONE's match preferences: two places (Home in Sawtelle by car, Work Downtown by
+    transit) and three-state causes, so /me/preferences and the cards show them."""
+    from app import data
+    from app.geo import neighborhood_latlon, zip_latlon
+
+    home = zip_latlon("90025")  # Sawtelle
+    work = neighborhood_latlon("Downtown")[1]
+    data.save_preferences(
+        uid,
+        causes={
+            "food-insecurity": "love",
+            "animal-shelters": "love",
+            "environment-parks": "open",
+        },
+        availability=["weekend_morning", "weekday_evening"],
+        skills=["physical", "car"],
+        frequency="weekly",
+        places=[
+            {"label": "Home", "lat": home[0], "lon": home[1], "area": "Sawtelle",
+             "mode": "car", "max_minutes": 45},
+            {"label": "Work", "lat": work[0], "lon": work[1], "area": "Downtown",
+             "mode": "transit", "max_minutes": 30},
+        ],
+    )  # fmt: skip
+
+
 def _past_shift(match_id, coordinator, days_ago, status):
     from app.db import Shift, now, shifts
 
@@ -302,6 +329,7 @@ def seed(seed_file=None):
     )
     if pending:
         data.swipe(me, pending.id, True)
+    _preferences(me)
     return {"org": org.name, "match_id": m.id, "coordinator_id": coord}
 
 

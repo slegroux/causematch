@@ -253,6 +253,24 @@ class RateEvent:
 
 rate_events = db.create(RateEvent, pk="id", transform=True)
 rate_events.create_index(["key", "at"], if_not_exists=True)
+
+
+class Place:
+    """Where a volunteer helps from (up to 2), private: never shown to anyone else. A ZIP or
+    neighborhood centroid, or a device location rounded to 2 decimals; never an address."""
+
+    id: int
+    user_id: int
+    label: str  # Home | Work | the volunteer's own, up to 20 characters
+    lat: float
+    lon: float
+    area: str  # shown back to the volunteer only: "Mar Vista", "90066", "My location"
+    mode: str  # car|transit|bike|walk (app/match.py MODE_KMH)
+    max_minutes: int  # 0: any distance
+
+
+places = db.create(Place, pk="id", transform=True)
+places.create_index(["user_id"], if_not_exists=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

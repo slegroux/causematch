@@ -23,6 +23,22 @@ SKILLS = [
 ]
 MAX_OPENING_SKILLS = 3
 
+# How a volunteer gets to a place (app/match.py MODE_KMH) and how long they'd travel.
+MODES = [
+    ("car", "Car"),
+    ("transit", "Transit"),
+    ("bike", "Bike"),
+    ("walk", "Walk"),
+]
+MAX_MINUTES = [  # (minutes, label), 0: any distance
+    (15, "15"),
+    (30, "30"),
+    (45, "45"),
+    (60, "60"),
+    (0, "Any"),
+]
+MAX_PLACES = 2
+
 FREQUENCY = [
     ("once", "Once, to try it"),
     ("monthly", "About monthly"),

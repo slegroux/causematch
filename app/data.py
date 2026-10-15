@@ -39,13 +39,60 @@ def _local_now():
     return datetime.now(LA).strftime("%Y-%m-%dT%H:%M")
 
 
+# The travel minutes a sign-up radius stood for (app/routes/onboarding.py TRAVEL).
+RADIUS_MINUTES = {8: 15, 16: 30, 25: 45}
+TRAVEL_PHRASE = {
+    "car": "by car",
+    "transit": "by transit",
+    "bike": "by bike",
+    "walk": "on foot",
+}
+
+
+def _places(me):
+    """The volunteer's places, as match.best_place takes them; scale_km scales the distance
+    score. A profile with no saved place has one, Home: its sign-up ZIP by car, reaching
+    exactly its radius, so its deck stays as it was."""
+    rows = _db.places(where="user_id = ?", where_args=[me.id], order_by="id")
+    if rows:
+        return [
+            {
+                **{k: getattr(p, k) for k in ("id", "label", "lat", "lon", "area")},
+                "mode": p.mode,
+                "max_minutes": p.max_minutes,
+                "reach_km": (reach := _match.reach_km(p.mode, p.max_minutes)),
+                "scale_km": reach or ANY_DISTANCE_KM,
+            }
+            for p in rows
+        ]
+    if None in (me.lat, me.lon):
+        return []
+    radius = me.radius_km
+    gated = bool(radius) and radius < ANY_DISTANCE_KM
+    return [
+        {
+            "id": None,
+            "label": "Home",
+            "lat": me.lat,
+            "lon": me.lon,
+            "area": me.neighborhood or "My sign-up ZIP",
+            "mode": "car",
+            "max_minutes": RADIUS_MINUTES.get(radius, 0) if gated else 0,
+            "reach_km": radius if gated else None,
+            "scale_km": radius,
+        }
+    ]
+
+
 def _deck_openings(uid):
-    """[(opening, active cause labels, distance_km or None)] this volunteer could still swipe on.
+    """[(opening, active cause labels, km, (place, km, minutes) or None)] this volunteer
+    could still swipe on.
 
     swipe() checks visibility with this same function, so whatever hides an opening
     from the deck (closed, past, inactive cause, a cause that is "not for me", out of
-    radius) also stops a like sent by id. Distance is None for a remote opening or when
-    either side has no location.
+    reach of every place) also stops a like sent by id. The place is the one quickest to
+    reach the opening from; it and km are None for a remote opening or when the volunteer
+    has no place.
     """
     labels = {c.slug: c.label for c in _db.causes() if c.active}
     seen = {
@@ -53,6 +100,7 @@ def _deck_openings(uid):
     }
     me = _db.profiles[uid]
     mine = _prefs.cause_prefs(me)
+    places = _places(me)
     # Only verified, active orgs the volunteer has not blocked. An org that blocked the
     # volunteer stays visible: hiding it would tell them.
     shown = {
@@ -77,19 +125,15 @@ def _deck_openings(uid):
             continue
         if not _match.causes_allowed(mine, json.loads(o.causes or "[]")):
             continue
-        km = None
+        near = None
         if not o.remote:
             if None in (o.lat, o.lon):
                 continue  # an in-person opening with no place cannot be ranked or gated
-            if None not in (me.lat, me.lon):
-                km = _match.haversine_km(me.lat, me.lon, o.lat, o.lon)
-                if (
-                    me.radius_km
-                    and me.radius_km < ANY_DISTANCE_KM
-                    and km > me.radius_km
-                ):
-                    continue
-        out.append((o, cause_labels, km))
+            if places:
+                near = _match.best_place(places, o.lat, o.lon)
+                if near is None:
+                    continue  # out of reach of every place
+        out.append((o, cause_labels, near and near[1], near))
     return out
 
 
@@ -124,7 +168,8 @@ def _distance_label(km):
 def deck(uid, limit=20):
     """Cards for open openings with an active cause, best fit first.
 
-    Cards carry the distance rounded to whole km, never coordinates.
+    Cards carry the distance rounded to whole km and the estimated travel time from the
+    nearest place, never coordinates.
     """
     me = _db.profiles[uid]
     active = {c.slug for c in _db.causes() if c.active}
@@ -134,15 +179,15 @@ def deck(uid, limit=20):
     org_names = {o.id: o.name for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
-    for o, cause_labels, km in _deck_openings(uid):
+    for o, cause_labels, km, near in _deck_openings(uid):
         fit = _match.score(
             causes=(mine[0], set(json.loads(o.causes or "[]")) & active),
             skills=(mine[1], json.loads(o.skills or "[]")),
-            distance=_match.distance_score(km, me.radius_km, o.remote),
+            distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
             availability=_match.availability_overlap(free, o.starts_at, o.recurrence),
             reply=rates.get(o.org_id, 0.5),
         )
-        ranked.append((-round(fit, 6), o.starts_at, o.id, o, cause_labels, km))
+        ranked.append((-round(fit, 6), o.starts_at, o.id, o, cause_labels, near))
     ranked.sort(key=lambda r: r[:3])
     return [
         {
@@ -156,9 +201,11 @@ def deck(uid, limit=20):
             "neighborhood": o.neighborhood,
             "slots": o.slots,
             "remote": bool(o.remote),
-            "distance": _distance_label(km),
+            "distance": _distance_label(near and near[1]),
+            "travel": near
+            and f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} from {near[0]['label']}",
         }
-        for *_, o, cause_labels, km in ranked[:limit]
+        for *_, o, cause_labels, near in ranked[:limit]
     ]
 
 
@@ -861,19 +908,28 @@ def preferences(uid):
         "availability": json.loads(p.availability or "[]"),
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
+        "places": _places(p),
     }
 
 
-def save_preferences(uid, *, causes, availability, skills, frequency):
-    """causes: {slug: love|open|no}; a cause left out is unrated."""
-    _db.profiles.update(
-        id=uid,
-        cause_prefs=json.dumps(causes),
-        causes=json.dumps(_prefs.picked(causes)),
-        availability=json.dumps(list(availability)),
-        skills=json.dumps(list(skills)),
-        frequency=frequency,
-    )
+def save_preferences(uid, *, causes, availability, skills, frequency, places):
+    """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
+    (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
+    ones. The profile's own point follows the first place."""
+    with _db.db.conn:
+        _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
+        for p in places:
+            _db.places.insert(_db.Place(user_id=uid, **p))
+        _db.profiles.update(
+            id=uid,
+            cause_prefs=json.dumps(causes),
+            causes=json.dumps(_prefs.picked(causes)),
+            availability=json.dumps(list(availability)),
+            skills=json.dumps(list(skills)),
+            frequency=frequency,
+            lat=places[0]["lat"],
+            lon=places[0]["lon"],
+        )
 
 
 TOKEN_MINUTES = 15
@@ -1917,6 +1973,7 @@ def delete_account(uid):
             [uid],
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         _db.db.execute(
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "

@@ -25,6 +25,38 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * EARTH_KM * asin(sqrt(a))
 
 
+# Door-to-door averages for Los Angeles, stops and parking included; tunable. No routing
+# API: travel minutes are estimated from the straight-line distance.
+MODE_KMH = {"car": 32, "transit": 14, "bike": 13, "walk": 4.5}
+
+
+def minutes(km, mode):
+    """Estimated travel minutes for a straight-line distance; at least 1."""
+    return max(1, round(km / MODE_KMH[mode] * 60))
+
+
+def reach_km(mode, max_minutes):
+    """How far max_minutes goes in this mode; None for any distance (0)."""
+    return max_minutes * MODE_KMH[mode] / 60 if max_minutes else None
+
+
+def best_place(places, lat, lon):
+    """(place, km, minutes) from the place quickest to reach this point from, among the
+    places whose reach covers it; None when none does.
+
+    A place is a dict with lat, lon, mode and reach_km (None: any distance).
+    """
+    best = None
+    for p in places:
+        km = haversine_km(p["lat"], p["lon"], lat, lon)
+        if p["reach_km"] is not None and km > p["reach_km"]:
+            continue
+        m = minutes(km, p["mode"])
+        if best is None or m < best[2]:
+            best = (p, km, m)
+    return best
+
+
 def jaccard(a, b):
     """Overlap of two collections as |a & b| / |a | b|; 0 when both are empty."""
     a, b = set(a), set(b)

@@ -5,39 +5,48 @@ from fasthtml.common import (
     H1,
     H2,
     A,
+    Button,
+    Datalist,
     Div,
     Fieldset,
     Form,
+    Hidden,
     Input,
     Label,
     Legend,
+    Option,
     P,
     Redirect,
+    Script,
     Span,
 )
 from monsterui.all import Alert, AlertT, Container
 from starlette.concurrency import run_in_threadpool
 
 from app import data, prefs
-from app.choices import AVAILABILITY, FREQUENCY, SKILLS
+from app.choices import AVAILABILITY, FREQUENCY, MAX_MINUTES, MAX_PLACES, MODES, SKILLS
 from app.forms import bad_request, query, str_form
+from app.geo import neighborhoods
 from app.ui import (
     BACK,
     CARD,
     HEART,
+    PIN,
     SHIELD,
     TITLE,
     BigButton,
     CauseChip,
     Icon,
     Router,
+    TextInput,
     VolunteerNav,
 )
 
 ar = Router()
 
-UNRECOGNIZED = "Something in that form wasn't recognized. Please try again."
+UNRECOGNIZED = prefs.UNRECOGNIZED
 NO_CAUSE = "Pick at least one cause you love or are open to."
+NO_PLACE = "Tell us your main place: a neighborhood, a ZIP code or your location."
 
 # A toggle chip: a visually hidden radio or checkbox, then the pill that shows its state.
 CHIP = (
@@ -138,6 +147,88 @@ def Checks(name, options, checked, cls):
     )
 
 
+def PlaceFields(slot, pf):
+    """One place: its name, where it is (a neighborhood, a ZIP or the device location), how
+    the volunteer gets there and how long they'd travel. Field names: place1_*, place2_*."""
+    n = f"place{slot + 1}"
+    return Fieldset(
+        Legend(
+            "Your main place" if slot == 0 else "A second place (optional)",
+            cls="font-bold text-ink",
+        ),
+        P(
+            "Leave “Neighborhood or ZIP” empty to skip it.",
+            cls="text-sm text-ink-muted",
+        )
+        if slot
+        else None,
+        Div(
+            Label("Name", fr=f"{n}_label", cls="uk-form-label"),
+            TextInput(
+                id=f"{n}_label",
+                name=f"{n}_label",
+                value=pf["label"],
+                maxlength=str(prefs.LABEL_MAX),
+                autocomplete="off",
+            ),
+            cls="space-y-1.5",
+        ),
+        Div(
+            Label("Neighborhood or ZIP", fr=f"{n}_where", cls="uk-form-label"),
+            TextInput(
+                id=f"{n}_where",
+                name=f"{n}_where",
+                value=pf["where"],
+                list="la-areas",
+                maxlength="80",
+                autocomplete="off",
+                placeholder="e.g. Mar Vista or 90066",
+                data_where=n,
+            ),
+            Hidden(id=f"{n}_lat", name=f"{n}_lat", value=pf["lat"]),
+            Hidden(id=f"{n}_lon", name=f"{n}_lon", value=pf["lon"]),
+            # static/geo.js shows this when the browser can locate; no display class here,
+            # so `hidden` holds until then
+            Div(
+                Button(
+                    Icon(PIN, size=18),
+                    "Use my location",
+                    type="button",
+                    data_locate=n,
+                    cls="uk-btn uk-btn-default h-11 gap-2 px-4",
+                ),
+                hidden=True,
+                data_locate_box="1",
+            ),
+            P(id=f"{n}_status", aria_live="polite", cls="text-sm text-ink-muted"),
+            cls="space-y-1.5",
+        ),
+        Fieldset(
+            Legend("Getting there", cls="uk-form-label mb-1.5"),
+            Div(
+                *[
+                    Chip("radio", f"{n}_mode", v, label, pf["mode"] == v)
+                    for v, label in MODES
+                ],
+                cls="grid grid-cols-4 gap-2",
+            ),
+        ),
+        Fieldset(
+            Legend("Up to (minutes)", cls="uk-form-label mb-1.5"),
+            Div(
+                *[
+                    Chip(
+                        "radio", f"{n}_minutes", str(v), label, pf["minutes"] == str(v)
+                    )
+                    for v, label in MAX_MINUTES
+                ],
+                cls="grid grid-cols-5 gap-1.5",
+            ),
+        ),
+        cls="space-y-3 rounded-2xl bg-cream p-4",
+    )
+
+
 def PrefsPage(f, error=None, saved=False):
     return Container(
         VolunteerNav("me"),
@@ -170,6 +261,13 @@ def PrefsPage(f, error=None, saved=False):
                 *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
             ),
             Section(
+                "Where you'll help from",
+                "Each card shows the time from the nearest of your places. Only you see "
+                "them; we keep an area, never an address.",
+                *[PlaceFields(i, pf) for i, pf in enumerate(f["place_forms"])],
+                Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
+            ),
+            Section(
                 "When you're usually free",
                 None,
                 Checks(
@@ -200,14 +298,26 @@ def PrefsPage(f, error=None, saved=False):
             method="post",
             cls="space-y-4",
         ),
+        Script(src="/static/geo.js", defer=True),
         cls="max-w-md pb-8",
     )
+
+
+def form_values(saved):
+    """data.preferences() as the page shows it: each place as its form fields."""
+    places = saved.pop("places")
+    saved["place_forms"] = [
+        prefs.place_form(places[i] if i < len(places) else None, i)
+        for i in range(MAX_PLACES)
+    ]
+    return saved
 
 
 @ar("/me/preferences", methods=["GET"])
 def preferences_page(req):
     return PrefsPage(
-        data.preferences(req.scope["uid"]), saved=query(req, "saved") == "1"
+        form_values(data.preferences(req.scope["uid"])),
+        saved=query(req, "saved") == "1",
     )
 
 
@@ -221,21 +331,25 @@ async def preferences_save(req):
 
 def _sync_save(req, form):
     uid = req.scope["uid"]
+    saved = data.preferences(uid)
     active = [c.slug for c in data.active_causes()]
     rated = {s: form.get(f"cause_{s}") for s in active if form.get(f"cause_{s}")}
     f = {
         # a rating of a cause that is inactive now is kept for when it comes back
         "causes": {
-            **{
-                s: v
-                for s, v in data.preferences(uid)["causes"].items()
-                if s not in active
-            },
+            **{s: v for s, v in saved["causes"].items() if s not in active},
             **rated,
         },
         "availability": form.getlist("availability"),
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
+        "place_forms": [
+            {
+                k: form.get(f"place{i + 1}_{k}", "")
+                for k in ("label", "where", "lat", "lon", "mode", "minutes")
+            }
+            for i in range(MAX_PLACES)
+        ],
     }
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
@@ -246,5 +360,17 @@ def _sync_save(req, form):
         return PrefsPage(f, UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
         return PrefsPage(f, NO_CAUSE)
-    data.save_preferences(uid, **f)
+    places = []
+    for i, pf in enumerate(f["place_forms"]):
+        current = saved["places"][i] if i < len(saved["places"]) else None
+        place, error = prefs.resolve_place(pf, current, i)
+        if error:
+            return PrefsPage(f, error)
+        if place:
+            places.append(place)
+    if not places or not f["place_forms"][0]["where"].strip():
+        return PrefsPage(f, NO_PLACE)
+    data.save_preferences(
+        uid, **{k: v for k, v in f.items() if k != "place_forms"}, places=places
+    )
     return Redirect("/me/preferences?saved=1")

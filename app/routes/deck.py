@@ -32,6 +32,8 @@ from app.ui import (
 
 ar = Router()
 
+ROUTE = ("M3 11 22 2l-9 19-2-8-8-2Z",)  # a navigation arrow: the travel estimate
+
 
 def when(starts_at):
     return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
@@ -82,6 +84,7 @@ def OpeningCard(c):
             Div(
                 Meta(CALENDAR, starts.strftime("%a %b %-d · %-I:%M %p")),
                 Meta(PIN, place_line(c)),
+                Meta(ROUTE, f"About {c['travel']}") if c.get("travel") else None,
                 Meta(PEOPLE, f"{c['slots']} spots"),
                 cls="space-y-1 pt-1",
             ),

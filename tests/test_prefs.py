@@ -22,6 +22,11 @@ SAVE = {
     "availability": ["weekday_evening", "weekend_morning"],
     "skills": ["admin", "media"],
     "frequency": "monthly",
+    # the sign-up place, unchanged: conftest's FORM says Chinatown
+    "place1_label": "Home",
+    "place1_where": "Chinatown",
+    "place1_mode": "car",
+    "place1_minutes": "0",  # any distance, as the user fixture widened it
 }
 
 
