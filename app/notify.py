@@ -427,3 +427,49 @@ def send_due_reminders():
         ):
             reminded.add(volunteer_id)
     return sent + len(reminded)
+
+
+def send_urgent_waves():
+    """Cloud Scheduler calls /tasks/urgent every 10 minutes: send each urgent call's due
+    wave (data.urgent_waves_due) to the volunteers data.urgent_recipients picks, once per
+    volunteer and call. A text counts against the SMS ceiling; one over it is recorded
+    `deferred` and not retried by the hourly sweep (the call may be over by then), though
+    wave 2 may try that volunteer again. How many were sent."""
+    at = now()
+    sent = 0
+    for call_id, _, size in data.urgent_waves_due(at):
+        info = data.urgent_notice(call_id, at)
+        if not info:
+            continue
+        link = f"{public_base_url()}/deck?card={info['opening_id']}"
+        people = "1 more person" if info["left"] == 1 else f"{info['left']} more people"
+        text = (
+            f"Causematch: {info['org']} needs {people} {info['when']} for "
+            f"{info['opening']}. Interested? {link} (Turn these off in Preferences. "
+            "Reply STOP to end all texts.)"
+        )
+        subject = f"Last minute: {info['org']} needs {people} {info['when']}"
+        body = (
+            f"{info['org']} is short of people for {info['opening']}, {info['when']}, "
+            f"and needs {people}.\n\nInterested? Have a look: {link}\n\nYou get these "
+            "because you turned on last-minute calls. Turn them off any time in Me, "
+            "then Preferences."
+        )
+        for uid, channel in data.urgent_recipients(call_id, size, at):
+            key = f"urgent:{call_id}:{uid}"
+            if channel == "sms":
+                sent += bool(_text("urgent", key, uid, text))
+                continue
+            email = data.urgent_email(uid)
+            if email:
+                sent += bool(
+                    _deliver(
+                        "urgent",
+                        key,
+                        uid,
+                        lambda to=email, subject=subject, body=body: get_emailer().send(
+                            to, subject, body
+                        ),
+                    )
+                )
+    return sent

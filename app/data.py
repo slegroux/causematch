@@ -418,12 +418,12 @@ def _work_of(o):
 SURPRISE_EVERY = 8  # "Surprise me": about one card in this many is from outside love
 
 
-def deck(uid, limit=20, today=False, view=None):
+def deck(uid, limit=20, today=False, view=None, first=None):
     """deck_and_count()'s cards."""
-    return deck_and_count(uid, limit, today, view)[0]
+    return deck_and_count(uid, limit, today, view, first)[0]
 
 
-def deck_and_count(uid, limit=20, today=False, view=None):
+def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     """Cards for open openings with an active cause, best fit first. today ("I'm free
     today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
 
@@ -431,6 +431,7 @@ def deck_and_count(uid, limit=20, today=False, view=None):
     swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
     distance rounded to whole km and the travel estimate, never coordinates. Returns
     (cards, how many the deck holds in all). view: the filter sheet's (see _viewed).
+    first: an opening id to put on top when the deck holds it (an urgent call's link).
     """
     me = _db.profiles[uid]
     p = _viewed(_deck_prefs(me), view)
@@ -447,20 +448,7 @@ def deck_and_count(uid, limit=20, today=False, view=None):
     calls = {c.opening_id: c for c in _db.urgent_calls(where="status = 'open'")}
     for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
-        when = _match.availability_overlap(
-            p["availability"], o.starts_at, o.recurrence, p["free_dates"]
-        )
-        if not _match.commitment_fits(p["commitment"], o.recurrence):
-            when /= 2
-        fit = _match.score(
-            causes=(rated, set(slugs)),
-            skills=(skills, json.loads(o.skills or "[]")),
-            distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
-            availability=when,
-            reply=rates.get(o.org_id, 0.5),
-            work=_match.work_fit(p["work"], _work_of(o)),
-            language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
-        )
+        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates)
         if today:  # ignores fit: the soonest, then the nearest; remote after in-person
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
@@ -469,6 +457,7 @@ def deck_and_count(uid, limit=20, today=False, view=None):
         ranked.append((o.id not in calls, *key, o, cause_labels, slugs, near))
     ranked.sort(key=lambda r: r[:4])
     pool = [r[4:] for r in ranked]
+    pool.sort(key=lambda r: r[0].id != first)  # stable: the rest keep their order
     seen = _db.swipes.count_where("volunteer_id = ?", [uid])
     surprise = bool(me.surprise) and bool(loved) and not today
     cards = []
@@ -512,6 +501,26 @@ def deck_and_count(uid, limit=20, today=False, view=None):
             }
         )
     return cards, len(ranked)
+
+
+def _fit(p, rated, skills, spoken, o, slugs, near, rates):
+    """match.score of an opening for a volunteer: the deck's order, and who an urgent call
+    notifies first."""
+    when = _match.availability_overlap(
+        p["availability"], o.starts_at, o.recurrence, p["free_dates"]
+    )
+    if not _match.commitment_fits(p["commitment"], o.recurrence):
+        when /= 2
+    km = near and near[1]
+    return _match.score(
+        causes=(rated, set(slugs)),
+        skills=(skills, json.loads(o.skills or "[]")),
+        distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
+        availability=when,
+        reply=rates.get(o.org_id, 0.5),
+        work=_match.work_fit(p["work"], _work_of(o)),
+        language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
+    )
 
 
 MAX_WHY = 4
@@ -1896,15 +1905,176 @@ def org_urgent_calls(coordinator_uid):
     }
 
 
-def urgent_label(starts_at, left):
-    """ "Urgent · today 9 am · needs 2": the deck's badge and the org's pill."""
+def urgent_when(starts_at, today=None):
+    """ "today 9 am", "tomorrow 2:30 pm", or the weekday; today: a date, else now's."""
     start = datetime.fromisoformat(starts_at)
-    today = datetime.now(LA).date()
+    today = today or datetime.now(LA).date()
     day = {0: "today", 1: "tomorrow"}.get(
         (start.date() - today).days, start.strftime("%a")
     )
     clock = start.strftime("%-I:%M %p" if start.minute else "%-I %p").lower()
-    return f"Urgent · {day} {clock} · needs {left}"
+    return f"{day} {clock}"
+
+
+def urgent_label(starts_at, left):
+    """ "Urgent · today 9 am · needs 2": the deck's badge and the org's pill."""
+    return f"Urgent · {urgent_when(starts_at)} · needs {left}"
+
+
+URGENT_WAVES = 2  # notification waves per call
+URGENT_WAVE_GAP = timedelta(minutes=30)  # wave 2 goes out this long after wave 1
+URGENT_PER_NEEDED = 3  # a wave notifies up to 3 x the people still needed ...
+URGENT_WAVE_MAX = 25  # ... and never more than this many
+URGENT_WEEK_MAX = 3  # urgent notices a volunteer gets in 7 days, whatever they picked
+# a notice in these states counts as given (a deferred or failed one may go again)
+_GIVEN = "('pending', 'sent', 'unknown', 'skipped')"
+
+
+def urgent_waves_due(at):
+    """[(call id, wave number, how many to notify)] for the open calls whose next wave is
+    due at `at` (UTC): wave 1 at once, wave 2 URGENT_WAVE_GAP after wave 1 while still
+    unfilled. Each is claimed here, so two sweeps never send the same wave."""
+    due = []
+    for call in _open_calls().values():
+        done = call.waves or 0
+        if done >= URGENT_WAVES or (
+            done and datetime.fromisoformat(call.wave_at) + URGENT_WAVE_GAP > at
+        ):
+            continue
+        left = call.needed - _urgent_found(call.id)
+        if left <= 0:
+            continue
+        _db.db.execute(
+            "UPDATE urgent_call SET waves = ?, wave_at = ? "
+            "WHERE id = ? AND coalesce(waves, 0) = ?",
+            [done + 1, at.isoformat(timespec="seconds"), call.id, done],
+        )
+        if _db.db.conn.changes() == 1:
+            due.append(
+                (call.id, done + 1, min(URGENT_PER_NEEDED * left, URGENT_WAVE_MAX))
+            )
+    return due
+
+
+def urgent_recipients(call_id, limit, at):
+    """[(volunteer id, "sms" or "email")] to notify about the call at `at` (UTC), best
+    fit first (match.score), at most `limit`.
+
+    Eligible: opted in; the call's opening is in their deck (verified org, not blocked by
+    them, no cause "not for me", their Only-show choices, not swiped yet); the org hasn't
+    blocked them; within their travel minutes of a place; free then (a ticked slot or a
+    free date); the window they picked; outside their quiet hours; under their weekly
+    cap; not already notified about this call; a number that never replied STOP, else
+    an email.
+    """
+    call = _db.urgent_calls[call_id]
+    if call.status != "open":
+        return []
+    o = copy.copy(_db.openings[call.opening_id])
+    o.starts_at = call.starts_at
+    local = at.astimezone(LA)
+    week_ago = (at - timedelta(days=7)).isoformat(timespec="seconds")
+    notified = {
+        r["recipient_id"]
+        for r in _db.db.query(
+            f"SELECT recipient_id FROM notification WHERE key LIKE ? AND status IN {_GIVEN}",
+            [f"urgent:{call_id}:%"],
+        )
+    }
+    this_week = {
+        r["recipient_id"]: r["n"]
+        for r in _db.db.query(
+            "SELECT recipient_id, count(*) AS n FROM notification WHERE kind = 'urgent' "
+            f"AND status IN {_GIVEN} AND sent_at > ? GROUP BY recipient_id",
+            [week_ago],
+        )
+    }
+    blocked_by_org = {
+        b.blocked_user_id
+        for b in _db.blocks(
+            where="blocked_org_id = ? AND blocked_user_id IS NOT NULL",
+            where_args=[call.org_id],
+        )
+    }
+    active = {c.slug for c in _db.causes() if c.active}
+    slugs = [s for s in json.loads(o.causes or "[]") if s in active]
+    rates = _org_reply_rates()
+    ranked = []
+    for me in _db.profiles(
+        where="role = 'volunteer' AND urgent_on = 1 AND deleted_at IS NULL "
+        "AND suspended_at IS NULL AND onboarded_at IS NOT NULL"
+    ):
+        u = _prefs.urgent(me)
+        if (
+            me.id in notified
+            or me.id in blocked_by_org
+            or this_week.get(me.id, 0) >= min(u["per_week"], URGENT_WEEK_MAX)
+            or _prefs.quiet_now(u, local.hour)
+            or (
+                u["window"] == "today"
+                and call.starts_at[:10] != local.date().isoformat()
+            )
+        ):
+            continue
+        channel = (
+            "sms"
+            if me.phone and not me.sms_opted_out
+            else "email"
+            if me.email
+            else None
+        )
+        if channel is None:
+            continue
+        p = _deck_prefs(me)
+        if o.id not in {d.id for d, *_ in _deck_openings(me.id, True, p)}:
+            continue
+        near = None
+        if not o.remote:
+            near = _match.best_place(p["places"], o.lat, o.lon)  # their full reach
+            if near is None:
+                continue
+        if (
+            _match.availability_overlap(
+                p["availability"], call.starts_at, "", p["free_dates"]
+            )
+            < 1
+        ):
+            continue
+        rated = {s: v for s, v in p["causes"].items() if s in active}
+        fit = _fit(
+            p,
+            rated,
+            json.loads(me.skills or "[]"),
+            _prefs.languages(me),
+            o,
+            slugs,
+            near,
+            rates,
+        )
+        ranked.append((-round(fit, 6), me.id, channel))
+    ranked.sort()
+    return [(uid, channel) for _, uid, channel in ranked[:limit]]
+
+
+def urgent_notice(call_id, at):
+    """What an urgent call's text or email sent at `at` (UTC) says: org, title, when, how
+    many more, the opening's id (for /deck?card=); None once the call is not open."""
+    call = _db.urgent_calls[call_id]
+    if call.status != "open":
+        return None
+    o = _db.openings[call.opening_id]
+    return {
+        "org": _db.orgs[call.org_id].name,
+        "opening": o.title,
+        "opening_id": o.id,
+        "when": urgent_when(call.starts_at, at.astimezone(LA).date()),
+        "left": call.needed - _urgent_found(call.id),
+    }
+
+
+def urgent_email(uid):
+    p = get_profile(uid)
+    return p.email if p and p.role == "volunteer" else None
 
 
 def notification_claim(kind, key, recipient_id, at, cutoff=None, max_attempts=5):

@@ -218,7 +218,7 @@ class Shift:
 
 class Notification:
     id: int
-    kind: str  # accepted|message|likes|reminder
+    kind: str  # accepted|message|likes|reminder|urgent
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
     recipient_id: int  # the volunteer's profile id; for "likes", the org id
     sent_at: str  # UTC; when this stream's last send was claimed
@@ -363,6 +363,8 @@ class UrgentCall:
     created_by: int  # the coordinator
     created_at: str  # UTC
     ended_at: str  # UTC, when it stopped being open
+    waves: int  # notification waves sent (app/notify.py send_urgent_waves), up to 2
+    wave_at: str  # UTC, when the last wave went out
 
 
 urgent_calls = db.create(UrgentCall, pk="id", transform=True)

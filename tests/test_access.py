@@ -127,6 +127,7 @@ ROUTES = {
         "public",
         None,
     ),  # the scheduler's bearer token guards it
+    ("POST", "/tasks/urgent"): ("public", None),  # the same
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
     ("GET", "/me/profile"): ("volunteer", "own-record"),

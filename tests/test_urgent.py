@@ -1,14 +1,25 @@
 """Urgent calls: a nonprofit short of people for a shift in the next 48 hours."""
 
-from datetime import datetime, timedelta
+import itertools
+import json
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 from conftest import coordinator_for, org_sign_in
 from starlette.testclient import TestClient
 
-from app import data
-from app.db import matches, openings, orgs, shifts, urgent_calls
+from app import data, notify
+from app.db import (
+    Profile,
+    matches,
+    notifications,
+    openings,
+    orgs,
+    profiles,
+    shifts,
+    urgent_calls,
+)
 from main import app
 
 LA = ZoneInfo("America/Los_Angeles")
@@ -361,3 +372,316 @@ def test_optin_is_private(shelter, user):
     assert "Sam" in inbox  # the like is there
     for word in ("Last-minute", "last-minute", "quiet", "10 pm"):
         assert word not in inbox
+
+
+# --- notification waves (/tasks/urgent) -----------------------------------------------
+
+TOKEN = "scheduler-secret"
+SHELTER = (34.0335, -118.2087)  # the dog-walking opening, Boyle Heights
+_phones = itertools.count(1)
+
+
+def call_day():
+    return (datetime.now(LA) + timedelta(days=1)).date()
+
+
+def call_start():
+    """The calls below: tomorrow 1 pm."""
+    return f"{call_day()}T13:00"
+
+
+def at(hour=11, day=None):
+    """A sweep's time: `day` (default the call's) at `hour`, Los Angeles."""
+    d = day or call_day()
+    return datetime(d.year, d.month, d.day, hour, tzinfo=LA).astimezone(UTC)
+
+
+@pytest.fixture
+def sweep(monkeypatch):
+    """Runs /tasks/urgent as Cloud Scheduler does, at a set time (default 11 am the day
+    of the call). sweep.at moves the clock."""
+    monkeypatch.setenv("TASKS_TOKEN", TOKEN)
+    notify.get_sms().sent.clear()
+
+    class Sweep:
+        when = at()
+
+        def __call__(self, **headers):
+            r = TestClient(app).post(
+                "/tasks/urgent",
+                headers=headers or {"Authorization": f"Bearer {TOKEN}"},
+            )
+            return r
+
+    s = Sweep()
+    monkeypatch.setattr(notify, "now", lambda: s.when)
+    return s
+
+
+def opted_in(lat=SHELTER[0], lon=SHELTER[1], causes=None, **kw):
+    """An onboarded volunteer near the shelter, opted in to last-minute calls, free on the
+    call's day; kw overrides any Profile field."""
+    n = next(_phones)
+    fields = {
+        "role": "volunteer",
+        "phone": f"+1213555{n:04d}",
+        "display_name": f"Vol{n}",
+        "session_version": 1,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "onboarded_at": "2026-01-01T00:00:00+00:00",
+        "lat": lat,
+        "lon": lon,
+        "radius_km": 16,  # 30 minutes by car
+        "cause_prefs": json.dumps(causes or {"animal-shelters": "love"}),
+        "availability": "[]",
+        "free_dates": json.dumps([call_day().isoformat()]),
+        "urgent_on": True,
+        **kw,
+    }
+    return profiles.insert(Profile(**fields)).id
+
+
+def notified():
+    """The volunteers an urgent notice was sent to."""
+    rows = notifications(where="kind = 'urgent' AND status = 'sent'")
+    return {r.recipient_id for r in rows}
+
+
+def texted():
+    return {p for p, _ in notify.get_sms().sent}
+
+
+def phone(uid):
+    return profiles[uid].phone
+
+
+def call_on(shelter, needed=1, starts_at=None):
+    assert post_call(shelter, starts_at=starts_at or call_start(),
+                     needed=str(needed)).status_code == 303  # fmt: skip
+    return urgent_calls()[-1]
+
+
+def test_wave_one_texts_a_link_to_the_card(shelter, sweep):
+    vol = opted_in()
+    call_on(shelter)
+    r = sweep()
+    assert r.status_code == 200 and r.text == "sent 1"
+    ((to, text),) = notify.get_sms().sent
+    assert to == phone(vol)
+    assert text == (
+        "Causematch: Eastside Paws Rescue needs 1 more person today 1 pm for Walk "
+        f"dogs at the shelter. Interested? https://causematch.test/deck?card="
+        f"{shelter.opening.id} (Turn these off in Preferences. Reply STOP to end all "
+        "texts.)"
+    )
+    (n,) = notifications(where="kind = 'urgent'")
+    assert (n.key, n.recipient_id, n.status) == (
+        f"urgent:{urgent_calls()[0].id}:{vol}",
+        vol,
+        "sent",
+    )
+    assert urgent_calls()[0].waves == 1
+
+
+def test_wave_one_is_three_times_the_people_needed_best_fit_first(shelter, sweep):
+    loved = [opted_in() for _ in range(4)]
+    open_ = [opted_in(causes={"animal-shelters": "open"}) for _ in range(4)]
+    call_on(shelter, needed=1)
+    assert sweep().text == "sent 3"
+    assert notified() < set(loved) and not notified() & set(open_)
+
+
+def test_wave_one_is_capped_at_25(shelter, sweep):
+    vols = [opted_in() for _ in range(30)]
+    call_on(shelter, needed=5)  # 5 open spots: 15
+    assert sweep().text == "sent 15"
+    urgent_calls.update(id=urgent_calls()[0].id, needed=10)  # 30, capped
+    notifications.delete_where()
+    urgent_calls.update(id=urgent_calls()[0].id, waves=0)
+    assert sweep().text == "sent 25"
+    assert len(notified()) == 25 and notified() <= set(vols)
+
+
+def test_wave_two_after_30_minutes_reaches_new_people_only(shelter, sweep):
+    vols = [opted_in() for _ in range(5)]
+    call_on(shelter, needed=1)
+    assert sweep().text == "sent 3"
+    first = notified()
+    sweep.when += timedelta(minutes=20)
+    assert sweep().text == "sent 0"  # too soon
+    sweep.when += timedelta(minutes=10)
+    assert sweep().text == "sent 2"  # the 2 not texted yet
+    assert notified() == set(vols) and len(notify.get_sms().sent) == 5
+    assert len(texted()) == 5 and first < notified()  # no one twice
+    assert urgent_calls()[0].waves == 2
+    opted_in()
+    sweep.when += timedelta(hours=1)
+    assert sweep().text == "sent 0"  # no third wave
+
+
+def test_wave_two_skipped_once_filled(shelter, sweep):
+    vols = [opted_in() for _ in range(5)]
+    call_on(shelter, needed=1)
+    sweep()
+    m = data.swipe(vols[0], shelter.opening.id, True)
+    data.decide(shelter.uid, m.id, True)
+    sweep.when += timedelta(minutes=40)
+    assert sweep().text == "sent 0" and urgent_calls()[0].status == "filled"
+
+
+def test_wave_due_is_claimed_once(shelter, sweep):
+    """Two sweeps at once (a scheduler retry) never send the same wave twice."""
+    call_on(shelter)
+    assert len(data.urgent_waves_due(sweep.when)) == 1
+    assert data.urgent_waves_due(sweep.when) == []
+
+
+def block_org(uid, org_id):
+    data._add_block(blocker_id=uid, blocked_org_id=org_id)
+
+
+def block_volunteer(uid, org_id):
+    data._add_block(blocker_id=uid, blocked_user_id=uid, blocked_org_id=org_id)
+
+
+EXCLUDED = {
+    "not opted in": lambda s: opted_in(urgent_on=False),
+    "quiet hours": lambda s: opted_in(urgent_quiet_from=10, urgent_quiet_to=12),
+    "quiet hours past midnight": lambda s: opted_in(
+        urgent_quiet_from=9, urgent_quiet_to=8
+    ),
+    "same day only": lambda s: opted_in(urgent_window="today"),
+    "far away": lambda s: opted_in(lat=34.25, lon=-118.60),  # Chatsworth, 16 km reach
+    "cause not for me": lambda s: opted_in(causes={"animal-shelters": "no"}),
+    "not free": lambda s: opted_in(free_dates="[]"),
+    "blocked the org": lambda s: (v := opted_in(), block_org(v, s.opening.org_id))[0],
+    "blocked by the org": lambda s: (
+        v := opted_in(),
+        block_volunteer(v, s.opening.org_id),
+    )[0],
+    "replied STOP, no email": lambda s: opted_in(sms_opted_out=True),
+    "no phone, no email": lambda s: opted_in(phone=None),
+    "already liked it": lambda s: (
+        v := opted_in(),
+        data.swipe(v, s.opening.id, True),
+    )[0],
+    "passed on it": lambda s: (v := opted_in(), data.swipe(v, s.opening.id, False))[0],
+    "suspended": lambda s: opted_in(suspended_at="2026-01-01T00:00:00+00:00"),
+    "not onboarded": lambda s: opted_in(onboarded_at=None),
+}
+
+
+@pytest.mark.parametrize("why", sorted(EXCLUDED))
+def test_wave_excludes(shelter, sweep, why):
+    ok = opted_in()  # the control: notified
+    out = EXCLUDED[why](shelter)
+    call_on(shelter, needed=2)
+    sweep.when = at(11, call_day() - timedelta(days=1))  # the day before the call
+    sweep()
+    assert notified() == {ok}, why
+    assert out not in {n.recipient_id for n in notifications()}
+
+
+def test_wave_same_day_only_is_notified_on_the_day(shelter, sweep):
+    vol = opted_in(urgent_window="today")
+    call_on(shelter)
+    sweep.when = at(11)  # the call's own day
+    sweep()
+    assert notified() == {vol}
+
+
+def test_wave_weekly_cap(shelter, sweep):
+    """At most what they picked, and never more than 3 in 7 days."""
+    one = opted_in(urgent_per_week=1)
+    three = opted_in(urgent_per_week=3)
+    for uid, n in ((one, 1), (three, 3)):
+        for i in range(n):
+            notifications.insert(
+                kind="urgent",
+                key=f"urgent:0:{uid}:{i}",
+                recipient_id=uid,
+                sent_at=(sweep.when - timedelta(days=6)).isoformat(timespec="seconds"),
+                status="sent",
+                attempts=1,
+            )
+    fresh = opted_in()
+    call_on(shelter, needed=2)
+    sweep()
+    assert notified() - {one, three} == {fresh}
+
+
+def test_wave_weekly_cap_frees_up_after_7_days(shelter, sweep):
+    vol = opted_in(urgent_per_week=1)
+    notifications.insert(
+        kind="urgent",
+        key=f"urgent:0:{vol}",
+        recipient_id=vol,
+        sent_at=(sweep.when - timedelta(days=7, minutes=1)).isoformat(),
+        status="sent",
+        attempts=1,
+    )
+    call_on(shelter)
+    sweep()
+    assert vol in notified()
+
+
+def test_wave_after_stop_goes_by_email(shelter, sweep):
+    vol = opted_in(sms_opted_out=True, email="vol@example.org")
+    call_on(shelter)
+    notify.get_emailer().sent.clear()
+    assert sweep().text == "sent 1" and not notify.get_sms().sent
+    ((to, subject, body),) = notify.get_emailer().sent
+    assert to == "vol@example.org" and vol in notified()
+    assert subject == "Last minute: Eastside Paws Rescue needs 1 more person today 1 pm"
+    assert f"/deck?card={shelter.opening.id}" in body and "Preferences" in body
+
+
+def test_wave_twilio_stop_reply_marks_the_number(shelter, sweep, monkeypatch):
+    vol = opted_in()
+    call_on(shelter)
+
+    def stopped(phone, text):
+        raise notify.SMSOptedOut
+
+    monkeypatch.setattr(notify.get_sms(), "send", stopped)
+    assert sweep().text == "sent 0"
+    assert profiles[vol].sms_opted_out
+    (n,) = notifications(where="kind = 'urgent'")
+    assert n.status == "skipped"
+
+
+def test_wave_texts_count_against_the_sms_ceiling(shelter, sweep, monkeypatch):
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "1")
+    a, b = opted_in(), opted_in()
+    call_on(shelter, needed=1)
+    assert sweep().text == "sent 1"
+    statuses = sorted(n.status for n in notifications(where="kind = 'urgent'"))
+    assert statuses == ["deferred", "sent"]
+    assert notified() < {a, b}
+
+
+def test_wave_task_needs_the_token(shelter, sweep):
+    opted_in()
+    call_on(shelter)
+    for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": TOKEN}):
+        r = TestClient(app).post("/tasks/urgent", headers=headers)
+        assert r.status_code == 401
+    assert not notify.get_sms().sent and urgent_calls()[0].waves is None
+
+
+def test_wave_link_puts_the_card_on_top_or_says_it_ended(shelter, user):
+    """/deck?card=<id>: that opening first while the deck holds it."""
+    uid = uid_of(user)
+    top = data.deck(uid, 50)
+    other = top[3]["id"]
+    page = user.get(f"/deck?card={other}")
+    assert top[3]["title"] in page.text.split("Pass")[0]
+    assert "has filled or ended" not in page.text
+    closed = openings(where="status = 'closed'")[0].id
+    for card in (closed, "abc", "²", "9" * 30):
+        page = user.get(f"/deck?card={card}")
+        assert page.status_code == 200
+    assert (
+        "That last-minute call has filled or ended."
+        in user.get(f"/deck?card={closed}").text
+    )

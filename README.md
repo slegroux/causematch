@@ -6,6 +6,7 @@ Swipe to volunteer. Causematch matches people with nonprofits across Los Angeles
 - **Match preferences** live in Me, then Preferences, and stay private: up to two places you help from (a neighborhood or ZIP area, or your device's location rounded to about 1 km, never an address) with how you travel and how far, causes rated love / open / not for me, the days and dates you're free, the kind of work and languages, and whether each one only ranks openings or also hides the ones that don't fit.
 - **Profiles** (Me, then Your profile): photo, name, pronouns, short bio, interests and the neighborhood nonprofits see. A nonprofit sees what `SHARED_WITH_NONPROFIT` lists (that profile, the causes you love or are open to, a general summary of when you're free, the languages you speak and how often you'd like to help) only after you like one of its openings, as "Sam L." until it says yes. The privacy page (`/privacy`) says the same.
 - **Nonprofits** use the dashboard: post openings anywhere in Los Angeles County with their kind of work (setting, effort, group size, first-timer friendly, languages), a photo and a link to their own event page, add their logo, accept volunteers, mark shifts done. Homelessness services openings are group shifts only (adults, no one-to-one contact).
+- **Last-minute calls**: a nonprofit short of people in the next 48 hours posts an urgent call on an opening ("needs 2, tomorrow 9 am"), optionally accepting the first ones who say yes. Volunteers who turned on last-minute calls under Preferences and are near, free and outside their quiet hours get a text (or an email) linking to the card, which their deck shows first. Limits: 3 calls per org a day, 2 waves per call of at most 3 × the people needed (25 at most), 3 notices per volunteer a week.
 
 Built with [FastHTML](https://fastht.ml), [MonsterUI](https://monsterui.answer.ai) and SQLite.
 
@@ -23,6 +24,24 @@ Environment variables (`.env.example` lists them all, without values). The app r
 - `TRUSTED_PROXY_HOPS` on Cloud Run (see Security)
 
 `SESSION_SECRET`, `PHONE_HASH_KEY` and `TASKS_TOKEN` must be at least 32 random characters in production, and `PUBLIC_BASE_URL` an `https://` origin with no path.
+
+### Scheduled jobs
+
+The host scales to zero, so nothing runs in the background: Cloud Scheduler calls two endpoints with `Authorization: Bearer $TASKS_TOKEN` (anything else gets 401).
+
+| Job | Schedule | Does |
+|---|---|---|
+| `POST /tasks/reminders` | hourly (`0 * * * *`) | shift reminders 23 to 25 hours ahead, retries of failed or deferred "you're matched" and message texts, and blanking decided claim requests |
+| `POST /tasks/urgent` | every 10 minutes (`*/10 * * * *`) | urgent calls' notification waves: wave 1 at the first run after a call is posted, wave 2 thirty minutes later if it hasn't filled |
+
+```sh
+gcloud scheduler jobs create http causematch-urgent --location=$REGION \
+  --schedule='*/10 * * * *' --time-zone=America/Los_Angeles \
+  --uri="$PUBLIC_BASE_URL/tasks/urgent" --http-method=POST \
+  --headers="Authorization=Bearer $TASKS_TOKEN"
+```
+
+The reminders job is created the same way, with `--schedule='0 * * * *'` and `/tasks/reminders`.
 
 ## Security
 

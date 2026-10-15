@@ -466,9 +466,11 @@ def privacy():
         Section(
             "Texts and email",
             "We text your sign-in code, a note when a nonprofit says yes, a reminder the "
-            "day before a shift and a note when a nonprofit sends a chat message. Reply "
-            "STOP to end texts. We email coordinators their sign-in link and a note when "
-            "volunteers like an opening.",
+            "day before a shift, a note when a nonprofit sends a chat message and, only "
+            "if you turn them on, last-minute calls (at most 3 a week, never in your "
+            "quiet hours; by email if you have no number for texts). Reply STOP to end "
+            "texts. We email coordinators their sign-in link and a note when volunteers "
+            "like an opening.",
         ),
         Section(
             "How long we keep it, and what stays after you delete",

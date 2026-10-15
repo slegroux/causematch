@@ -41,7 +41,7 @@ UPLOADS = (
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
 # Cloud Scheduler calls these with a bearer token and sends no Origin. Exact paths: a
 # future /tasks/ route isn't exempt until it is listed (and checks the token).
-ORIGIN_EXEMPT = frozenset({"/tasks/reminders"})
+ORIGIN_EXEMPT = frozenset({"/tasks/reminders", "/tasks/urgent"})
 # Static assets may be cached; every other response may hold someone's data.
 CACHEABLE = ("/static/", "/favicon.ico")
 STYLESHEETS = (

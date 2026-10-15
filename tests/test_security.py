@@ -958,8 +958,8 @@ def test_secret_scan_config_and_script_exist():
 
 def test_only_the_listed_task_path_skips_the_origin_check(anon):
     """L10: an exact list, so a future /tasks/ route isn't exempt by accident."""
-    assert security.ORIGIN_EXEMPT == {"/tasks/reminders"}
-    for path in ("/tasks/other", "/tasks/reminders/x", "/tasks/"):
+    assert security.ORIGIN_EXEMPT == {"/tasks/reminders", "/tasks/urgent"}
+    for path in ("/tasks/other", "/tasks/reminders/x", "/tasks/urgent/x", "/tasks/"):
         assert anon.post(path, headers={"Origin": EVIL}).status_code == 403, path
 
 
