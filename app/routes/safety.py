@@ -235,7 +235,7 @@ def block_volunteer_save(req, match_id: int):
 @ar("/profile", methods=["GET"])
 def profile_page(req):
     return Container(
-        VolunteerNav(),
+        VolunteerNav("me"),
         H1("Your profile", cls="text-2xl font-bold my-4"),
         P(
             "Deleting your account removes your name, phone, email and location and "
@@ -248,6 +248,13 @@ def profile_page(req):
             cls="uk-btn " + ButtonT.destructive,
         ),
         P(A("Privacy policy", href="/privacy", cls=AT.muted), cls="pt-8"),
+        P(A("History", href="/history", cls=AT.muted), cls="pt-2"),
+        PlainForm(
+            Button("Sign out", cls=ButtonT.default),
+            action="/logout",
+            method="post",
+            cls="pt-4",
+        ),
         cls="max-w-md pb-8",
     )
 
@@ -255,7 +262,7 @@ def profile_page(req):
 @ar("/profile/delete", methods=["GET"])
 def delete_confirm(req):
     return Container(
-        VolunteerNav(),
+        VolunteerNav("me"),
         H1("Delete your account?", cls="text-2xl font-bold my-4"),
         Ul(
             Li("Your name, phone, email and location are erased."),

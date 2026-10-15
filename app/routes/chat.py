@@ -88,7 +88,7 @@ def ChatPage(uid, match_id, role, notice=""):
         ws_connect=f"{base}/{match_id}/ws" if head["writable"] else None,
     )
     return Container(
-        VolunteerNav() if role == "volunteer" else None,
+        VolunteerNav("matches") if role == "volunteer" else None,
         A(f"Back to {back[1].lower()}", href=back[0], cls=AT.muted + " text-sm"),
         H1(head["title"], cls="text-2xl font-bold my-2"),
         P(f"{head['org']} - {head['other']}", cls=TextPresets.muted_sm + " mb-2"),

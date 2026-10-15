@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 190" preserveAspectRatio="xMidYMid slice">
+  <rect width="400" height="190" fill="#EEE5FA"/>
+  <g fill="#D9C8F2">
+    <ellipse cx="54" cy="58" rx="11" ry="13"/>
+    <circle cx="40" cy="40" r="5"/><circle cx="52" cy="34" r="5"/><circle cx="64" cy="36" r="5"/><circle cx="72" cy="46" r="5"/>
+    <ellipse cx="352" cy="130" rx="11" ry="13"/>
+    <circle cx="338" cy="112" r="5"/><circle cx="350" cy="106" r="5"/><circle cx="362" cy="108" r="5"/><circle cx="370" cy="118" r="5"/>
+  </g>
+  <rect y="158" width="400" height="32" fill="#DCCBF3"/>
+  <ellipse cx="200" cy="160" rx="120" ry="8" fill="#CDB8EC"/>
+  <path d="M120 160c0-34 18-56 46-56s46 22 46 56Z" fill="#D9A066"/>
+  <ellipse cx="128" cy="76" rx="14" ry="28" transform="rotate(18 128 76)" fill="#8A5A3B"/>
+  <ellipse cx="204" cy="76" rx="14" ry="28" transform="rotate(-18 204 76)" fill="#8A5A3B"/>
+  <circle cx="166" cy="82" r="38" fill="#E8B57F"/>
+  <ellipse cx="166" cy="98" rx="18" ry="13" fill="#F6DDBF"/>
+  <circle cx="152" cy="76" r="4.5" fill="#2D1E17"/>
+  <circle cx="180" cy="76" r="4.5" fill="#2D1E17"/>
+  <ellipse cx="166" cy="92" rx="6" ry="4.5" fill="#2D1E17"/>
+  <path d="M160 101q6 6 12 0" fill="none" stroke="#2D1E17" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M244 160c0-28 12-46 32-46s32 18 32 46Z" fill="#7A4AB8"/>
+  <path d="M308 150c22 0 26-20 14-28" fill="none" stroke="#7A4AB8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M248 74l6 30 22-14ZM304 74l-6 30-22-14Z" fill="#5B3392"/>
+  <circle cx="276" cy="100" r="28" fill="#7A4AB8"/>
+  <ellipse cx="266" cy="98" rx="4" ry="5" fill="#FFF8F0"/>
+  <ellipse cx="286" cy="98" rx="4" ry="5" fill="#FFF8F0"/>
+  <path d="M272 109l4 3 4-3" fill="none" stroke="#EEE5FA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path transform="translate(211 34) scale(1.05)" d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" fill="#C0452A"/>
+</svg>

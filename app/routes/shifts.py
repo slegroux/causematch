@@ -244,7 +244,7 @@ def _sync_new_shift_save(req, form, match_id: int):
 def history(req):
     mine = data.my_shifts(req.scope["uid"])
     return Container(
-        VolunteerNav(),
+        VolunteerNav("me"),
         H1("Your history", cls="text-2xl font-bold my-4"),
         Section(
             "Upcoming",

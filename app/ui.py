@@ -3,8 +3,8 @@ from fasthtml.common import (
     A,
     Button,
     Div,
-    Form,
     Input,
+    Nav,
     Option,
     P,
     Select,
@@ -76,7 +76,7 @@ def CauseChip(slug, label):
     )
 
 
-def Wordmark():
+def Wordmark(small=False):
     """A heart on a terracotta tile, then "causematch"."""
     return Div(
         Svg(
@@ -88,15 +88,16 @@ def Wordmark():
                 transform="translate(6 7) scale(0.833)",
             ),
             viewBox="0 0 32 32",
-            width="36",
-            height="36",
+            width="28" if small else "36",
+            height="28" if small else "36",
             aria_hidden="true",
             cls="text-brand",
         ),
         Span(
             "cause",
             Span("match", cls="text-brand"),
-            cls="font-display text-3xl font-extrabold tracking-tight text-ink",
+            cls="font-display font-extrabold tracking-tight text-ink "
+            + ("text-2xl" if small else "text-3xl"),
         ),
         cls="flex items-center gap-2",
     )
@@ -154,33 +155,115 @@ def Choice(name, options, selected="", placeholder=None):
     )
 
 
-def AddToHomeScreen():
-    """Hidden until static/a2hs.js decides: iPhone Safari, in a tab, not dismissed."""
-    return Div(
-        P(
-            "Add Causematch to your Home Screen: tap Share, then Add to Home Screen.",
-            cls=TextPresets.muted_sm,
-        ),
-        Button("Dismiss", type="button", id="a2hs-close", cls="uk-btn uk-btn-default"),
-        id="a2hs",
-        hidden=True,
-        cls="py-3",
+# 24 px line icons, as path data: stroked in the text color (Icon below)
+HEART = (
+    (
+        "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2"
+        "-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"
+    ),
+)
+CARDS = (
+    "M4 8a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z",
+    "M8 2h10a2 2 0 0 1 2 2v12",
+)
+PERSON = ("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M4 21a8 8 0 0 1 16 0")
+CROSS = ("M18 6 6 18", "M6 6l12 12")
+CALENDAR = (
+    "M8 2v4M16 2v4M3 10h18",
+    "M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z",
+)
+PIN = (
+    "M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z",
+    "M12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z",
+)
+PEOPLE = (
+    "M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20",
+    "M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z",
+    "M20 20v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.15a3.5 3.5 0 0 1 0 6.7",
+)
+
+
+def Icon(paths, size=24, filled=False, cls=""):
+    """A line icon in the current text color; decorative, so hidden from screen readers."""
+    return Svg(
+        *[Path(d=d) for d in paths],
+        viewBox="0 0 24 24",
+        width=str(size),
+        height=str(size),
+        fill="currentColor" if filled else "none",
+        stroke="none" if filled else "currentColor",
+        stroke_width="2",
+        stroke_linecap="round",
+        stroke_linejoin="round",
+        aria_hidden="true",
+        cls=f"shrink-0 {cls}".strip(),
     )
 
 
-def VolunteerNav():
+def AddToHomeScreen():
+    """A small toast above the tab bar, hidden until static/a2hs.js decides: iPhone Safari,
+    in a tab, not dismissed. The outer box carries no display class, so `hidden` holds."""
     return Div(
-        AddToHomeScreen(),
         Div(
-            A("Openings", href="/deck", cls=AT.muted),
-            A("Matches", href="/matches", cls=AT.muted),
-            A("History", href="/history", cls=AT.muted),
-            A("Profile", href="/profile", cls=AT.muted),
-            Form(
-                Button("Sign out", type="submit", cls=AT.muted + " bg-transparent p-0"),
-                action="/logout",
-                method="post",
+            P(
+                "Add Causematch to your Home Screen: tap Share, then Add to Home Screen.",
+                cls="text-sm font-semibold leading-snug",
             ),
-            cls="flex gap-4 py-3 text-sm",
+            Button(
+                Icon(CROSS, size=20),
+                Span("Dismiss", cls="sr-only"),
+                type="button",
+                id="a2hs-close",
+                cls="grid h-11 w-11 shrink-0 place-items-center rounded-full "
+                "hover:bg-white/10 focus-visible:outline focus-visible:outline-2 "
+                "focus-visible:outline-cream",
+            ),
+            cls="mx-auto flex max-w-md items-center gap-2 rounded-2xl bg-ink py-1.5 "
+            "pl-4 pr-1.5 text-cream shadow-warm",
         ),
+        id="a2hs",
+        hidden=True,
+        cls="cm-toast fixed inset-x-3 z-40",
+    )
+
+
+# (key, label, href, icon) of each tab in the volunteer's bottom bar
+TABS = (
+    ("openings", "Openings", "/deck", CARDS),
+    ("matches", "Matches", "/matches", HEART),
+    ("me", "Me", "/profile", PERSON),
+)
+
+
+def TabBar(active):
+    def tab(key, label, href, icon):
+        on = key == active
+        return A(
+            Span(
+                Icon(icon, size=22),
+                cls="grid h-8 w-14 place-items-center rounded-full "
+                + ("bg-brand-soft" if on else ""),
+            ),
+            Span(label),
+            href=href,
+            aria_current="page" if on else None,
+            cls="flex h-16 flex-col items-center justify-center gap-0.5 text-xs font-bold "
+            + ("text-brand-ink" if on else "text-ink-muted hover:text-ink"),
+        )
+
+    return Nav(
+        Div(*[tab(*t) for t in TABS], cls="mx-auto grid max-w-md grid-cols-3"),
+        aria_label="Main",
+        id="tabbar",
+        cls="cm-tabbar fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95",
+    )
+
+
+def VolunteerNav(active=None):
+    """The volunteer's header, Home Screen toast and bottom tab bar. The bar is fixed, so
+    it can sit anywhere in the page; static/theme.css pads the body above it."""
+    return Div(
+        Div(A(Wordmark(small=True), href="/deck"), cls="flex items-center pt-3 pb-3"),
+        AddToHomeScreen(),
+        TabBar(active),
     )

@@ -84,6 +84,10 @@ def main():
         phone.clear_cookies()
         volunteer_sign_in(v, demo.ME_PHONE)
         v.wait_for_url("**/deck")
+        # the Home Screen toast shows (an iPhone user agent, in a tab); then dismiss it, so
+        # it covers nothing in the other shots
+        shot(v, "v04a-home-screen-toast", full_page=False)
+        v.get_by_role("button", name="Dismiss").click()
         shot(v, "v04-deck", full_page=False)
         for name, path in (
             ("v05-matches", "/matches"),

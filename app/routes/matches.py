@@ -86,7 +86,7 @@ def matches_page(req):
     rows = data.my_matches(req.scope["uid"])
     notice = query(req, "notice")
     return Container(
-        VolunteerNav(),
+        VolunteerNav("matches"),
         H1("Your matches", cls="text-2xl font-bold my-4"),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
         A("History", href="/history", cls=AT.muted + " block pb-4"),
@@ -110,7 +110,7 @@ def withdraw_confirm(req, match_id: int):
     if m["status"] not in ("pending", "accepted"):
         return Redirect("/matches")
     return Container(
-        VolunteerNav(),
+        VolunteerNav("matches"),
         H1(f"Withdraw from {m['title']}?", cls="text-2xl font-bold my-4"),
         P(
             "You won't be able to like this opening again.",

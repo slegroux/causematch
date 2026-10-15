@@ -184,3 +184,18 @@ h1, h2, h3, .font-display {
   font-weight: 700;
   white-space: nowrap;
 }
+
+/* The volunteer's bottom tab bar (app/ui.py TabBar): fixed above the iPhone's home
+   indicator, with the page padded so nothing hides under it, and the Home Screen toast
+   just above it. */
+.cm-tabbar {
+  padding-bottom: env(safe-area-inset-bottom);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  backdrop-filter: saturate(1.4) blur(10px);
+}
+body:has(.cm-tabbar) {
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+.cm-toast {
+  bottom: calc(4.75rem + env(safe-area-inset-bottom));
+}

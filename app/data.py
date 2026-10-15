@@ -144,6 +144,8 @@ def deck(uid, limit=20):
             "title": o.title,
             "org": org_names.get(o.org_id, ""),
             "causes": cause_labels,
+            # the same active causes as slugs, in the same order (the card's art and chips)
+            "slugs": [s for s in json.loads(o.causes or "[]") if s in active],
             "starts_at": o.starts_at,
             "neighborhood": o.neighborhood,
             "slots": o.slots,
