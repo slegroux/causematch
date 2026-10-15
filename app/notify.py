@@ -145,3 +145,7 @@ def send_login_link(email, token):
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
     )
+
+
+def on_new_message(match_id, sender_id):
+    """Called after a chat message is saved. Item 7 texts the other side if they are offline."""

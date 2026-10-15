@@ -44,6 +44,9 @@ def MatchRow(m):
         DivFullySpaced(P(m["title"], cls="font-semibold"), Label(STATUS[m["status"]])),
         P(m["org"], cls=TextPresets.muted_sm),
         P(f"{when(m['starts_at'])} - {m['neighborhood']}", cls=TextPresets.muted_sm),
+        A("Chat", href=f"/chat/{m['id']}", cls=AT.muted + " mr-4")
+        if m["status"] == "accepted"
+        else None,
         A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=AT.muted)
         if m["status"] in ("pending", "accepted")
         else None,

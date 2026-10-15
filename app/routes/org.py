@@ -16,6 +16,7 @@ from fasthtml.common import (
 )
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
+    AT,
     Alert,
     AlertT,
     Button,
@@ -423,6 +424,9 @@ def InboxRow(m):
         ),
         P(f"Neighborhood: {m['neighborhood'] or 'not given'}"),
         P(f"Wants to help: {label_of(FREQUENCY, m['frequency']) or 'not given'}"),
+        A("Chat", href=f"/org/chat/{m['id']}", cls=AT.muted)
+        if m["status"] == "accepted"
+        else None,
         PlainForm(
             accept,
             Button("Decline", name="decision", value="decline", cls=ButtonT.default),

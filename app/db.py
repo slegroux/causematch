@@ -117,6 +117,14 @@ class Match:
     withdrawn_at: str
 
 
+class Message:
+    id: int
+    match_id: int
+    sender_id: int
+    body: str  # plain text, 1-2000 characters
+    created_at: str
+
+
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
@@ -128,6 +136,8 @@ login_tokens = db.create(LoginToken, pk="token_hash", transform=True)
 swipes = db.create(Swipe, pk=["volunteer_id", "opening_id"], transform=True)
 matches = db.create(Match, pk="id", transform=True)
 matches.create_index(["opening_id", "volunteer_id"], unique=True, if_not_exists=True)
+messages = db.create(Message, pk="id", transform=True)
+messages.create_index(["match_id", "created_at"], if_not_exists=True)
 # One live profile per phone; a soft-deleted profile frees its number.
 db.execute("DROP INDEX IF EXISTS idx_profile_phone")
 db.execute(

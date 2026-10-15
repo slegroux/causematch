@@ -30,6 +30,7 @@ from app.db import (
     ensure_causes,
     login_tokens,
     matches,
+    messages,
     openings,
     org_members,
     orgs,
@@ -52,6 +53,7 @@ def fresh_db():
         login_tokens,
         swipes,
         matches,
+        messages,
     ):
         table.delete_where()
     ensure_causes()

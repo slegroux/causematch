@@ -15,7 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import data
 from app.auth import PUBLIC, is_org_path, session_secret, ws_session_user
-from app.db import matches, openings, org_members, orgs, profiles, swipes
+from app.db import matches, messages, openings, org_members, orgs, profiles, swipes
 from main import app
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +53,12 @@ ROUTES = {
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("GET", "/org/inbox"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
+    ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
+    ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
+    ("WS", "/chat/{match_id}/ws"): ("volunteer", "own-record"),
+    ("GET", "/org/chat/{match_id}"): ("coordinator", "own-org"),
+    ("POST", "/org/chat/{match_id}/send"): ("coordinator", "own-org"),
+    ("WS", "/org/chat/{match_id}/ws"): ("coordinator", "own-org"),
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
 }
@@ -114,6 +120,7 @@ def ws_refused(client, path):
     """True when the socket is closed on the caller; False when the handler talks to them."""
     try:
         with client.websocket_connect(path) as ws:
+            ws.send_text('{"msg": ""}')  # a handler that let us in answers, so no hang
             ws.receive_text()
     except WebSocketDisconnect:
         return True
@@ -383,6 +390,45 @@ def check_swipe(w):
     assert sorted(m.volunteer_id for m in matches()) == sorted([w.a.uid, b])
 
 
+def accepted_match(w):
+    """The world's match, accepted: a stranger is then refused for being a stranger."""
+    data.decide(w.org0_uid, w.match.id, True)
+    return w.match.id
+
+
+def chat_id_check(stranger, owner, base, kind):
+    """A stranger's call on an accepted match's chat, with the real id and bad ids."""
+
+    def call(w, mid):
+        c = getattr(w, stranger)
+        if kind == "page":
+            return c.get(f"{base}/{mid}", follow_redirects=False)
+        return c.post(
+            f"{base}/{mid}/send", data={"msg": "intrude"}, follow_redirects=False
+        )
+
+    def check(w):
+        mid = accepted_match(w)
+        for i in (mid, *GONE):
+            if kind == "ws":
+                assert ws_refused(getattr(w, stranger), f"{base}/{i}/ws"), i
+            else:
+                assert_refused(call(w, i))
+        assert messages.count == 0
+        # control: the owner is let in, so the refusals were about ownership
+        o = getattr(w, owner)
+        if kind == "ws":
+            with o.websocket_connect(f"{base}/{mid}/ws"):
+                pass
+        elif kind == "page":
+            assert o.get(f"{base}/{mid}").status_code == 200
+        else:
+            r = o.post(f"{base}/{mid}/send", data={"msg": "hi"}, follow_redirects=False)
+            assert r.status_code == 303 and messages.count == 1
+
+    return check
+
+
 # route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
     ("GET", "/matches/{match_id}/withdraw"): path_id_check(
@@ -407,6 +453,14 @@ OWNERSHIP = {
     ),
     ("POST", "/org/openings/new"): check_create_opening,
     ("POST", "/swipe"): check_swipe,
+    ("GET", "/chat/{match_id}"): chat_id_check("b", "a", "/chat", "page"),
+    ("POST", "/chat/{match_id}/send"): chat_id_check("b", "a", "/chat", "send"),
+    ("WS", "/chat/{match_id}/ws"): chat_id_check("b", "a", "/chat", "ws"),
+    ("GET", "/org/chat/{match_id}"): chat_id_check("org1", "org0", "/org/chat", "page"),
+    ("POST", "/org/chat/{match_id}/send"): chat_id_check(
+        "org1", "org0", "/org/chat", "send"
+    ),
+    ("WS", "/org/chat/{match_id}/ws"): chat_id_check("org1", "org0", "/org/chat", "ws"),
 }
 
 
@@ -483,7 +537,7 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 
 TABLES = {
     "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
-    "orgs", "profiles", "swipes",
+    "messages", "orgs", "profiles", "swipes",
 }  # fmt: skip
 
 
@@ -570,8 +624,11 @@ def ws_app(role):
             return
         await ws.send_text("welcome")
 
-    async def on_msg(msg: str, ws):
-        if ws_session_user(ws, role) is None:
+    async def on_msg(ws, msg: str = ""):
+        if (
+            ws_session_user(ws, role) is None
+            and ws.application_state.name != "DISCONNECTED"
+        ):
             await ws.close(code=1008)
 
     wsapp.ws("/ws-probe", conn=conn)(on_msg)

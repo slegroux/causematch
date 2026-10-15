@@ -259,6 +259,116 @@ def org_inbox(coordinator_uid):
     return out
 
 
+MAX_MESSAGE = 2000
+
+
+def chat_access(uid, match_id, write=False):
+    """ "volunteer" or "coordinator": how this user takes part in the match's chat.
+
+    PermissionError for anyone else, and for a match that never had a chat (pending,
+    declined, or withdrawn before it was accepted). With write=True the match must be
+    accepted: once it is withdrawn the history is read-only for both sides.
+    """
+    if not _is_id(match_id):
+        raise PermissionError("no such match")
+    try:
+        m = _db.matches[match_id]
+        o = _db.openings[m.opening_id]
+    except NotFoundError:
+        raise PermissionError("no such match") from None
+    if m.volunteer_id == uid:
+        role = "volunteer"
+    elif o.org_id in coordinator_org_ids(uid):
+        role = "coordinator"
+    else:
+        raise PermissionError("not part of this match")
+    if m.status == "accepted" or (m.status == "withdrawn" and m.decided_at):
+        if write and m.status != "accepted":
+            raise PermissionError("this chat is read-only")
+        return role
+    raise PermissionError("no chat on this match")
+
+
+def _first_name(name):
+    parts = (name or "").split(maxsplit=1)
+    return parts[0] if parts else "Volunteer"
+
+
+def _message_row(msg, volunteer_id, names):
+    return {
+        "id": msg.id,
+        "sender_uid": msg.sender_id,
+        "sender": _first_name(names.get(msg.sender_id))
+        if msg.sender_id == volunteer_id
+        else names.get(msg.sender_id) or "Coordinator",
+        "body": msg.body,
+        "created_at": msg.created_at,
+    }
+
+
+def _names(ids):
+    return {i: p.display_name for i in ids if (p := get_profile(i))}
+
+
+def send_message(uid, match_id, body):
+    """Save a message from a participant of an accepted match and return it.
+
+    ValueError for a non-string, an empty message, or one over 2000 characters;
+    PermissionError when this user may not write in this chat.
+    """
+    if not isinstance(body, str):
+        raise ValueError("message must be text")  # noqa: TRY004
+    body = body.strip()
+    if not body or len(body) > MAX_MESSAGE:
+        raise ValueError(f"message must be 1 to {MAX_MESSAGE} characters")
+    chat_access(uid, match_id, write=True)
+    msg = _db.messages.insert(
+        match_id=match_id, sender_id=uid, body=body, created_at=_now()
+    )
+    m = _db.matches[match_id]
+    return _message_row(msg, m.volunteer_id, _names([uid]))
+
+
+def list_messages(uid, match_id, limit=200):
+    """The latest `limit` messages of the chat, oldest first."""
+    chat_access(uid, match_id)
+    m = _db.matches[match_id]
+    rows = _db.messages(
+        where="match_id = ?",
+        where_args=[match_id],
+        order_by="id DESC",
+        limit=max(1, min(int(limit), 1000)),
+    )[::-1]
+    names = _names({r.sender_id for r in rows})
+    return [_message_row(r, m.volunteer_id, names) for r in rows]
+
+
+def chat_header(uid, match_id):
+    """What the chat page shows about the other side.
+
+    The volunteer sees the org name and the contact name of the coordinator who accepted
+    them; the coordinator sees the volunteer's first name only. Also whether the caller
+    may still write.
+    """
+    role = chat_access(uid, match_id)
+    m = _db.matches[match_id]
+    o = _db.openings[m.opening_id]
+    org = _db.orgs[o.org_id].name
+    if role == "volunteer":
+        decider = get_profile(m.decided_by) if m.decided_by else None
+        other = decider.display_name if decider and decider.display_name else org
+    else:
+        volunteer = get_profile(m.volunteer_id)
+        other = _first_name(volunteer.display_name if volunteer else "")
+    return {
+        "role": role,
+        "title": o.title,
+        "org": org,
+        "other": other,
+        "writable": m.status == "accepted",
+    }
+
+
 def active_causes():
     return [c for c in _db.causes(order_by="sort") if c.active]
 

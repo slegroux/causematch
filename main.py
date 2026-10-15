@@ -9,6 +9,7 @@ from app import data, notify
 from app.auth import SESSION_MAX_AGE, beforeware, session_secret
 from app.config import is_production, public_base_url, require_env
 from app.routes.auth import ar as auth_router
+from app.routes.chat import ar as chat_router
 from app.routes.deck import ar as deck_router
 from app.routes.matches import ar as matches_router
 from app.routes.onboarding import ar as onboarding_router
@@ -33,6 +34,7 @@ app, rt = fast_app(
     pico=False,
     hdrs=(
         Script(src="/static/vendor/htmx-2.0.7.min.js"),
+        Script(src="/static/vendor/htmx-ext-ws-2.0.4.min.js"),
         *Theme.blue.headers(),
         Link(rel="manifest", href="/static/manifest.webmanifest"),
         Link(rel="icon", href="/favicon.ico", sizes="any"),
@@ -56,6 +58,7 @@ for router in (
     onboarding_router,
     deck_router,
     matches_router,
+    chat_router,
     org_router,
     pwa_router,
 ):

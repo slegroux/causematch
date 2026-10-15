@@ -10,7 +10,7 @@ pytestmark = pytest.mark.e2e
 
 
 TITLE = "Sort and pack pantry boxes"  # the soonest seeded opening, so the top card
-EXTERNAL = re.compile(r"^(?!http://127\.0\.0\.1)(https?|wss?)://")
+EXTERNAL = re.compile(r"^(?!(http|ws)://127\.0\.0\.1)(https?|wss?)://")
 blocked = []
 
 
