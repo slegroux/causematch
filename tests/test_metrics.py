@@ -554,3 +554,139 @@ def test_stats_script_will_not_create_or_migrate_a_database(tmp_path):
     before = other.read_bytes()
     assert run_stats(other).returncode != 0
     assert other.read_bytes() == before
+
+
+# --- last-minute calls -----------------------------------------------------------------
+
+FILL_MINUTES = [10, 20, 30, 40, 50, 60, 70, 80]  # median 45
+
+
+def build_urgent(urgent_vols=6, normal_vols=6):
+    """12 urgent calls: 8 filled after FILL_MINUTES, 3 ended unfilled, 1 open. Shifts:
+    urgent fills by `urgent_vols` volunteers, 12 marked (3 no-shows); other shifts by
+    `normal_vols`, 10 marked (1 no-show); a scheduled and a cancelled one of each, ignored.
+    """
+    from app.db import urgent_calls
+
+    o = openings(where="status = 'open'")[0]
+    ids = []
+    for i, minutes in enumerate(FILL_MINUTES + [None] * 4):
+        status = "filled" if minutes else "open" if i == 11 else "closed"
+        ended = None
+        if status != "open":
+            m = 60 + (minutes or 90)  # posted at 01:00
+            ended = f"2026-10-01T{m // 60:02d}:{m % 60:02d}:00+00:00"
+        ids.append(
+            urgent_calls.insert(
+                opening_id=o.id, org_id=o.org_id, starts_at="2026-10-02T09:00",
+                needed=2, auto_accept=False, status=status, created_by=0,
+                created_at=at(1), ended_at=ended,
+            ).id
+        )  # fmt: skip
+
+    def people(n, tag):
+        return [
+            profiles.insert(
+                Profile(role="volunteer", phone=f"+1213777{tag}{i:03d}", created_at=T0)
+            ).id
+            for i in range(n)
+        ]
+
+    def shifts_for(vols, marked, no_shows, call):
+        mids = [
+            matches.insert(
+                Match(opening_id=o.id, volunteer_id=vid, status="accepted",
+                      created_at=T0, decided_at=at(2), urgent_call_id=call)
+            ).id
+            for vid in vols
+        ]  # fmt: skip
+        for k in range(marked + 2):
+            status = (
+                "no_show" if k < no_shows
+                else "completed" if k < marked
+                else "scheduled" if k == marked
+                else "cancelled"
+            )  # fmt: skip
+            shifts.insert(
+                Shift(match_id=mids[k % len(mids)], starts_at=f"2026-10-{2 + k:02d}T09:00",
+                      status=status, created_at=T0)
+            )  # fmt: skip
+
+    shifts_for(people(urgent_vols, 1), 12, 3, ids[0])
+    shifts_for(people(normal_vols, 2), 10, 1, None)
+
+
+def test_urgent_figures_are_the_hand_computed_ones():
+    build_urgent()
+    u = pilot_metrics(data.metrics_rows(), NOW)["urgent"]
+    assert u["urgent_posted"]["value"] == 12
+    assert (u["urgent_filled_rate"]["n"], u["urgent_filled_rate"]["d"]) == (8, 11)
+    assert u["urgent_median_fill_min"]["value"] == pytest.approx(45)
+    assert u["urgent_median_fill_min"]["n"] == 8
+    assert (u["urgent_no_show_rate"]["n"], u["urgent_no_show_rate"]["d"]) == (3, 12)
+    assert (u["normal_no_show_rate"]["n"], u["normal_no_show_rate"]["d"]) == (1, 10)
+    shown = {k: metrics.fmt(k, c) for k, c in u.items()}
+    assert shown == {
+        "urgent_posted": "12",
+        "urgent_filled_rate": "73%",
+        "urgent_median_fill_min": "too few (n<10)",  # 8 filled calls
+        "urgent_no_show_rate": "25%",
+        "normal_no_show_rate": "10%",
+    }
+
+
+def test_urgent_median_shows_once_enough_calls_filled(monkeypatch):
+    monkeypatch.setattr(metrics, "MIN_DENOM", 8)
+    build_urgent()
+    u = pilot_metrics(data.metrics_rows(), NOW)["urgent"]
+    assert metrics.fmt("urgent_median_fill_min", u["urgent_median_fill_min"]) == "45"
+
+
+def test_urgent_no_show_of_a_small_group_is_withheld_with_its_complement():
+    """3 volunteers behind the urgent fills: both no-show rates withheld, since overall's
+    no-show rate minus the other one would give it back."""
+    build_urgent(urgent_vols=3)
+    m = pilot_metrics(data.metrics_rows(), NOW)
+    u = m["urgent"]
+    for k in ("urgent_no_show_rate", "normal_no_show_rate"):
+        assert metrics.fmt(k, u[k]) == "withheld"
+        assert metrics.counts(k, u[k]).startswith("n=")
+    assert metrics.fmt("no_show_rate", m["overall"]["no_show_rate"]) == "18%"  # 4/22
+
+
+def test_urgent_none_yet_reads_as_dashes():
+    u = pilot_metrics(data.metrics_rows(), NOW)["urgent"]
+    assert u["urgent_posted"]["value"] == 0
+    assert {metrics.fmt(k, c) for k, c in u.items() if k != "urgent_posted"} == {"—"}
+
+
+def test_urgent_on_the_admin_page_csv_and_stats(tmp_path):
+    build_urgent()
+    c = admin_client()
+    page = c.get("/admin/metrics").text
+    assert "Last-minute calls" in page and "Median minutes to fill" in page
+    assert "73%" in page and "8/11" in page and "3/12" in page
+    assert "Calls that filled / calls that ended" in page
+    rows = list(csv.reader(io.StringIO(c.get("/admin/metrics.csv").text)))
+    urgent = {r[2]: r for r in rows if r and r[0] == "urgent"}
+    assert urgent["urgent_filled_rate"][3:] == ["11", "8", "11", "0.7273"]
+    assert urgent["urgent_median_fill_min"][4:] == ["", "", ""]  # too few: withheld
+    copy = tmp_path / "copy.db"
+    # the app's own connection writes the copy: it sees what this test wrote
+    from app.db import db
+
+    db.execute("VACUUM INTO ?", [str(copy)])
+    out = run_stats(copy)
+    assert out.returncode == 0, out.stderr
+    got = dict(line.split(": ", 1) for line in out.stdout.splitlines())
+    assert got["urgent_posted"] == "12" and got["urgent_filled_rate"] == "0.7273"
+    # a database from before urgent calls: no table, no column
+    dst = sqlite3.connect(copy)
+    dst.execute("DROP TABLE urgent_call")
+    dst.execute("ALTER TABLE match DROP COLUMN urgent_call_id")
+    dst.commit()
+    dst.close()
+    out = run_stats(copy)
+    assert out.returncode == 0, out.stderr
+    got = dict(line.split(": ", 1) for line in out.stdout.splitlines())
+    assert got["urgent_posted"] == "0" and got["urgent_filled_rate"] == ""

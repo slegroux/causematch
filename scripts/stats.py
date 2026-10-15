@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.metrics import METRICS, pilot_metrics
+from app.metrics import METRICS, URGENT, pilot_metrics
 from app.metrics_rows import fetch_rows
 
 
@@ -43,6 +43,9 @@ def main():
     print(f"completed_pairs: {len({(s['volunteer_id'], s['org_id']) for s in shifts})}")
     for key in METRICS:
         v = overall[key]["value"]
+        print(f"{key}: {'' if v is None else round(v, 4)}")
+    for key in URGENT:
+        v = metrics["urgent"][key]["value"]
         print(f"{key}: {'' if v is None else round(v, 4)}")
     empty = metrics["empty_deck"]
     print(f"empty_deck_views: {empty['views']}")

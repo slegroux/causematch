@@ -90,6 +90,34 @@ DEFINITIONS = {
     ),
     "no_show_rate": "No-shows / (completed + no-shows).",
 }
+# Last-minute calls (app/data.py post_urgent_call): one table, overall only
+URGENT = {
+    "urgent_posted": "Urgent calls posted",
+    "urgent_filled_rate": "Filled",
+    "urgent_median_fill_min": "Median minutes to fill",
+    "urgent_no_show_rate": "No-show, urgent fills",
+    "normal_no_show_rate": "No-show, other shifts",
+}
+URGENT_RATES = {"urgent_filled_rate", "urgent_no_show_rate", "normal_no_show_rate"}
+MEDIANS = {"median_reply_h", "urgent_median_fill_min"}
+URGENT_DEFINITIONS = {
+    "urgent_posted": "Urgent calls posted by nonprofits, open ones included.",
+    "urgent_filled_rate": (
+        "Calls that filled / calls that ended (filled, stopped by the org, their time "
+        "passed or their opening closed). Open calls are in neither count."
+    ),
+    "urgent_median_fill_min": (
+        "Median minutes from posting to filling, over the calls that filled; n is the "
+        "calls counted."
+    ),
+    "urgent_no_show_rate": (
+        "No-shows / (completed + no-shows), over shifts of likes made on an urgent call. "
+        f"Withheld, with the other no-show rate, while either has fewer than "
+        f"{MIN_GROUP_VOLUNTEERS} volunteers: overall's no-show rate minus one would give "
+        "the other back."
+    ),
+    "normal_no_show_rate": "The same, over every other shift.",
+}
 BREAKDOWNS = {
     "overall": "Overall",
     "cause": "By cause (an opening counts under each of its causes)",
@@ -275,6 +303,7 @@ def pilot_metrics(rows, now=None):
     empty = rows.get("empty_decks", [])
     out = {
         "overall": _group(swipes, matches, shifts, vols, now),
+        "urgent": _urgent(rows),
         "labels": {c["slug"]: c["label"] for c in rows["causes"]},
         # how often filters left nothing to swipe (plan risk: over-filtering)
         "empty_deck": {
@@ -326,15 +355,56 @@ def _withhold_complements(rows, overall):
             min(shown, key=lambda c: c["d"])["suppressed"] = True
 
 
+def _urgent(rows):
+    """The URGENT figures, each a cell like _group's."""
+    calls = rows.get("urgent_calls", [])
+    ended = [c for c in calls if c["status"] != "open"]
+    filled = [c for c in ended if c["status"] == "filled" and c["ended_at"]]
+    minutes = [_hours(c["created_at"], c["ended_at"]) * 60 for c in filled]
+
+    def no_show(urgent):
+        marked = [
+            s
+            for s in rows["shifts"]
+            if bool(s.get("urgent_call_id")) == urgent
+            and s["status"] in ("completed", "no_show")
+        ]
+        cell = _rate(sum(s["status"] == "no_show" for s in marked), len(marked))
+        cell["volunteers"] = len({s["volunteer_id"] for s in marked})
+        return cell
+
+    out = {
+        "urgent_posted": _count(len(calls)),
+        "urgent_filled_rate": _rate(
+            sum(c["status"] == "filled" for c in ended), len(ended)
+        ),
+        "urgent_median_fill_min": {
+            "n": len(minutes),
+            "d": None,
+            "value": median(minutes) if minutes else None,
+        },
+        "urgent_no_show_rate": no_show(True),
+        "normal_no_show_rate": no_show(False),
+    }
+    pair = ("urgent_no_show_rate", "normal_no_show_rate")
+    if any(
+        withheld(k, out[k]) or 0 < out[k]["volunteers"] < MIN_GROUP_VOLUNTEERS
+        for k in pair
+    ):
+        for k in pair:
+            out[k]["suppressed"] = bool(out[k]["d"])
+    return out
+
+
 def label(metrics, kind, key):
     return metrics["labels"].get(key, key) if kind == "cause" else key
 
 
 def too_few(metric, cell):
     """A rate over fewer than MIN_DENOM, or a median over fewer than MIN_DENOM matches."""
-    if metric == "median_reply_h":
+    if metric in MEDIANS:
         return 0 < cell["n"] < MIN_DENOM
-    return metric in RATES and bool(cell["d"]) and cell["d"] < MIN_DENOM
+    return metric in RATES | URGENT_RATES and bool(cell["d"]) and cell["d"] < MIN_DENOM
 
 
 def withheld(metric, cell):
@@ -351,18 +421,18 @@ def fmt(metric, cell):
         return "withheld"
     if v is None:
         return "—"
-    if metric == "median_reply_h":
-        return f"{v:.1f}"
-    if metric in RATES:
+    if metric in MEDIANS:
+        return f"{v:.1f}" if metric == "median_reply_h" else f"{v:.0f}"
+    if metric in RATES | URGENT_RATES:
         return f"{v * 100:.0f}%"
     return str(v)
 
 
 def counts(metric, cell):
     """The counts shown beneath the figure."""
-    if metric == "median_reply_h":
+    if metric in MEDIANS:
         return f"n={cell['n']}"
-    if metric in RATES:
+    if metric in RATES | URGENT_RATES:
         if not cell["d"]:
             return ""
         return (
@@ -382,7 +452,7 @@ def csv_rows(metrics):
     n is the sample size: a rate's denominator, the median's matches, a count's count.
     numerator and value are empty where a rate or median is too few or withheld.
     """
-    for metric, text in DEFINITIONS.items():
+    for metric, text in {**DEFINITIONS, **URGENT_DEFINITIONS}.items():
         yield (f"# {metric}: {text}",)
     yield ("breakdown", "group", "metric", "n", "numerator", "denominator", "value")
     for kind in BREAKDOWNS:
@@ -401,3 +471,16 @@ def csv_rows(metrics):
                     "" if c["d"] is None else c["d"],
                     "" if hide or c["value"] is None else round(c["value"], 4),
                 )
+    for metric in URGENT:
+        c = metrics["urgent"][metric]
+        hide = withheld(metric, c)
+        is_rate = metric in URGENT_RATES
+        yield (
+            "urgent",
+            "all",
+            metric,
+            c["d"] if is_rate else c["n"],
+            "" if hide or not is_rate else c["n"],
+            "" if c["d"] is None else c["d"],
+            "" if hide or c["value"] is None else round(c["value"], 4),
+        )
