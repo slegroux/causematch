@@ -494,6 +494,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
         email="sam.secret@example.com",
         lat=34.0123456,
         lon=-118.6543210,
+        radius_km=60,
         neighborhood="Chinatown",
         causes='["food-insecurity"]',
         availability='["weekend_morning"]',

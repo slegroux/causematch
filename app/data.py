@@ -11,6 +11,7 @@ import apsw
 from apswutils.db import NotFoundError
 
 from app import db as _db
+from app import match as _match
 
 
 def start(demo):
@@ -34,16 +35,17 @@ def _local_now():
 
 
 def _deck_openings(uid):
-    """[(opening, active cause labels)] this volunteer could still swipe on, soonest first.
+    """[(opening, active cause labels, distance_km or None)] this volunteer could still swipe on.
 
     swipe() checks visibility with this same function, so whatever hides an opening
-    from the deck (closed, past, inactive cause, and later radius and blocks) also
-    stops a like sent by id.
+    from the deck (closed, past, inactive cause, out of radius) also stops a like sent
+    by id. Distance is None for a remote opening or when either side has no location.
     """
     labels = {c.slug: c.label for c in _db.causes() if c.active}
     seen = {
         s.opening_id for s in _db.swipes(where="volunteer_id = ?", where_args=[uid])
     }
+    me = _db.profiles[uid]
     out = []
     for o in _db.openings(
         where="status = ? AND starts_at >= ?",
@@ -51,14 +53,61 @@ def _deck_openings(uid):
         order_by="starts_at",
     ):
         cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
-        if cause_labels and o.id not in seen:
-            out.append((o, cause_labels))
+        if not cause_labels or o.id in seen:
+            continue
+        km = None
+        if not o.remote and None not in (me.lat, me.lon, o.lat, o.lon):
+            km = _match.haversine_km(me.lat, me.lon, o.lat, o.lon)
+            if me.radius_km and km > me.radius_km:
+                continue
+        out.append((o, cause_labels, km))
     return out
 
 
+def _org_reply_rates():
+    """{org_id: reply rate} for every org with eligible matches, in one query.
+
+    Eligible: decided, or still pending after 48 h. Withdrawn matches are not the
+    org's doing and do not count.
+    """
+    rows = _db.db.query(
+        "SELECT o.org_id AS org_id, "
+        "sum(m.status != 'pending' AND "
+        "julianday(m.decided_at) - julianday(m.created_at) <= 2.0) AS fast, "
+        "count(*) AS eligible "
+        "FROM match m JOIN opening o ON o.id = m.opening_id "
+        "WHERE m.status IN ('accepted', 'declined') "
+        "OR (m.status = 'pending' AND julianday('now') - julianday(m.created_at) > 2.0) "
+        "GROUP BY o.org_id"
+    )
+    return {r["org_id"]: _match.reply_rate(r["fast"], r["eligible"]) for r in rows}
+
+
+def _distance_label(km):
+    return None if km is None else "< 1 km" if km < 1 else f"{round(km)} km"
+
+
 def deck(uid, limit=20):
-    """Cards for open openings with an active cause that this volunteer has not swiped."""
+    """Cards for open openings with an active cause, best fit first.
+
+    Cards carry the distance rounded to whole km, never coordinates.
+    """
+    me = _db.profiles[uid]
+    mine = json.loads(me.causes or "[]"), json.loads(me.skills or "[]")
+    free = json.loads(me.availability or "[]")
     org_names = {o.id: o.name for o in _db.orgs()}
+    rates = _org_reply_rates()
+    ranked = []
+    for o, cause_labels, km in _deck_openings(uid):
+        fit = _match.score(
+            causes=(mine[0], json.loads(o.causes or "[]")),
+            skills=(mine[1], json.loads(o.skills or "[]")),
+            distance=_match.distance_score(km, me.radius_km, o.remote),
+            availability=_match.availability_overlap(free, o.starts_at, o.recurrence),
+            reply=rates.get(o.org_id, 0.5),
+        )
+        ranked.append((-fit, o.starts_at, o.id, o, cause_labels, km))
+    ranked.sort(key=lambda r: r[:3])
     return [
         {
             "id": o.id,
@@ -68,8 +117,10 @@ def deck(uid, limit=20):
             "starts_at": o.starts_at,
             "neighborhood": o.neighborhood,
             "slots": o.slots,
+            "remote": bool(o.remote),
+            "distance": _distance_label(km),
         }
-        for o, cause_labels in _deck_openings(uid)[:limit]
+        for *_, o, cause_labels, km in ranked[:limit]
     ]
 
 
@@ -110,7 +161,7 @@ def swipe(uid, opening_id, liked):
             where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
         ):
             return _match_for(uid, opening_id)
-        if opening_id not in {o.id for o, _ in _deck_openings(uid)}:
+        if opening_id not in {o.id for o, *_ in _deck_openings(uid)}:
             raise LookupError("no such opening")
         _db.swipes.insert(
             _db.Swipe(

@@ -30,6 +30,14 @@ def OpeningCard(c):
         DivLAligned(*[Label(name) for name in c["causes"]], cls="flex-wrap gap-1"),
         P(c["org"], cls=TextPresets.muted_sm),
         DivFullySpaced(P(when(c["starts_at"])), P(c["neighborhood"])),
+        P(
+            "Remote"
+            if c["remote"]
+            else f"about {c['distance']} away"
+            if c["distance"]
+            else "",
+            cls=TextPresets.muted_sm,
+        ),
         P(f"{c['slots']} spots", cls=TextPresets.muted_sm),
         header=CardTitle(c["title"]),
         cls="w-full select-none",

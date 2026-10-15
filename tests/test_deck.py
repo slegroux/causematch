@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timedelta
 
+from conftest import deck_titles
+
 from app import data
 from app.data import LA
 from app.db import Opening, now, openings, orgs
@@ -37,23 +39,23 @@ def add_opening(title, causes, starts_at=None, status="open", **kw):
 def test_deck_shows_seeded_opening(user):
     r = user.get("/deck")
     assert r.status_code == 200
-    assert SEEN in r.text
-    assert "Westside Pantry Collective" in r.text
+    assert SEEN in deck_titles(user)
+    assert "Westside Pantry Collective" in str(
+        data.deck(data.get_or_create_volunteer(user.phone), 50)
+    )
     assert 'name="viewport"' in r.text
     assert r.text.count('name="viewport"') == 1
     assert "<title>Causematch</title>" in r.text
 
 
 def test_inactive_cause_hidden(user):
-    r = user.get("/deck")
-    assert r.status_code == 200 and SEEN in r.text
-    assert "Pack hygiene kits for outreach" not in r.text
+    assert SEEN in deck_titles(user)
+    assert "Pack hygiene kits for outreach" not in deck_titles(user)
 
 
 def test_closed_opening_hidden(user):
-    r = user.get("/deck")
-    assert r.status_code == 200 and SEEN in r.text
-    assert "Holiday pantry drive" not in r.text
+    assert SEEN in deck_titles(user)
+    assert "Holiday pantry drive" not in deck_titles(user)
 
 
 def test_mixed_cause_opening_shows_only_active_label(user):
@@ -62,22 +64,30 @@ def test_mixed_cause_opening_shows_only_active_label(user):
         ["food-insecurity", "homelessness-services"],
         starts_at=soon(1),
     )
-    r = user.get("/deck")
-    assert "Mixed cause shift" in r.text
-    assert "Food insecurity" in r.text
-    assert "Homelessness services" not in r.text
+    uid = data.get_or_create_volunteer(user.phone)
+    (card,) = [c for c in data.deck(uid, 50) if c["title"] == "Mixed cause shift"]
+    assert card["causes"] == ["Food insecurity"]
 
 
-def test_deck_is_soonest_first_and_limited():
-    add_opening("Earliest shift", ["food-insecurity"], starts_at=soon(1))
-    add_opening("Second shift", ["food-insecurity"], starts_at=soon(2))
+def test_equal_fit_is_soonest_first_and_limited(user):
+    uid = data.get_or_create_volunteer(user.phone)
+    for o in openings():
+        openings.update(id=o.id, status="closed")
+    sat = datetime.now(LA).replace(hour=9, minute=0) + timedelta(days=7)
+    sat += timedelta(
+        days=(5 - sat.weekday()) % 7
+    )  # a Saturday morning: the user is free
+    fmt = "%Y-%m-%dT%H:%M"
+    add_opening("Earliest shift", ["food-insecurity"], starts_at=sat.strftime(fmt))
+    sat += timedelta(days=7)
+    add_opening("Second shift", ["food-insecurity"], starts_at=sat.strftime(fmt))
     add_opening(
         "Skipped closed",
         ["food-insecurity"],
-        starts_at=soon(0.5),
+        starts_at=sat.strftime(fmt),
         status="closed",
     )
-    titles = [c["title"] for c in data.deck(0, limit=2)]
+    titles = [c["title"] for c in data.deck(uid, limit=2)]
     assert titles == ["Earliest shift", "Second shift"]
 
 
@@ -86,8 +96,7 @@ def test_null_causes_do_not_break_deck(user):
     openings.update(
         id=openings(where="title = ?", where_args=["Bad row"])[0].id, causes=None
     )
-    r = user.get("/deck")
-    assert r.status_code == 200 and SEEN in r.text
+    assert SEEN in deck_titles(user)
 
 
 def test_root_redirects_to_deck(user):

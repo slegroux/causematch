@@ -96,11 +96,18 @@ def new_user():
     return c
 
 
+def deck_titles(user):
+    """Every title in this volunteer's deck, best fit first (the page shows only the top card)."""
+    return [c["title"] for c in data.deck(data.get_or_create_volunteer(user.phone), 50)]
+
+
 @pytest.fixture
 def user(new_user):
     """Signed in and onboarded."""
     r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
     assert r.headers["location"] == "/deck"
+    # Wide enough that every seeded opening is in reach; radius has its own tests.
+    profiles.update(id=data.get_or_create_volunteer(new_user.phone), radius_km=60)
     return new_user
 
 

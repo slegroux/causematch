@@ -26,4 +26,7 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 timeout = 300
-markers = ["e2e: drives a real browser against a live server"]
+markers = [
+    "e2e: drives a real browser against a live server",
+    "perf: asserts a time budget; still runs in the normal suite",
+]

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in
+from conftest import coordinator_for, deck_titles, org_sign_in
 from starlette.testclient import TestClient
 
 from app.db import causes, openings, orgs
@@ -53,15 +53,15 @@ def test_posted_opening_reaches_deck(coord, user):
 
 def test_closing_removes_it_from_the_deck(coord, user):
     post(coord, starts_at=future(2))
-    assert "Saturday fridge restock" in user.get("/deck").text  # positive control
+    assert "Saturday fridge restock" in deck_titles(user)  # positive control
     (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
     assert (
         coord.post(f"/org/openings/{o.id}/close", follow_redirects=False).status_code
         == 303
     )
     assert openings[o.id].status == "closed"
-    assert "Saturday fridge restock" not in user.get("/deck").text
-    assert "Sort and pack pantry boxes" in user.get("/deck").text  # positive control
+    assert "Saturday fridge restock" not in deck_titles(user)
+    assert "Sort and pack pantry boxes" in deck_titles(user)  # positive control
 
 
 def test_stored_opening_fields(coord):
