@@ -200,6 +200,8 @@ def _live(role, base):
     # `data` is FastHTML's name for the parsed frame, so it hides the data module here;
     # the frame is read by key because a cookie named `msg` would win over a parameter.
     async def recv(ws, data):
+        if ws.application_state != WebSocketState.CONNECTED:
+            return  # conn refused this socket; a frame sent before the close arrived is dropped
         match_id = _match_id(ws)
         msg = data.get("msg") if isinstance(data, dict) else None
         try:
@@ -208,9 +210,13 @@ def _live(role, base):
         except PermissionError:
             return await _refuse(ws)
         except ValueError:
-            text = NOTICES[_notice_for(msg)]
-            return await ws.send_text(to_xml(ChatError(text, oob=True)))
-        await ws.send_text(to_xml(ChatError(oob=True)))
+            reply = ChatError(NOTICES[_notice_for(msg)], oob=True)
+        else:
+            reply = ChatError(oob=True)
+        try:
+            await ws.send_text(to_xml(reply))
+        except (RuntimeError, OSError, WebSocketDisconnect):
+            pass  # closed since (a revoked session): nothing to tell it
 
     async def disconn(ws):
         match_id = _match_id(ws)

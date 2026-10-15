@@ -1,7 +1,7 @@
 import json
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 import anyio.from_thread
 import pytest
@@ -423,6 +423,36 @@ def test_a_file_part_as_msg_is_a_400_not_a_500(chat, base):
     assert r.status_code == 400 and messages.count == 0
 
 
+def test_a_frame_sent_to_a_refused_socket_is_dropped_not_answered(chat, monkeypatch):
+    """conn closes a refused socket, but a frame sent before the close arrived is still
+    queued. Answering it wrote to the closed socket and raised in the handler (it surfaced
+    as a failure in whichever test happened to refuse a socket)."""
+    from app.routes import chat as chat_routes
+
+    checked = threading.Semaphore(0)
+    real = chat_routes._authorized
+
+    def spy(*args):
+        checked.release()
+        return real(*args)
+
+    monkeypatch.setattr(chat_routes, "_authorized", spy)
+    with ExitStack() as stack:
+        for _ in range(chat_routes.MAX_SOCKETS_PER_MATCH):
+            stack.enter_context(chat.vol.websocket_connect(chat.vol_ws))
+        registered(chat.id, chat_routes.MAX_SOCKETS_PER_MATCH)
+        for _ in range(chat_routes.MAX_SOCKETS_PER_MATCH):
+            assert checked.acquire(timeout=5)  # the five connects
+        with chat.vol.websocket_connect(chat.vol_ws) as ws:
+            say(ws, "")  # queued behind the connect
+            with pytest.raises(WebSocketDisconnect) as e:
+                ws.receive_text()
+            assert e.value.code == 1008
+            assert checked.acquire(timeout=5)  # the sixth connect's own check
+            # the frame must not be checked, let alone answered, while the app is still alive
+            assert not checked.acquire(timeout=0.5)
+
+
 def test_the_event_loop_is_not_held_by_the_data_lock(chat):
     held, release = threading.Event(), threading.Event()
 
@@ -503,8 +533,6 @@ def test_a_dead_revoked_recipient_does_not_stop_the_others(chat):
 
 
 def test_socket_caps_per_match_and_per_user(chat):
-    from contextlib import ExitStack
-
     from app.db import matches as match_table
     from app.routes.chat import MAX_SOCKETS, MAX_SOCKETS_PER_MATCH
 
