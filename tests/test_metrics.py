@@ -415,6 +415,10 @@ def test_admin_signs_in_and_sees_the_pages(pilot, big_n):
     assert c.get("/deck", follow_redirects=False).status_code == 403
 
 
+def test_the_page_explains_withheld(pilot):
+    assert "Withheld" in admin_client().get("/admin/metrics").text
+
+
 def test_the_page_says_too_few_for_small_denominators(pilot):
     page = admin_client().get("/admin/metrics")
     assert "too few (n&lt;10)" in page.text or "too few (n<10)" in page.text

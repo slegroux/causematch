@@ -137,7 +137,9 @@ def admin_metrics():
                 "Aggregates only; the counts sit beneath each figure. A dash means no data "
                 f'yet. A rate over fewer than {MIN_DENOM} observations reads "too few". '
                 f"A row with fewer than {MIN_GROUP_VOLUNTEERS} volunteers is merged into "
-                '"other (small groups)". Repeat rates cover volunteers whose first '
+                '"other (small groups)". "Withheld" hides a rate beside a "too few" one, '
+                "so it can't be subtracted back from the totals. Repeat rates cover "
+                "volunteers whose first "
                 f"completed shift was {REPEAT_WINDOW_DAYS}+ days ago. Only the first shift is "
                 "scheduled automatically, so repeats also reflect how diligently "
                 "coordinators add shifts.",
