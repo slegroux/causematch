@@ -57,6 +57,25 @@ def commitment(profile):
     return profile.commitment or "either"
 
 
+def work(profile):
+    """The kind of work a volunteer prefers, as match.work_fit takes it."""
+    return {
+        "setting": profile.setting or "either",
+        "effort": profile.effort or "any",
+        "group_size": profile.group_size or "any",
+        "first_timer": bool(profile.first_timer),
+    }
+
+
+def orientation_ok(profile):
+    """False: openings with a separate orientation session are hidden."""
+    return profile.orientation_ok is None or bool(profile.orientation_ok)
+
+
+def languages(profile):
+    return json.loads(profile.languages or "[]")
+
+
 def picked(prefs):
     """The causes a volunteer would help with (love, then open), for the `causes` column."""
     return [s for s, v in prefs.items() if v == LOVE] + [

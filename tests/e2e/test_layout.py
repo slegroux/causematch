@@ -85,3 +85,15 @@ def test_an_os_dark_mode_keeps_native_controls_light(browser, live_url):
     scheme = page.evaluate("getComputedStyle(document.documentElement).colorScheme")
     assert scheme == "light"
     ctx.close()
+
+
+def test_the_save_bar_covers_nothing_at_the_bottom_of_preferences(se_page):
+    sign_in_page(se_page, "(310) 555-0163")
+    se_page.goto("/me/preferences")
+    se_page.evaluate("window.scrollTo(0, document.scrollingElement.scrollHeight)")
+    save = se_page.get_by_role("button", name="Save preferences").bounding_box()
+    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+    assert save["y"] + save["height"] <= bar["y"], (save, bar)
+    # the last section's last control is above the save button, not under it
+    last = se_page.locator("label:has(input[name=skills])").last.bounding_box()
+    assert last["y"] + last["height"] <= save["y"], (last, save)

@@ -146,6 +146,15 @@ def first_start(typical_time, i=0, today=None):
     return f"{date}T{hour:02d}:{minute:02d}"
 
 
+# A sample opening's kind of work, guessed from its cause (the seed file doesn't say):
+# (setting, effort, group size). A demo stand-in; real nonprofits fill these in.
+WORK_BY_CAUSE = {
+    "environment-parks": ("outdoor", "active", "big"),
+    "food-insecurity": ("indoor", "moderate", "small"),
+    "animal-shelters": ("", "moderate", "small"),
+}
+
+
 def load_orgs(orgs):
     """Insert the seed file's nonprofits as verified orgs with sample openings."""
     from app.choices import SKILLS
@@ -172,6 +181,7 @@ def load_orgs(orgs):
                     ntee_code=o.get("ntee_code") or "",
                 )
             )
+            setting, effort, group = WORK_BY_CAUSE.get(o["cause"], ("", "", ""))
             for x in o.get("openings", []):
                 openings.insert(
                     Opening(
@@ -193,6 +203,11 @@ def load_orgs(orgs):
                         reply_channel="email",
                         adult_confirmed=True,
                         created_at=now(),
+                        setting=setting,
+                        effort=effort,
+                        group_size=group,
+                        first_timer_ok=i % 2 == 0,
+                        languages=json.dumps(["es"] if i % 3 == 0 else []),
                     )
                 )
                 i += 1
@@ -245,6 +260,10 @@ def _preferences(uid):
         free_dates=[(datetime.now(LA) + timedelta(days=10)).date().isoformat()],
         horizon_days=31,
         commitment="either",
+        setting="either",
+        effort="active",
+        first_timer=True,
+        languages=["es"],
         skills=["physical", "car"],
         frequency="weekly",
         places=[

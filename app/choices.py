@@ -33,6 +33,25 @@ COMMITMENT = [
     ("either", "Either"),
 ]
 
+# Kind of work: optional on an opening ("" is not said, which scores neutral) and a
+# preference for a volunteer, who can also say "either" / "any".
+SETTING = [("indoor", "Indoors"), ("outdoor", "Outdoors")]
+EFFORT = [("light", "Light"), ("moderate", "Moderate"), ("active", "Active")]
+GROUP = [("solo", "On my own"), ("small", "Small group"), ("big", "Big group")]
+LANGUAGES = [
+    ("es", "Spanish"),
+    ("ko", "Korean"),
+    ("tl", "Tagalog"),
+    ("hy", "Armenian"),
+    ("zh", "Chinese"),
+    ("vi", "Vietnamese"),
+    ("fa", "Farsi"),
+    ("ru", "Russian"),
+    ("ja", "Japanese"),
+    ("asl", "ASL"),
+    ("other", "Another language"),
+]
+
 SKILLS = [
     ("physical", "Physical work / lifting"),
     ("car", "A car, happy to drive"),

@@ -29,13 +29,17 @@ from app import data, prefs
 from app.choices import (
     COMMITMENT,
     DAYS,
+    EFFORT,
     FREQUENCY,
+    GROUP,
     HORIZON,
+    LANGUAGES,
     MAX_FREE_DATES,
     MAX_MINUTES,
     MAX_PLACES,
     MODES,
     PARTS,
+    SETTING,
     SKILLS,
 )
 from app.forms import bad_request, query, str_form
@@ -56,6 +60,11 @@ from app.ui import (
 )
 
 ar = Router()
+
+# A volunteer's kind-of-work answers: the opening's choices plus "doesn't matter"
+SETTINGS = [*SETTING, ("either", "Either")]
+EFFORTS = [*EFFORT, ("any", "Any")]
+GROUPS = [*GROUP, ("any", "Any")]
 
 SLOTS = {f"{d}_{p}" for d, _ in DAYS for p, _ in PARTS}
 CHECK = ("M5 12.5 10 17.5 19.5 7",)
@@ -401,6 +410,58 @@ def PrefsPage(f, error=None, saved=False):
                 ),
             ),
             Section(
+                "Kind of work",
+                "Openings that say they fit rank higher; ones that don't say aren't held "
+                "back.",
+                Group(
+                    "Indoors or outdoors",
+                    "grid grid-cols-3 gap-2",
+                    "setting",
+                    SETTINGS,
+                    f["setting"],
+                ),
+                Group(
+                    "How active",
+                    "grid grid-cols-4 gap-1.5",
+                    "effort",
+                    EFFORTS,
+                    f["effort"],
+                ),
+                Group(
+                    "Group size",
+                    "grid grid-cols-2 gap-2",
+                    "group_size",
+                    GROUPS,
+                    f["group_size"],
+                ),
+                Div(
+                    Chip(
+                        "checkbox",
+                        "first_timer",
+                        "1",
+                        "I'm new: first-timer friendly first",
+                        f["first_timer"],
+                    ),
+                    Chip(
+                        "checkbox",
+                        "orientation_ok",
+                        "1",
+                        "A separate orientation session is fine",
+                        f["orientation_ok"],
+                    ),
+                    cls="flex flex-wrap gap-2",
+                ),
+                Fieldset(
+                    Legend(
+                        "Languages you speak besides English",
+                        cls="uk-form-label mb-1.5",
+                    ),
+                    Checks(
+                        "languages", LANGUAGES, f["languages"], "flex flex-wrap gap-2"
+                    ),
+                ),
+            ),
+            Section(
                 "How often",
                 None,
                 Div(
@@ -467,6 +528,12 @@ def _sync_save(req, form):
         "free_dates": [d for d in form.getlist("free_dates") if d],
         "horizon_days": form.get("horizon_days", "0"),
         "commitment": form.get("commitment", "either"),
+        "setting": form.get("setting", "either"),
+        "effort": form.get("effort", "any"),
+        "group_size": form.get("group_size", "any"),
+        "first_timer": form.get("first_timer") == "1",
+        "orientation_ok": form.get("orientation_ok") == "1",
+        "languages": form.getlist("languages"),
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
         "place_forms": [
@@ -485,6 +552,10 @@ def _sync_save(req, form):
         or not set(f["availability"]) <= SLOTS
         or f["horizon_days"] not in {str(v) for v, _ in HORIZON}
         or f["commitment"] not in {v for v, _ in COMMITMENT}
+        or f["setting"] not in {v for v, _ in SETTINGS}
+        or f["effort"] not in {v for v, _ in EFFORTS}
+        or f["group_size"] not in {v for v, _ in GROUPS}
+        or not set(f["languages"]) <= {v for v, _ in LANGUAGES}
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):

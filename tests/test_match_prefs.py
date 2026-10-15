@@ -471,3 +471,120 @@ def test_when_free_dates_go_with_the_account(bare):
     uid = uid_of(bare)
     data.delete_account(uid)
     assert profiles[uid].free_dates is None
+
+
+# --- kind of work --------------------------------------------------------------------------
+
+
+def work_form(**over):
+    return when_form(orientation_ok="1", **over)
+
+
+def test_work_an_opening_that_says_nothing_scores_half():
+    for mine in (
+        {
+            "setting": "outdoor",
+            "effort": "active",
+            "group_size": "big",
+            "first_timer": True,
+        },
+        {
+            "setting": "either",
+            "effort": "any",
+            "group_size": "any",
+            "first_timer": False,
+        },
+    ):
+        assert match.work_fit(mine, {}) == 0.5
+        assert match.work_fit(mine, {"setting": "", "effort": None}) == 0.5
+    assert match.language_fit(["es"], []) == 0.5
+    assert match.language_fit([], ["es"]) == 0.5
+    assert match.language_fit(["es", "ko"], ["ko"]) == 1
+
+
+def test_work_an_outdoor_active_opening_ranks_first_for_an_outdoor_active_volunteer(
+    bare,
+):
+    r = save(bare, work_form(setting="outdoor", effort="active"))
+    assert r.status_code == 303, r.text
+    add("indoor and light", DOWNTOWN, setting="indoor", effort="light")
+    add("says nothing", DOWNTOWN)
+    add("outdoor and active", DOWNTOWN, setting="outdoor", effort="active")
+    assert list(cards(bare)) == [
+        "outdoor and active",
+        "says nothing",
+        "indoor and light",
+    ]
+
+
+def test_work_a_volunteer_who_does_not_mind_ranks_them_alike(bare):
+    save(bare, work_form())
+    add("says nothing", DOWNTOWN, starts_at="2099-01-03T09:00")
+    add("outdoor and active", DOWNTOWN, setting="outdoor", effort="active",
+        starts_at="2099-01-03T10:00")  # fmt: skip
+    assert list(cards(bare)) == ["says nothing", "outdoor and active"]  # by time
+
+
+def test_work_first_timer_friendly_lifts_an_opening_for_a_newcomer(bare):
+    save(bare, work_form(first_timer="1"))
+    add("no word", DOWNTOWN)
+    add("first-timer friendly", DOWNTOWN, first_timer_ok=True)
+    assert next(iter(cards(bare))) == "first-timer friendly"
+
+
+def test_work_a_spoken_language_that_helps_lifts_an_opening(bare):
+    save(bare, work_form(languages=["es"]))
+    add("korean helps", DOWNTOWN, languages='["ko"]')
+    add("spanish helps", DOWNTOWN, languages='["es"]')
+    add("no languages", DOWNTOWN)
+    assert next(iter(cards(bare))) == "spanish helps"
+
+
+def test_work_orientation_not_ok_hides_a_separate_orientation(bare):
+    save(bare, when_form())  # orientation_ok unticked
+    add("same day", DOWNTOWN, orientation_required="same_day")
+    hidden = add("separate session", DOWNTOWN, orientation_required="separate")
+    assert list(cards(bare)) == ["same day"]
+    with pytest.raises(LookupError):
+        data.swipe(uid_of(bare), hidden, True)
+    save(bare, work_form())
+    assert set(cards(bare)) == {"same day", "separate session"}
+
+
+def test_work_a_profile_from_before_shows_separate_orientations():
+    assert data._prefs.orientation_ok(type("P", (), {"orientation_ok": None})())
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"setting": "underwater"},
+        {"effort": "extreme"},
+        {"group_size": "crowd"},
+        {"languages": ["klingon"]},
+    ],
+)
+def test_work_an_unknown_answer_saves_nothing(bare, over):
+    r = save(bare, work_form(**over))
+    assert r.status_code == 200 and "wasn't recognized" in r.text
+
+
+def test_work_answers_are_stored_and_shown(bare):
+    save(
+        bare,
+        work_form(
+            setting="indoor", effort="light", group_size="solo", languages=["tl"]
+        ),
+    )
+    p = profiles[uid_of(bare)]
+    assert (p.setting, p.effort, p.group_size, p.languages) == (
+        "indoor",
+        "light",
+        "solo",
+        '["tl"]',
+    )
+    assert p.orientation_ok and not p.first_timer
+    page = bare.get("/me/preferences").text
+    assert 'name="setting" value="indoor" checked' in page
+    assert 'name="languages" value="tl" checked' in page
+    assert 'name="orientation_ok" value="1" checked' in page

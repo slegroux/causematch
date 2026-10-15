@@ -65,6 +65,12 @@ class Opening:
     reply_channel: str  # email|text|either
     adult_confirmed: bool  # 18+ and no one-to-one contact with vulnerable people
     created_at: str
+    # Kind of work, all optional ("" or NULL: not said)
+    setting: str  # indoor|outdoor
+    effort: str  # light|moderate|active
+    group_size: str  # solo|small|big
+    first_timer_ok: bool
+    languages: str  # JSON list of choices.LANGUAGES keys that help
 
 
 class Profile:
@@ -98,6 +104,12 @@ class Profile:
     free_dates: str  # JSON ["YYYY-MM-DD"], up to 10, future only (pruned when read)
     horizon_days: int  # 7|14|31; 0 or NULL: any time
     commitment: str  # one_time|recurring|either (NULL: either)
+    setting: str  # indoor|outdoor; NULL or "either": no preference
+    effort: str  # light|moderate|active; NULL or "any"
+    group_size: str  # solo|small|big; NULL or "any"
+    first_timer: bool  # prefers first-timer friendly openings
+    orientation_ok: bool  # False hides openings with a separate orientation; NULL: True
+    languages: str  # JSON list of choices.LANGUAGES keys
 
 
 class OrgMember:

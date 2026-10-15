@@ -137,6 +137,8 @@ def _deck_openings(uid, today=False):
             continue
         if not _match.causes_allowed(mine, json.loads(o.causes or "[]")):
             continue
+        if o.orientation_required == "separate" and not _prefs.orientation_ok(me):
+            continue
         near = None
         if not o.remote:
             if None in (o.lat, o.lon):
@@ -177,6 +179,15 @@ def _distance_label(km):
     return None if km is None else "< 1 km" if km < 1 else f"{round(km)} km"
 
 
+def _work_of(o):
+    return {
+        "setting": o.setting,
+        "effort": o.effort,
+        "group_size": o.group_size,
+        "first_timer_ok": bool(o.first_timer_ok),
+    }
+
+
 def deck(uid, limit=20, today=False):
     """Cards for open openings with an active cause, best fit first. today ("I'm free
     today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
@@ -191,6 +202,7 @@ def deck(uid, limit=20, today=False):
     free = json.loads(me.availability or "[]")
     dates = _prefs.free_dates(me, local_today())
     commitment = _prefs.commitment(me)
+    work, spoken = _prefs.work(me), _prefs.languages(me)
     org_names = {o.id: o.name for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
@@ -204,6 +216,8 @@ def deck(uid, limit=20, today=False):
             distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
             availability=when,
             reply=rates.get(o.org_id, 0.5),
+            work=_match.work_fit(work, _work_of(o)),
+            language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
         )
         if today:  # ignores fit: the soonest, then the nearest
             key = (o.starts_at, km if km is not None else 0, o.id)
@@ -933,6 +947,9 @@ def preferences(uid):
         "free_dates": _prefs.free_dates(p, local_today()),
         "horizon_days": _prefs.horizon_days(p),
         "commitment": _prefs.commitment(p),
+        **_prefs.work(p),
+        "orientation_ok": _prefs.orientation_ok(p),
+        "languages": _prefs.languages(p),
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
         "places": _places(p),
@@ -950,6 +967,12 @@ def save_preferences(
     free_dates=(),
     horizon_days=0,
     commitment="either",
+    setting="either",
+    effort="any",
+    group_size="any",
+    first_timer=False,
+    orientation_ok=True,
+    languages=(),
 ):
     """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
     (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
@@ -966,6 +989,12 @@ def save_preferences(
             free_dates=json.dumps(sorted(free_dates)),
             horizon_days=horizon_days,
             commitment=commitment,
+            setting=setting,
+            effort=effort,
+            group_size=group_size,
+            first_timer=first_timer,
+            orientation_ok=orientation_ok,
+            languages=json.dumps(list(languages)),
             skills=json.dumps(list(skills)),
             frequency=frequency,
             lat=places[0]["lat"],
@@ -1154,8 +1183,14 @@ def create_opening(
     notes,
     reply_channel,
     skills=(),
+    setting="",
+    effort="",
+    group_size="",
+    first_timer_ok=False,
+    languages=(),
 ):
-    """Opening id. Only an org member may post; the status always starts open.
+    """Opening id. Only an org member may post; the status always starts open. The kind
+    of work (setting ... languages) is optional: "" is not said.
 
     ValueError without coordinates: an in-person opening needs a place to be ranked.
     """
@@ -1185,6 +1220,11 @@ def create_opening(
             reply_channel=reply_channel,
             adult_confirmed=True,
             created_at=_now(),
+            setting=setting,
+            effort=effort,
+            group_size=group_size,
+            first_timer_ok=first_timer_ok,
+            languages=json.dumps(sorted(set(languages))),
         )
     ).id
 

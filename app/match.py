@@ -9,11 +9,13 @@ from app.choices import DAYS, PARTS
 LA = ZoneInfo("America/Los_Angeles")
 EARTH_KM = 6371.0088
 WEIGHTS = {
-    "causes": 0.35,
-    "skills": 0.20,
-    "distance": 0.20,
+    "causes": 0.30,
+    "distance": 0.18,
     "availability": 0.15,
+    "skills": 0.12,
+    "work": 0.10,
     "reply": 0.10,
+    "language": 0.05,
 }
 
 
@@ -184,6 +186,42 @@ def distance_score(distance_km, radius_km, remote=False):
     return max(0.0, 1 - distance_km / radius_km)
 
 
+WORK_KEYS = ("setting", "effort", "group_size")
+NO_PREFERENCE = {None, "", "either", "any"}
+
+
+def work_fit(mine, theirs):
+    """Kind of work in 0..1: the mean over setting, effort, group size and first-timer
+    friendliness. Each is 1 when they agree, 0 when they differ, and 0.5 when the opening
+    doesn't say or the volunteer doesn't mind, so an opening never loses by saying nothing.
+
+    mine: {setting, effort, group_size, first_timer}; theirs: the same with first_timer_ok.
+    """
+    terms = []
+    for k in WORK_KEYS:
+        want, have = mine.get(k), theirs.get(k)
+        terms.append(0.5 if want in NO_PREFERENCE or not have else float(want == have))
+    terms.append(
+        1.0 if mine.get("first_timer") and theirs.get("first_timer_ok") else 0.5
+    )
+    return sum(terms) / len(terms)
+
+
+def work_matches(mine, theirs):
+    """The kinds of work where the opening says what the volunteer asked for."""
+    return [
+        k
+        for k in WORK_KEYS
+        if mine.get(k) not in NO_PREFERENCE and mine.get(k) == theirs.get(k)
+    ]
+
+
+def language_fit(mine, theirs):
+    """1 when the volunteer speaks a language the opening says helps, else 0.5: a language
+    helps, it is never required."""
+    return 1.0 if set(mine) & set(theirs) else 0.5
+
+
 def score(
     *,
     causes,
@@ -191,13 +229,18 @@ def score(
     distance,
     availability,
     reply,
+    work=0.5,
+    language=0.5,
 ):
     """Weighted fit in 0..1; each argument is already a 0..1 term, except causes
-    (compared by cause_fit) and skills (by coverage), which are (volunteer, opening) pairs."""
+    (compared by cause_fit) and skills (by coverage), which are (volunteer, opening) pairs.
+    work and language default to neutral."""
     return (
         WEIGHTS["causes"] * cause_fit(*causes)
         + WEIGHTS["skills"] * skill_coverage(*skills)
         + WEIGHTS["distance"] * distance
         + WEIGHTS["availability"] * availability
         + WEIGHTS["reply"] * reply
+        + WEIGHTS["work"] * work
+        + WEIGHTS["language"] * language
     )

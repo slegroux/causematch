@@ -122,6 +122,8 @@ def test_score_weights_sum_to_one_for_a_perfect_fit():
         "distance": 1,
         "availability": 1,
         "reply": 1,
+        "work": 1,
+        "language": 1,
     }
     assert match.score(**perfect) == pytest.approx(1)
 
@@ -129,11 +131,13 @@ def test_score_weights_sum_to_one_for_a_perfect_fit():
 @pytest.mark.parametrize(
     "term, weight",
     [
-        ("causes", 0.35),
-        ("skills", 0.20),
-        ("distance", 0.20),
+        ("causes", 0.30),
+        ("distance", 0.18),
         ("availability", 0.15),
+        ("skills", 0.12),
+        ("work", 0.10),
         ("reply", 0.10),
+        ("language", 0.05),
     ],
 )
 def test_each_term_carries_its_weight(term, weight):
@@ -143,6 +147,8 @@ def test_each_term_carries_its_weight(term, weight):
         "distance": 0,
         "availability": 0,
         "reply": 0,
+        "work": 0,
+        "language": 0,
     }
     one = {**zero, term: (["a"], ["a"]) if term in ("causes", "skills") else 1}
     assert match.score(**zero) == 0
