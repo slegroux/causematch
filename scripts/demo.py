@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
@@ -52,10 +53,30 @@ def refuse_production(env=os.environ):
         )
 
 
+def _git(cwd, *args):
+    r = subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False
+    )
+    return r.stdout.split() if r.returncode == 0 else []
+
+
+def inside_this_repo(path):
+    """True when path is in this checkout, or in any other git checkout of this repo
+    (one sharing its first commit): real org data must not land where `git add` sees it."""
+    path = Path(path).resolve()
+    if path.is_relative_to(ROOT):
+        return True
+    here = Path(path)
+    while not here.is_dir():  # the nearest folder that exists
+        here = here.parent
+    roots = set(_git(ROOT, "rev-list", "--max-parents=0", "HEAD"))
+    return bool(roots & set(_git(here, "rev-list", "--max-parents=0", "HEAD")))
+
+
 def configure(port, db=None, seed_file=None):
     """The demo's environment. Runs before anything imports app, whose modules read it."""
     refuse_production()
-    if seed_file and Path(seed_file).resolve().is_relative_to(ROOT):
+    if seed_file and inside_this_repo(seed_file):
         sys.exit(
             "--seed-file must live outside the repo: real org data never enters git"
         )

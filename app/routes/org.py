@@ -37,6 +37,7 @@ from app.ui import (
     CALENDAR,
     CARD,
     PIN,
+    SMALL_LINK,
     Checks,
     Choice,
     Field,
@@ -546,11 +547,6 @@ INBOX_TONE = {
     "declined": "off",
     "withdrawn": "off",
 }
-# a small link that is still a 44 px tap target
-SMALL_LINK = (
-    "inline-flex min-h-11 items-center text-sm font-semibold text-ink-muted underline "
-    "underline-offset-4 hover:text-ink"
-)
 
 
 def Fact(term, value):
@@ -614,7 +610,7 @@ def InboxRow(m):
             else None,
             A("Report", href=f"/org/matches/{m['id']}/report", cls=SMALL_LINK),
             A("Block", href=f"/org/matches/{m['id']}/block", cls=SMALL_LINK),
-            cls="flex flex-wrap gap-x-5 border-t border-line pt-1",
+            cls="flex flex-wrap gap-x-5 border-t border-line pt-1 text-sm",
         ),
         cls="w-full space-y-3 p-4 " + CARD,
     )

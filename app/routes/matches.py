@@ -3,7 +3,6 @@ import re
 from fasthtml.common import H1, H2, A, Div, P, Redirect, Response, Span
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
-    AT,
     Alert,
     AlertT,
     Button,
@@ -21,6 +20,7 @@ from app.ui import (
     CARD,
     CHAT,
     HEART,
+    SMALL_LINK,
     TITLE,
     Icon,
     Pill,
@@ -37,11 +37,6 @@ STATUS = {
     "withdrawn": "Withdrawn",
 }
 TONE = {"pending": "wait", "accepted": "good", "declined": "off", "withdrawn": "off"}
-# a small link that is still a 44 px tap target
-SMALL_LINK = (
-    "inline-flex min-h-11 items-center font-semibold text-ink-muted underline "
-    "underline-offset-4 hover:text-ink"
-)
 
 
 NOTICE = {
@@ -165,7 +160,7 @@ def withdraw_confirm(req, match_id: int):
             ),
             PlainForm(
                 Button("Withdraw", cls=ButtonT.destructive),
-                A("Keep it", href="/matches", cls=AT.muted + " ml-4"),
+                A("Keep it", href="/matches", cls=SMALL_LINK + " ml-4"),
                 action=f"/matches/{m['id']}/withdraw",
                 method="post",
                 cls="flex items-center pt-2",

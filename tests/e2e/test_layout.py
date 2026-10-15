@@ -61,21 +61,87 @@ def test_swipe_buttons_are_big_round_targets(se_page):
         assert box["y"] + box["height"] <= SE["height"] - 64, (name, box)
 
 
-def test_the_chat_composer_is_in_view_above_the_tab_bar(se_page):
-    p = sign_in_page(se_page, "(310) 555-0162")
+def long_chat(page, phone):
+    p = sign_in_page(page, phone)
     match_id = accepted_match(p.id)
     for i in range(30):  # a history taller than the screen
         data.send_message(p.id, match_id, f"Message number {i}")
-    se_page.goto(f"/chat/{match_id}")
-    se_page.evaluate("window.scrollTo(0, 0)")
+    page.goto(f"/chat/{match_id}")
+    return match_id
+
+
+def test_the_chat_composer_and_links_are_big_enough(se_page):
+    long_chat(se_page, "(310) 555-0162")
     bar = se_page.get_by_role("navigation", name="Main").bounding_box()
     for field in (
         se_page.get_by_label("Message"),
         se_page.get_by_role("button", name="Send"),
+        se_page.get_by_role("link", name="Report"),
+        se_page.get_by_role("link", name="Block"),
+        se_page.get_by_role("link", name="causematch"),
     ):
         box = field.bounding_box()
-        assert box["y"] + box["height"] <= bar["y"], (box, bar)
         assert box["height"] >= 44, box
+    form = se_page.locator("form.cm-composer").bounding_box()
+    assert form["y"] + form["height"] <= bar["y"] + 0.5, (form, bar)
+
+
+@pytest.mark.parametrize("height", [560, 480])
+def test_the_chat_composer_sticks_to_the_tab_bar(browser, live_url, height):
+    """On a short screen the page scrolls, so only position: sticky keeps the composer
+    in view: flush on the tab bar at the top of the page, and above it (never under it)
+    wherever the reader scrolls to."""
+    ctx = guard(
+        browser.new_context(
+            viewport={"width": 375, "height": height},
+            is_mobile=True,
+            has_touch=True,
+            base_url=live_url,
+        )
+    )
+    page = ctx.new_page()
+    long_chat(page, f"(310) 555-01{height // 10}")
+    scroll, inner = page.evaluate(
+        "[document.scrollingElement.scrollHeight, innerHeight]"
+    )
+    assert scroll > inner  # precondition: without sticky the composer would scroll away
+    for y in (0, (scroll - inner) // 2, scroll):
+        page.evaluate(f"window.scrollTo(0, {y})")
+        bar = page.get_by_role("navigation", name="Main").bounding_box()
+        form = page.locator("form.cm-composer").bounding_box()
+        bottom = form["y"] + form["height"]
+        assert form["y"] >= 0 and bottom <= bar["y"] + 1.5, (y, form, bar)
+        if y == 0:  # stuck: its own place is below the screen; flush, not overlapping
+            assert bar["y"] - 1.5 <= bottom <= bar["y"] + 0.5, (form, bar)
+    ctx.close()
+
+
+def test_the_home_screen_toast_never_covers_the_chat(browser, playwright, live_url):
+    ctx = guard(
+        browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
+    )
+    page = ctx.new_page()
+    long_chat(page, "(310) 555-0163")
+    box = page.get_by_label("Message").bounding_box()
+    hit = page.evaluate(
+        f"document.elementFromPoint({box['x'] + box['width'] / 2}, "
+        f"{box['y'] + box['height'] / 2}).getAttribute('aria-label')"
+    )
+    assert hit == "Message"
+    page.goto("/deck")  # the toast's one page: an iPhone in a tab sees it there
+    assert page.locator("#a2hs").is_visible()
+    ctx.close()
+
+
+def test_the_current_tab_differs_by_more_than_color(se_page):
+    sign_in_page(se_page, "(310) 555-0164")
+    se_page.goto("/deck")
+    bar = se_page.get_by_role("navigation", name="Main")
+    weight = "e => getComputedStyle(e).fontWeight"
+    on = bar.locator("[aria-current=page]")
+    off = bar.get_by_role("link", name="Matches")
+    assert int(on.evaluate(weight)) > int(off.evaluate(weight))
+    assert on.locator(".bg-brand").count() == 1  # the bar above the current tab
 
 
 def test_an_os_dark_mode_keeps_native_controls_light(browser, live_url):

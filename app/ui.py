@@ -209,6 +209,11 @@ PILL = {
     "off": "bg-sand text-ink-muted",
 }
 TITLE = "font-display text-2xl font-extrabold text-ink my-4"  # a volunteer page's H1
+# a small text link that is still a 44 px tap target
+SMALL_LINK = (
+    "inline-flex min-h-11 items-center font-semibold text-ink-muted underline "
+    "underline-offset-4 hover:text-ink"
+)
 CARD = "rounded-3xl border border-line bg-white shadow-warm"
 
 
@@ -277,7 +282,11 @@ TABS = (
 def TabBar(active):
     def tab(key, label, href, icon):
         on = key == active
+        # the current tab differs by more than hue: a brand bar on top, a heavier label
         return A(
+            Span(cls="absolute inset-x-6 top-0 h-[3px] rounded-b-full bg-brand")
+            if on
+            else None,
             Span(
                 Icon(icon, size=22),
                 cls="grid h-8 w-14 place-items-center rounded-full "
@@ -286,8 +295,12 @@ def TabBar(active):
             Span(label),
             href=href,
             aria_current="page" if on else None,
-            cls="flex h-16 flex-col items-center justify-center gap-0.5 text-xs font-bold "
-            + ("text-brand-ink" if on else "text-ink-muted hover:text-ink"),
+            cls="relative flex h-16 flex-col items-center justify-center gap-0.5 text-xs "
+            + (
+                "font-extrabold text-brand-ink"
+                if on
+                else "font-semibold text-ink-muted hover:text-ink"
+            ),
         )
 
     return Nav(
@@ -299,11 +312,19 @@ def TabBar(active):
 
 
 def VolunteerNav(active=None):
-    """The volunteer's header, Home Screen toast and bottom tab bar. The bar is fixed, so
-    it can sit anywhere in the page; static/theme.css pads the body above it."""
+    """The volunteer's header and bottom tab bar, plus the Home Screen toast on the deck
+    only (elsewhere it would cover the chat composer). The bar is fixed, so it can sit
+    anywhere in the page; static/theme.css pads the body above it."""
     return Div(
-        Div(A(Wordmark(small=True), href="/deck"), cls="flex items-center pt-3 pb-3"),
-        AddToHomeScreen(),
+        Div(
+            A(
+                Wordmark(small=True),
+                href="/deck",
+                cls="inline-flex min-h-11 items-center",
+            ),
+            cls="flex items-center pt-2 pb-2",
+        ),
+        AddToHomeScreen() if active == "openings" else None,
         TabBar(active),
     )
 

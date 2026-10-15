@@ -55,12 +55,18 @@ def test_every_page_links_the_manifest_and_icons(anon, user, coord):
         assert 'src="/static/a2hs.js"' in html, path
 
 
-def test_home_screen_hint_is_on_volunteer_pages_only(anon, user, coord):
-    for path in ("/deck", "/matches"):
-        html = user.get(path).text
-        tag = re.search(r'<div[^>]*id="a2hs"[^>]*>', html)
-        assert tag and "hidden" in tag.group(0), path
-    for client, path in ((anon, "/login"), (coord, "/org"), (coord, "/org/inbox")):
+def test_home_screen_hint_is_on_the_deck_only(anon, user, coord):
+    """Elsewhere the toast would cover the chat composer or the end of a list."""
+    tag = re.search(r'<div[^>]*id="a2hs"[^>]*>', user.get("/deck").text)
+    assert tag and "hidden" in tag.group(0)
+    for client, path in (
+        (user, "/matches"),
+        (user, "/history"),
+        (user, "/profile"),
+        (anon, "/login"),
+        (coord, "/org"),
+        (coord, "/org/inbox"),
+    ):
         assert 'id="a2hs"' not in client.get(path).text, path
 
 

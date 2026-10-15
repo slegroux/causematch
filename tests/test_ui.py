@@ -18,7 +18,7 @@ from test_claim import admin_client
 
 from app import data
 from app.config import demo_banner
-from app.db import openings, orgs
+from app.db import blocks, openings, orgs
 from app.ui import DEMO_NOTICE
 from main import app
 
@@ -303,13 +303,51 @@ def test_screenshots_of_real_orgs_stay_out_of_the_repo(tmp_path):
     )
     assert r.returncode != 0 and "outside the repo" in r.stderr
     assert not out.exists()
-    # and screenshots written into the repo anyway are never committable
+
+
+def in_git():
+    return (
+        subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def test_screenshot_folders_are_never_committable():
+    if not in_git():
+        pytest.skip("not a git checkout (an export or an sdist): nothing to commit to")
     for png in ("screens-x/v01.png", "docs/screenshots/a.png", "screens/o1.png"):
         ignored = subprocess.run(
             ["git", "-C", str(ROOT), "check-ignore", "-q", "--no-index", png],
             check=False,
         )
         assert ignored.returncode == 0, png
+
+
+def test_real_org_data_stays_out_of_every_checkout_of_this_repo(tmp_path):
+    inside = _demo().inside_this_repo
+    assert inside(ROOT / "screens") and inside(ROOT / "a" / "b.json")
+    assert not inside(tmp_path / "screens")
+    if not in_git():
+        pytest.skip("not a git checkout: no other checkout to compare with")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org"]
+    # another checkout of this repo (say the primary one, seen from a worktree)
+    clone = tmp_path / "clone"
+    subprocess.run(
+        [*git, "clone", "-q", "--no-checkout", str(ROOT), str(clone)], check=True
+    )
+    assert inside(clone / "screens" / "v01.png")
+    # an unrelated repository is fine
+    other = tmp_path / "other"
+    subprocess.run([*git, "init", "-q", str(other)], check=True)
+    subprocess.run(
+        [*git, "-C", str(other), "commit", "-q", "--allow-empty", "-m", "x"],
+        check=True,
+    )
+    assert not inside(other / "screens")
 
 
 # --- the nonprofit's pages (design item 5) ------------------------------------------
@@ -437,3 +475,41 @@ def test_not_found_and_refusal_pages_wear_the_shared_look(anon):
     page = security.too_many().body.decode()
     assert "rounded-3xl" in page and "cause<span class='text-brand'>match" in page
     assert "Too many tries" in page and "Back to Causematch" in page
+
+
+def test_opening_counts_match_the_inbox_page_with_blind_and_blocked_likes(coord):
+    """Waiting likes counted on /org equal the cards /org/inbox shows: an org-blind like
+    (from a volunteer the org blocked) and a like from a volunteer who blocked the org
+    are in neither."""
+    coord_uid = data.coordinator_by_email(coordinator_for(0)[1])
+    first = openings(where="org_id = ? AND status = 'open'", where_args=[coord.org_id])[
+        0
+    ]
+    second = openings.insert(
+        {
+            **{k: v for k, v in first.__dict__.items() if k != "id"},
+            "title": "Second opening",
+        }
+    )
+    shown = data.get_or_create_volunteer("+13105550181")
+    data.swipe(shown, first.id, True)
+    # blocked by the org, then liking again: org_blind, never in the inbox, even after
+    # an admin lifts the block
+    blind = data.get_or_create_volunteer("+13105550182")
+    data.block_volunteer(coord_uid, data.swipe(blind, first.id, True).id)
+    data.swipe(blind, second.id, True)
+    admin_uid = data.add_admin("boss@example.org", "Boss Person")
+    for b in blocks(where="blocked_user_id = ?", where_args=[blind]):
+        data.unblock(admin_uid, b.id)
+    # blocked the org themselves: their waiting like is withdrawn
+    blocker = data.get_or_create_volunteer("+13105550183")
+    data.block_org(blocker, data.swipe(blocker, second.id, True).id)
+
+    counts = data.opening_counts(coord_uid)
+    on_page = coord.get("/org/inbox").text.count("/decide")
+    inbox = data.org_inbox(coord_uid)["pending"]
+    assert sum(c["pending"] for c in counts.values()) == on_page == len(inbox) == 1
+    assert counts[first.id]["pending"] == 1 and counts[second.id]["pending"] == 0
+    # another coordinator's org: none of its openings are counted for this one
+    other = {o.id for o in openings() if o.org_id != coord.org_id}
+    assert not other & set(counts)

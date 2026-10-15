@@ -54,7 +54,7 @@ def main():
     p.add_argument("--port", type=int, default=5078)
     a = p.parse_args()
     demo.refuse_production()
-    if a.seed_file and a.out.resolve().is_relative_to(demo.ROOT):
+    if a.seed_file and demo.inside_this_repo(a.out):
         sys.exit(
             "--out must be outside the repo with --seed-file: real org data never "
             "enters git"

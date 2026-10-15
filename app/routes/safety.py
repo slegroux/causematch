@@ -28,6 +28,7 @@ from app.ui import (
     NEXT,
     SHIELD,
     SIGN_OUT,
+    SMALL_LINK,
     TITLE,
     TRASH,
     Choice,
@@ -329,7 +330,7 @@ def delete_confirm(req):
             ),
             PlainForm(
                 Button("Delete my account", cls=ButtonT.destructive),
-                A("Keep it", href="/profile", cls=AT.muted + " ml-4"),
+                A("Keep it", href="/profile", cls=SMALL_LINK + " ml-4"),
                 action="/profile/delete",
                 method="post",
                 cls="flex items-center pt-2",
@@ -416,7 +417,7 @@ def privacy():
         Section(
             "How long we keep it, and what stays after you delete",
             "We keep your account until you delete it. Volunteers can delete theirs any "
-            "time from Profile; coordinators ask us to delete theirs. Deleting erases your "
+            "time from Me; coordinators ask us to delete theirs. Deleting erases your "
             "name, phone, email, location, neighborhood and the free text you typed. Your "
             "matches are withdrawn and your future shifts cancelled, and your chat messages "
             'are replaced with "[message removed]".',

@@ -13,14 +13,14 @@ from fasthtml.common import (
     to_xml,
 )
 from fasthtml.common import Form as PlainForm
-from monsterui.all import AT, Container, TextPresets
+from monsterui.all import Container, TextPresets
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
-from app.ui import BACK, SEND, Icon, Router, TextInput, VolunteerNav
+from app.ui import BACK, SEND, SMALL_LINK, Icon, Router, TextInput, VolunteerNav
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -129,9 +129,9 @@ def ChatPage(uid, match_id, role, notice=""):
         ),
         box,
         Div(
-            A("Report", href=f"{rbase}/{match_id}/report", cls=AT.muted + " mr-4"),
-            A("Block", href=f"{rbase}/{match_id}/block", cls=AT.muted),
-            cls="text-sm pt-4",
+            A("Report", href=f"{rbase}/{match_id}/report", cls=SMALL_LINK),
+            A("Block", href=f"{rbase}/{match_id}/block", cls=SMALL_LINK),
+            cls="flex gap-x-5 pt-2 text-sm",
         ),
         Script(src="/static/chat.js", defer=True),
         cls="max-w-md pb-8",

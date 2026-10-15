@@ -209,7 +209,8 @@ body:has(.cm-tabbar) {
   bottom: 0;
 }
 body:has(.cm-tabbar) .cm-composer {
-  bottom: calc(4rem + env(safe-area-inset-bottom));
+  /* the bar: 4rem of tabs and its 1px top border */
+  bottom: calc(4rem + 1px + env(safe-area-inset-bottom));
 }
 /* An opening's fill bar (app/routes/org.py): a native <progress>, so its width needs no
    style attribute */
