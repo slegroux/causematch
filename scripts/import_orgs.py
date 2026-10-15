@@ -128,7 +128,10 @@ def main(argv=None, client=None, sleep=time.sleep):
     if a.delay < 0:
         p.error("--delay can't be negative")
     if a.city and a.city.lower() not in PLACE_NAMES:
-        p.error("only Los Angeles County has a ZIP list (app/la_zips.csv)")
+        p.error(
+            "not a known Los Angeles County place (app/org_import.py PLACE_NAMES); "
+            "search with one of them, or import by --ein"
+        )
 
     own = client is None
     client = client or propublica.make_client()

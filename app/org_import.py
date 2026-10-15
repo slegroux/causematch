@@ -58,7 +58,9 @@ PLACE_NAMES = {
         "Tujunga", "Valley Village", "Van Nuys", "Venice", "West Hills", "Wilmington",
         "Winnetka", "Woodland Hills",
         # unincorporated places and other postal names
-        "Acton", "Agua Dulce", "Altadena", "Canyon Country", "Castaic", "Hacienda Heights",
+        "Acton", "Agua Dulce", "Altadena", "Canyon Country", "Castaic", "East Los Angeles",
+        "Florence", "Hacienda Heights", "Harbor Gateway", "Lennox", "West Carson",
+        "Willowbrook",
         "La Canada", "La Crescenta", "Lake Hughes", "Littlerock", "Llano",
         "Marina Del Rey", "Montrose", "Newhall", "Pearblossom", "Rancho Dominguez",
         "Rowland Heights", "Saugus", "Stevenson Ranch", "Topanga", "Universal City",

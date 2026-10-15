@@ -1,9 +1,9 @@
 """Regenerate app/la_zips.csv: ZIP code areas (ZCTAs) in Los Angeles County with their internal points.
 
 A ZCTA counts as LA County when LA County holds the largest share of its land area.
-Its city flag is 1 when more than half of its land area is inside the City of Los Angeles;
-it is kept for metrics. Volunteers, openings and imported nonprofits may be anywhere in the
-county.
+Its city flag is 1 when more than half of its land area is inside the City of Los Angeles.
+Nothing reads it today; it is kept for a future city/county split. Volunteers, openings and
+imported nonprofits may be anywhere in the county.
 Sources (US Census Bureau, public domain):
   2023 Gazetteer ZCTA file (internal points)
   2020 ZCTA-to-county relationship file (land area per county)

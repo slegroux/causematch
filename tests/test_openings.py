@@ -266,18 +266,19 @@ def test_any_los_angeles_county_zip_is_accepted_for_an_opening(coord, zip_code, 
     assert (o.lat, o.lon) == geo.zip_latlon(zip_code)
 
 
+@pytest.mark.parametrize("zip_code", ["90012-1234", "9001A", "9001", " "])
+def test_a_malformed_zip_asks_for_five_digits(coord, zip_code):
+    r = post(coord, zip=zip_code)
+    assert r.status_code == 200 and "five-digit ZIP code" in r.text
+    assert "must be in Los Angeles County" not in r.text  # not blamed on the area
+    assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+
+
 @pytest.mark.parametrize("zip_code", ["94103", "00000"])
 def test_a_zip_outside_the_county_is_refused_and_says_so(coord, zip_code):
     r = post(coord, zip=zip_code)
     assert r.status_code == 200 and "Los Angeles County" in r.text
     assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
-
-
-def test_volunteers_and_openings_share_one_area():
-    """The onboarding ZIP check and the opening ZIP check read the same list."""
-    for zip_code in ("90401", "90232", "91101", "90704", "90012"):
-        assert geo.zip_latlon(zip_code)
-    assert geo.zip_latlon("94103") is None and geo.zip_latlon("00000") is None
 
 
 class _Frozen(datetime):
@@ -447,8 +448,10 @@ NOTE = "Homelessness services: group shifts only"
 def test_homelessness_services_is_offered_and_its_opening_reaches_the_deck(coord, user):
     page = coord.get("/org/openings/new").text
     assert "Homelessness services" in page
-    # the note is in the page for :has() to reveal, hidden until the cause is picked
-    assert NOTE in page and "cm-homeless-note" in page and 'cm-homeless"' not in page
+    # the note is always in the page, read with the checkbox; emphasis waits for the cause
+    assert NOTE in page and 'id="homeless-note"' in page
+    assert re.search(r'name="adult_only_ok"[^>]*aria-describedby="homeless-note"', page)
+    assert not re.search(r'<form[^>]*class="[^"]*\bcm-homeless\b', page)
     r = post(
         coord,
         cause="homelessness-services",

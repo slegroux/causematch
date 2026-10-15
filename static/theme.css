@@ -235,15 +235,17 @@ body:has(.cm-tabbar) .cm-composer {
   background-color: hsl(var(--cm-parks));
   border-radius: 9999px;
 }
-/* The opening form (app/routes/org.py): for homelessness services, the adults-only, no
-   one-to-one confirmation stands out and says what qualifies (group shifts). :has() needs
-   no script; .cm-homeless covers a form redrawn with that cause. */
+/* The opening form (app/routes/org.py): the homelessness note is always shown (muted) and
+   read with the adults-only checkbox; for that cause the confirmation stands out and says
+   what qualifies (group shifts). :has() needs no script; .cm-homeless covers a form drawn
+   with that cause, and browsers without :has(). */
 .cm-homeless-note {
-  display: none;
+  color: hsl(var(--cm-ink-muted));
 }
 form:has(select[name="cause"] option[value="homelessness-services"]:checked) .cm-homeless-note,
 form.cm-homeless .cm-homeless-note {
-  display: block;
+  color: hsl(var(--cm-brand-ink));
+  font-weight: 700;
 }
 form:has(select[name="cause"] option[value="homelessness-services"]:checked) .cm-adult-box,
 form.cm-homeless .cm-adult-box {

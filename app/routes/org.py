@@ -347,20 +347,23 @@ def OpeningForm(uid, f=None, error=None):
                 "Anything volunteers should know? Shoes, physical demands, parking. (optional)",
                 Textarea(f.get("notes", ""), name="notes", rows=3, cls="uk-textarea"),
             ),
-            # cm-adult-box (static/theme.css): stands out, with what qualifies, once the
-            # cause is homelessness services
+            # cm-adult-box (static/theme.css): the note is always there, read with the
+            # checkbox (aria-describedby), and stands out once the cause is homelessness
+            # services (:has(), or .cm-homeless on a form drawn with that cause)
             Div(
                 P(
                     "Homelessness services: group shifts only, like meal service, "
                     "hygiene kits, donation sorting or events. Not case management, "
                     "mentoring, or anything that needs a background check.",
-                    cls="cm-homeless-note text-sm font-semibold text-brand-ink",
+                    id="homeless-note",
+                    cls="cm-homeless-note text-sm",
                 ),
                 LabelCheckboxX(
                     ADULT_ONLY,
                     name="adult_only_ok",
                     value="1",
                     checked=bool(f.get("adult_only_ok")),
+                    aria_describedby="homeless-note",
                 ),
                 cls="cm-adult-box space-y-3 rounded-2xl border border-line p-4",
             ),
@@ -467,6 +470,8 @@ def _sync_new_opening_save(req, form):
         )
     if f["cause"] not in {c.slug for c in data.active_causes()}:
         return fail("Please pick a cause from the list.")
+    if not re.fullmatch(r"[0-9]{5}", f["zip"]):
+        return fail("Enter a five-digit ZIP code, like 90012.")
     latlon = zip_latlon(f["zip"])
     if not latlon:
         return fail(

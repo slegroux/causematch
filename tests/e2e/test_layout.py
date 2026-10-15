@@ -185,15 +185,23 @@ def test_nonprofit_pages_fit_a_small_phone(browser, live_url):
     page.context.close()
 
 
-def test_the_homelessness_note_shows_only_for_that_cause(browser, live_url):
+def test_the_homelessness_note_stands_out_only_for_that_cause(browser, live_url):
+    """Always shown and read with the checkbox; bold in a highlighted box once the
+    cause is homelessness services."""
     from helpers import coordinator_page
 
     page = coordinator_page(browser, live_url)
     page.goto("/org/openings/new")
     note = page.get_by_text("Homelessness services: group shifts only")
-    assert not note.is_visible()
-    page.locator('select[name="cause"]').select_option("homelessness-services")
-    assert note.is_visible()
-    page.locator('select[name="cause"]').select_option("food-insecurity")
-    assert not note.is_visible()
+    weight = "e => Number(getComputedStyle(e).fontWeight)"
+    box = page.locator(".cm-adult-box")
+    border = "e => getComputedStyle(e).borderTopWidth"
+    cause = page.locator('select[name="cause"]')
+    checkbox = page.locator('input[name="adult_only_ok"]')
+    assert note.is_visible() and note.evaluate(weight) < 700
+    assert checkbox.get_attribute("aria-describedby") == "homeless-note"
+    cause.select_option("homelessness-services")
+    assert note.evaluate(weight) >= 700 and box.evaluate(border) == "2px"
+    cause.select_option("food-insecurity")
+    assert note.evaluate(weight) < 700 and box.evaluate(border) == "1px"
     page.context.close()
