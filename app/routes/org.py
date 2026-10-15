@@ -32,7 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from app import data, notify
 from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
-from app.forms import bad_request, query, str_form
+from app.forms import bad_request, hidden_chars, query, str_form
 from app.geo import city_zip_latlon
 from app.routes.shifts import RepeatForm
 from app.ui import Checks, Choice, Field, Page, Router, TextInput, VolunteerHeader
@@ -305,6 +305,10 @@ def _sync_save_details(req, form):
     name, phone = form.get("name", "").strip(), form.get("phone", "").strip()
     if not name or len(name) > 80:
         return org_home(req, "Enter your name and role (80 characters at most).")
+    if hidden_chars(name):
+        return org_home(
+            req, "Something in your name wasn't recognized. Please try again."
+        )
     e164 = normalize_phone(phone) if phone else ""
     if phone and not e164:
         return org_home(req, BAD_PHONE)
@@ -354,6 +358,8 @@ def _sync_new_opening_save(req, form):
         return fail("Please choose your organization.")
     if any(len(f[k]) > n for k, n in LIMITS.items()):
         return fail("One of your answers is too long. Please shorten it.")
+    if any(hidden_chars(f[k], multiline=k in ("about", "notes")) for k in LIMITS):
+        return fail("Something in that form wasn't recognized. Please try again.")
     if not f["title"] or not f["about"] or not f["neighborhood"]:
         return fail(
             "Please fill in the title, what volunteers will do, and the neighborhood."

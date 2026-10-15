@@ -1086,3 +1086,10 @@ def test_a_suspended_number_is_sent_no_code(w):
     fresh = TestClient(app)
     r = fresh.post("/login/send", data={"phone": w.vol.phone})
     assert r.status_code == 200 and notify.get_verifier().sent == []
+
+
+def test_report_details_with_a_bidi_control_are_refused():
+    """A right-to-left override can make a report read as something else (review 4)."""
+    with pytest.raises(ValueError, match="can't show"):
+        data._checked_report_text("spam", "he said \u202eyas ton")
+    assert data._checked_report_text("spam", " plain text ") == "plain text"

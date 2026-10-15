@@ -40,6 +40,12 @@ FILLERS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
 # paragraph separators: none belongs in a name or a bio
 HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cn", "Cs", "Zl", "Zp"})
 ZWJ = "\u200d"
+EMOJI_STYLE = "\ufe0f"
+# Marks that draw nothing: the combining grapheme joiner, Khmer and Mongolian ones,
+# variation selectors (U+FE0F is EMOJI_STYLE, checked on its own)
+IGNORABLE_MARKS = re.compile(
+    "[\u034f\u17b4\u17b5\u180b-\u180f\ufe00-\ufe0e\U000e0100-\U000e01ef]"
+)
 MAX_MARKS = 3  # combining marks on one character; more is "Zalgo" text
 HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 
@@ -47,21 +53,34 @@ HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 def hidden_chars(text, multiline=False):
     """True when `text` holds a character that would hide, reorder or break what is
     shown: a format or control character (bidi controls, zero-width spaces, tags), a
-    private-use or unassigned code point, a filler, a line separator, or more than
-    MAX_MARKS combining marks in a row. Multiline text may hold line breaks and tabs, and
-    a zero-width joiner between two characters (emoji like the rainbow flag use one)."""
+    private-use or unassigned code point, a filler, a line separator, a mark that is
+    invisible by default (IGNORABLE_MARKS) or has no base character before it, or more
+    than MAX_MARKS combining marks on one character. Multiline text may hold line breaks
+    and tabs, and a zero-width joiner between two characters (emoji like the rainbow flag
+    use one); a joiner doesn't start a new character, so marks around it add up. The
+    emoji variation selector U+FE0F is allowed only right after an emoji (category So)."""
     marks = 0
     for i, c in enumerate(text):
         category = unicodedata.category(c)
-        if c in "\n\r\t" or c == ZWJ:
+        if c in "\n\r\t":
+            if not multiline:
+                return True
+        elif c == ZWJ:
             inside = 0 < i < len(text) - 1 and not (
                 text[i - 1].isspace() or text[i + 1].isspace()
             )
-            if not multiline or (c == ZWJ and not inside):
+            if not (multiline and inside):
                 return True
-        elif category in HIDDEN_CATEGORIES or c in FILLERS:
+            continue  # the marks on either side count as one character's
+        elif c == EMOJI_STYLE:
+            if i == 0 or unicodedata.category(text[i - 1]) != "So":
+                return True
+            continue
+        elif IGNORABLE_MARKS.match(c) or category in HIDDEN_CATEGORIES or c in FILLERS:
             return True
         if category in ("Mn", "Me"):
+            if i == 0 or text[i - 1].isspace():
+                return True  # a mark needs a character to sit on
             marks += 1
             if marks > MAX_MARKS:
                 return True

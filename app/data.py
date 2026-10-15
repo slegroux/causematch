@@ -16,6 +16,7 @@ from app import match as _match
 from app import photos as _photos
 from app.choices import ANY_DISTANCE_KM, INTERESTS
 from app.config import phone_hash_key
+from app.forms import BIDI
 from app.metrics_rows import fetch_rows
 
 
@@ -398,10 +399,10 @@ def org_inbox(coordinator_uid):
                 "id": r["id"],
                 "status": r["status"],
                 "opening": r["title"],
-                "name": volunteer_name(
-                    r["display_name"],
-                    None if blocked else r["last_name"],
-                    r["status"] == "accepted",
+                "name": BLOCKED_NAME
+                if blocked
+                else volunteer_name(
+                    r["display_name"], r["last_name"], r["status"] == "accepted"
                 ),
                 "photo_key": None if blocked else r["photo_key"],
                 "pronouns": None if blocked else r["pronouns"],
@@ -661,10 +662,12 @@ def org_shifts(coordinator_uid):
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
         row["first_name"] = _first_name(r["display_name"])
-        row["name"] = volunteer_name(
-            r["display_name"],
-            None if r["blocked"] else r["last_name"],
-            r["match_status"] == "accepted",
+        row["name"] = (
+            BLOCKED_NAME
+            if r["blocked"]
+            else volunteer_name(
+                r["display_name"], r["last_name"], r["match_status"] == "accepted"
+            )
         )
         row["photo_key"] = None if r["blocked"] else r["photo_key"]
         row["weekly"] = r["recurrence"] == "weekly"
@@ -720,6 +723,11 @@ def _first_name(name):
     return parts[0] if parts else "Volunteer"
 
 
+# What an org sees for a volunteer after a block either way: no live field at all, so the
+# volunteer can't keep changing what that org reads (their first name included)
+BLOCKED_NAME = "Volunteer"
+
+
 def volunteer_name(first, last, full=False):
     """What a nonprofit calls a volunteer: "Sam L." until it accepts them, "Sam Lee" once
     it has (full); just "Sam" when they gave no last name."""
@@ -749,7 +757,8 @@ def _names(ids):
 def send_message(uid, match_id, body):
     """Save a message from a participant of an accepted match and return it.
 
-    ValueError for a non-string, an empty message, or one over 2000 characters;
+    ValueError for a non-string, an empty message, one over 2000 characters, or one
+    holding a bidi control;
     PermissionError when this user may not write in this chat.
     """
     if not isinstance(body, str):
@@ -757,6 +766,8 @@ def send_message(uid, match_id, body):
     body = body.strip()
     if not body or len(body) > MAX_MESSAGE:
         raise ValueError(f"message must be 1 to {MAX_MESSAGE} characters")
+    if BIDI.search(body):  # a bidi control can make a message read as something else
+        raise ValueError("message holds a character we can't show")
     chat_access(uid, match_id, write=True)
     msg = _db.messages.insert(
         match_id=match_id, sender_id=uid, body=body, created_at=_now()
@@ -798,16 +809,23 @@ def chat_header(uid, match_id):
         volunteer = get_profile(m.volunteer_id)
         # what photo_for hides hides the last name too, and so does a block with the
         # org of this match (photo_for looks at all of the coordinator's orgs)
+        blocked = bool(volunteer) and (
+            _org_blocked_volunteer(volunteer.id, o.org_id)
+            or _volunteer_blocked_org(volunteer.id, o.org_id)
+        )
         seen = (
             bool(volunteer)
-            and not _org_blocked_volunteer(volunteer.id, o.org_id)
-            and not _volunteer_blocked_org(volunteer.id, o.org_id)
+            and not blocked
             and _sees_volunteer(get_profile(uid), volunteer.id)
         )
-        other = volunteer_name(
-            volunteer.display_name if volunteer else "",
-            volunteer.last_name if seen else "",
-            m.status == "accepted",
+        other = (
+            BLOCKED_NAME
+            if blocked
+            else volunteer_name(
+                volunteer.display_name if volunteer else "",
+                volunteer.last_name if seen else "",
+                m.status == "accepted",
+            )
         )
         if seen:
             photo = volunteer.photo_key
@@ -1376,6 +1394,8 @@ def _checked_report_text(reason, details):
         raise ValueError("choose a reason")
     if not isinstance(details, str) or len(details.strip()) > MAX_DETAILS:
         raise ValueError(f"details can be up to {MAX_DETAILS} characters")
+    if BIDI.search(details):  # reordering characters can make a report read wrong
+        raise ValueError("details hold a character we can't show")
     return details.strip()
 
 
@@ -1420,9 +1440,9 @@ def org_match_volunteer(coordinator_uid, match_id):
     blocked = _org_blocked_volunteer(p.id, o.org_id) or _volunteer_blocked_org(
         p.id, o.org_id
     )
-    return volunteer_name(
-        p.display_name, None if blocked else p.last_name, m.status == "accepted"
-    )
+    if blocked:
+        return BLOCKED_NAME
+    return volunteer_name(p.display_name, p.last_name, m.status == "accepted")
 
 
 def report_org(uid, match_id, reason, details=""):

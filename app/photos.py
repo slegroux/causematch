@@ -8,9 +8,12 @@ whatever a browser is later given is a JPEG Pillow wrote, not the uploader's byt
 import io
 import math
 import secrets
+import subprocess
+import sys
 import threading
 import warnings
 from collections import namedtuple
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageFilter, ImageOps, UnidentifiedImageError
 
@@ -84,42 +87,67 @@ JpegFrame = namedtuple("JpegFrame", "sof scans first_ns")
 
 
 def jpeg_frame(raw):
-    """(the first SOF marker, the number of scans, the components in the first scan) of
-    a JPEG's top-level marker stream, counting at most MAX_SCANS + 1 scans. Segments are
-    skipped by their length, so a thumbnail inside EXIF doesn't count; entropy-coded data
-    and stray bytes are skipped up to the next real marker, the way libjpeg reads them."""
-    i, n, sof, scans, first_ns = 2, len(raw), None, 0, 0
-    while i + 4 <= n and scans <= MAX_SCANS:
-        if raw[i] != 0xFF:  # stray bytes: libjpeg skips to the next marker, so do we
-            if (i := raw.find(b"\xff", i)) == -1:
-                break
-            continue
-        marker = raw[i + 1]
-        if marker == 0xFF:  # fill byte
+    """(the SOF marker, the number of scans, the components in the first scan) of a
+    JPEG, counting at most MAX_SCANS + 1 scans; BadPhoto for any stream this can't read
+    exactly as libjpeg does. Fail closed: between segments only a marker may follow
+    (fill bytes allowed), so no stray bytes and no FF 00, and one SOF before any scan.
+    Inside entropy-coded data, as in libjpeg, FF* 00 is data, FF* D0-D7 a restart, and
+    any other FF* xx the next marker. A thumbnail inside EXIF is skipped by its length."""
+    n = len(raw)
+    if raw[:2] != b"\xff\xd8":
+        raise BadPhoto("not a JPEG")
+    i, sof, scans, first_ns = 2, None, 0, 0
+    while True:
+        if i >= n or raw[i] != 0xFF:
+            raise BadPhoto("bytes where a JPEG marker should be")
+        while i < n and raw[i] == 0xFF:  # fill bytes before the marker
             i += 1
-            continue
-        if marker == 0xD9:  # end of image
+        if i >= n:
+            raise BadPhoto("a JPEG cut short")
+        marker = raw[i]
+        i += 1
+        if marker == 0xD9:  # end of image: anything after it is never read
             break
-        if 0xD0 <= marker <= 0xD7 or marker == 0x01:  # no length
-            i += 2
-            continue
-        if marker in SOF_ANY and sof is None:
+        if marker == 0x00 or 0xD0 <= marker <= 0xD8 or marker == 0x01:
+            raise BadPhoto("a JPEG marker out of place")
+        if i + 2 > n or (length := int.from_bytes(raw[i : i + 2], "big")) < 2:
+            raise BadPhoto("a JPEG segment cut short")
+        end = i + length
+        if end > n:
+            raise BadPhoto("a JPEG segment cut short")
+        if marker in SOF_ANY:
+            if sof is not None:
+                raise BadPhoto("two JPEG frames")
             sof = marker
-        if marker == 0xDA and scans == 0 and i + 4 < n:
-            first_ns = raw[i + 4]  # FF DA, a 2-byte length, then Ns
-        i += 2 + int.from_bytes(raw[i + 2 : i + 4], "big")
-        if marker != 0xDA:
-            continue
-        scans += 1
-        while (j := raw.find(b"\xff", i)) != -1 and j + 1 < n:
-            nxt = raw[j + 1]
-            if nxt != 0 and not 0xD0 <= nxt <= 0xD7:  # a marker, not stuffing or RSTn
+        if marker == 0xDA:
+            if sof is None or length < 3:
+                raise BadPhoto("a JPEG scan before its frame")
+            scans += 1
+            if scans == 1:
+                first_ns = raw[i + 2]
+            if scans > MAX_SCANS:
                 break
-            i = j + 2
+            i = _entropy_end(raw, end)
         else:
-            break
-        i = j
+            i = end
     return JpegFrame(sof, scans, first_ns)
+
+
+def _entropy_end(raw, i):
+    """Where a scan's entropy-coded data starting at i ends: the first FF of the next
+    marker. FF FF ... 00 is a stuffed FF and FF FF ... D0-D7 a restart, as libjpeg reads
+    them, so a run of FFs can't hide a marker."""
+    n = len(raw)
+    while (j := raw.find(b"\xff", i)) != -1:
+        k = j + 1
+        while k < n and raw[k] == 0xFF:
+            k += 1
+        if k >= n:
+            break
+        if raw[k] != 0x00 and not 0xD0 <= raw[k] <= 0xD7:
+            return j
+        i = k + 1
+    raise BadPhoto("a JPEG cut short")
 
 
 def _check(raw):
@@ -166,10 +194,8 @@ def _check(raw):
 
 def _open(raw):
     """The decoded image, upright, at most WORK_PIXELS; BadPhoto for anything _check
-    refuses or Pillow can't read; Busy when no decode slot frees up within WAIT seconds."""
+    refuses or Pillow can't read."""
     w, h, jpeg = _check(raw)
-    if not _decoding.acquire(timeout=WAIT):
-        raise Busy("both decode slots are taken")
     try:
         scale = min(1, (WORK_PIXELS / (w * h)) ** 0.5)
         size = (max(1, math.ceil(w * scale)), max(1, math.ceil(h * scale)))
@@ -190,8 +216,6 @@ def _open(raw):
         EOFError,
     ) as e:
         raise BadPhoto("not a readable picture") from e
-    finally:
-        _decoding.release()
 
 
 def _flat(im, background=(255, 255, 255)):
@@ -262,8 +286,9 @@ def _logo(im):
     return out
 
 
-def process(raw, kind="volunteer"):
-    """(full, thumb) JPEGs of an uploaded picture, by what it is for:
+def process_here(raw, kind="volunteer"):
+    """(full, thumb) JPEGs of an uploaded picture, by what it is for, decoded in this
+    process (app/photo_worker.py runs it; everything else calls process):
 
     - volunteer: the whole picture at most FULL px on its longest side;
     - card: an org's or opening's photo, centre-cut to the swipe card's 3:2 (CARD);
@@ -282,3 +307,68 @@ def process(raw, kind="volunteer"):
     full = im.copy()
     full.thumbnail((FULL, FULL), Image.Resampling.LANCZOS)
     return Processed(_jpeg(full), _jpeg(_square(im, THUMB)))
+
+
+# The decode runs in a child process (app/photo_worker.py), so a picture that slips past
+# _check's limits can't take the app down with it: it is killed after WORKER_TIMEOUT
+# seconds on every platform, and on Linux (Cloud Run) it also can't map more than
+# WORKER_MEMORY or use more than WORKER_CPU seconds. macOS doesn't enforce RLIMIT_AS, so
+# development gets the CPU limit and the timeout only.
+WORKER_TIMEOUT = 10  # seconds of wall clock, then the child is killed
+WORKER_MEMORY = 512 * 2**20  # bytes of address space: a decode peaks under 200 MB RSS
+WORKER_CPU = 8  # seconds
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def worker_command(kind):
+    """The child that decodes one picture: -E and -s, so no PYTHON* variable or user
+    site-packages changes what it imports; the repo root is its working directory."""
+    return [
+        sys.executable,
+        "-E",
+        "-s",
+        "-m",
+        "app.photo_worker",
+        kind,
+        str(WORKER_MEMORY),
+        str(WORKER_CPU),
+    ]
+
+
+def _is_jpeg(b):
+    return b[:2] == b"\xff\xd8" and b[-2:] == b"\xff\xd9"
+
+
+def process(raw, kind="volunteer"):
+    """process_here's (full, thumb), decoded in a child process, at most two at a time.
+
+    The header checks (_check) run here first, so most refusals cost no child and no
+    slot. BadPhoto for a refused picture and for a child that failed, ran out of time or
+    memory, or answered something other than two JPEGs; Busy when no slot frees up
+    within WAIT seconds."""
+    if len(raw) > MAX_UPLOAD:
+        raise BadPhoto("too large")
+    _check(raw)
+    if not _decoding.acquire(timeout=WAIT):
+        raise Busy("both decode slots are taken")
+    try:
+        done = subprocess.run(
+            worker_command(kind),
+            input=raw,
+            capture_output=True,
+            timeout=WORKER_TIMEOUT,
+            cwd=ROOT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:  # run() has killed and reaped the child
+        raise BadPhoto("the picture took too long to decode") from e
+    finally:
+        _decoding.release()
+    out = done.stdout
+    if done.returncode != 0 or len(out) < 8:
+        raise BadPhoto("the picture couldn't be decoded")
+    size = int.from_bytes(out[:8], "big")
+    full, thumb = out[8 : 8 + size], out[8 + size :]
+    if not (_is_jpeg(full) and _is_jpeg(thumb)):
+        raise BadPhoto("the decoder answered something else")
+    return Processed(full, thumb)

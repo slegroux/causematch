@@ -83,6 +83,11 @@ def test_optional_fields_can_be_cleared(user):
         ({"bio": "e\u0301\u0302\u0303\u0304"}, "wasn't recognized"),  # 4 marks
         ({"pronouns": "they\u2028them"}, "wasn't recognized"),  # line separator
         ({"bio": "private \ue000"}, "wasn't recognized"),  # private use
+        ({"last_name": "\u0301"}, "wasn't recognized"),  # a mark with nothing under it
+        ({"last_name": "Le\u034fe"}, "wasn't recognized"),  # grapheme joiner
+        ({"last_name": "Lee\ufe00"}, "wasn't recognized"),  # variation selector
+        ({"last_name": "Lee\ufe0f"}, "wasn't recognized"),  # emoji style, no emoji
+        ({"bio": "e\u0301\u0302\u200d\u0303\u0304"}, "wasn't recognized"),  # ZWJ
     ],
 )
 def test_bad_details_are_refused_and_change_nothing(user, over, message):
@@ -94,7 +99,7 @@ def test_bad_details_are_refused_and_change_nothing(user, over, message):
 
 
 def test_a_bio_keeps_emoji_line_breaks_and_accents(user):
-    bio = "Proud \U0001f3f3\ufe0f\u200d\U0001f308 volunteer.\nJosé, Zoë, Đorđe."
+    bio = "Proud \U0001f3f3\ufe0f\u200d\U0001f308 volunteer, I \u2764\ufe0f LA.\nJosé, Zoë."
     assert save(user, bio=bio, last_name="Nguyễn").status_code == 303
     assert profiles[uid_of(user)].bio == bio
 

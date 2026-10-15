@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import warnings
 import zlib
 from pathlib import Path
@@ -507,7 +508,7 @@ def peak():
     return r if sys.platform == "darwin" else r * 1024  # bytes on macOS, KB on Linux
 before = peak()
 try:
-    photos.process(raw, sys.argv[2])
+    photos.process_here(raw, sys.argv[2])  # in this process: its memory is measured
     result = "ok"
 except photos.BadPhoto:
     result = "refused"
@@ -696,9 +697,14 @@ def test_scans_are_counted_by_the_marker_stream():
     n = len(scan_bounds(raw))
     assert n > 1 and photos.jpeg_frame(raw) == (0xC2, n, 3)  # first: DC of all three
     assert photos.jpeg_frame(jpeg((64, 64))) == (0xC0, 1, 3)
-    # stray bytes before a marker don't hide the scans after them from the count
+    # bytes where a marker should be are refused outright (libjpeg would skip them)
     start, _ = scan_bounds(raw)[1]
-    assert photos.jpeg_frame(raw[:start] + b"\x00\x00" + raw[start:]).scans == n
+    with pytest.raises(photos.BadPhoto, match="marker should be"):
+        photos.jpeg_frame(raw[:start] + b"\x00\x00" + raw[start:])
+    # FF FF 00 inside entropy data is a stuffed FF, as in libjpeg: it hides no scan
+    _, first_end = scan_bounds(raw)[0]
+    padded = raw[:first_end] + b"\xff\xff\x00\x00\x10" + raw[first_end:]
+    assert photos.jpeg_frame(padded).scans == n
     s, e = scan_bounds(raw)[-1]
     many = raw[:e] + raw[s:e] * 60 + raw[e:]
     assert photos.jpeg_frame(many).scans == photos.MAX_SCANS + 1  # stops counting there
@@ -746,6 +752,13 @@ def test_after_a_block_the_org_sees_no_profile_details(user, coord, blocker):
     )
     assert r.headers["location"] == "/deck"
     assert profiles[uid].neighborhood == "Chinatown"
+    # nor can a first name changed after the block: the org sees "Volunteer"
+    r = user.post(
+        "/me/profile/details",
+        data={"first_name": "Renamed", "last_name": "", "pronouns": "", "bio": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and profiles[uid].display_name == "Renamed"
     rows = [r for box in data.org_inbox(_coord_uid()).values() for r in box]
     assert rows, "the past match stays listed"
     for page in ("/org/inbox", f"/org/chat/{m.id}", f"/org/matches/{m.id}/report"):
@@ -764,7 +777,7 @@ def test_after_a_block_the_org_sees_no_profile_details(user, coord, blocker):
             assert hidden not in html, (page, hidden)
         assert "/photos/" not in html, page
     (row,) = rows
-    assert row["name"] == "Sam" and row["bio"] is None and row["interests"] == []
+    assert row["name"] == "Volunteer" and row["bio"] is None and row["interests"] == []
     assert (row["neighborhood"], row["frequency"]) == (None, None)
     assert row["causes"] == [] and row["availability"] == []
 
@@ -778,3 +791,121 @@ def test_only_baseline_extended_and_progressive_jpegs_are_read():
         with pytest.raises(photos.BadPhoto, match="unsupported"):
             photos.process(crafted)
     assert photos.jpeg_frame(one_component_scan(raw)) == (0xC0, 1, 1)
+
+
+# --- review pass 4: a header walk that fails closed, and the decode in a child -------------
+
+
+def _decoy(segment):
+    """FF 00, then a length a careless parser would jump by, landing on `segment` hidden
+    in a COM that libjpeg skips: libjpeg discards the FF 00 and the two bytes after it."""
+    com = b"\xff\xfe" + (2 + len(segment)).to_bytes(2, "big") + segment
+    return b"\xff\x00\x00\x06" + com
+
+
+def test_ff_00_cant_hide_a_non_interleaved_scan():
+    raw = one_component_scan(jpeg((64, 64)))
+    start, _ = scan_bounds(raw)[0]
+    decoy = b"\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00"
+    probe = raw[:start] + _decoy(decoy) + raw[start:]
+    Image.open(io.BytesIO(probe))  # Pillow reads its header: a real divergence
+    with pytest.raises(photos.BadPhoto, match="out of place"):
+        photos.jpeg_frame(probe)
+    with pytest.raises(photos.BadPhoto):
+        photos.process(probe)
+
+
+def test_ff_00_cant_hide_an_unsupported_frame():
+    raw = jpeg((64, 64))
+    sof = raw.index(b"\xff\xc0")
+    decoy = raw[sof : sof + 2 + int.from_bytes(raw[sof + 2 : sof + 4], "big")]
+    lossless = raw[: sof + 1] + b"\xc3" + raw[sof + 2 :]
+    probe = lossless[:sof] + _decoy(decoy) + lossless[sof:]
+    with pytest.raises(photos.BadPhoto):
+        photos.jpeg_frame(probe)
+    with pytest.raises(photos.BadPhoto):
+        photos.process(probe)
+
+
+def _cut_short(raw, start, end):
+    return raw[: end - 10]
+
+
+def _soi_again(raw, start, end):
+    return raw[:end] + b"\xff\xd8\xff\xd9"
+
+
+def _stray_byte(raw, start, end):
+    return raw[:start] + b"\x00" + raw[start:]
+
+
+def _scan_first(raw, start, end):
+    sof = raw.index(b"\xff\xc0")
+    return raw[:sof] + raw[start:end] + raw[sof:]
+
+
+@pytest.mark.parametrize("damage", [_cut_short, _soi_again, _stray_byte, _scan_first])
+def test_a_malformed_marker_stream_is_refused(damage):
+    raw = jpeg((64, 64))
+    start, end = scan_bounds(raw)[0]
+    with pytest.raises(photos.BadPhoto):
+        photos.jpeg_frame(damage(raw, start, end))
+
+
+def test_the_decode_runs_in_a_child_and_returns_two_jpegs():
+    out = photos.process(jpeg((1600, 1200)))
+    assert out.full[:2] == b"\xff\xd8" and Image.open(io.BytesIO(out.full)).size == (
+        800,
+        600,
+    )
+    assert Image.open(io.BytesIO(out.thumb)).size == (160, 160)
+
+
+def test_a_decode_that_runs_too_long_is_killed(monkeypatch):
+    """The test stands a sleeping child in for the decoder: the timeout, not a file."""
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    monkeypatch.setattr(photos, "worker_command", lambda kind: sleeper)
+    monkeypatch.setattr(photos, "WORKER_TIMEOUT", 1)
+    started = time.monotonic()
+    with pytest.raises(photos.BadPhoto, match="too long"):
+        photos.process(jpeg())
+    assert time.monotonic() - started < 10
+    assert photos._decoding.acquire(timeout=0) and photos._decoding.acquire(timeout=0)
+    photos._decoding.release()
+    photos._decoding.release()
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import sys; sys.exit(1)",  # crashed, or was killed by a limit
+        "import sys; sys.stdout.buffer.write(b'<html>' * 4)",  # answered something else
+        "import os, signal; os.kill(os.getpid(), signal.SIGKILL)",
+    ],
+    ids=["exit-1", "not-jpeg", "killed"],
+)
+def test_a_failed_child_is_a_bad_photo(monkeypatch, script):
+    monkeypatch.setattr(
+        photos, "worker_command", lambda kind: [sys.executable, "-c", script]
+    )
+    with pytest.raises(photos.BadPhoto):
+        photos.process(jpeg())
+
+
+def test_a_picture_at_the_caps_fits_the_childs_limits(crafted):
+    """On Linux this runs under RLIMIT_AS and RLIMIT_CPU: the limits leave room for a
+    real decode at the caps."""
+    out = photos.process((crafted / "prog-12mp.jpg").read_bytes(), "card")
+    assert Image.open(io.BytesIO(out.full)).size == photos.CARD
+    assert photos.process((crafted / "12mp-rgba.png").read_bytes(), "logo").full
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="macOS doesn't enforce RLIMIT_AS; production (Cloud Run) is Linux, where "
+    "this runs",
+)
+def test_the_childs_memory_is_capped(monkeypatch, crafted):
+    monkeypatch.setattr(photos, "WORKER_MEMORY", 64 * 2**20)
+    with pytest.raises(photos.BadPhoto):
+        photos.process((crafted / "12mp-rgba.png").read_bytes(), "logo")
