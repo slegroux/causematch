@@ -242,15 +242,15 @@ def deck_view(req):
 
 def FilterSheet(uid, today, count, view):
     """The deck's quick filters, in a <details> over the card's top corner (no script):
-    the main place's travel time, which causes show, and this week only. They narrow this
-    visit's deck and change no saved preference. Its button says how many cards the deck
+    the main place's travel time, which causes show, and this week only. They hold until
+    cleared and change no saved preference. Its button says how many cards the deck
     holds."""
     view = view or {}
     f = data.preferences(uid)
     main = f["places"][0] if f["places"] else None
     minutes = view.get("max_minutes", main and main["max_minutes"])
     allowed = [c for c in data.active_causes() if f["causes"].get(c.slug) != prefs.NO]
-    shown = view.get("causes", [c.slug for c in allowed])
+    shown = [c.slug for c in allowed if c.slug not in view.get("hidden", [])]
     return Details(
         Summary(
             Icon(SLIDERS, size=18),
@@ -269,7 +269,7 @@ def FilterSheet(uid, today, count, view):
         PlainForm(
             Hidden(name="today", value="1") if today else None,
             P(
-                "Just for this visit. To keep a change, edit ",
+                "These hold until you clear them. To keep a change, edit ",
                 A(
                     "your preferences",
                     href="/me/preferences",
@@ -347,9 +347,7 @@ def DeckArea(uid, today=False, view=None, notice=None):
     )
     if not cards:
         data.record_empty_deck(uid, today)
-        relax = (view and data.view_relaxation(uid, today, view)) or data.relaxations(
-            uid, today
-        )
+        relax = data.relaxations(uid, today, view)
         return Div(note, EmptyDeck(today, relax), sheet, id="deck-area", cls="relative")
     c = cards[0]
     return Div(
@@ -402,14 +400,25 @@ def _sync_filters(req, form):
         minutes is not None and minutes not in {str(m) for m, _ in MAX_MINUTES}
     ) or not set(shown) <= {c.slug for c in data.active_causes()}:
         return bad_request()
-    if form.get("clear") == "1":
+    saved = data.preferences(req.scope["uid"])
+    main = saved["places"][0] if saved["places"] else None
+    # only what differs from the saved preferences, so the view pins nothing else
+    view = {}
+    if minutes is not None and main and int(minutes) != main["max_minutes"]:
+        view["max_minutes"] = int(minutes)
+    hidden = sorted(
+        c.slug
+        for c in data.active_causes()
+        if c.slug not in shown and saved["causes"].get(c.slug) != prefs.NO
+    )
+    if hidden:
+        view["hidden"] = hidden
+    if form.get("this_week") == "1" and not 0 < saved["horizon_days"] <= 7:
+        view["this_week"] = True
+    if form.get("clear") == "1" or not view:
         req.session.pop(VIEW, None)
-    else:  # this visit only: the session, never the saved preferences
-        req.session[VIEW] = {
-            **({"max_minutes": int(minutes)} if minutes is not None else {}),
-            "causes": sorted(set(shown)),
-            "this_week": form.get("this_week") == "1",
-        }
+    else:  # the session, never the saved preferences
+        req.session[VIEW] = view
     return Redirect("/deck?today=1" if form.get("today") == "1" else "/deck")
 
 

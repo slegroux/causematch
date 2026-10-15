@@ -192,9 +192,13 @@ def _when_ok(p, o):
 
 
 def record_empty_deck(uid, today=False):
-    """Log an empty deck, once per volunteer per hour: refreshing doesn't inflate it."""
+    """Log an empty deck, once per volunteer and mode per hour: refreshing doesn't
+    inflate it, and the "I'm free today" split stays whole."""
     hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
-    if not _db.deck_empties.count_where("volunteer_id = ? AND at > ?", [uid, hour_ago]):
+    if not _db.deck_empties.count_where(
+        "volunteer_id = ? AND coalesce(today, 0) = ? AND at > ?",
+        [uid, int(bool(today)), hour_ago],
+    ):
         _db.deck_empties.insert(_db.DeckEmpty(volunteer_id=uid, today=today, at=_now()))
 
 
@@ -255,17 +259,25 @@ def _relaxation_labels(p):
     return out
 
 
-def relaxations(uid, today=False):
-    """{"key", "label", "more"}: the one change that adds the most cards, or None. For a
-    place, only its shortest wider travel time that adds any is offered."""
+def relaxations(uid, today=False, view=None):
+    """{"key", "label", "more"}: the one change that adds the most cards to the deck as
+    shown (the saved preferences under the filter sheet's view), or None. With a view on,
+    "Clear filters" comes first; a saved change is offered only when it adds cards even
+    under the view, so taking it never changes a preference for nothing. For a place,
+    only its shortest wider travel time that adds any is offered."""
     p = _deck_prefs(_db.profiles[uid])
-    base = len(_deck_openings(uid, today, p))
+    base = len(_deck_openings(uid, today, _viewed(p, view)))
+    options = [("clear_view", "Clear filters", p)] if view else []
+    options += [
+        (key, label, _viewed(_relaxed(p, key), view))
+        for key, label in _relaxation_labels(p).items()
+    ]
     best, widened = None, set()
-    for key, label in _relaxation_labels(p).items():
+    for key, label, q in options:
         place = key.split(":")[1] if key.startswith("widen:") else None
         if place in widened:
             continue
-        more = len(_deck_openings(uid, today, _relaxed(p, key))) - base
+        more = len(_deck_openings(uid, today, q)) - base
         if more > 0 and place is not None:
             widened.add(place)
         if more > 0 and (best is None or more > best["more"]):
@@ -322,18 +334,18 @@ def apply_relaxation(uid, key):
 
 
 def _viewed(p, view):
-    """_deck_prefs() narrowed by the deck's filter sheet, for this visit only: the saved
-    preferences never change. view: {"max_minutes", "causes", "this_week"} or None.
-    max_minutes sets the main place's reach (only while distance is a dealbreaker), causes
-    lists the ones to show (the others are hidden like "not for me"), this_week caps the
-    horizon at 7 days."""
+    """_deck_prefs() under the deck's filter sheet, until the volunteer clears it (it lives
+    in the session; the saved preferences never change). view: {"max_minutes", "hidden",
+    "this_week"}, each only when it differs from the saved value, or None.
+
+    max_minutes sets the main place's travel time (only while distance is "Only show"; it
+    may widen as well as narrow), hidden causes are hidden like "not for me", and
+    this_week caps the horizon at 7 days. Nothing else can be loosened."""
     if not view:
         return p
     q = {**p, "causes": dict(p["causes"])}
-    if view.get("causes") is not None:
-        for c in active_causes():
-            if c.slug not in view["causes"]:
-                q["causes"][c.slug] = _prefs.NO
+    for slug in view.get("hidden", []):
+        q["causes"][slug] = _prefs.NO
     if view.get("this_week") and not 0 < p["horizon_days"] <= 7:
         q["horizon_days"] = 7
     minutes = view.get("max_minutes")
@@ -349,18 +361,6 @@ def _viewed(p, view):
             *p["places"][1:],
         ]
     return q
-
-
-def view_relaxation(uid, today, view):
-    """{"key": "clear_view", ...}: clearing the filter sheet, when that adds cards."""
-    me = _db.profiles[uid]
-    p = _deck_prefs(me)
-    more = len(_deck_openings(uid, today, p)) - len(
-        _deck_openings(uid, today, _viewed(p, view))
-    )
-    return (
-        {"key": "clear_view", "label": "Clear filters", "more": more} if more else None
-    )
 
 
 def _org_reply_rates():
@@ -577,10 +577,11 @@ def _swipe(uid, opening_id, liked, today=False, view=None):
         ):
             return _match_for(uid, opening_id), False
         p = _deck_prefs(_db.profiles[uid])
-        seen = {o.id for o, *_ in _deck_openings(uid, False, p)}
-        if (today or view) and opening_id not in seen:
-            seen |= {o.id for o, *_ in _deck_openings(uid, today, _viewed(p, view))}
-        if opening_id not in seen:
+        drawn = _deck_openings(uid, today, _viewed(p, view))  # the deck it was shown in
+        if opening_id not in {o.id for o, *_ in drawn} and (
+            not (today or view)
+            or opening_id not in {o.id for o, *_ in _deck_openings(uid, False, p)}
+        ):
             raise LookupError("no such opening")
         _db.swipes.insert(
             _db.Swipe(

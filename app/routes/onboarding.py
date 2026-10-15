@@ -15,7 +15,7 @@ ar = Router()
 
 ADULTS_ONLY = "Causematch is for adults 18+"
 LA_ONLY = "Causematch is only in Los Angeles for now"
-FIVE_DIGITS = "Enter a five-digit ZIP code, like 90012."
+FIVE_DIGITS = prefs.FIVE_DIGITS
 NO_PLACE = (
     "Tell us where you'll help from: a neighborhood, a ZIP code or your location."
 )
@@ -214,9 +214,10 @@ def _sync_onboarding_save(req, form):
     where = " ".join(posted["where"].split())
     if not where:
         return fail(NO_PLACE)
-    if where.isdigit() and len(where) != 5:
+    typed_zip = prefs.as_zip(where)
+    if typed_zip == "":
         return fail(FIVE_DIGITS)
-    if where.isdigit() and not zip_latlon(where):
+    if typed_zip and not zip_latlon(typed_zip):
         return fail(LA_ONLY)
     place, error = prefs.resolve_place({**posted, "label": "Home"}, None, 0)
     if error:

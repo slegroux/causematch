@@ -402,11 +402,17 @@ def privacy():
             "reporter wrote, and the pilot's aggregate statistics.",
         ),
         Section(
-            "Your preferences are private",
-            "Only you see your preferences. They decide which openings you see and in "
-            "what order; no nonprofit sees your places, ratings, dates or the rest. A "
-            "nonprofit you like sees only what the paragraph above lists: the causes you "
-            "love or are open to, and a general summary of when you're free.",
+            "What stays private, and what a nonprofit sees",
+            "Only you see these: your places and your device's location, how you rated "
+            "each cause, the days and times you ticked and your specific dates, how far "
+            "ahead you look, one-time or recurring, the kind of work, languages and "
+            "skills you picked, which preferences only show or only rank, and Surprise "
+            "me. They decide which openings you see and in what order.",
+            "A nonprofit sees what the paragraph above lists, and only after you like one "
+            "of its openings: your first name, the causes you love or are open to, a "
+            "general summary of when you're free (weekday or weekend mornings, "
+            "afternoons, evenings), how often you'd like to help and the neighborhood "
+            "you gave.",
         ),
         Section(
             "Who else handles your data",

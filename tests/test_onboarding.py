@@ -235,7 +235,7 @@ def test_onboarding_allows_location_and_has_no_inline_script(new_user):
 def test_privacy_page_lists_places_and_preferences_as_private(anon):
     page = anon.get("/privacy").text
     assert "places" in page and "never an address" in page
-    assert "Only you see your preferences" in page
+    assert "Only you see these:" in page
 
 
 def test_onboarding_once_done_cannot_be_posted_again(user):
@@ -292,3 +292,78 @@ def test_vietnamese_names_are_fine_composed_or_not(new_user, name):
     )
     assert r.status_code == 303
     assert profile_of(new_user).display_name == name
+
+
+def test_privacy_page_says_exactly_what_is_shared_and_what_is_private(anon):
+    from html import unescape
+
+    from app.choices import SHARED_WITH_NONPROFIT
+
+    page = unescape(anon.get("/privacy").text)
+    private = page.split("Only you see these:")[1].split(". They decide")[0]
+    shared = page.split("A nonprofit sees what the paragraph above lists")[1]
+    shared = shared.split("you gave.")[0]
+    assert SHARED_WITH_NONPROFIT in page
+    # each thing the consent shares is named as shared, and none of it as private
+    for item, words in (
+        ("first name", "first name"),
+        ("causes", "causes you love or are open to"),
+        ("availability", "general summary of when you're free"),
+        ("how often", "how often you'd like to help"),
+        ("neighborhood", "neighborhood you gave"),
+    ):
+        assert item in SHARED_WITH_NONPROFIT
+        assert words in shared + "you gave", item
+        assert item not in private, item
+    for kept in ("places", "device", "rated", "specific dates", "skills", "languages"):
+        assert kept in private, kept
+
+
+def test_a_new_volunteer_sees_what_their_home_reaches(new_user):
+    """End to end, with nothing changed after onboarding: Home is 90012 by car within
+    30 minutes (16 km), so a shift nearby shows and one across the county doesn't."""
+    from app.db import Opening, now, openings, orgs
+    from app.geo import neighborhood_latlon
+
+    new_user.post("/onboarding", data=FORM)
+    for o in openings():
+        openings.update(id=o.id, status="closed")
+    for title, area in (("near", "Chinatown"), ("far", "Santa Monica")):
+        lat, lon = neighborhood_latlon(area)[1]
+        openings.insert(
+            Opening(org_id=orgs()[0].id, title=title, about="",
+                    causes='["food-insecurity"]', skills="[]", lat=lat, lon=lon,
+                    neighborhood=area, remote=False, starts_at="2099-01-03T09:00",
+                    recurrence="one_time", slots=3, status="open", created_at=now())
+        )  # fmt: skip
+    (card,) = data.deck(profile_of(new_user).id, 5)
+    assert card["title"] == "near" and card["travel"].endswith("by car from Home")
+    assert "near" in new_user.get("/deck").text
+
+
+@pytest.mark.parametrize(
+    "where, area",
+    [("９００１２", "90012"), ("90012-1234", "90012"), (" 90012 ", "90012")],
+)
+def test_zip_forms_people_type_are_read(new_user, where, area):
+    r = new_user.post(
+        "/onboarding", data={**FORM, "place1_where": where}, follow_redirects=False
+    )
+    assert r.status_code == 303, r.text
+    (home,) = places(where="user_id = ?", where_args=[profile_of(new_user).id])
+    assert home.area == area
+
+
+@pytest.mark.parametrize(
+    "where, message",
+    [
+        ("²³", "Enter a five-digit ZIP code"),
+        ("9001-2", "Enter a five-digit ZIP code"),
+        ("x" * 81, "too long"),
+    ],
+)
+def test_odd_places_get_a_clear_message(new_user, where, message):
+    r = new_user.post(
+        "/onboarding", data={**FORM, "place1_where": where}, follow_redirects=False
+    )
+    assert r.status_code == 200 and message in r.text

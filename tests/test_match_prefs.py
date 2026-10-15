@@ -20,6 +20,10 @@ from app.db import (
 )
 from app.metrics import pilot_metrics
 
+HOME_PLACES = (
+    True  # each test runs with a saved Home place and as a profile from before
+)
+
 cause_prefs_migration = importlib.import_module("app.migrations.0010_cause_prefs")
 day_slots_migration = importlib.import_module("app.migrations.0011_day_slots")
 
@@ -77,6 +81,22 @@ def bare(user):
     for o in openings():
         openings.update(id=o.id, status="closed")
     return user
+
+
+# The places a `user` starts with: onboarding's Home (widened to any distance), or none
+AT_START = {"home place": [("Home", "90012", "car", 0)], "sign-up point": []}
+
+
+def places_of(client):
+    return [
+        (p.label, p.area, p.mode, p.max_minutes)
+        for p in places(where="user_id = ?", where_args=[uid_of(client)], order_by="id")
+    ]
+
+
+def from_before_places(client):
+    """Make the volunteer a profile from before places: no row, the sign-up point is Home."""
+    places.delete_where("user_id = ?", [uid_of(client)])
 
 
 def save(client, *place_forms, **extra):
@@ -155,7 +175,7 @@ def test_place_unchanged_text_keeps_the_saved_point(bare):
 def test_place_a_device_point_outside_la_is_refused(bare, lat, lon):
     r = save(bare, place_fields(1, "Home", "My location", lat=lat, lon=lon))
     assert r.status_code == 200 and "isn't in Los Angeles County" in r.text
-    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+    assert places_of(bare) == AT_START[bare.home]  # nothing saved
 
 
 def test_place_a_zip_and_a_neighborhood_resolve(bare):
@@ -169,7 +189,7 @@ def test_place_an_unknown_name_saves_nothing(bare):
     r = save(bare, place_fields(1, "Home", "Atlantis"))
     assert r.status_code == 200 and "couldn't find “Atlantis”" in r.text
     assert 'value="Atlantis"' in r.text  # what they typed stays in the field
-    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+    assert places_of(bare) == AT_START[bare.home]  # nothing saved
 
 
 @pytest.mark.parametrize(
@@ -183,7 +203,7 @@ def test_place_an_unknown_name_saves_nothing(bare):
 def test_place_an_unknown_mode_or_time_saves_nothing(bare, over):
     r = save(bare, {**place_fields(1, "Home", "Venice"), **over})
     assert r.status_code == 200 and "wasn't recognized" in r.text
-    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+    assert places_of(bare) == AT_START[bare.home]  # nothing saved
 
 
 def test_place_the_main_place_is_required_and_names_are_short(bare):
@@ -191,7 +211,7 @@ def test_place_the_main_place_is_required_and_names_are_short(bare):
     assert "Tell us your main place" in r.text
     r = save(bare, place_fields(1, "x" * 21, "Venice"))
     assert "up to 20 characters" in r.text
-    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+    assert places_of(bare) == AT_START[bare.home]  # nothing saved
 
 
 def test_place_emptying_the_second_place_removes_it(bare):
@@ -214,6 +234,7 @@ def test_place_no_more_than_two(bare):
 
 def test_place_a_profile_from_sign_up_shows_its_home(bare):
     """No saved place yet: the sign-up ZIP is Home, by car, at the sign-up travel time."""
+    from_before_places(bare)
     profiles.update(id=uid_of(bare), radius_km=16)
     page = bare.get("/me/preferences").text
     assert 'name="place1_where" value="Chinatown"' in page
@@ -425,7 +446,7 @@ def test_when_past_free_dates_are_pruned_when_read(bare):
 def test_when_an_unknown_answer_saves_nothing(bare, over):
     r = save(bare, when_form(**over))
     assert r.status_code == 200 and "wasn't recognized" in r.text
-    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+    assert places_of(bare) == AT_START[bare.home]  # nothing saved
 
 
 def test_when_the_grid_shows_21_slots_and_a_legacy_bucket_as_days(bare):
@@ -863,6 +884,7 @@ def test_filter_sheet_unknown_values_are_refused(bare, bad):
 
 
 def test_filter_sheet_on_a_sign_up_profile_creates_no_place(bare):
+    from_before_places(bare)
     profiles.update(id=uid_of(bare), radius_km=16)
     bare.post("/deck/filters", data={"max_minutes": "60", "causes": [FOOD]})
     assert places() == []
@@ -1110,7 +1132,7 @@ def test_place_names_with_hidden_characters_are_refused(bare):
     assert r.status_code == 200 and "hidden or special characters" in r.text
     r = save(bare, place_fields(1, "Home", "Down\u00adtown"))  # soft hyphen (Cf)
     assert "hidden or special characters" in r.text
-    assert places(where="user_id = ?", where_args=[uid_of(bare)]) == []
+    assert places_of(bare) == AT_START[bare.home]  # nothing saved
 
 
 def test_hidden_chars_categories():
@@ -1127,3 +1149,58 @@ def test_hidden_chars_categories():
     assert not hidden_chars("e\u0301\u0301\u0301")
     assert hidden_chars("e\u0301\u0301\u0301\u0301")
     assert hidden_chars("tab\there") and not hidden_chars("tab\there", True)
+
+
+# --- review fixes (4-6 fixes and item 7) -----------------------------------------------------
+
+
+def test_a_causes_only_filter_does_not_pin_the_travel_time(bare):
+    """The sheet posts its pre-checked minutes too; only what differs is kept."""
+    downtown_15(bare)
+    pasadena = add("pasadena", PASADENA)  # 17 km: needs 45 min by car
+    every = [FOOD, PARKS, ANIMALS]
+    bare.post("/deck/filters", data={"max_minutes": "15", "causes": every})
+    assert "Filtered" not in bare.get("/deck").text  # nothing differs: no view
+    bare.post("/deck/filters", data={"max_minutes": "15", "causes": []})
+    page = bare.get("/deck").text
+    assert "Filtered" in page and "Clear filters: 1 more" not in page  # 0 cards anyway
+    bare.post("/deck/filters", data={"clear": "1"})
+    # empty deck, no view: the offer widens the saved place, and the card does appear
+    assert "Widen to 45 min: 1 more" in bare.get("/deck").text
+    bare.post("/deck/relax", data={"key": "widen:0:45"})
+    assert pasadena in {c["id"] for c in data.deck(uid_of(bare), 5)}
+
+
+def test_under_a_view_an_offer_always_adds_what_it_promises(bare):
+    """A view pinning 30 min: widening the saved place would change nothing on screen,
+    so it is not offered; clearing the view comes first when it helps."""
+    downtown_15(bare)
+    add("pasadena", PASADENA)
+    add("animals", DOWNTOWN, causes=json.dumps([ANIMALS]))
+    uid = uid_of(bare)
+    pinned = {"max_minutes": 30, "hidden": [ANIMALS]}
+    offer = data.relaxations(uid, view=pinned)
+    assert offer == {"key": "clear_view", "label": "Clear filters", "more": 1}
+    assert data.relaxations(uid, view={"max_minutes": 30}) is None  # only pasadena left
+    before = places(where="user_id = ?", where_args=[uid])[0].max_minutes
+    bare.post("/deck/filters", data={"max_minutes": "30", "causes": [FOOD]})
+    page = bare.get("/deck").text
+    assert "Widen" not in page and "Clear filters: 1 more" in page
+    assert places(where="user_id = ?", where_args=[uid])[0].max_minutes == before
+
+
+def test_empty_deck_views_keep_the_free_today_split(bare):
+    downtown_15(bare)
+    bare.get("/deck")
+    bare.get("/deck?today=1")
+    bare.get("/deck")
+    bare.get("/deck?today=1")
+    assert sorted(bool(e.today) for e in deck_empties()) == [False, True]
+
+
+def test_a_rating_the_page_did_not_carry_is_kept(bare):
+    """A page loaded before a cause came back has no radios for it: its rating stays."""
+    save(bare, work_form(**{"cause_animal-shelters": "no"}))
+    form = {k: v for k, v in work_form().items() if k != "cause_animal-shelters"}
+    save(bare, form)
+    assert json.loads(profiles[uid_of(bare)].cause_prefs)[ANIMALS] == "no"
