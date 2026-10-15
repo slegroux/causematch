@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 from fastlite import database
 
+from app.config import is_dev
+
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(
     os.environ.get("CAUSEMATCH_DB") or ROOT / "data" / "causematch.db"
@@ -36,6 +38,7 @@ class Org:
     about: str
     intro: str  # warm|cold
     created_at: str
+    deactivated_at: str  # UTC; an admin closed this org after a report
 
 
 class Opening:
@@ -86,6 +89,7 @@ class Profile:
     onboarded_at: str
     created_at: str
     deleted_at: str
+    suspended_at: str  # UTC; an admin suspended this account: it cannot sign in
     sms_opted_out: bool  # the number replied STOP: never text it again
 
 
@@ -156,12 +160,32 @@ class Notification:
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
     recipient_id: int  # the volunteer's profile id; for "likes", the org id
     sent_at: str  # UTC; when this stream's last send was claimed
-    status: (
-        str  # pending|sent|failed|skipped|unknown (a timeout: may have been delivered)
-    )
+    status: str  # pending|sent|failed|skipped|cancelled|unknown (a timeout: may have been delivered)
     attempts: (
         int  # tries of the current send, capped so a dead number is not retried forever
     )
+
+
+class Report:
+    id: int
+    reporter_id: int
+    target_user_id: int  # set when a coordinator reported a volunteer
+    target_org_id: int  # set when a volunteer reported an org
+    match_id: int
+    reason: str  # harassment|no_show_pattern|unsafe|spam|other
+    details: str  # up to 1000 characters
+    status: str  # open|dismissed|actioned
+    created_at: str
+    resolved_by: int
+    resolved_at: str
+
+
+class Block:
+    id: int
+    blocker_id: int  # the volunteer, or the coordinator who blocked for their org
+    blocked_user_id: int  # set when a coordinator blocked a volunteer
+    blocked_org_id: int  # the org blocked by a volunteer; for a coordinator's block, the org it covers
+    created_at: str
 
 
 causes = db.create(Cause, pk="slug", transform=True)
@@ -180,6 +204,12 @@ messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id", transform=True)
 notifications = db.create(Notification, pk="id", transform=True)
 notifications.create_index(["key"], unique=True, if_not_exists=True)
+reports = db.create(Report, pk="id", transform=True)
+blocks = db.create(Block, pk="id", transform=True)
+db.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS block_once ON block"
+    "(blocker_id, coalesce(blocked_user_id, 0), coalesce(blocked_org_id, 0))"
+)
 # One live shift per match and start; a cancelled one frees its time.
 db.execute("DROP INDEX IF EXISTS idx_shift_match_id_starts_at")
 db.execute(
@@ -369,6 +399,7 @@ def _seed_demo():
                 about="An invented organization.",
                 intro="cold",
                 created_at=now(),
+                verified_at=now() if is_dev() else None,
             )
         )
         ids.append(org.id)

@@ -294,7 +294,7 @@ def _text(kind, key, uid, body, window=None):
 def on_accepted(match_id):
     """Called after a coordinator accepts. Texts the volunteer, once per match."""
     info = data.match_notice(match_id)
-    if info:
+    if info and info["status"] == "accepted":  # a block withdraws the match: no text
         return _text(
             "accepted",
             f"accepted:{match_id}",
@@ -312,6 +312,7 @@ def on_new_message(match_id, sender_id):
     info = data.match_notice(match_id)
     if (
         not info
+        or info["status"] != "accepted"  # blocked or withdrawn: no text
         or info["volunteer_id"] == sender_id
         or volunteer_online(match_id, info["volunteer_id"])
     ):

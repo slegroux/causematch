@@ -109,6 +109,10 @@ async def verify(req, sess):
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
     uid = data.get_or_create_volunteer(e164)
     profile = data.get_profile(uid)
+    if profile is None:  # suspended by an admin
+        return PhoneForm(
+            error="This number can't sign in. Contact us if that is a mistake."
+        )
     sess.clear()
     sess["uid"] = uid
     sess["sv"] = profile.session_version or 1

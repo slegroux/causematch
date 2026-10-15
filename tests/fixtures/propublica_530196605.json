@@ -1,0 +1,22 @@
+{
+  "organization": {
+    "id": 70017,
+    "ein": 530196605,
+    "name": "American National Red Cross",
+    "careofname": null,
+    "address": "431 18th St NW",
+    "city": "Washington",
+    "state": "DC",
+    "zipcode": "20006-5304",
+    "ntee_code": "P210",
+    "subsection_code": 3,
+    "asset_amount": 5052941623,
+    "income_amount": 4608946426,
+    "revenue_amount": 3916983933,
+    "updated_at": "2025-01-01T00:00:00.000Z"
+  },
+  "filings_with_data": [],
+  "filings_without_data": [],
+  "data_source": "current_data",
+  "api_version": 2
+}

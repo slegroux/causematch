@@ -10,12 +10,19 @@ from monsterui.all import (
 )
 
 
+def PrivacyFooter():
+    return P(
+        A("Privacy", href="/privacy", cls=AT.muted), cls=TextPresets.muted_sm + " pt-8"
+    )
+
+
 def Page(title, *content, error=None, intro=None):
     return Container(
         H1(title, cls="text-2xl font-bold my-4"),
         P(intro, cls=TextPresets.muted_sm + " mb-4") if intro else None,
         Alert(error, cls=AlertT.error + " mb-4") if error else None,
         *content,
+        PrivacyFooter(),
         cls="max-w-md pb-8",
     )
 
@@ -67,6 +74,7 @@ def VolunteerNav():
             A("Openings", href="/deck", cls=AT.muted),
             A("Matches", href="/matches", cls=AT.muted),
             A("History", href="/history", cls=AT.muted),
+            A("Profile", href="/profile", cls=AT.muted),
             Form(
                 Button("Sign out", type="submit", cls=AT.muted + " bg-transparent p-0"),
                 action="/logout",

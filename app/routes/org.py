@@ -422,6 +422,8 @@ INBOX_STATUS = {"pending": "Waiting", "accepted": "Accepted", "declined": "Decli
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
+    "reported": "Thanks. A Causematch admin will review the report.",
+    "blocked": "Blocked.",
 }
 
 
@@ -454,6 +456,8 @@ def InboxRow(m):
         if m["status"] == "accepted"
         else None,
         RepeatForm(m["id"]) if m["status"] == "accepted" and m["weekly"] else None,
+        A("Report", href=f"/org/matches/{m['id']}/report", cls=AT.muted + " mr-4"),
+        A("Block", href=f"/org/matches/{m['id']}/block", cls=AT.muted),
         PlainForm(
             accept,
             Button("Decline", name="decision", value="decline", cls=ButtonT.default),

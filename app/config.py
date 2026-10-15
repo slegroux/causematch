@@ -44,3 +44,13 @@ def tasks_token(env=os.environ):
     if not token and is_production(env):
         raise RuntimeError("TASKS_TOKEN must be set in production")
     return token
+
+
+def contact_email(env=os.environ):
+    """Where the privacy page tells people to write. Required in production."""
+    addr = (env.get("CONTACT_EMAIL") or "").strip()
+    if not addr:
+        if is_dev(env):
+            return "hello@causematch.test"
+        raise RuntimeError("CONTACT_EMAIL must be set (the address on /privacy)")
+    return addr

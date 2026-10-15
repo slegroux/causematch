@@ -22,12 +22,14 @@ from app.auth import (
     ws_session_user,
 )
 from app.db import (
+    blocks,
     matches,
     messages,
     openings,
     org_members,
     orgs,
     profiles,
+    reports,
     shifts,
     swipes,
 )
@@ -61,6 +63,18 @@ ROUTES = {
     ("GET", "/matches"): ("volunteer", "own-record"),
     ("GET", "/matches/{match_id}/withdraw"): ("volunteer", "own-record"),
     ("POST", "/matches/{match_id}/withdraw"): ("volunteer", "own-record"),
+    ("GET", "/matches/{match_id}/report"): ("volunteer", "own-record"),
+    ("POST", "/matches/{match_id}/report"): ("volunteer", "own-record"),
+    ("GET", "/matches/{match_id}/block"): ("volunteer", "own-record"),
+    ("POST", "/matches/{match_id}/block"): ("volunteer", "own-record"),
+    ("GET", "/profile"): ("volunteer", "own-record"),
+    ("GET", "/profile/delete"): ("volunteer", "own-record"),
+    ("POST", "/profile/delete"): ("volunteer", "own-record"),
+    ("GET", "/privacy"): ("public", None),
+    ("GET", "/org/matches/{match_id}/report"): ("coordinator", "own-org"),
+    ("POST", "/org/matches/{match_id}/report"): ("coordinator", "own-org"),
+    ("GET", "/org/matches/{match_id}/block"): ("coordinator", "own-org"),
+    ("POST", "/org/matches/{match_id}/block"): ("coordinator", "own-org"),
     ("GET", "/org"): ("coordinator", "own-org"),
     ("POST", "/org/details"): ("coordinator", "own-org"),
     ("GET", "/org/openings/new"): ("coordinator", "own-org"),
@@ -77,6 +91,15 @@ ROUTES = {
     ("GET", "/admin"): ("admin", None),
     ("GET", "/admin/metrics"): ("admin", None),
     ("GET", "/admin/metrics.csv"): ("admin", None),
+    ("GET", "/admin/reports"): ("admin", None),
+    ("POST", "/admin/reports/{report_id}/dismiss"): ("admin", "own-record"),
+    ("POST", "/admin/reports/{report_id}/suspend"): ("admin", "own-record"),
+    ("POST", "/admin/reports/{report_id}/deactivate"): ("admin", "own-record"),
+    ("GET", "/admin/blocks"): ("admin", None),
+    ("POST", "/admin/blocks/{block_id}/unblock"): ("admin", "own-record"),
+    ("GET", "/admin/orgs"): ("admin", None),
+    ("GET", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
+    ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
     ("GET", "/history"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
     ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
@@ -121,7 +144,14 @@ def app_routes(routes, prefix=""):
 
 
 def concrete(path, match_id, opening_id):
-    return path.format(match_id=match_id, opening_id=opening_id, shift_id=match_id)
+    return path.format(
+        match_id=match_id,
+        opening_id=opening_id,
+        shift_id=match_id,
+        report_id=match_id,
+        block_id=match_id,
+        org_id=match_id,
+    )
 
 
 def is_public_path(path):
@@ -535,6 +565,80 @@ def check_mark_shift(w):
     assert r.status_code == 303 and shifts[sid].status == "completed"
 
 
+def stranger_post(client, template, **body):
+    def call(w, rid):
+        return client(w).post(
+            template.format(rid),
+            data=body or {"reason": "spam"},
+            follow_redirects=False,
+        )
+
+    return call
+
+
+def stranger_get(client, template):
+    return lambda w, rid: client(w).get(template.format(rid), follow_redirects=False)
+
+
+def untouched(w):
+    return (
+        not blocks.count
+        and not reports.count
+        and (matches[w.match.id].status == "pending")
+    )
+
+
+def safety_check(call):
+    """A stranger's report or block on A's match: refused, nothing recorded."""
+    return path_id_check(call, lambda w: w.match.id, untouched)
+
+
+def _reported(w):
+    data.report_org(w.a.uid, w.match.id, "spam")
+    return reports()[0].id
+
+
+def check_admin_report_route(action):
+    def check(w):
+        rid = _reported(w)
+        for i in (rid, *GONE):
+            assert_refused(
+                w.b.post(f"/admin/reports/{i}/{action}", follow_redirects=False)
+            )
+        assert reports[rid].status == "open"
+        r = w.admin.post(f"/admin/reports/{rid}/dismiss", follow_redirects=False)
+        assert r.status_code == 303 and reports[rid].status == "dismissed"
+
+    return check
+
+
+def check_admin_unblock(w):
+    data.block_org(w.a.uid, w.match.id)
+    bid = blocks()[0].id
+    for i in (bid, *GONE):
+        assert_refused(w.b.post(f"/admin/blocks/{i}/unblock", follow_redirects=False))
+    assert blocks.count == 1
+    r = w.admin.post(f"/admin/blocks/{bid}/unblock", follow_redirects=False)
+    assert r.status_code == 303 and blocks.count == 0
+
+
+def check_admin_org(method, tail):
+    def check(w):
+        org = orgs()[0].id
+        for i in (org, *GONE):
+            r = w.b.request(
+                method,
+                f"/admin/orgs/{i}/{tail}"
+                + ("?ein=530196605" if method == "GET" else ""),
+                data={"ein": "530196605"} if method == "POST" else None,
+                follow_redirects=False,
+            )
+            assert_refused(r)
+        assert not orgs[org].ein
+
+    return check
+
+
 # route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
     ("GET", "/matches/{match_id}/withdraw"): path_id_check(
@@ -572,6 +676,38 @@ OWNERSHIP = {
         "org1", "org0", "/org/chat", "send"
     ),
     ("WS", "/org/chat/{match_id}/ws"): chat_id_check("org1", "org0", "/org/chat", "ws"),
+    ("GET", "/matches/{match_id}/report"): safety_check(
+        stranger_get(lambda w: w.b, "/matches/{}/report")
+    ),
+    ("POST", "/matches/{match_id}/report"): safety_check(
+        stranger_post(lambda w: w.b, "/matches/{}/report")
+    ),
+    ("GET", "/matches/{match_id}/block"): safety_check(
+        stranger_get(lambda w: w.b, "/matches/{}/block")
+    ),
+    ("POST", "/matches/{match_id}/block"): safety_check(
+        stranger_post(lambda w: w.b, "/matches/{}/block")
+    ),
+    ("GET", "/org/matches/{match_id}/report"): safety_check(
+        stranger_get(lambda w: w.org1, "/org/matches/{}/report")
+    ),
+    ("POST", "/org/matches/{match_id}/report"): safety_check(
+        stranger_post(lambda w: w.org1, "/org/matches/{}/report")
+    ),
+    ("GET", "/org/matches/{match_id}/block"): safety_check(
+        stranger_get(lambda w: w.org1, "/org/matches/{}/block")
+    ),
+    ("POST", "/org/matches/{match_id}/block"): safety_check(
+        stranger_post(lambda w: w.org1, "/org/matches/{}/block")
+    ),
+    ("POST", "/admin/reports/{report_id}/dismiss"): check_admin_report_route("dismiss"),
+    ("POST", "/admin/reports/{report_id}/suspend"): check_admin_report_route("suspend"),
+    ("POST", "/admin/reports/{report_id}/deactivate"): check_admin_report_route(
+        "deactivate"
+    ),
+    ("POST", "/admin/blocks/{block_id}/unblock"): check_admin_unblock,
+    ("GET", "/admin/orgs/{org_id}/lookup"): check_admin_org("GET", "lookup"),
+    ("POST", "/admin/orgs/{org_id}/verify"): check_admin_org("POST", "verify"),
 }
 
 
@@ -673,6 +809,7 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 TABLES = {
     "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
     "messages", "orgs", "profiles", "swipes", "shifts", "notifications",
+    "blocks", "reports",
 }  # fmt: skip
 
 

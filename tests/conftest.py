@@ -26,6 +26,7 @@ from starlette.testclient import TestClient
 from app import data, notify
 from app.auth import normalize_phone
 from app.db import (
+    blocks,
     causes,
     ensure_causes,
     login_tokens,
@@ -36,6 +37,7 @@ from app.db import (
     org_members,
     orgs,
     profiles,
+    reports,
     seed_demo,
     shifts,
     swipes,
@@ -59,6 +61,8 @@ def fresh_db():
         messages,
         shifts,
         notifications,
+        reports,
+        blocks,
     ):
         table.delete_where()
     chat_routes._sockets.clear()  # no socket outlives its test

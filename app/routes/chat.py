@@ -60,6 +60,7 @@ def ChatPage(uid, match_id, role, notice=""):
     head = data.chat_header(uid, match_id)
     msgs = data.list_messages(uid, match_id)
     base = "/chat" if role == "volunteer" else "/org/chat"
+    rbase = "/matches" if role == "volunteer" else "/org/matches"
     back = ("/matches", "Matches") if role == "volunteer" else ("/org/inbox", "Inbox")
     box = Div(
         Div(
@@ -94,6 +95,11 @@ def ChatPage(uid, match_id, role, notice=""):
         H1(head["title"], cls="text-2xl font-bold my-2"),
         P(f"{head['org']} - {head['other']}", cls=TextPresets.muted_sm + " mb-2"),
         box,
+        Div(
+            A("Report", href=f"{rbase}/{match_id}/report", cls=AT.muted + " mr-4"),
+            A("Block", href=f"{rbase}/{match_id}/block", cls=AT.muted),
+            cls="text-sm pt-4",
+        ),
         Script(src="/static/chat.js", defer=True),
         cls="max-w-md pb-8",
     )

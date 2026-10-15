@@ -7,7 +7,13 @@ from starlette.staticfiles import StaticFiles
 
 from app import data, notify
 from app.auth import SESSION_MAX_AGE, beforeware, session_secret
-from app.config import is_production, public_base_url, require_env, tasks_token
+from app.config import (
+    contact_email,
+    is_production,
+    public_base_url,
+    require_env,
+    tasks_token,
+)
 from app.routes.admin import ar as admin_router
 from app.routes.auth import ar as auth_router
 from app.routes.chat import ar as chat_router
@@ -17,6 +23,7 @@ from app.routes.onboarding import ar as onboarding_router
 from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
 from app.routes.pwa import ar as pwa_router
+from app.routes.safety import ar as safety_router
 from app.routes.shifts import ar as shifts_router
 from app.routes.tasks import ar as tasks_router
 
@@ -26,6 +33,7 @@ notify.get_emailer()  # ... or sign-in links
 notify.get_sms()  # ... or texts
 tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
+contact_email()  # ... or the privacy page has no contact
 app, rt = fast_app(
     before=beforeware,
     secret_key=session_secret(os.environ),
@@ -67,6 +75,7 @@ for router in (
     chat_router,
     org_router,
     shifts_router,
+    safety_router,
     tasks_router,
     pwa_router,
 ):

@@ -4,6 +4,8 @@ from fasthtml.common import H1, A, APIRouter, Div, P, Redirect, Response
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     AT,
+    Alert,
+    AlertT,
     Button,
     ButtonT,
     Card,
@@ -15,7 +17,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
-from app.forms import bad_request, str_form
+from app.forms import bad_request, query, str_form
 from app.routes.deck import DeckArea, when
 from app.ui import VolunteerNav
 
@@ -26,6 +28,12 @@ STATUS = {
     "accepted": "Accepted",
     "declined": "Not this time",
     "withdrawn": "Withdrawn",
+}
+
+
+NOTICE = {
+    "reported": "Thanks. We read every report.",
+    "blocked": "Blocked. Their openings won't show up again.",
 }
 
 
@@ -58,9 +66,13 @@ def MatchRow(m):
         A("Chat", href=f"/chat/{m['id']}", cls=AT.muted + " mr-4")
         if m["status"] == "accepted"
         else None,
-        A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=AT.muted)
+        A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=AT.muted + " mr-4")
         if m["status"] in ("pending", "accepted")
         else None,
+        A("Report", href=f"/matches/{m['id']}/report", cls=AT.muted + " mr-4"),
+        Label("Blocked")
+        if m["blocked"]
+        else A("Block", href=f"/matches/{m['id']}/block", cls=AT.muted),
         cls="w-full",
     )
 
@@ -68,9 +80,11 @@ def MatchRow(m):
 @ar("/matches", methods=["GET"])
 def matches_page(req):
     rows = data.my_matches(req.scope["uid"])
+    notice = query(req, "notice")
     return Container(
         VolunteerNav(),
         H1("Your matches", cls="text-2xl font-bold my-4"),
+        Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
         A("History", href="/history", cls=AT.muted + " block pb-4"),
         Div(
             *(

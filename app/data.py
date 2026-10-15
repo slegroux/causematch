@@ -48,12 +48,25 @@ def _deck_openings(uid):
         s.opening_id for s in _db.swipes(where="volunteer_id = ?", where_args=[uid])
     }
     me = _db.profiles[uid]
+    # Only verified, active orgs the volunteer has not blocked. An org that blocked the
+    # volunteer stays visible: hiding it would tell them.
+    shown = {
+        r["id"]
+        for r in _db.db.query(
+            "SELECT id FROM org WHERE verified_at IS NOT NULL AND deactivated_at IS NULL "
+            "AND id NOT IN (SELECT blocked_org_id FROM block "
+            "WHERE blocker_id = ? AND blocked_user_id IS NULL)",
+            [uid],
+        )
+    }
     out = []
     for o in _db.openings(
         where="status = ? AND starts_at >= ?",
         where_args=["open", _local_now()],
         order_by="starts_at",
     ):
+        if o.org_id not in shown:
+            continue
         cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
         if not cause_labels or o.id in seen:
             continue
@@ -188,6 +201,8 @@ def _swipe(uid, opening_id, liked):
         )
         if not liked:
             return None, False
+        if _org_blocked_volunteer(uid, _db.openings[opening_id].org_id):
+            return None, False  # dropped silently: the volunteer is not told
         return _db.matches.insert(
             _db.Match(
                 opening_id=opening_id,
@@ -275,10 +290,12 @@ def _own_match(uid, match_id):
 def my_match(uid, match_id):
     """{"id", "status", "title"} of the volunteer's own match; PermissionError otherwise."""
     m = _own_match(uid, match_id)
+    o = _db.openings[m.opening_id]
     return {
         "id": m.id,
         "status": m.status,
-        "title": _db.openings[m.opening_id].title,
+        "title": o.title,
+        "org": _db.orgs[o.org_id].name,
     }
 
 
@@ -307,6 +324,7 @@ def my_matches(uid):
         o = _db.openings[m.opening_id]
         out.append(
             {
+                "blocked": _volunteer_blocked_org(uid, o.org_id),
                 "id": m.id,
                 "status": m.status,
                 "title": o.title,
@@ -335,7 +353,12 @@ def org_inbox(coordinator_uid):
         "FROM match m JOIN opening o ON o.id = m.opening_id "
         "JOIN profile p ON p.id = m.volunteer_id "
         "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
-        "AND p.deleted_at IS NULL AND m.status IN ('pending', 'accepted', 'declined') "
+        "AND p.deleted_at IS NULL AND p.suspended_at IS NULL "
+        "AND m.status IN ('pending', 'accepted', 'declined') "
+        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = p.id "
+        "AND b.blocked_org_id = o.org_id) "
+        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = p.id "
+        "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id) "
         "ORDER BY m.id DESC",
         [coordinator_uid],
     )
@@ -574,7 +597,7 @@ def org_shifts(coordinator_uid):
     for r in _db.db.query(
         _SHIFT_SELECT + "WHERE o.org_id IN "
         "(SELECT org_id FROM org_member WHERE user_id = ?) "
-        "AND p.deleted_at IS NULL AND s.status != 'cancelled' "
+        "AND p.deleted_at IS NULL AND p.suspended_at IS NULL AND s.status != 'cancelled' "
         "ORDER BY s.starts_at, s.id",
         [coordinator_uid],
     ):
@@ -619,6 +642,11 @@ def chat_access(uid, match_id, write=False):
         raise PermissionError("not part of this match")
     if m.status == "accepted" or (m.status == "withdrawn" and m.decided_at):
         if write and m.status != "accepted":
+            raise PermissionError("this chat is read-only")
+        if write and (
+            _org_blocked_volunteer(m.volunteer_id, o.org_id)
+            or _volunteer_blocked_org(m.volunteer_id, o.org_id)
+        ):
             raise PermissionError("this chat is read-only")
         return role
     raise PermissionError("no chat on this match")
@@ -738,7 +766,7 @@ def get_profile(uid):
         p = _db.profiles[uid]
     except NotFoundError:
         return None
-    return None if p.deleted_at else p
+    return None if p.deleted_at or p.suspended_at else p
 
 
 def save_onboarding(
@@ -970,6 +998,8 @@ def create_opening(
         raise PermissionError("not a member of this org")
     if lat is None or lon is None:
         raise ValueError("an opening needs coordinates")
+    if _db.orgs[org_id].deactivated_at:
+        raise PermissionError("this org is deactivated")
     return _db.openings.insert(
         _db.Opening(
             org_id=org_id,
@@ -1140,6 +1170,397 @@ def shift_notice(shift_id):
         return None
     info = match_notice(sh.match_id)
     return info and {**info, "starts_at": sh.starts_at}
+
+
+# --- trust and safety: reports, blocks, suspension, org verification, deletion ---------------
+
+REASONS = [
+    ("harassment", "Harassment"),
+    ("no_show_pattern", "A pattern of no-shows"),
+    ("unsafe", "I felt unsafe"),
+    ("spam", "Spam"),
+    ("other", "Something else"),
+]
+MAX_DETAILS = 1000
+
+
+def _org_blocked_volunteer(volunteer_id, org_id):
+    """True when a coordinator of this org blocked the volunteer."""
+    return bool(
+        _db.blocks.count_where(
+            "blocked_user_id = ? AND blocked_org_id = ?", [volunteer_id, org_id]
+        )
+    )
+
+
+def _volunteer_blocked_org(volunteer_id, org_id):
+    """True when the volunteer blocked the org."""
+    return bool(
+        _db.blocks.count_where(
+            "blocker_id = ? AND blocked_user_id IS NULL AND blocked_org_id = ?",
+            [volunteer_id, org_id],
+        )
+    )
+
+
+def _match_and_opening(match_id):
+    if not _is_id(match_id):
+        raise PermissionError("no such match")
+    try:
+        m = _db.matches[match_id]
+        return m, _db.openings[m.opening_id]
+    except NotFoundError:
+        raise PermissionError("no such match") from None
+
+
+def _end_match(m, by, pending_to):
+    """Close one pending or accepted match: pending becomes `pending_to` (declined or
+    withdrawn), accepted becomes withdrawn, and its future shifts are cancelled."""
+    if m.status == "pending" and pending_to == "declined":
+        _db.matches.update(id=m.id, status="declined", decided_at=_now(), decided_by=by)
+    elif m.status in ("pending", "accepted"):
+        _db.matches.update(id=m.id, status="withdrawn", withdrawn_at=_now())
+    else:
+        return
+    _db.db.execute(
+        "UPDATE shift SET status = 'cancelled' "
+        "WHERE match_id = ? AND status = 'scheduled' AND starts_at > ?",
+        [m.id, _local_now()],
+    )
+    _sync_fill(m.opening_id)
+
+
+def _checked_report_text(reason, details):
+    if reason not in {r for r, _ in REASONS}:
+        raise ValueError("choose a reason")
+    if not isinstance(details, str) or len(details.strip()) > MAX_DETAILS:
+        raise ValueError(f"details can be up to {MAX_DETAILS} characters")
+    return details.strip()
+
+
+def _add_report(reporter_id, match_id, reason, details, *, user_id=None, org_id=None):
+    if _db.reports.count_where(
+        "reporter_id = ? AND match_id = ? AND status = 'open'", [reporter_id, match_id]
+    ):
+        return  # already open: a repeat adds nothing
+    _db.reports.insert(
+        _db.Report(
+            reporter_id=reporter_id,
+            target_user_id=user_id,
+            target_org_id=org_id,
+            match_id=match_id,
+            reason=reason,
+            details=details,
+            status="open",
+            created_at=_now(),
+        )
+    )
+
+
+def org_match_volunteer(coordinator_uid, match_id):
+    """First name of the volunteer on a match of the coordinator's org; PermissionError otherwise."""
+    m, o = _match_and_opening(match_id)
+    _member_of(coordinator_uid, o.org_id)
+    return _first_name(_db.profiles[m.volunteer_id].display_name)
+
+
+def report_org(uid, match_id, reason, details=""):
+    """A volunteer reports the org of their own match. PermissionError for any other id,
+    ValueError for a reason that is not one of REASONS or details over 1000 characters."""
+    m, o = _match_and_opening(match_id)
+    if m.volunteer_id != uid:
+        raise PermissionError("not your match")
+    details = _checked_report_text(reason, details)
+    _add_report(uid, match_id, reason, details, org_id=o.org_id)
+
+
+def report_volunteer(coordinator_uid, match_id, reason, details=""):
+    """A coordinator reports the volunteer of a match of their org. Same errors."""
+    m, o = _match_and_opening(match_id)
+    _member_of(coordinator_uid, o.org_id)
+    details = _checked_report_text(reason, details)
+    _add_report(coordinator_uid, match_id, reason, details, user_id=m.volunteer_id)
+
+
+def _add_block(**cols):
+    try:
+        _db.blocks.insert(_db.Block(created_at=_now(), **cols))
+    except apsw.ConstraintError:
+        pass  # already blocked
+
+
+def block_org(uid, match_id):
+    """A volunteer blocks the org of their own match: its openings leave their deck, their
+    pending and accepted matches with it are withdrawn and their future shifts cancelled,
+    and chat is read-only."""
+    with _db.db.conn:
+        m, o = _match_and_opening(match_id)
+        if m.volunteer_id != uid:
+            raise PermissionError("not your match")
+        _add_block(blocker_id=uid, blocked_org_id=o.org_id)
+        for mine in _db.matches(
+            where="volunteer_id = ? AND status IN ('pending', 'accepted') "
+            "AND opening_id IN (SELECT id FROM opening WHERE org_id = ?)",
+            where_args=[uid, o.org_id],
+        ):
+            _end_match(mine, uid, "withdrawn")
+
+
+def block_volunteer(coordinator_uid, match_id):
+    """A coordinator blocks a match's volunteer for their org: their pending likes there are
+    declined, an accepted match is withdrawn, and their future likes are silently dropped."""
+    with _db.db.conn:
+        m, o = _match_and_opening(match_id)
+        _member_of(coordinator_uid, o.org_id)
+        _add_block(
+            blocker_id=coordinator_uid,
+            blocked_user_id=m.volunteer_id,
+            blocked_org_id=o.org_id,
+        )
+        for theirs in _db.matches(
+            where="volunteer_id = ? AND status IN ('pending', 'accepted') "
+            "AND opening_id IN (SELECT id FROM opening WHERE org_id = ?)",
+            where_args=[m.volunteer_id, o.org_id],
+        ):
+            _end_match(theirs, coordinator_uid, "declined")
+
+
+def _admin(uid):
+    p = get_profile(uid)
+    if not p or p.role != "admin":
+        raise PermissionError("admins only")
+
+
+def admin_blocks(admin_uid):
+    """Every block, for the admin who may lift it: first names and org names only."""
+    _admin(admin_uid)
+    return [
+        {
+            "id": r["id"],
+            "created_at": r["created_at"],
+            "org": r["org"],
+            "kind": "coordinator" if r["blocked_user_id"] else "volunteer",
+            "volunteer": _first_name(r["vol"]),
+        }
+        for r in _db.db.query(
+            "SELECT b.id, b.created_at, b.blocked_user_id, g.name AS org, "
+            "(SELECT display_name FROM profile WHERE id = coalesce(b.blocked_user_id, b.blocker_id)) AS vol "
+            "FROM block b JOIN org g ON g.id = b.blocked_org_id ORDER BY b.id DESC"
+        )
+    ]
+
+
+def unblock(admin_uid, block_id):
+    """Lift a block. Admin only; matches the block ended stay ended."""
+    _admin(admin_uid)
+    if not _is_id(block_id) or not _db.blocks.count_where("id = ?", [block_id]):
+        raise LookupError("no such block")
+    _db.blocks.delete(block_id)
+
+
+def admin_reports(admin_uid):
+    """Open reports, oldest first, with the least context a decision needs: the match, the
+    opening, the reason, the details, and first names. No phones, emails or places."""
+    _admin(admin_uid)
+    out = []
+    for r in _db.db.query(
+        "SELECT r.id, r.match_id, r.reason, r.details, r.created_at, r.target_user_id, "
+        "r.target_org_id, o.title, g.name AS org, "
+        "(SELECT display_name FROM profile WHERE id = r.reporter_id) AS reporter, "
+        "(SELECT display_name FROM profile WHERE id = m.volunteer_id) AS volunteer, "
+        "(SELECT suspended_at FROM profile WHERE id = r.target_user_id) AS suspended, "
+        "g.deactivated_at "
+        "FROM report r JOIN match m ON m.id = r.match_id "
+        "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
+        "WHERE r.status = 'open' ORDER BY r.id"
+    ):
+        by_volunteer = r["target_org_id"] is not None
+        out.append(
+            {
+                "id": r["id"],
+                "match_id": r["match_id"],
+                "opening": r["title"],
+                "org": r["org"],
+                "reason": dict(REASONS).get(r["reason"], r["reason"]),
+                "details": r["details"] or "",
+                "created_at": r["created_at"],
+                "reporter": _first_name(r["reporter"]),
+                "by": "volunteer" if by_volunteer else "coordinator",
+                "target": r["org"] if by_volunteer else _first_name(r["volunteer"]),
+                "target_user_id": r["target_user_id"],
+                "target_org_id": r["target_org_id"],
+                "suspended": bool(r["suspended"]),
+                "deactivated": bool(r["deactivated_at"]),
+            }
+        )
+    return out
+
+
+def _open_report(admin_uid, report_id):
+    _admin(admin_uid)
+    if not _is_id(report_id):
+        raise LookupError("no such report")
+    found = _db.reports(where="id = ? AND status = 'open'", where_args=[report_id])
+    if not found:
+        raise LookupError("no such open report")
+    return found[0]
+
+
+def _resolve(admin_uid, where, args, status):
+    _db.db.execute(
+        f"UPDATE report SET status = ?, resolved_by = ?, resolved_at = ? "
+        f"WHERE status = 'open' AND {where}",
+        [status, admin_uid, _now(), *args],
+    )
+
+
+def dismiss_report(admin_uid, report_id):
+    """Close one report with no action. LookupError unless it is open."""
+    with _db.db.conn:
+        _open_report(admin_uid, report_id)
+        _resolve(admin_uid, "id = ?", [report_id], "dismissed")
+
+
+def suspend_target(admin_uid, report_id):
+    """Suspend the reported user: they cannot sign in, every session ends, a volunteer's
+    pending and accepted matches are withdrawn. Every open report on them is actioned."""
+    with _db.db.conn:
+        r = _open_report(admin_uid, report_id)
+        uid = r.target_user_id
+        if uid is None:
+            raise ValueError("this report names an org, not a user")
+        if _db.profiles[uid].role == "admin":
+            raise PermissionError("an admin cannot be suspended here")
+        _db.db.execute(
+            "UPDATE profile SET suspended_at = ?, "
+            "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
+            [_now(), uid],
+        )
+        for m in _db.matches(
+            where="volunteer_id = ? AND status IN ('pending', 'accepted')",
+            where_args=[uid],
+        ):
+            _end_match(m, admin_uid, "withdrawn")
+        _resolve(admin_uid, "target_user_id = ?", [uid], "actioned")
+
+
+def deactivate_target_org(admin_uid, report_id):
+    """Deactivate the reported org: its openings close and their future shifts are cancelled,
+    it leaves every deck and cannot post. Every open report on it is actioned."""
+    with _db.db.conn:
+        r = _open_report(admin_uid, report_id)
+        org_id = r.target_org_id
+        if org_id is None:
+            raise ValueError("this report names a user, not an org")
+        _db.db.execute(
+            "UPDATE org SET deactivated_at = ? WHERE id = ?", [_now(), org_id]
+        )
+        _db.db.execute(
+            "UPDATE shift SET status = 'cancelled', cancelled_at = ?, cancelled_by = ? "
+            "WHERE status = 'scheduled' AND starts_at > ? AND match_id IN "
+            "(SELECT m.id FROM match m JOIN opening o ON o.id = m.opening_id "
+            "WHERE o.org_id = ?)",
+            [_now(), admin_uid, _local_now(), org_id],
+        )
+        _db.db.execute(
+            "UPDATE opening SET status = 'closed' WHERE org_id = ?", [org_id]
+        )
+        _resolve(admin_uid, "target_org_id = ?", [org_id], "actioned")
+
+
+def admin_orgs():
+    """Every org with its EIN and verification state, for /admin/orgs."""
+    return [
+        {
+            "id": o.id,
+            "name": o.name,
+            "ein": o.ein or "",
+            "verified": bool(o.verified_at),
+            "deactivated": bool(o.deactivated_at),
+        }
+        for o in _db.orgs(order_by="id")
+    ]
+
+
+def verify_org(org_id, ein):
+    """Mark an org verified under this EIN (nine digits). Admin-only entry point, used by the
+    admin page and scripts/verify_org.py. LookupError for an unknown org; ValueError for a
+    malformed EIN or one another org already carries."""
+    if not _is_id(org_id) or not org_exists(org_id):
+        raise LookupError(f"no org {org_id}")
+    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
+        raise ValueError("an EIN is nine digits")
+    try:
+        _db.db.execute(
+            "UPDATE org SET ein = ?, verified_at = ? WHERE id = ?",
+            [ein, _now(), org_id],
+        )
+    except apsw.ConstraintError:
+        raise ValueError("another org already has that EIN") from None
+
+
+PLACEHOLDER = "[message removed]"
+
+
+def delete_account(uid):
+    """A volunteer deletes their own account.
+
+    Soft-deleted, with every personal column scrubbed (kept: the answers the metrics group
+    by). Pending and accepted matches are withdrawn and future shifts cancelled, their
+    message bodies are replaced, texts still queued for them are cancelled, and every
+    session ends. They can sign up again later as a new profile.
+    """
+    with _db.db.conn:
+        try:
+            p = _db.profiles[uid] if _is_id(uid) else None
+        except NotFoundError:
+            p = None
+        if p is None or p.role != "volunteer":
+            raise PermissionError("not a volunteer")
+        if p.deleted_at:
+            return
+        for m in _db.matches(
+            where="volunteer_id = ? AND status IN ('pending', 'accepted')",
+            where_args=[uid],
+        ):
+            _end_match(m, uid, "withdrawn")
+        _db.db.execute(
+            "UPDATE message SET body = ? WHERE sender_id = ?", [PLACEHOLDER, uid]
+        )
+        _db.db.execute(
+            "UPDATE notification SET status = 'cancelled' WHERE recipient_id = ? "
+            "AND kind != 'likes' AND status IN ('pending', 'failed')",
+            [uid],
+        )
+        _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        _db.db.execute(
+            "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
+            "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
+            "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
+            "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
+            [_now(), uid],
+        )
+
+
+def remove_coordinator(email):
+    """Admin-only entry point (scripts/remove_coordinator.py): delete a coordinator's account.
+
+    Soft-deleted and scrubbed like a volunteer's, taken out of every org, signed out at
+    once. Their messages stay: they are the org's side of the record. LookupError when there
+    is no such coordinator."""
+    uid = coordinator_by_email(email)
+    if not uid:
+        raise LookupError(f"no coordinator {email}")
+    with _db.db.conn:
+        _db.db.execute("DELETE FROM org_member WHERE user_id = ?", [uid])
+        _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        _db.db.execute(
+            "UPDATE profile SET deleted_at = ?, email = NULL, display_name = NULL, "
+            "contact_phone = NULL, session_version = coalesce(session_version, 1) + 1 "
+            "WHERE id = ?",
+            [_now(), uid],
+        )
+    return uid
 
 
 # One apsw connection is shared by every request thread (and, later, websockets); apsw

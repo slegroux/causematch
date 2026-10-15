@@ -1,7 +1,7 @@
 import re
 
-from fasthtml.common import APIRouter, Div, Input, P, Redirect, Response
-from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
+from fasthtml.common import A, APIRouter, Div, Input, P, Redirect, Response
+from monsterui.all import AT, Button, ButtonT, Form, LabelCheckboxX, TextPresets
 
 from app import data
 from app.choices import (
@@ -139,7 +139,13 @@ def OnboardingForm(f=None, error=None):
                 LabelCheckboxX(
                     "I agree", name="consent", value="1", checked=bool(f.get("consent"))
                 ),
-                P(CONSENT, cls=TextPresets.muted_sm),
+                P(
+                    CONSENT,
+                    " ",
+                    A("Read the privacy policy", href="/privacy", cls=AT.muted),
+                    ".",
+                    cls=TextPresets.muted_sm,
+                ),
                 cls="space-y-1",
             ),
             Button("Start swiping", cls=ButtonT.primary + " w-full"),
