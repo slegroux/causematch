@@ -88,6 +88,9 @@ def test_svg_is_not_a_picture():
         "https://example.org:99999/",
         "//example.org/x",
         "https://" + "a" * 600 + ".org",
+        "https://evil.com\\good.org",  # a browser reads the backslash as a slash
+        "https://good.org\u202e/moc.live",  # right-to-left override in the host
+        "https://example.org/a\u2066b",  # and anywhere else
     ],
 )
 def test_only_plain_https_links_are_accepted(raw):
@@ -99,6 +102,19 @@ def test_a_link_shows_its_domain():
         "https://www.example.org/volunteer"
     )
     assert domain("https://www.Example.org/volunteer") == "example.org"
+
+
+def test_an_international_domain_shows_as_punycode():
+    """A Cyrillic "а" looks like a Latin "a": the card says xn--pple-43d.com instead."""
+    url = https_url("https://\u0430pple.com/volunteer")
+    assert url == "https://xn--pple-43d.com/volunteer"
+    assert domain(url) == "xn--pple-43d.com"
+
+
+def test_org_photos_may_be_cached_a_day(coord, user):
+    upload(coord, f"/org/organization/{coord.org_id}/logo", png(), "image/png")
+    r = user.get(f"/photos/{orgs[coord.org_id].logo_key}.jpg")
+    assert r.headers["cache-control"] == "private, max-age=86400"
 
 
 # --- the Organization page -------------------------------------------------------------

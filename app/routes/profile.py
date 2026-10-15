@@ -253,11 +253,14 @@ def profile(req):
 
 async def read_photo(req):
     """The bytes of the form's one `photo` file, at most photos.MAX_UPLOAD + 1 of them;
-    None when there is no file."""
-    form = await req.form(max_files=1, max_fields=1)
+    None unless the form is exactly that one file. (FastHTML has already parsed the form
+    with Starlette's defaults, so req.form's own max_files would not apply.)"""
+    form = await req.form()
     try:
-        upload = form.get("photo")
-        if not isinstance(upload, UploadFile):
+        items = form.multi_items()
+        if len(items) != 1 or items[0][0] != "photo":
+            return None
+        if not isinstance(upload := items[0][1], UploadFile):
             return None
         return await upload.read(photos.MAX_UPLOAD + 1)
     finally:

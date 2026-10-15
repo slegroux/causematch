@@ -2062,6 +2062,11 @@ def _coordinated_org(coordinator_uid, org_id):
     return _db.orgs[org_id]
 
 
+def coordinator_org(coordinator_uid, org_id):
+    """An org this coordinator belongs to; PermissionError for any other id."""
+    return _coordinated_org(coordinator_uid, org_id)
+
+
 def set_org_picture(coordinator_uid, org_id, which, processed):
     """The org's logo or photo (which: logo | photo) becomes this one; the old one goes."""
     column = {"logo": "logo_key", "photo": "photo_key"}[which]
@@ -2137,8 +2142,9 @@ def _sees_volunteer(viewer, volunteer_id):
 
 
 def photo_for(viewer_uid, key, thumb=False):
-    """(JPEG bytes, ETag) of the photo `key` when this signed-in viewer may see it, else
-    None: a photo they may not see and one that doesn't exist look the same."""
+    """(JPEG bytes, ETag, a volunteer's?) of the photo `key` when this signed-in viewer
+    may see it, else None: a photo they may not see and one that doesn't exist look the
+    same."""
     viewer = get_profile(viewer_uid) if _is_id(viewer_uid) else None
     if viewer is None or not _photos.is_key(key):
         return None
@@ -2157,7 +2163,7 @@ def photo_for(viewer_uid, key, thumb=False):
             viewer, owner_id
         ):
             return None
-    return jpeg, f'"{sha}{"-t" if thumb else ""}"'
+    return jpeg, f'"{sha}{"-t" if thumb else ""}"', kind == "volunteer"
 
 
 RATE_KEEP_SECONDS = 24 * 3600  # the longest window in app/security.py

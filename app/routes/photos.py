@@ -16,9 +16,15 @@ def _serve(req, key, thumb):
     found = data.photo_for(req.scope["uid"], key, thumb)
     if found is None:
         return Response("Not found", status_code=404)
-    jpeg, etag = found
-    # Private: one viewer's browser may keep it a day; no shared cache ever may.
-    headers = {"ETag": etag, "Cache-Control": "private, max-age=86400"}
+    jpeg, etag, volunteer = found
+    # Private: no shared cache ever keeps one. A volunteer's photo is asked for again on
+    # every view (a 304 when unchanged), so a block or a removal hides it at once; an
+    # org's logo or photo, public to anyone signed in, may stay a day.
+    headers = {
+        "ETag": etag,
+        "Cache-Control": "private, no-cache" if volunteer else "private, max-age=86400",
+        "Cross-Origin-Resource-Policy": "same-origin",
+    }
     if req.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
     return Response(jpeg, media_type="image/jpeg", headers=headers)

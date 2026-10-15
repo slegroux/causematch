@@ -190,9 +190,14 @@ def _sync_save_details(uid, org_id, form):
     return Redirect("/org/organization?notice=saved")
 
 
-async def _upload(req, save, page, done):
+async def _upload(req, authorize, save, page, done):
     """A picture from the form, processed then saved by save(processed); page(error) on a
-    bad picture, 403 when save refuses."""
+    bad picture. authorize() runs first: a coordinator of another org gets 403 before
+    anything is read or decoded."""
+    try:
+        await run_in_threadpool(authorize)
+    except PermissionError:
+        return Response("Forbidden", status_code=403)
     raw = await read_photo(req)
     kind = "logo" if req.url.path.endswith("/logo") else "card"
     try:
@@ -222,6 +227,7 @@ async def save_logo(req, org_id: int):
     uid = req.scope["uid"]
     return await _upload(
         req,
+        partial(data.coordinator_org, uid, org_id),
         partial(data.set_org_picture, uid, org_id, "logo"),
         partial(_org_page_with, uid, org_id),
         "/org/organization?notice=saved",
@@ -233,6 +239,7 @@ async def save_org_photo(req, org_id: int):
     uid = req.scope["uid"]
     return await _upload(
         req,
+        partial(data.coordinator_org, uid, org_id),
         partial(data.set_org_picture, uid, org_id, "photo"),
         partial(_org_page_with, uid, org_id),
         "/org/organization?notice=saved",
@@ -304,6 +311,7 @@ async def save_opening_photo(req, opening_id: int):
     uid = req.scope["uid"]
     return await _upload(
         req,
+        partial(data.coordinator_opening, uid, opening_id),
         partial(data.set_opening_photo, uid, opening_id),
         partial(OpeningMediaPage, uid, opening_id),
         f"/org/openings/{opening_id}/media?notice=saved",

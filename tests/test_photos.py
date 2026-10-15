@@ -2,8 +2,14 @@
 may see a volunteer's photo. Every picture here is generated; none is of a real person."""
 
 import io
+import os
 import struct
+import subprocess
+import sys
+import threading
+import warnings
 import zlib
+from pathlib import Path
 
 import pytest
 from conftest import TestClient, sign_in
@@ -124,7 +130,9 @@ def test_a_photo_is_served_privately_with_an_etag(user):
     upload(user, jpeg())
     url = f"/photos/{key_of(user)}.jpg"
     r = user.get(url)
-    assert r.headers["cache-control"] == "private, max-age=86400"
+    # asked for again on every view, so a block hides it at once (review LOW-4)
+    assert r.headers["cache-control"] == "private, no-cache"
+    assert r.headers["cross-origin-resource-policy"] == "same-origin"
     etag = r.headers["etag"]
     again = user.get(url, headers={"If-None-Match": etag})
     assert again.status_code == 304 and again.content == b""
@@ -458,3 +466,160 @@ def test_the_nudge_can_be_dismissed(user):
     r = user.post("/deck/photo-nudge/dismiss", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     assert "Add a photo so nonprofits know" not in user.get("/deck").text
+
+
+# --- the security review's fixes (review-security-items1-4) --------------------------------
+
+ROOT = Path(__file__).resolve().parent.parent
+
+GENERATE = r"""
+import sys
+from PIL import Image, ImageDraw
+out = sys.argv[1]
+Image.new("RGB", (7000, 7000), (200, 90, 60)).save(f"{out}/7000.webp", "WEBP", lossless=True)
+Image.new("RGBA", (7000, 7000), (200, 90, 60, 255)).save(f"{out}/7000-rgba.png")
+Image.new("1", (7000, 7000)).save(f"{out}/7000-1bit.gif")
+Image.new("L", (7000, 7000), 128).save(f"{out}/7000-grey.png")
+Image.new("RGB", (7000, 7000), (200, 90, 60)).save(f"{out}/7000.jpg", quality=80)
+Image.new("RGB", (3460, 2310), (20, 90, 160)).save(f"{out}/8mp.webp", "WEBP", lossless=True)
+im = Image.new("RGBA", (4000, 3000), (0, 0, 0, 0))
+for x in range(0, 4000, 200):
+    ImageDraw.Draw(im).rectangle((x, 0, x + 100, 3000), fill=(x % 255, 90, 160, 255))
+im.save(f"{out}/12mp-rgba.png")
+"""
+MEASURE = r"""
+import resource, sys
+from pathlib import Path
+from app import photos
+raw = Path(sys.argv[1]).read_bytes()
+def peak():
+    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return r if sys.platform == "darwin" else r * 1024  # bytes on macOS, KB on Linux
+before = peak()
+try:
+    photos.process(raw, sys.argv[2])
+    result = "ok"
+except photos.BadPhoto:
+    result = "refused"
+print(result, (peak() - before) // 2**20)
+"""
+
+
+@pytest.fixture(scope="module")
+def crafted(tmp_path_factory):
+    """The reviewer's files: tiny uploads that claim huge bitmaps. Made in another
+    process, so making them doesn't raise the peak the measurements read."""
+    out = tmp_path_factory.mktemp("crafted")
+    subprocess.run([sys.executable, "-c", GENERATE, str(out)], check=True)
+    return out
+
+
+def peak_mb(path, kind):
+    """(result, peak RSS growth in MB) of photos.process in a fresh process."""
+    r = subprocess.run(
+        [sys.executable, "-c", MEASURE, str(path), kind],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result, mb = r.stdout.split()
+    return result, int(mb)
+
+
+@pytest.mark.parametrize(
+    ("name", "kind", "expected"),
+    [
+        ("7000.webp", "volunteer", "refused"),  # 2 KB, was +833 MB
+        ("7000.webp", "logo", "refused"),  # was +1174 MB
+        ("7000-rgba.png", "logo", "refused"),  # was +806 MB
+        ("7000-1bit.gif", "volunteer", "refused"),  # was +439 MB
+        ("7000-grey.png", "volunteer", "refused"),  # was +439 MB
+        ("7000.jpg", "volunteer", "ok"),  # a JPEG decodes at a smaller scale
+        ("8mp.webp", "card", "ok"),  # just under WebP's cap
+        ("12mp-rgba.png", "logo", "ok"),  # just under PNG's cap
+    ],
+)
+def test_a_huge_bitmap_never_costs_more_than_200_mb(crafted, name, kind, expected):
+    result, mb = peak_mb(crafted / name, kind)
+    assert result == expected
+    assert mb < (50 if expected == "refused" else 200), mb
+
+
+def test_a_third_decode_waits_for_one_of_two_to_finish():
+    held = [photos._decoding.acquire(timeout=1) for _ in range(2)]
+    assert all(held)
+    done = threading.Event()
+    t = threading.Thread(target=lambda: (photos.process(jpeg()), done.set()))
+    t.start()
+    try:
+        assert not done.wait(0.5)  # both slots are taken
+    finally:
+        photos._decoding.release()
+        photos._decoding.release()
+    assert done.wait(10)
+    t.join()
+
+
+def test_the_bomb_check_leaves_warning_filters_alone():
+    """Process-wide warning filters are not thread-safe: the size check is explicit."""
+    before = list(warnings.filters)
+    threads = [
+        threading.Thread(target=photos.process, args=(jpeg((600, 400)),))
+        for _ in range(6)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with pytest.raises(photos.BadPhoto):
+        photos.process(bomb_png())
+    assert list(warnings.filters) == before
+
+
+def test_uploads_are_throttled(user):
+    for _ in range(10):
+        assert upload(user, jpeg((200, 200))).status_code == 303
+    r = upload(user, jpeg((200, 200)))
+    assert r.status_code == 429 and "retry-after" in r.headers
+
+
+def test_an_upload_is_exactly_one_photo_file(user):
+    two = [
+        ("photo", ("a.jpg", jpeg(), "image/jpeg")),
+        ("photo", ("b.jpg", jpeg(), "image/jpeg")),
+    ]
+    assert user.post("/me/profile/photo", files=two).status_code == 400
+    r = user.post(
+        "/me/profile/photo",
+        data={"extra": "x"},
+        files={"photo": ("a.jpg", jpeg(), "image/jpeg")},
+    )
+    assert r.status_code == 400
+    other = {"picture": ("a.jpg", jpeg(), "image/jpeg")}
+    assert user.post("/me/profile/photo", files=other).status_code == 400
+    assert key_of(user) is None
+
+
+def test_another_orgs_upload_is_refused_before_decoding(coord, monkeypatch):
+    from conftest import coordinator_for, org_sign_in
+
+    from app.db import openings, orgs
+
+    def never(*a, **kw):
+        raise AssertionError("decoded a picture for a coordinator of another org")
+
+    _, email = coordinator_for(1)
+    elsewhere = TestClient(app)
+    org_sign_in(elsewhere, email)
+    monkeypatch.setattr(photos, "process", never)
+    opening = next(o for o in openings() if o.org_id == coord.org_id)
+    for path in (
+        f"/org/organization/{coord.org_id}/logo",
+        f"/org/organization/{coord.org_id}/photo",
+        f"/org/openings/{opening.id}/photo",
+    ):
+        r = elsewhere.post(path, files={"photo": ("a.jpg", jpeg(), "image/jpeg")})
+        assert r.status_code == 403, path
+    assert orgs[coord.org_id].logo_key is None

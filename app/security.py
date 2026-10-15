@@ -395,12 +395,14 @@ BUCKETS = {
     "swipe": (30, 30),  # a burst of 30 cards, then one a second
     "chat": (20, 10),  # chat POSTs and websocket frames together
     "safety": (10, 3600),  # report and block POSTs
+    "upload": (10, 600),  # pictures (UPLOADS): 10 in a row, then one a minute
 }
 # POST paths and their bucket
 THROTTLED = (
     (re.compile(r"/swipe"), "swipe"),
     (re.compile(r"/(org/)?chat/[^/]+/send"), "chat"),
     (re.compile(r"/(org/)?matches/[^/]+/(report|block)"), "safety"),
+    *((rx, "upload") for rx in UPLOADS),
 )
 _buckets = {}  # (name, user id) -> (tokens, last refill time)
 _buckets_lock = threading.Lock()

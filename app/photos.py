@@ -6,16 +6,27 @@ whatever a browser is later given is a JPEG Pillow wrote, not the uploader's byt
 """
 
 import io
+import math
 import secrets
+import threading
 import warnings
 from collections import namedtuple
 
 from PIL import Image, ImageChops, ImageFilter, ImageOps, UnidentifiedImageError
 
 MAX_UPLOAD = 6 * 1024 * 1024  # bytes; static/photo.js sends far less (1600 px JPEG)
-# A decompression bomb is a small file that decodes to a huge bitmap. Pillow warns past
-# this many pixels and refuses at twice it; open() below turns the warning into a refusal.
-Image.MAX_IMAGE_PIXELS = 50_000_000  # a 48 MP phone photo still opens
+# A decompression bomb is a small file that decodes to a huge bitmap: a 2 KB WebP can
+# claim 7000 x 7000 pixels. _open reads the size from the header and refuses past these
+# before decoding anything. A JPEG decodes at 1/2 to 1/8 scale (draft), so a 48 MP phone
+# photo is fine; PNG and GIF decode at full size, 4 bytes a pixel; WebP's decoder holds
+# about 18 bytes a pixel at its peak. Each cap keeps one decode under about 200 MB.
+MAX_PIXELS_JPEG = 50_000_000
+MAX_PIXELS = {"JPEG": MAX_PIXELS_JPEG, "MPO": MAX_PIXELS_JPEG, "WEBP": 8_000_000}
+MAX_PIXELS_OTHER = 12_000_000  # PNG, GIF
+# Pillow's own check stays as a backstop (an error at twice this); its warning between 1x
+# and 2x is redundant with _open's refusal, so it is silenced once, here.
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS_JPEG
+warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 # JPEG includes MPO, an iPhone's multi-picture JPEG
 FORMATS = ("JPEG", "PNG", "WEBP", "GIF")
 Image.init()  # register every plugin, so open(formats=FORMATS) knows WEBP
@@ -23,12 +34,15 @@ FULL = 800  # px, the longest side of a volunteer photo
 CARD = (960, 640)  # px, an org's or opening's photo: cut to the swipe card's 3:2
 LOGO = 320  # px, square: the logo centred on its background, to show as a round badge
 THUMB = 160  # px, square
+# A decoded picture shrinks at once to at most this many pixels (16 MB as RGBA), keeping
+# its shape: enough for every output (a 960 x 640 card cut from a panorama, too).
+WORK_PIXELS = 4_000_000
+# At most two pictures are being decoded at a time, whatever the thread pool's size: a
+# decode is the one moment a full-size bitmap is in memory.
+_decoding = threading.BoundedSemaphore(2)
 QUALITY = 82
-INK = (
-    45,
-    30,
-    23,
-)  # static/theme.css --cm-ink: behind a logo drawn for dark backgrounds
+# static/theme.css --cm-ink: behind a logo drawn for dark backgrounds
+INK = (45, 30, 23)
 
 Processed = namedtuple("Processed", "full thumb")
 
@@ -51,28 +65,37 @@ def is_key(key):
 
 
 def _open(raw):
-    """The decoded image, upright; BadPhoto for anything else."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
+    """The decoded image, upright, at most WORK_PIXELS; BadPhoto for anything else,
+    including a picture with more pixels than its format may have."""
+    with _decoding:
+        try:
             with Image.open(io.BytesIO(raw), formats=FORMATS) as probe:
+                w, h = probe.size  # from the header: nothing is decoded yet
+                jpeg = probe.format in ("JPEG", "MPO")
+                if w * h > MAX_PIXELS.get(probe.format, MAX_PIXELS_OTHER):
+                    raise BadPhoto("too many pixels")
                 probe.verify()  # structure only; a verified image can't be used after
+            scale = min(1, (WORK_PIXELS / (w * h)) ** 0.5)
+            size = (max(1, math.ceil(w * scale)), max(1, math.ceil(h * scale)))
             im = Image.open(io.BytesIO(raw), formats=FORMATS)
-            if im.format in ("JPEG", "MPO"):
-                # a big JPEG decodes straight to a smaller scale: less memory and time
-                im.draft("RGB", (FULL * 2, FULL * 2))
+            if jpeg:
+                im.draft("RGB", size)  # decodes straight to a smaller scale
             im.load()
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA")  # palette, grey, 1-bit: before resampling
+            im.thumbnail(size, Image.Resampling.LANCZOS, reducing_gap=3.0)
             return ImageOps.exif_transpose(im)
-    except (
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-        UnidentifiedImageError,
-        OSError,
-        SyntaxError,
-        ValueError,
-        EOFError,
-    ) as e:
-        raise BadPhoto("not a readable picture") from e
+        except (
+            Image.DecompressionBombError,
+            UnidentifiedImageError,
+            OSError,
+            SyntaxError,
+            ValueError,  # BadPhoto too
+            EOFError,
+        ) as e:
+            if isinstance(e, BadPhoto):
+                raise
+            raise BadPhoto("not a readable picture") from e
 
 
 def _flat(im, background=(255, 255, 255)):
