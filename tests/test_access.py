@@ -14,7 +14,13 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app import data
-from app.auth import PUBLIC, is_org_path, session_secret, ws_session_user
+from app.auth import (
+    PUBLIC,
+    is_admin_path,
+    is_org_path,
+    session_secret,
+    ws_session_user,
+)
 from app.db import (
     matches,
     messages,
@@ -34,7 +40,7 @@ NAME = "Zelda"  # volunteer A, whose data nobody else may see
 SECRETS = [NAME, TITLE]
 
 # (method, path) -> (who may use it, how the route is scoped)
-#   who: public | volunteer | coordinator | admin (no admin route exists yet)
+#   who: public | volunteer | coordinator | admin
 #   scope: None | own-record (the signed-in volunteer's) | own-org (the coordinator's org's)
 ROUTES = {
     ("GET", "/login"): ("public", None),
@@ -66,6 +72,9 @@ ROUTES = {
     ("POST", "/org/shifts/{shift_id}/mark"): ("coordinator", "own-org"),
     ("GET", "/org/matches/{match_id}/shifts/new"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/shifts/new"): ("coordinator", "own-org"),
+    ("GET", "/admin"): ("admin", None),
+    ("GET", "/admin/metrics"): ("admin", None),
+    ("GET", "/admin/metrics.csv"): ("admin", None),
     ("GET", "/history"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
     ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
@@ -119,11 +128,11 @@ def is_public_path(path):
 
 
 def home_of(role):
-    return "/org" if role == "coordinator" else "/deck"
+    return {"coordinator": "/org", "admin": "/admin"}.get(role, "/deck")
 
 
 def login_of(path):
-    return "/org/login" if is_org_path(path) else "/login"
+    return "/org/login" if is_org_path(path) or is_admin_path(path) else "/login"
 
 
 def send(client, method, path):
@@ -202,6 +211,8 @@ def test_classification_is_well_formed():
             assert scope, f"{path} takes an id: say whose record it is"
         if is_org_path(path) and who != "public":
             assert who == "coordinator", path
+        if is_admin_path(path):
+            assert who == "admin", path
         assert not (method == "WS" and who == "public"), (
             "a websocket must check its caller"
         )
@@ -275,6 +286,7 @@ def test_wrong_role_never_gets_the_other_sides_page(world, route):
     callers = {
         "volunteer": [("coordinator", world.org1), ("admin", world.admin)],
         "coordinator": [("volunteer", world.b), ("admin", world.admin)],
+        "admin": [("volunteer", world.b), ("coordinator", world.org1)],
     }[who]
     for role, client in callers:
         if method == "WS":

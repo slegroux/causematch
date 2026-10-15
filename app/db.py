@@ -178,6 +178,10 @@ db.execute(
     "CREATE UNIQUE INDEX IF NOT EXISTS coordinator_email_live ON profile(lower(email)) "
     "WHERE role = 'coordinator' AND deleted_at IS NULL"
 )
+db.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS admin_email_live ON profile(lower(email)) "
+    "WHERE role = 'admin' AND deleted_at IS NULL"
+)
 
 CAUSES = [
     Cause("food-insecurity", "Food insecurity", "utensils", 1, True),

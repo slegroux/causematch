@@ -59,15 +59,28 @@ def is_org_path(path):
     return path == "/org" or path.startswith("/org/")
 
 
+def is_admin_path(path):
+    return path == "/admin" or path.startswith("/admin/")
+
+
 def check_session(req, sess):
-    """Sign-in, then role: volunteers get the volunteer pages, coordinators /org/*, nobody both."""
+    """Sign-in, then role: volunteers get the volunteer pages, coordinators /org/*, admins
+    /admin/*; nobody more than one."""
     path = req.url.path
     profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
     if not profile or sess.get("sv") != (profile.session_version or 1):
         sess.pop("uid", None)
-        return Redirect("/org/login" if is_org_path(path) else "/login")
+        staff = is_org_path(path) or is_admin_path(path)
+        return Redirect("/org/login" if staff else "/login")
     req.scope["uid"] = profile.id
     if path == "/logout":
+        return
+    if is_admin_path(path):
+        if profile.role != "admin":
+            # a coordinator is sent home; anyone else has no business here
+            if profile.role == "coordinator":
+                return Redirect("/org")
+            return Response("Forbidden", status_code=403)
         return
     if is_org_path(path):
         # Membership is checked on every request: removing a coordinator takes effect at once.

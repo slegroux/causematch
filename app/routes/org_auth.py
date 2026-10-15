@@ -50,6 +50,8 @@ def _send_link(email):
     """After the response, so known and unknown addresses take the same time to answer."""
     uid = data.coordinator_by_email(email)
     if not (uid and data.coordinator_org_ids(uid)):
+        uid = data.admin_by_email(email)
+    if not uid:
         return
     try:
         notify.send_login_link(email, data.create_login_token(uid))
@@ -99,13 +101,12 @@ async def org_login_verify(req, sess):
     token = form.get("token", "")
     uid = data.consume_login_token(token) if 0 < len(token) <= 200 else None
     profile = data.get_profile(uid) if uid else None
-    if (
-        not profile
-        or profile.role != "coordinator"
-        or not data.coordinator_org_ids(uid)
-    ):
+    is_coordinator = bool(
+        profile and profile.role == "coordinator" and data.coordinator_org_ids(uid)
+    )
+    if not (is_coordinator or (profile and profile.role == "admin")):
         return EmailForm(error=BAD_LINK)
     sess.clear()
     sess["uid"] = uid
     sess["sv"] = profile.session_version or 1
-    return Redirect("/org")
+    return Redirect("/org" if is_coordinator else "/admin")

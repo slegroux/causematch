@@ -8,6 +8,7 @@ from starlette.staticfiles import StaticFiles
 from app import data, notify
 from app.auth import SESSION_MAX_AGE, beforeware, session_secret
 from app.config import is_production, public_base_url, require_env, tasks_token
+from app.routes.admin import ar as admin_router
 from app.routes.auth import ar as auth_router
 from app.routes.chat import ar as chat_router
 from app.routes.deck import ar as deck_router
@@ -59,6 +60,7 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"))
 for router in (
     auth_router,
     org_auth_router,
+    admin_router,
     onboarding_router,
     deck_router,
     matches_router,
