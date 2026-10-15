@@ -73,22 +73,46 @@ def test_optional_fields_can_be_cleared(user):
             {"interests": [v for v, _ in INTERESTS][: MAX_INTERESTS + 1]},
             "Pick up to 6 interests",
         ),
-        ({"pronouns": "she\x00her"}, "wasn't recognized"),
-        ({"last_name": "Le\u200be"}, "wasn't recognized"),  # zero-width space
-        ({"bio": "Hi \u202eereht"}, "wasn't recognized"),  # right-to-left override
-        ({"first_name": "Sam\ufeff"}, "wasn't recognized"),
-        ({"pronouns": "they\tthem"}, "wasn't recognized"),
-        ({"last_name": "Lee\u3164"}, "wasn't recognized"),  # Hangul filler
-        ({"last_name": "\u2800"}, "wasn't recognized"),  # braille blank
-        ({"bio": "hi\U000e0041"}, "wasn't recognized"),  # a tag character
-        ({"bio": "e\u0301\u0302\u0303\u0304"}, "wasn't recognized"),  # 4 marks
-        ({"pronouns": "they\u2028them"}, "wasn't recognized"),  # line separator
-        ({"bio": "private \ue000"}, "wasn't recognized"),  # private use
-        ({"last_name": "\u0301"}, "wasn't recognized"),  # a mark with nothing under it
-        ({"last_name": "Le\u034fe"}, "wasn't recognized"),  # grapheme joiner
-        ({"last_name": "Lee\ufe00"}, "wasn't recognized"),  # variation selector
-        ({"last_name": "Lee\ufe0f"}, "wasn't recognized"),  # emoji style, no emoji
-        ({"bio": "e\u0301\u0302\u200d\u0303\u0304"}, "wasn't recognized"),  # ZWJ
+        ({"pronouns": "she\x00her"}, "hidden or special characters"),
+        (
+            {"last_name": "Le\u200be"},
+            "hidden or special characters",
+        ),  # zero-width space
+        (
+            {"bio": "Hi \u202eereht"},
+            "hidden or special characters",
+        ),  # right-to-left override
+        ({"first_name": "Sam\ufeff"}, "hidden or special characters"),
+        ({"pronouns": "they\tthem"}, "hidden or special characters"),
+        ({"last_name": "Lee\u3164"}, "hidden or special characters"),  # Hangul filler
+        ({"last_name": "\u2800"}, "hidden or special characters"),  # braille blank
+        ({"bio": "hi\U000e0041"}, "hidden or special characters"),  # a tag character
+        (
+            {"bio": "e\u0301\u0302\u0303\u0304"},
+            "hidden or special characters",
+        ),  # 4 marks
+        (
+            {"pronouns": "they\u2028them"},
+            "hidden or special characters",
+        ),  # line separator
+        ({"bio": "private \ue000"}, "hidden or special characters"),  # private use
+        (
+            {"last_name": "\u0301"},
+            "hidden or special characters",
+        ),  # a mark with nothing under it
+        ({"last_name": "Le\u034fe"}, "hidden or special characters"),  # grapheme joiner
+        (
+            {"last_name": "Lee\ufe00"},
+            "hidden or special characters",
+        ),  # variation selector
+        (
+            {"last_name": "Lee\ufe0f"},
+            "hidden or special characters",
+        ),  # emoji style, no emoji
+        (
+            {"bio": "e\u0301\u0302\u200d\u0303\u0304"},
+            "hidden or special characters",
+        ),  # ZWJ
     ],
 )
 def test_bad_details_are_refused_and_change_nothing(user, over, message):
@@ -204,3 +228,43 @@ def test_deleting_the_account_erases_the_details(user):
     user.post("/profile/delete")
     p = profiles[uid]
     assert (p.last_name, p.pronouns, p.bio, p.interests) == (None, None, None, None)
+
+
+def test_the_neighborhood_nonprofits_see_is_edited_in_the_profile(user):
+    assert save(user, neighborhood="Echo Park").status_code == 303
+    assert profiles[uid_of(user)].neighborhood == "Echo Park"
+    for bad, why in (
+        ("Echo\u202e Park", "hidden or special"),
+        ("x" * 81, "80 characters"),
+    ):
+        r = save(user, neighborhood=bad)
+        assert r.status_code == 400 and why in r.text.replace("&#x27;", "'")
+    assert profiles[uid_of(user)].neighborhood == "Echo Park"
+
+
+@pytest.mark.parametrize(
+    "bio",
+    [
+        "Proud \U0001f3f3\ufe0f\u200d\U0001f308 ally",  # rainbow flag
+        "Our \U0001f468\u200d\U0001f469\u200d\U0001f467 helps",  # a family
+        "\U0001f469\U0001f3fd\u200d\U0001f4bb by day",  # skin tone, then a joiner
+        "Team \u0031\ufe0f\u20e3 and \u0023\ufe0f\u20e3",  # keycaps 1 and #
+    ],
+)
+def test_a_bio_keeps_emoji_sequences_and_keycaps(user, bio):
+    assert save(user, bio=bio).status_code == 303
+    assert profiles[uid_of(user)].bio == bio
+
+
+@pytest.mark.parametrize(
+    "bio",
+    [
+        "a" + "\u200d" * 500 + "b",  # joiners between letters, a wall of them
+        "Ca\u200dll me",  # one, hiding inside a word
+        "x\u200d\U0001f308",  # a letter before it
+        "1\ufe0f",  # emoji style on a digit, no keycap
+    ],
+)
+def test_a_bio_refuses_joiners_outside_emoji(user, bio):
+    r = save(user, bio=bio)
+    assert r.status_code == 400 and "hidden or special characters" in r.text

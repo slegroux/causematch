@@ -23,7 +23,7 @@ from app.choices import (
     MAX_MINUTES,
 )
 from app.config import phone_hash_key
-from app.forms import BIDI
+from app.forms import BIDI, hidden_chars
 from app.metrics_rows import fetch_rows
 
 
@@ -784,10 +784,8 @@ def org_inbox(coordinator_uid):
     )
     out = {"pending": [], "decided": [], "past": []}
     for r in rows:
-        # After a block either way the row shows the first name and nothing else of the
-        # volunteer: every other field is read live and the volunteer may still edit it.
-        # (The first name is live too, but checked like every name: no hidden characters,
-        # 80 at most.)
+        # After a block either way the row shows BLOCKED_NAME and nothing else of the
+        # volunteer: every field is read live, and the volunteer may still edit it.
         blocked = bool(r["blocked"])
         out[
             {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
@@ -811,9 +809,10 @@ def org_inbox(coordinator_uid):
                     for i in json.loads(r["interests"] or "[]")
                     if i in interests
                 ],
+                # A to Z: the stored order (loved first) would hint at the private ratings
                 "causes": []
                 if blocked
-                else [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
+                else sorted(labels.get(s, s) for s in json.loads(r["causes"] or "[]")),
                 # a general summary (weekday/weekend parts of the day), never the days
                 "availability": []
                 if blocked
@@ -1048,8 +1047,8 @@ def org_shifts(coordinator_uid):
     """{"upcoming", "to_mark", "marked"} for this coordinator's orgs only.
 
     to_mark: started and not yet marked. marked: marked within 7 days and still open to
-    their one correction. Rows carry the volunteer's first name only, whether the opening
-    repeats weekly, and "latest" when the row is its match's latest live shift (set only
+    their one correction. Rows carry the volunteer's name as volunteer_name gives it
+    (BLOCKED_NAME under a block) and photo, whether the opening repeats weekly, and "latest" when the row is its match's latest live shift (set only
     on rows in these lists; an old corrected shift can be the latest but is not listed).
     """
     now = _local_now()
@@ -1066,7 +1065,6 @@ def org_shifts(coordinator_uid):
         row = {
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
-        row["first_name"] = _first_name(r["display_name"])
         row["name"] = (
             BLOCKED_NAME
             if r["blocked"]
@@ -1143,13 +1141,17 @@ def volunteer_name(first, last, full=False):
     return f"{first} {last}" if full else f"{first} {initial.upper()}."
 
 
-def _message_row(msg, volunteer_id, names):
+def _message_row(msg, volunteer_id, names, blocked=False):
+    """blocked: a block stands between the volunteer and the org, so the volunteer's
+    messages carry BLOCKED_NAME, not their live (and still editable) first name."""
+    if msg.sender_id != volunteer_id:
+        sender = names.get(msg.sender_id) or "Coordinator"
+    else:
+        sender = BLOCKED_NAME if blocked else _first_name(names.get(msg.sender_id))
     return {
         "id": msg.id,
         "sender_uid": msg.sender_id,
-        "sender": _first_name(names.get(msg.sender_id))
-        if msg.sender_id == volunteer_id
-        else names.get(msg.sender_id) or "Coordinator",
+        "sender": sender,
         "body": msg.body,
         "created_at": msg.created_at,
     }
@@ -1178,7 +1180,7 @@ def send_message(uid, match_id, body):
         match_id=match_id, sender_id=uid, body=body, created_at=_now()
     )
     m = _db.matches[match_id]
-    return _message_row(msg, m.volunteer_id, _names([uid]))
+    return _message_row(msg, m.volunteer_id, _names([uid]), _match_blocked(m))
 
 
 def list_messages(uid, match_id, limit=200):
@@ -1192,7 +1194,16 @@ def list_messages(uid, match_id, limit=200):
         limit=max(1, min(int(limit), 1000)),
     )[::-1]
     names = _names({r.sender_id for r in rows})
-    return [_message_row(r, m.volunteer_id, names) for r in rows]
+    blocked = _match_blocked(m)
+    return [_message_row(r, m.volunteer_id, names, blocked) for r in rows]
+
+
+def _match_blocked(m):
+    """True when a block stands either way between a match's volunteer and its org."""
+    org_id = _db.openings[m.opening_id].org_id
+    return _org_blocked_volunteer(m.volunteer_id, org_id) or _volunteer_blocked_org(
+        m.volunteer_id, org_id
+    )
 
 
 def chat_header(uid, match_id):
@@ -1424,8 +1435,11 @@ def save_preferences(
         )
 
 
-def save_profile_details(uid, *, first_name, last_name, pronouns, bio, interests):
-    """A volunteer's own name, pronouns, bio and interests (checked by the caller)."""
+def save_profile_details(
+    uid, *, first_name, last_name, pronouns, bio, interests, neighborhood=None
+):
+    """A volunteer's own name, pronouns, bio, interests and, unless None, the neighborhood
+    nonprofits see (checked by the caller)."""
     p = get_profile(uid)
     if p is None or p.role != "volunteer":
         raise PermissionError("not a volunteer")
@@ -1436,6 +1450,7 @@ def save_profile_details(uid, *, first_name, last_name, pronouns, bio, interests
         pronouns=pronouns or None,
         bio=bio or None,
         interests=json.dumps(list(interests)),
+        **({} if neighborhood is None else {"neighborhood": neighborhood}),
     )
 
 
@@ -1963,14 +1978,24 @@ def _add_report(reporter_id, match_id, reason, details, *, user_id=None, org_id=
 
 def org_match_volunteer(coordinator_uid, match_id):
     """The name the org sees of the volunteer on a match of the coordinator's org ("Sam
-    L.", "Sam Lee" once accepted); PermissionError otherwise."""
+    L.", "Sam Lee" once accepted); PermissionError otherwise. A match its inbox doesn't
+    list as theirs to see (org_inbox's rule: a like dropped unseen, withdrawn before a
+    decision, a suspended or deleted volunteer) or one under a block either way shows
+    BLOCKED_NAME: ids are sequential, and a report or block page must not name anyone
+    the inbox wouldn't."""
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
     p = _db.profiles[m.volunteer_id]
-    blocked = _org_blocked_volunteer(p.id, o.org_id) or _volunteer_blocked_org(
-        p.id, o.org_id
+    listed = (
+        not p.deleted_at
+        and not p.suspended_at
+        and not m.org_blind
+        and (
+            m.status in ("pending", "accepted", "declined")
+            or (m.status == "withdrawn" and m.decided_at)
+        )
     )
-    if blocked:
+    if not listed or _match_blocked(m):
         return BLOCKED_NAME
     return volunteer_name(p.display_name, p.last_name, m.status == "accepted")
 
@@ -2276,7 +2301,7 @@ def upsert_imported_org(ein, name, city, zip_code, ntee_code, cause, lat, lon):
     return "created"
 
 
-CLAIM_LIMITS = {"org_name": 200, "name": 100, "email": 254}
+CLAIM_LIMITS = {"org_name": 200, "name": 80, "email": 254}  # name: as a coordinator's
 
 
 def submit_claim(ein, org_name, name, email, phone=""):
@@ -2290,6 +2315,8 @@ def submit_claim(ein, org_name, name, email, phone=""):
     for key, limit in CLAIM_LIMITS.items():
         if not 0 < len(fields[key]) <= limit:
             raise ValueError(key)
+    if hidden_chars(fields["org_name"]) or hidden_chars(fields["name"]):
+        raise ValueError("a hidden or special character")
     if _db.claim_requests(
         where="status = 'pending' AND ein = ? AND email = ?",
         where_args=[ein, fields["email"]],
@@ -2401,7 +2428,10 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
             c.email,
             org.id,
             "coordinator" if has_owner else "owner",
-            name="" if existing else c.name,
+            # a name from before claims were checked, unfit to show: they add their own
+            name=""
+            if existing or len(c.name) > CLAIM_LIMITS["name"] or hidden_chars(c.name)
+            else c.name,
             phone="" if existing else (c.phone or ""),
         )
         if not org.verified_at:

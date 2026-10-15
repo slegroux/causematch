@@ -4,10 +4,15 @@
 import pytest
 from conftest import coordinator_for
 from test_layout import SE, accepted_match
-from test_swipe import guard, offline_under_csp, sign_in_page  # noqa: F401  (fixture)
+from test_swipe import (  # noqa: F401  (fixture)
+    guard,
+    offline_under_csp,
+    onboard_page,
+    sign_in_page,
+)
 
 from app import data
-from app.db import openings, orgs
+from app.db import openings, orgs, places
 
 pytestmark = pytest.mark.e2e
 
@@ -125,3 +130,33 @@ def test_nonprofit_pages_have_big_targets_and_no_overflow(browser, live_url):
     page.context.close()
     bad = {k: v for k, v in found.items() if v != ([], [])}
     assert bad == {}
+
+
+@pytest.mark.parametrize("size", [SE, {"width": 390, "height": 844}])
+def test_a_volunteer_with_a_home_place_gets_the_whole_filter_sheet(
+    browser, live_url, size
+):
+    """The path real volunteers take: onboarding saves a Home place, so the deck shows
+    travel times and the filter sheet its travel fieldset. Open, the sheet is all on
+    screen above the tab bar, with big targets and no overflow, and Close shuts it."""
+    ctx = guard(
+        browser.new_context(
+            viewport=size, is_mobile=True, has_touch=True, base_url=live_url
+        )
+    )
+    page = ctx.new_page()
+    p = onboard_page(page, "(310) 555-0174")
+    assert places(where="user_id = ?", where_args=[p.id])  # the real Home place
+    assert check(page, "/deck") == ([], [])
+    assert page.get_by_text("from Home").first.is_visible()  # a travel why-chip
+    page.locator("summary").click()
+    sheet = page.locator("form[action='/deck/filters']")
+    box = sheet.bounding_box()
+    bar = page.get_by_role("navigation", name="Main").bounding_box()
+    assert box["y"] >= 0 and box["y"] + box["height"] <= bar["y"] + 0.5, (box, bar)
+    assert sheet.get_by_text("Travel from Home").is_visible()
+    assert sheet.get_by_role("link", name="your preferences").is_visible()
+    assert page.evaluate(SMALL) == [] and page.evaluate(OVERFLOW) == []
+    page.get_by_role("button", name="Close filters").click()
+    assert not sheet.is_visible()
+    ctx.close()

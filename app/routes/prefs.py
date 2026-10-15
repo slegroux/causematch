@@ -1,5 +1,6 @@
-"""/me/preferences: what a volunteer wants from the deck, editable at any time. Private:
-nonprofits never see these answers."""
+"""/me/preferences: what a volunteer wants from the deck, editable at any time. Places,
+cause ratings, dates, kind of work, skills and the Only-show choices stay private; the
+sections a nonprofit sees after a like (choices.SHARED_WITH_NONPROFIT) say so."""
 
 from datetime import datetime
 
@@ -49,6 +50,7 @@ from app.ui import (
     BACK,
     CARD,
     HEART,
+    PEOPLE,
     PIN,
     SHIELD,
     TITLE,
@@ -135,10 +137,24 @@ def Chip(kind, name, value, text, checked, on=CHIP_ON, icon=None):
     )
 
 
-def Section(title, hint, *content):
+SHARED = "Shared with a nonprofit after you like its opening"
+
+
+def SharedNote(detail=""):
+    """Marks what a nonprofit sees (choices.SHARED_WITH_NONPROFIT); the rest is private."""
+    return P(
+        Icon(PEOPLE, size=16, cls="mt-0.5"),
+        Span(SHARED + detail),
+        cls="flex gap-1.5 text-xs font-bold text-brand-ink",
+    )
+
+
+def Section(title, hint, *content, shared=None):
+    """shared: None for a private section, else the detail its SharedNote adds."""
     return Div(
         H2(title, cls="font-display text-lg font-extrabold text-ink"),
         P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
+        SharedNote(shared) if shared is not None else None,
         *content,
         cls="space-y-3 p-5 " + CARD,
     )
@@ -369,7 +385,12 @@ def PrefsPage(f, error=None, saved=False):
         P(
             Icon(SHIELD, size=16, cls="mt-0.5 text-ink-muted"),
             Span(
-                "Only you see these. They decide which openings you see, and in what order."
+                "These decide which openings you see, and in what order. Your places, "
+                "cause ratings, dates, kind of work, skills and Only-show choices stay "
+                "private; a nonprofit sees only what's marked shared, and only after you "
+                "like one of its openings (",
+                A("Privacy", href="/privacy", cls="underline"),
+                ").",
             ),
             cls="-mt-2 mb-4 flex gap-2 text-sm text-ink-muted",
         ),
@@ -385,6 +406,7 @@ def PrefsPage(f, error=None, saved=False):
                 "Causes",
                 "Love ranks first. Not for me hides every opening for that cause.",
                 *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
+                shared=": the causes you love or are open to, not how you rated them.",
             ),
             Section(
                 "Where you'll help from",
@@ -412,6 +434,8 @@ def PrefsPage(f, error=None, saved=False):
                     COMMITMENT,
                     f["commitment"],
                 ),
+                shared=": a summary of the times you tick (weekday or weekend mornings, "
+                "afternoons, evenings). Your dates stay private.",
             ),
             Section(
                 "Kind of work",
@@ -461,6 +485,7 @@ def PrefsPage(f, error=None, saved=False):
                         "Languages you speak besides English",
                         cls="uk-form-label mb-1.5",
                     ),
+                    SharedNote("."),
                     Checks(
                         "languages", LANGUAGES, f["languages"], "flex flex-wrap gap-2"
                     ),
@@ -499,6 +524,7 @@ def PrefsPage(f, error=None, saved=False):
                     ],
                     cls="flex flex-wrap gap-2",
                 ),
+                shared=".",
             ),
             Section(
                 "What you bring",

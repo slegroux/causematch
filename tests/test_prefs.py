@@ -89,7 +89,7 @@ def test_me_links_to_preferences(user):
 
 def test_page_shows_the_onboarding_answers(homelessness_off, user):
     html = user.get("/me/preferences").text
-    assert "Preferences" in html and "Only you see these" in html
+    assert "Preferences" in html and "stay private" in html
     # FORM in conftest: food loved, free weekend mornings, has a car, weekly
     for name, value in (
         (f"cause_{FOOD}", "love"),
@@ -351,3 +351,35 @@ def test_the_migration_adds_the_column_to_an_old_table(tmp_path):
 def test_homelessness_services_is_offered_now_that_it_is_active(user):
     html = user.get("/me/preferences").text
     assert 'name="cause_homelessness-services" value="love"' in html
+
+
+def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
+    """Causes, general availability, languages and how often are shared after a like
+    (choices.SHARED_WITH_NONPROFIT); places, ratings, dates, kind of work, skills and the
+    Only-show choices are not. The page must not promise everything is private."""
+    from html import unescape
+
+    from app.choices import SHARED_WITH_NONPROFIT
+    from app.routes.prefs import SHARED
+
+    html = unescape(user.get("/me/preferences").text)
+    assert "Only you see these" not in html and 'href="/privacy"' in html
+    sections = html.split("<h2")[1:]
+    marked = {s.split(">", 1)[1].split("<", 1)[0]: SHARED in s for s in sections}
+    assert marked == {
+        "Causes": True,
+        "Where you'll help from": False,
+        "When": True,
+        "Kind of work": True,  # its languages fieldset only
+        "Only show, or prefer?": False,
+        "How often": True,
+        "What you bring": False,
+    }
+    kind = next(
+        s for s in sections if s.startswith(">Kind of work") or "Kind of work<" in s
+    )
+    assert kind.count(SHARED) == 1 and kind.index("Languages you speak") < kind.index(
+        SHARED
+    )
+    for item in ("causes", "availability", "languages", "how often"):
+        assert item in SHARED_WITH_NONPROFIT

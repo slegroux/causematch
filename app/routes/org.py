@@ -38,7 +38,7 @@ from app.choices import (
     SETTING,
     SKILLS,
 )
-from app.forms import hidden_chars, query, str_form
+from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.geo import zip_latlon
 from app.routes.shifts import RepeatForm
 from app.ui import (
@@ -467,9 +467,7 @@ def _sync_save_details(req, form):
     if not name or len(name) > 80:
         return org_home(req, "Enter your name and role (80 characters at most).")
     if hidden_chars(name):
-        return org_home(
-            req, "Something in your name wasn't recognized. Please try again."
-        )
+        return org_home(req, HIDDEN_CHARS_MESSAGE)
     e164 = normalize_phone(phone) if phone else ""
     if phone and not e164:
         return org_home(req, BAD_PHONE)
@@ -525,7 +523,7 @@ def _sync_new_opening_save(req, form):
     if any(len(f[k]) > n for k, n in LIMITS.items()):
         return fail("One of your answers is too long. Please shorten it.")
     if any(hidden_chars(f[k], multiline=k in ("about", "notes")) for k in LIMITS):
-        return fail("Something in that form wasn't recognized. Please try again.")
+        return fail(HIDDEN_CHARS_MESSAGE)
     if not f["title"] or not f["about"] or not f["neighborhood"]:
         return fail(
             "Please fill in the title, what volunteers will do, and the neighborhood."

@@ -291,12 +291,40 @@ def _volunteer(phone, name, hood, causes, skills, frequency):
         lon=-118.42,
         radius_km=60,
         causes=causes,
-        availability=["weekend_morning", "weekday_evening"],
+        # day slots and a Home place, as onboarding saves them
+        availability=["sat_morning", "sun_morning", "tue_evening", "thu_evening"],
         skills=skills,
         frequency=frequency,
         heard_from="personal",
+        place={
+            "label": "Home",
+            "lat": 34.03,
+            "lon": -118.42,
+            "area": hood,
+            "mode": "car",
+            "max_minutes": 0,  # any distance: every demo opening is in reach
+        },
     )
     return uid
+
+
+def _fill_invented_openings():
+    """The invented seed's openings, given what real ones carry: kind of work, a sample
+    event link (example.org) and a language now and then, so their cards show it all."""
+    from app.db import openings
+
+    for i, o in enumerate(openings(order_by="id")):
+        cause = (json.loads(o.causes or "[]") or [""])[0]
+        setting, effort, group = WORK_BY_CAUSE.get(cause, ("", "", ""))
+        openings.update(
+            id=o.id,
+            setting=setting,
+            effort=effort,
+            group_size=group,
+            first_timer_ok=i % 2 == 0,
+            languages=json.dumps(["es"] if i % 3 == 0 else []),
+            event_url=f"https://example.org/volunteer/{o.id}",
+        )
 
 
 def _preferences(uid):
@@ -391,6 +419,7 @@ def seed(seed_file=None):
         load_orgs(json.loads(path.read_text()), path.resolve().parent)
     else:
         seed_demo()
+        _fill_invented_openings()
     org = orgs()[0]
     coord = data.add_coordinator(COORDINATOR[0], org.id, name=COORDINATOR[1])
     data.add_admin(*ADMIN)

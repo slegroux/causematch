@@ -61,7 +61,7 @@ def test_zip_outside_la_rejected(new_user):
     r = new_user.post(
         "/onboarding", data={**FORM, "place1_where": "10001"}, follow_redirects=False
     )
-    assert "only in Los Angeles for now" in r.text
+    assert "only in Los Angeles County for now" in r.text
     assert not profile_of(new_user).onboarded_at
 
 
@@ -301,8 +301,8 @@ def test_privacy_page_says_exactly_what_is_shared_and_what_is_private(anon):
 
     page = unescape(anon.get("/privacy").text)
     private = page.split("Only you see these:")[1].split(". They decide")[0]
-    shared = page.split("A nonprofit sees what the paragraph above lists")[1]
-    shared = shared.split("you gave.")[0]
+    shared = page.split('A nonprofit sees only what "Who sees what" lists')[1]
+    shared = shared.split("(you can change it")[0]
     assert SHARED_WITH_NONPROFIT in page
     # each thing the consent shares is named as shared, and none of it as private
     for item, words in (
@@ -311,12 +311,12 @@ def test_privacy_page_says_exactly_what_is_shared_and_what_is_private(anon):
         ("availability", "general summary of when you're free"),
         ("how often", "how often you'd like to help"),
         ("languages", "languages you speak"),
-        ("neighborhood", "neighborhood you gave"),
+        ("neighborhood", "neighborhood you show nonprofits"),
         ("photo", "your photo"),
         ("pronouns", "pronouns, bio and interests"),
     ):
         assert item in SHARED_WITH_NONPROFIT
-        assert words in shared + "you gave", item
+        assert words in shared, item
         assert item not in private, item
     for kept in ("places", "device", "rated", "specific dates", "skills"):
         assert kept in private, kept

@@ -276,9 +276,10 @@ def deck_view(req):
     return req.session.get(VIEW)
 
 
-def FilterSheet(uid, today, count, view, beside=False):
+def FilterSheet(uid, today, count, view):
     """The deck's quick filters, in a <details> (no script) whose round button sits left of
-    Pass and Like (beside=True) or under the empty deck, opening upwards:
+    Pass and Like, or under the empty deck. Open, the sheet is fixed just above the tab
+    bar, whatever the card's height, so all of it is on screen:
     the main place's travel time, which causes show, and this week only. They hold until
     cleared and change no saved preference. Its button says how many cards the deck
     holds."""
@@ -299,7 +300,7 @@ def FilterSheet(uid, today, count, view, beside=False):
                 "rounded-full bg-ink px-1.5 text-xs font-bold text-cream",
             ),
             Span(f"{count} opening{'' if count == 1 else 's'}", cls="sr-only"),
-            Span("Filtered", cls="sr-only") if view else None,
+            Span(" (Filtered)", cls="sr-only") if view else None,
             Span(", filters", cls="sr-only"),
             cls="relative grid h-12 w-12 cursor-pointer list-none place-items-center "
             "rounded-full border bg-white text-ink shadow-warm "
@@ -308,6 +309,19 @@ def FilterSheet(uid, today, count, view, beside=False):
         ),
         PlainForm(
             Hidden(name="today", value="1") if today else None,
+            Div(
+                H2("Filters", cls="font-display text-lg font-extrabold text-ink"),
+                # static/swipe.js closes the <details>; without script, Show closes it
+                Button(
+                    Icon(CROSS, size=20),
+                    Span("Close filters", cls="sr-only"),
+                    type="button",
+                    data_close_sheet="1",
+                    cls="-mr-2 grid h-11 w-11 place-items-center rounded-full "
+                    "text-ink-muted hover:bg-sand hover:text-ink",
+                ),
+                cls="flex items-center justify-between",
+            ),
             P(
                 "These hold until you clear them. To keep a change, edit ",
                 A(
@@ -368,11 +382,11 @@ def FilterSheet(uid, today, count, view, beside=False):
             ),
             action="/deck/filters",
             method="post",
-            # never taller than the room above the buttons: a short screen scrolls it
-            cls="absolute bottom-full z-30 mb-2 max-h-[calc(100dvh-15rem)] "
-            "w-[min(22rem,calc(100vw-2rem))] overflow-y-auto "
-            + ("left-0 " if beside else "left-1/2 -translate-x-1/2 ")
-            + "space-y-4 rounded-3xl border border-line bg-white p-5 shadow-warm",
+            # fixed above the tab bar (cm-filter-sheet in static/theme.css), never
+            # taller than the screen above it; a short screen scrolls it
+            cls="cm-filter-sheet fixed inset-x-4 z-40 mx-auto max-w-[22rem] "
+            "space-y-4 overflow-y-auto rounded-3xl border border-line bg-white p-5 "
+            "shadow-warm",
         ),
         cls="relative z-20",
     )
@@ -407,7 +421,7 @@ def DeckArea(uid, today=False, view=None, notice=None):
         # and Like stay in reach above the tab bar; the gaps between them still drag
         Div(
             Div(
-                FilterSheet(uid, today, count, view, beside=True),
+                FilterSheet(uid, today, count, view),
                 cls="pointer-events-auto",
             ),
             SwipeButtons(c["id"], today),

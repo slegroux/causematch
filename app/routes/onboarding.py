@@ -14,7 +14,7 @@ from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput
 ar = Router()
 
 ADULTS_ONLY = "Causematch is for adults 18+"
-LA_ONLY = "Causematch is only in Los Angeles for now"
+LA_ONLY = "Causematch is only in Los Angeles County for now"
 FIVE_DIGITS = prefs.FIVE_DIGITS
 NO_PLACE = (
     "Tell us where you'll help from: a neighborhood, a ZIP code or your location."

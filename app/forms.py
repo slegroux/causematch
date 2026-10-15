@@ -41,6 +41,9 @@ FILLERS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
 # paragraph separators: none belongs in a name or a bio
 HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cn", "Cs", "Zl", "Zp"})
 ZWJ = "\u200d"
+EMOJI = ("So", "Sk")  # a symbol, or a skin-tone modifier, which a joiner may follow
+KEYCAPS = frozenset("0123456789#*")
+KEYCAP = "\u20e3"  # combining enclosing keycap: 1️⃣ is "1", U+FE0F, U+20E3
 EMOJI_STYLE = "\ufe0f"
 # Marks that draw nothing: the combining grapheme joiner, Khmer and Mongolian ones,
 # variation selectors (U+FE0F is EMOJI_STYLE, checked on its own)
@@ -57,9 +60,10 @@ def hidden_chars(text, multiline=False):
     private-use or unassigned code point, a filler, a line separator, a mark that is
     invisible by default (IGNORABLE_MARKS) or has no base character before it, or more
     than MAX_MARKS combining marks on one character. Multiline text may hold line breaks
-    and tabs, and a zero-width joiner between two characters (emoji like the rainbow flag
-    use one); a joiner doesn't start a new character, so marks around it add up. The
-    emoji variation selector U+FE0F is allowed only right after an emoji (category So)."""
+    and tabs, and a zero-width joiner inside an emoji sequence: after an emoji, a skin
+    tone or U+FE0F, and before an emoji (the rainbow flag, a family, a person at a
+    laptop), never between letters. The emoji variation selector U+FE0F is allowed only
+    right after an emoji (category So) or in a keycap (1, #, * then U+FE0F U+20E3)."""
     marks = 0
     for i, c in enumerate(text):
         category = unicodedata.category(c)
@@ -67,14 +71,21 @@ def hidden_chars(text, multiline=False):
             if not multiline:
                 return True
         elif c == ZWJ:
-            inside = 0 < i < len(text) - 1 and not (
-                text[i - 1].isspace() or text[i + 1].isspace()
+            before = text[i - 1] if i else ""
+            after = text[i + 1] if i + 1 < len(text) else ""
+            joins = (
+                before
+                and after
+                and (before == EMOJI_STYLE or unicodedata.category(before) in EMOJI)
+                and unicodedata.category(after) == "So"
             )
-            if not (multiline and inside):
+            if not (multiline and joins):
                 return True
-            continue  # the marks on either side count as one character's
+            continue
         elif c == EMOJI_STYLE:
-            if i == 0 or unicodedata.category(text[i - 1]) != "So":
+            before = text[i - 1] if i else ""
+            keycap = before in KEYCAPS and text[i + 1 : i + 2] == KEYCAP
+            if not before or not (unicodedata.category(before) == "So" or keycap):
                 return True
             continue
         elif IGNORABLE_MARKS.match(c) or category in HIDDEN_CATEGORIES or c in FILLERS:

@@ -446,12 +446,13 @@ def privacy():
             "ahead you look, one-time or recurring, the kind of work and skills you "
             "picked, which preferences only show or only rank, and Surprise me. They "
             "decide which openings you see and in what order.",
-            "A nonprofit sees what the paragraph above lists, and only after you like one "
-            "of its openings: your photo, your first name and last initial (all of your "
+            'A nonprofit sees only what "Who sees what" lists, and only after you like '
+            "one of its openings: your photo, your first name and last initial (all of your "
             "last name once it accepts you), pronouns, bio and interests, the causes you "
             "love or are open to, a general summary of when you're free (weekday or "
             "weekend mornings, afternoons, evenings), the languages you speak, how often "
-            "you'd like to help and the neighborhood you gave.",
+            "you'd like to help and the neighborhood you show nonprofits (you can "
+            "change it under Me, then Your profile).",
         ),
         Section(
             "Who else handles your data",
@@ -490,7 +491,8 @@ def privacy():
         ),
         Section(
             "Seeing or correcting your data",
-            "You can change your photo, name, pronouns, bio and interests yourself under "
+            "You can change your photo, name, pronouns, bio, interests and the "
+            "neighborhood nonprofits see yourself under "
             "Me, then Your profile, and your match preferences under Me, then "
             f"Preferences. For anything else, write to {contact} and we'll send you what "
             "we hold or fix it, or delete your account and sign up again.",

@@ -270,3 +270,9 @@ body:has(.cm-tabbar) .cm-savebar {
   bottom: calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
   z-index: 10;
 }
+/* The deck's open filter sheet (app/routes/deck.py FilterSheet): just above the tab bar,
+   whatever the card's height, and never taller than the screen above it. */
+.cm-filter-sheet {
+  bottom: calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 4rem - 1px - 1.5rem - env(safe-area-inset-bottom));
+}

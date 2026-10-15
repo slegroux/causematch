@@ -1093,3 +1093,102 @@ def test_report_details_with_a_bidi_control_are_refused():
     with pytest.raises(ValueError, match="can't show"):
         data._checked_report_text("spam", "he said \u202eyas ton")
     assert data._checked_report_text("spam", " plain text ") == "plain text"
+
+
+# --- final security review: names after a block, and on pages the inbox wouldn't list ------
+
+
+def test_chat_messages_name_a_blocked_volunteer_volunteer_only(w):
+    """L1: the message rows, not only the header, stop reading the live first name."""
+    m = like(w)
+    accept(w, m)
+    data.send_message(w.vol.uid, m.id, "See you Saturday")
+    data.block_volunteer(w.coord_uid, m.id)
+    profiles.update(id=w.vol.uid, display_name="CALLME5551234")  # a rename after it
+    page = w.coord.get(f"/org/chat/{m.id}").text
+    assert "CALLME" not in page and "Sam" not in page and data.BLOCKED_NAME in page
+    rows = data.list_messages(w.coord_uid, m.id)
+    assert [r["sender"] for r in rows] == [data.BLOCKED_NAME]
+    assert "You" in w.vol.get(f"/chat/{m.id}").text  # their own view is unchanged
+
+
+def _report_page_name(w, m):
+    return w.coord.get(f"/org/matches/{m.id}/report").text
+
+
+@pytest.mark.parametrize(
+    "hide",
+    [
+        "org_blind",
+        "withdrawn_undecided",
+        "suspended",
+        "deleted",
+        "org_block",
+        "vol_block",
+    ],
+)
+def test_report_and_block_pages_name_no_one_the_inbox_would_hide(w, hide):
+    """L2: org_match_volunteer follows org_inbox's rule; the report itself still goes."""
+    m = like(w)
+    assert "Report Sam" in _report_page_name(w, m)  # positive control: listed, named
+    if hide == "org_blind":
+        matches.update(id=m.id, org_blind=1)
+    elif hide == "withdrawn_undecided":
+        data.withdraw(w.vol.uid, m.id)
+    elif hide in ("suspended", "deleted"):
+        profiles.update(id=w.vol.uid, **{f"{hide}_at": "2026-10-15T00:00:00+00:00"})
+    elif hide == "org_block":
+        blocks.insert(
+            blocker_id=w.coord_uid,
+            blocked_user_id=w.vol.uid,
+            blocked_org_id=w.org,
+            created_at="2026-10-15T00:00:00+00:00",
+        )
+    else:
+        blocks.insert(
+            blocker_id=w.vol.uid,
+            blocked_user_id=None,
+            blocked_org_id=w.org,
+            created_at="2026-10-15T00:00:00+00:00",
+        )
+    assert data.org_match_volunteer(w.coord_uid, m.id) == data.BLOCKED_NAME
+    for page, title in (("report", "Report"), ("block", "Block")):
+        html = w.coord.get(f"/org/matches/{m.id}/{page}").text
+        assert f"{title} Sam" not in html and f"{title} Volunteer" in html, (hide, page)
+    r = w.coord.post(f"/org/matches/{m.id}/report", data={"reason": data.REASONS[0][0]})
+    assert r.status_code in (200, 303)
+    assert reports(where="match_id = ?", where_args=[m.id])  # still reported
+
+
+def test_a_claim_name_is_checked_like_any_name(anon):
+    """L3: the claim form refuses hidden characters and names over 80; an older claim
+    that slipped through is approved without its name."""
+    form = {
+        "ein": "53-0196605",
+        "org_name": "Helpers",
+        "name": "Ann Lee",
+        "email": "ann@example.org",
+        "authorized": "1",
+    }
+    for over in ({"name": "Ann\u202e Lee"}, {"org_name": "Help\u200bers"}):
+        r = anon.post("/org/claim", data={**form, **over})
+        assert "hidden or special characters" in r.text, over
+    r = anon.post("/org/claim", data={**form, "name": "n" * 81})
+    assert "Enter your name" in r.text
+    with pytest.raises(ValueError):
+        data.submit_claim("530196605", "Helpers", "Ann\u202e Lee", "ann@example.org")
+
+
+def test_the_inbox_lists_a_volunteers_causes_a_to_z(w):
+    """I4: the stored order puts loved causes first; A to Z hints at no rating."""
+    profiles.update(
+        id=w.vol.uid,
+        causes='["food-insecurity", "animal-shelters", "environment-parks"]',
+    )
+    like(w)
+    (row,) = data.org_inbox(w.coord_uid)["pending"]
+    assert row["causes"] == [
+        "Animal shelters",
+        "Environment & parks",
+        "Food insecurity",
+    ]

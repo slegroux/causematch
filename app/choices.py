@@ -13,8 +13,9 @@ AVAILABILITY = [
 ]
 
 # The day grid: 7 days x 3 parts, stored as "mon_morning" ... "sun_evening" (21 slots).
-# AVAILABILITY above is the older weekday/weekend summary: onboarding still asks it, and the
-# nonprofit sees it (app/match.py general_buckets).
+# AVAILABILITY above is the older weekday/weekend summary: profiles from before the grid
+# may still hold it, and the nonprofit sees the grid summed up into it (app/match.py
+# general_buckets).
 DAYS = [
     ("mon", "Mon"),
     ("tue", "Tue"),

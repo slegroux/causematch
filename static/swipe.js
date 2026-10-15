@@ -72,6 +72,13 @@
     }
   });
 
+  // The filter sheet's close button: shut its <details> (Show openings also closes it).
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-close-sheet]");
+    var d = b && b.closest("details");
+    if (d) d.open = false;
+  });
+
   // Ignore taps that land on a card just swapped in (the second tap of a double tap).
   document.addEventListener("click", function (e) {
     if (e.target.closest && e.target.closest("#deck-area button") && !ready()) {

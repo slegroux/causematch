@@ -66,6 +66,30 @@ def sign_in_page(page, phone):
     return p
 
 
+def onboard_page(page, phone, where="90012"):
+    """Sign in and fill onboarding the way a volunteer does, so the profile has the Home
+    place it saves (sign_in_page skips onboarding: a profile from before places)."""
+    page.goto("/login")
+    page.get_by_label("Mobile number").fill(phone)
+    page.get_by_role("button", name="Text me a code").click()
+    page.get_by_label("Code").fill("000000")
+    page.get_by_role("button", name="Sign in").click()
+    page.wait_for_url("**/onboarding")
+    page.locator("input[name=first_name]").fill("Sam")
+    page.get_by_text("I'm 18 or older").click()
+    page.get_by_label("Neighborhood or ZIP").fill(where)
+    for slug in ("food-insecurity", "environment-parks", "animal-shelters"):
+        page.locator(f"label:has(input[name='cause_{slug}'][value=love])").click()
+    page.locator("label:has(input[name=availability][value=sat_morning])").click()
+    page.locator("select[name=heard_from]").select_option("public")
+    page.get_by_text("I agree", exact=True).click()
+    page.get_by_role("button", name="Start swiping").click()
+    page.wait_for_url("**/deck")
+    e164 = "+1" + re.sub(r"\D", "", phone)
+    (p,) = profiles(where="phone = ?", where_args=[e164])
+    return p
+
+
 def touch_drag(page, selector, dx):
     """A real touch swipe through the browser's input pipeline, not synthetic JS events."""
     box = page.locator(selector).bounding_box()

@@ -270,7 +270,7 @@ def test_org_shifts_lists_to_mark_upcoming_and_recent(accepted, clock):
     box = data.org_shifts(uid)
     assert [s["id"] for s in box["to_mark"]] == [first.id]
     assert [s["id"] for s in box["upcoming"]] == [later.id]
-    assert box["to_mark"][0]["first_name"] == "Zelda"
+    assert box["to_mark"][0]["name"].startswith("Zelda")
     assert data.org_shifts(accepted.org1.uid) == {
         "upcoming": [],
         "to_mark": [],

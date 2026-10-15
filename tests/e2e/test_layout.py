@@ -36,7 +36,13 @@ def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(se_page):
         ("/matches", "Matches"),
         ("/history", "Me"),
         ("/profile", "Me"),
+        ("/me/preferences", "Me"),
+        ("/me/profile", "Me"),
+        ("/profile/delete", "Me"),
         (f"/chat/{match_id}", "Matches"),
+        (f"/matches/{match_id}/withdraw", "Matches"),
+        (f"/matches/{match_id}/report", "Matches"),
+        (f"/matches/{match_id}/block", "Matches"),
     ):
         se_page.goto(path)
         width = se_page.evaluate(

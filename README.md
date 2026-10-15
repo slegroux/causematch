@@ -2,8 +2,10 @@
 
 Swipe to volunteer. Causematch matches people with nonprofits across Los Angeles County that need a hand (food, environment and parks, animal shelters, homelessness services): volunteers swipe through openings ranked for them, the nonprofit says yes too, and a chat opens.
 
-- **Volunteers** use it on their phone: sign in with a text code, pick causes, swipe. A profile (photo, name, pronouns, short bio, interests) reaches a nonprofit only after a like, as "Sam L." until it says yes.
-- **Nonprofits** use the dashboard: post openings with a photo and a link to their own event page, add their logo, accept volunteers, mark shifts done.
+- **Volunteers** use it on their phone: sign in with a text code, answer a short onboarding, swipe. Each card says why it's shown (causes, travel time, when you're free, kind of work); "I'm free today" and a filter sheet narrow the deck for a visit.
+- **Match preferences** live in Me, then Preferences, and stay private: up to two places you help from (a neighborhood or ZIP area, or your device's location rounded to about 1 km, never an address) with how you travel and how far, causes rated love / open / not for me, the days and dates you're free, the kind of work and languages, and whether each one only ranks openings or also hides the ones that don't fit.
+- **Profiles** (Me, then Your profile): photo, name, pronouns, short bio, interests and the neighborhood nonprofits see. A nonprofit sees what `SHARED_WITH_NONPROFIT` lists (that profile, the causes you love or are open to, a general summary of when you're free, the languages you speak and how often you'd like to help) only after you like one of its openings, as "Sam L." until it says yes. The privacy page (`/privacy`) says the same.
+- **Nonprofits** use the dashboard: post openings anywhere in Los Angeles County with their kind of work (setting, effort, group size, first-timer friendly, languages), a photo and a link to their own event page, add their logo, accept volunteers, mark shifts done. Homelessness services openings are group shifts only (adults, no one-to-one contact).
 
 Built with [FastHTML](https://fastht.ml), [MonsterUI](https://monsterui.answer.ai) and SQLite.
 

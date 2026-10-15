@@ -22,6 +22,9 @@ from app.db import blocks, now, openings, org_members, orgs, profiles
 from app.ui import DEMO_NOTICE
 from main import app
 
+# every page check runs twice: with the Home place onboarding saves, and as a profile
+# from before places (conftest.pytest_generate_tests)
+HOME_PLACES = True
 ROOT = Path(__file__).resolve().parent.parent
 # Franken UI's class for each kind of field; an <input> with none of them draws no box
 FIELD_CLASSES = {"uk-input", "uk-checkbox", "uk-radio", "uk-range"}

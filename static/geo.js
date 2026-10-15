@@ -1,6 +1,6 @@
-// "Use my location" on /me/preferences (app/routes/prefs.py): the device's position,
-// rounded here to 2 decimals (about 1 km), goes into the place's hidden fields; the server
-// rounds it again. Nothing leaves the page until the form is saved.
+// "Use my location" on /me/preferences and /onboarding (app/routes/prefs.py PlaceFields):
+// the device's position, rounded here to 2 decimals (about 1 km), goes into the place's
+// hidden fields; the server rounds it again. Nothing leaves the page until the form is saved.
 (function () {
   if (!("geolocation" in navigator)) return;
 

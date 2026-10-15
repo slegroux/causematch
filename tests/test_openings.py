@@ -538,7 +538,7 @@ def test_kind_of_work_form_offers_the_fields(coord):
 def test_an_opening_refuses_hidden_characters(coord, over):
     before = openings.count
     r = post(coord, **over)
-    assert "wasn't recognized" in r.text.replace("&#x27;", "'")
+    assert "hidden or special characters" in r.text
     assert openings.count == before
 
 
@@ -549,4 +549,4 @@ def test_an_opening_keeps_line_breaks_in_its_text(coord):
 
 def test_a_coordinator_name_refuses_hidden_characters(coord):
     r = coord.post("/org/details", data={"name": "Maria\u202e, lead", "phone": ""})
-    assert "wasn't recognized" in r.text.replace("&#x27;", "'")
+    assert "hidden or special characters" in r.text

@@ -38,7 +38,7 @@ from starlette.datastructures import UploadFile
 
 from app import data, photos
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
-from app.forms import bad_request, hidden_chars, query, str_form
+from app.forms import HIDDEN_CHARS_MESSAGE, bad_request, hidden_chars, query, str_form
 from app.ui import (
     BACK,
     CARD,
@@ -64,6 +64,7 @@ NOTICE = {
     "details": "Profile saved.",
 }
 MAX_NAME = 80
+MAX_NEIGHBORHOOD = 80  # as onboarding (LIMITS)
 # The types a phone's picker offers; the server decides what it accepts (photos.FORMATS)
 ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif"
 
@@ -103,19 +104,22 @@ def PhotoForm(action, label, button, ident="photo", shrink=True):
 
 
 def DetailsForm(p, f=None):
-    """Name, pronouns, bio and interests; f: the values just typed, after an error."""
+    """Name, pronouns, bio, interests and the neighborhood nonprofits see; f: the values
+    just typed, after an error."""
     f = f or {
         "first_name": p.display_name or "",
         "last_name": p.last_name or "",
         "pronouns": p.pronouns or "",
         "bio": p.bio or "",
+        "neighborhood": p.neighborhood or "",
         "interests": json.loads(p.interests or "[]"),
     }
     return PlainForm(
         H2("About you", cls="font-display text-lg font-extrabold text-ink"),
         P(
             "Nonprofits see these after you like one of their openings: your first "
-            "name and last initial, and your full last name once they say yes.",
+            "name and last initial (your full last name once they say yes), pronouns, "
+            "bio, interests and neighborhood.",
             cls=TextPresets.muted_sm,
         ),
         Field(
@@ -157,6 +161,14 @@ def DetailsForm(p, f=None):
                 maxlength=str(MAX_BIO),
                 placeholder="What brings you to volunteering?",
                 cls="uk-textarea",
+            ),
+        ),
+        Field(
+            "Neighborhood nonprofits see (optional, e.g. Silver Lake)",
+            TextInput(
+                name="neighborhood",
+                value=f["neighborhood"],
+                maxlength=str(MAX_NEIGHBORHOOD),
             ),
         ),
         Field(
@@ -294,7 +306,7 @@ def details_error(f):
     if any(
         hidden_chars(v, multiline=k == "bio") for k, v in f.items() if k != "interests"
     ):
-        return "Something in that form wasn't recognized. Please try again."
+        return HIDDEN_CHARS_MESSAGE
     if not f["first_name"] or len(f["first_name"]) > MAX_NAME:
         return f"Enter your first name ({MAX_NAME} characters at most)."
     if len(f["last_name"]) > MAX_NAME:
@@ -303,6 +315,8 @@ def details_error(f):
         return f"Keep your pronouns to {MAX_PRONOUNS} characters."
     if len(f["bio"]) > MAX_BIO:
         return f"Keep your bio to {MAX_BIO} characters."
+    if len(f["neighborhood"]) > MAX_NEIGHBORHOOD:
+        return f"Keep your neighborhood to {MAX_NEIGHBORHOOD} characters."
     picked = set(f["interests"])
     if not picked <= {v for v, _ in INTERESTS} or len(picked) > MAX_INTERESTS:
         return f"Pick up to {MAX_INTERESTS} interests from the list."
@@ -316,7 +330,7 @@ async def save_details(req):
         return bad_request()
     f = {
         k: form.get(k, "").strip()
-        for k in ("first_name", "last_name", "pronouns", "bio")
+        for k in ("first_name", "last_name", "pronouns", "bio", "neighborhood")
     }
     f["interests"] = list(dict.fromkeys(form.getlist("interests")))
     return await run_in_threadpool(_sync_save_details, req.scope["uid"], f)
