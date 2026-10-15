@@ -45,7 +45,9 @@ class Opening:
     lon: float
     neighborhood: str
     remote: bool
-    starts_at: str
+    starts_at: (
+        str  # America/Los_Angeles wall clock, naive ISO minutes (created_at is UTC)
+    )
     recurrence: str
     slots: int
     orientation_required: str
@@ -61,7 +63,8 @@ class Profile:
     role: str  # volunteer|coordinator|admin
     phone: str  # E.164
     email: str
-    display_name: str
+    display_name: str  # volunteer first name, or a coordinator's name and role
+    contact_phone: str  # coordinators only, E.164; never a sign-in phone
     adult_attested: bool
     session_version: int  # bump to sign every device out
     lat: float  # private: never rendered

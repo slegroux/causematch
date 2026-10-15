@@ -1,6 +1,9 @@
+import functools
 import hashlib
+import inspect
 import json
 import secrets
+import threading
 from datetime import UTC, datetime, timedelta
 
 import apsw
@@ -286,8 +289,11 @@ def org_exists(org_id):
     return bool(orgs(where="id = ?", where_args=[org_id]))
 
 
-def add_coordinator(email, org_id, role="coordinator"):
-    """Admin-only entry point (scripts/add_coordinator.py): profile id of the coordinator."""
+def add_coordinator(email, org_id, role="coordinator", name="", phone=""):
+    """Admin-only entry point (scripts/add_coordinator.py): profile id of the coordinator.
+
+    name is the contact name shown to volunteers; phone (E.164) is optional.
+    """
     if role not in ("owner", "coordinator"):
         raise ValueError(role)
     if not org_exists(org_id):
@@ -301,13 +307,27 @@ def add_coordinator(email, org_id, role="coordinator"):
             Profile(
                 role="coordinator",
                 email=email,
+                display_name=name,
+                contact_phone=phone,
                 session_version=1,
                 created_at=_now(),
             )
         ).id
+        found = None
+    if found and (name or phone):
+        set_coordinator_details(found, name or get_profile(found).display_name, phone)
     if not org_members(where="org_id = ? AND user_id = ?", where_args=[org_id, uid]):
         org_members.insert({"org_id": org_id, "user_id": uid, "role": role})
     return uid
+
+
+def set_coordinator_details(uid, name, phone=""):
+    """Contact name (required) and phone (E.164, optional) on a coordinator's profile."""
+    if not name:
+        raise ValueError("name")
+    if (p := get_profile(uid)) is None or p.role != "coordinator":
+        raise PermissionError("not a coordinator")
+    profiles.update(id=uid, display_name=name, contact_phone=phone)
 
 
 def coordinator_by_email(email):
@@ -350,14 +370,12 @@ def create_login_token(uid):
 
 def consume_login_token(token):
     """User id the token was issued to, or None. Marks it used in one statement."""
-    db.execute(
+    rows = db.q(
         "UPDATE login_token SET used_at = ? WHERE token_hash = ? "
-        "AND used_at IS NULL AND expires_at > ?",
+        "AND used_at IS NULL AND expires_at > ? RETURNING user_id",
         [_now(), _hash(token), _now()],
     )
-    if db.conn.changes() != 1:
-        return None
-    return login_tokens[_hash(token)].user_id
+    return rows[0]["user_id"] if rows else None
 
 
 def create_opening(
@@ -418,8 +436,32 @@ def org_openings(coordinator_uid):
 def close_opening(coordinator_uid, opening_id):
     try:
         o = openings[opening_id]
-    except NotFoundError:
+    except (NotFoundError, OverflowError):  # OverflowError: id past SQLite's 64 bits
         raise PermissionError("no such opening") from None
     if o.org_id not in coordinator_org_ids(coordinator_uid):
         raise PermissionError("not a member of this org")
     openings.update(id=opening_id, status="closed")
+
+
+# One apsw connection is shared by every request thread (and, later, websockets); apsw
+# raises ThreadingViolationError when two threads use it at once. SQLite allows a single
+# writer anyway, so every public function here runs under one re-entrant lock.
+_lock = threading.RLock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        with _lock:
+            return fn(*args, **kwargs)
+
+    return run
+
+
+for _name, _fn in list(globals().items()):
+    if (
+        inspect.isfunction(_fn)
+        and _fn.__module__ == __name__
+        and not _name.startswith("_")
+    ):
+        globals()[_name] = _serialized(_fn)

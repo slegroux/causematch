@@ -14,6 +14,12 @@ def request_link(client, email, **kw):
     return client.post("/org/login/send", data={"email": email}, **kw)
 
 
+def verify(client, token):
+    return client.post(
+        "/org/login/verify", data={"token": token}, follow_redirects=False
+    )
+
+
 def token_of(body):
     return body.split("token=")[1].split()[0]
 
@@ -42,11 +48,11 @@ def test_token_works_once(anon):
     _, email = coordinator_for(0)
     request_link(anon, email)
     token = token_of(notify.get_emailer().sent[-1][2])
-    first = anon.get(f"/org/login/verify?token={token}", follow_redirects=False)
+    first = verify(anon, token)
     assert first.status_code == 303 and first.headers["location"] == "/org"
     assert anon.get("/org").status_code == 200
     other = TestClient(app)
-    second = other.get(f"/org/login/verify?token={token}", follow_redirects=False)
+    second = verify(other, token)
     assert second.status_code == 200 and "expired or was already used" in second.text
     assert other.get("/org", follow_redirects=False).status_code == 303
 
@@ -58,7 +64,7 @@ def test_expired_token_fails(anon):
     past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat(timespec="seconds")
     for t in login_tokens():
         login_tokens.update(token_hash=t.token_hash, expires_at=past)
-    r = anon.get(f"/org/login/verify?token={token}", follow_redirects=False)
+    r = verify(anon, token)
     assert r.status_code == 200 and "expired" in r.text
     assert anon.get("/org", follow_redirects=False).status_code == 303
 
@@ -85,13 +91,15 @@ def test_new_link_invalidates_the_old_one(anon):
     request_link(anon, email)
     old = token_of(notify.get_emailer().sent[-1][2])
     request_link(anon, email)
-    r = anon.get(f"/org/login/verify?token={old}", follow_redirects=False)
-    assert r.status_code == 200
+    r = verify(anon, old)
+    assert r.status_code == 200 and "expired or was already used" in r.text
+    assert anon.get("/org", follow_redirects=False).status_code == 303
+    assert verify(anon, token_of(notify.get_emailer().sent[-1][2])).status_code == 303
 
 
 def test_garbage_tokens_fail(anon):
     for t in ("", "x", "a" * 5000, "%00"):
-        r = anon.get("/org/login/verify", params={"token": t}, follow_redirects=False)
+        r = verify(anon, t)
         assert r.status_code == 200 and "expired" in r.text
 
 
@@ -183,3 +191,54 @@ def test_org_sign_in_helper_roundtrip():
     c = TestClient(app)
     org_sign_in(c, email)
     assert c.get("/org").status_code == 200
+
+
+def test_get_and_head_do_not_consume_the_token(anon):
+    _, email = coordinator_for(0)
+    request_link(anon, email)
+    token = token_of(notify.get_emailer().sent[-1][2])
+    for method in (anon.get, anon.head, anon.get):
+        r = method(f"/org/login/verify?token={token}", follow_redirects=False)
+        assert r.status_code == 200
+    assert 'name="token"' in anon.get(f"/org/login/verify?token={token}").text
+    assert [t.used_at for t in login_tokens()] == [None]
+    assert (
+        anon.get("/org", follow_redirects=False).status_code == 303
+    )  # still signed out
+    assert verify(anon, token).status_code == 303
+    assert login_tokens()[0].used_at
+    assert verify(TestClient(app), token).status_code == 200
+
+
+def test_multipart_email_is_400_not_500(anon):
+    r = anon.post("/org/login/send", files={"email": ("a.txt", b"x@y.org")})
+    assert r.status_code == 400
+    r = anon.post("/org/login/verify", files={"token": ("a.txt", b"x")})
+    assert r.status_code == 400
+
+
+def test_membership_removed_between_send_and_verify_is_refused(anon):
+    from app.db import org_members
+
+    _, email = coordinator_for(0)
+    request_link(anon, email)
+    token = token_of(notify.get_emailer().sent[-1][2])
+    org_members.delete_where()
+    r = verify(anon, token)
+    assert r.status_code == 200 and "expired or was already used" in r.text
+    assert anon.get("/org", follow_redirects=False).status_code == 303
+
+
+def test_link_is_sent_after_the_response_and_a_send_failure_changes_nothing(
+    anon, monkeypatch
+):
+    _, email = coordinator_for(0)
+
+    def boom(*a):
+        raise RuntimeError("emailer down")
+
+    monkeypatch.setattr(notify, "send_login_link", boom)
+    known = request_link(anon, email)
+    unknown = request_link(anon, "nobody@example.org")
+    assert known.status_code == unknown.status_code == 200
+    assert SENT in known.text and known.text == unknown.text

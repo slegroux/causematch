@@ -1,10 +1,22 @@
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fasthtml.common import H2, APIRouter, Div, Input, P, Redirect, Response, Textarea
+from fasthtml.common import (
+    H2,
+    A,
+    APIRouter,
+    Div,
+    Input,
+    P,
+    Redirect,
+    Response,
+    Textarea,
+)
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
+    Alert,
+    AlertT,
     Button,
     ButtonT,
     Card,
@@ -17,7 +29,8 @@ from monsterui.all import (
 )
 
 from app import data
-from app.geo import zip_latlon
+from app.auth import normalize_phone
+from app.geo import city_zip_latlon
 from app.routes.onboarding import AVAILABILITY, FREQUENCY
 from app.ui import Choice, Field, Page
 
@@ -36,6 +49,44 @@ ORIENTATION = [
     ("separate", "Yes, a separate session beforehand (describe below)"),
 ]
 REPLY = [("email", "Email"), ("text", "Text"), ("either", "Either")]
+MAX_AHEAD = timedelta(days=366)
+BAD_PHONE = "Enter a US phone number, like (310) 555-0123, or leave it blank."
+
+
+def reply_options(has_phone):
+    """Text needs a number to send to."""
+    return REPLY if has_phone else REPLY[:1]
+
+
+def DetailsForm(profile, error=None):
+    return Form(
+        Field(
+            'Your name and role, e.g. "Maria Lopez, volunteer coordinator"',
+            Input(
+                name="name",
+                value=profile.display_name or "",
+                maxlength="80",
+                required=True,
+            ),
+        ),
+        Field(
+            "Phone (optional)",
+            Input(
+                name="phone",
+                type="tel",
+                inputmode="tel",
+                value=profile.contact_phone or "",
+                autocomplete="tel",
+            ),
+        ),
+        Alert(error, cls=AlertT.error) if error else None,
+        Button("Save details", cls=ButtonT.default),
+        action="/org/details",
+        method="post",
+        cls="space-y-3 max-w-md pb-8",
+    )
+
+
 LIMITS = {"title": 100, "about": 1000, "neighborhood": 80, "notes": 500}
 ADULT_ONLY = (
     "I confirm this opening is for adults (18+) and involves no one-to-one contact "
@@ -66,8 +117,9 @@ def OpeningRow(o):
 
 
 @ar("/org", methods=["GET"])
-def org_home(req):
+def org_home(req, error: str = ""):
     uid = req.scope["uid"]
+    profile = data.get_profile(uid)
     by_org = data.org_openings(uid)
     sections = []
     for org, role in data.coordinator_orgs(uid):
@@ -87,20 +139,24 @@ def org_home(req):
                 Button("Sign out", cls=ButtonT.ghost), action="/logout", method="post"
             ),
         ),
+        None
+        if profile.display_name
+        else P("Add your name so volunteers know who you are.", cls="font-semibold"),
+        None if profile.display_name else DetailsForm(profile, error or None),
         Div(*sections, cls="flex flex-col gap-8 pb-4"),
         Div(
-            Button(
+            A(
                 "Post an opening",
-                cls=ButtonT.primary,
-                onclick="location='/org/openings/new'",
+                href="/org/openings/new",
+                cls="uk-btn " + ButtonT.primary,
             ),
-            Button(
-                "Volunteer inbox",
-                cls=ButtonT.default,
-                onclick="location='/org/inbox'",
-            ),
+            A("Volunteer inbox", href="/org/inbox", cls="uk-btn " + ButtonT.default),
             cls="pb-8 flex gap-3",
         ),
+        H2("Your details", cls="text-xl font-semibold")
+        if profile.display_name
+        else None,
+        DetailsForm(profile, error or None) if profile.display_name else None,
         cls="max-w-3xl",
     )
 
@@ -199,7 +255,11 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 "Best way to send you interested volunteers?",
-                Choice("reply_channel", REPLY, f.get("reply_channel", "")),
+                Choice(
+                    "reply_channel",
+                    reply_options(bool(data.get_profile(uid).contact_phone)),
+                    f.get("reply_channel", ""),
+                ),
             ),
             Button("Post opening", cls=ButtonT.primary + " w-full"),
             action="/org/openings/new",
@@ -210,14 +270,35 @@ def OpeningForm(uid, f=None, error=None):
     )
 
 
+@ar("/org/details", methods=["POST"])
+async def save_details(req):
+    uid = req.scope["uid"]
+    form = await req.form()
+    if any(not isinstance(v, str) for _, v in form.multi_items()):
+        return Response("Bad request", status_code=400)
+    name, phone = form.get("name", "").strip(), form.get("phone", "").strip()
+    if not name or len(name) > 80:
+        return org_home(req, "Enter your name and role (80 characters at most).")
+    e164 = normalize_phone(phone) if phone else ""
+    if phone and not e164:
+        return org_home(req, BAD_PHONE)
+    data.set_coordinator_details(uid, name, e164)
+    return Redirect("/org")
+
+
 @ar("/org/openings/new", methods=["GET"])
 def new_opening_page(req):
+    if not data.get_profile(req.scope["uid"]).display_name:
+        return Redirect("/org")  # volunteers see who is asking: name first
     return OpeningForm(req.scope["uid"])
 
 
 @ar("/org/openings/new", methods=["POST"])
 async def new_opening_save(req):
     uid = req.scope["uid"]
+    profile = data.get_profile(uid)
+    if not profile.display_name:
+        return Redirect("/org")
     form = await req.form()
     if any(not isinstance(v, str) for _, v in form.multi_items()):
         return Response("Bad request", status_code=400)
@@ -248,25 +329,35 @@ async def new_opening_save(req):
         )
     if f["cause"] not in {c.slug for c in data.active_causes()}:
         return fail("Please pick a cause from the list.")
-    latlon = zip_latlon(f["zip"])
+    latlon = city_zip_latlon(f["zip"])
     if not latlon:
         return fail(
-            "Causematch is only in Los Angeles County for now. Check the ZIP code."
+            "Openings must be in the City of Los Angeles for now. Check the ZIP code."
         )
     try:
         start = datetime.strptime(f["starts_at"], "%Y-%m-%dT%H:%M")
     except ValueError:
         return fail("Please enter the date and time of the next shift.")
-    if start <= datetime.now(LA).replace(tzinfo=None):
+    now = datetime.now(LA)
+    local = start.replace(tzinfo=LA)
+    if local.astimezone(UTC).astimezone(LA).replace(tzinfo=None) != start:
+        return fail("That time doesn't exist (clocks skip it). Pick another time.")
+    if local <= now:
         return fail("The next shift has to be in the future.")
+    if local > now + MAX_AHEAD:
+        return fail("The next shift must be within the next 12 months.")
     if f["recurrence"] not in {v for v, _ in RECURRENCE}:
         return fail("Please say whether the opening repeats.")
     if not re.fullmatch(r"[0-9]{1,3}", f["slots"]) or not 1 <= int(f["slots"]) <= 200:
         return fail("Volunteers needed must be a number from 1 to 200.")
     if f["orientation_required"] not in {v for v, _ in ORIENTATION}:
         return fail("Please say whether an orientation is required.")
-    if f["reply_channel"] not in {v for v, _ in REPLY}:
-        return fail("Please choose how we should send you interested volunteers.")
+    if f["reply_channel"] not in {
+        v for v, _ in reply_options(bool(profile.contact_phone))
+    }:
+        return fail(
+            "Please choose how we should send you interested volunteers. Text needs a phone number in your details."
+        )
     if f["adult_only_ok"] != "1":
         return fail(
             "Please confirm the opening is for adults with no one-to-one contact."
@@ -295,6 +386,8 @@ async def new_opening_save(req):
 
 @ar("/org/openings/{opening_id}/close", methods=["POST"])
 def close(req, opening_id: int):
+    if opening_id > 2**63 - 1:  # past SQLite's integers: no such opening
+        return Response("Not found", status_code=404)
     try:
         data.close_opening(req.scope["uid"], opening_id)
     except PermissionError:

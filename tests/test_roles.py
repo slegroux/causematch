@@ -65,3 +65,12 @@ def test_logout_works_for_every_role(coord, user):
 def test_phone_sign_in_does_not_hand_a_volunteer_a_coordinator_session(anon):
     sign_in(anon)
     assert anon.get("/org", follow_redirects=False).status_code == 403
+
+
+def test_coordinator_logout_lands_on_the_org_sign_in(coord):
+    r = coord.post("/logout", follow_redirects=False)
+    assert r.headers["location"] == "/org/login"
+
+
+def test_volunteer_logout_lands_on_the_phone_sign_in(user):
+    assert user.post("/logout", follow_redirects=False).headers["location"] == "/login"

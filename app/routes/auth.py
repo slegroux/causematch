@@ -109,5 +109,8 @@ def verify(sess, code: str = ""):
 
 @ar("/logout", methods=["POST"])
 def logout(sess):
+    profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
     sess.clear()
-    return Redirect("/login")
+    return Redirect(
+        "/org/login" if profile and profile.role == "coordinator" else "/login"
+    )

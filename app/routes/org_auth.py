@@ -1,9 +1,9 @@
 import logging
 import re
 
-import httpx
-from fasthtml.common import APIRouter, Form, Input, P, Redirect
+from fasthtml.common import APIRouter, Form, Input, P, Redirect, Response
 from monsterui.all import Button, ButtonT, TextPresets
+from starlette.background import BackgroundTask
 
 from app import data, notify
 from app.ui import Page
@@ -45,22 +45,56 @@ def org_login_page():
     return EmailForm()
 
 
+def _send_link(email):
+    """After the response, so known and unknown addresses take the same time to answer."""
+    uid = data.coordinator_by_email(email)
+    if not (uid and data.coordinator_org_ids(uid)):
+        return
+    try:
+        notify.send_login_link(email, data.create_login_token(uid))
+    except Exception as e:  # noqa: BLE001  nothing here may reach the user: it would reveal the account
+        log.warning("sending a sign-in link failed: %s", type(e).__name__)
+
+
+async def _form(req):
+    form = await req.form()
+    if any(not isinstance(v, str) for _, v in form.multi_items()):
+        return None
+    return form
+
+
 @ar("/org/login/send", methods=["POST"])
-def org_login_send(email: str = ""):
-    email = email.strip().lower()
+async def org_login_send(req):
+    form = await _form(req)
+    if form is None:
+        return Response("Bad request", status_code=400)
+    email = form.get("email", "").strip().lower()
     if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return EmailForm(email[:254], BAD_EMAIL)
-    uid = data.coordinator_by_email(email)
-    if uid and data.coordinator_org_ids(uid):
-        try:
-            notify.send_login_link(email, data.create_login_token(uid))
-        except httpx.HTTPError as e:
-            log.warning("sending a sign-in link failed: %s", type(e).__name__)
-    return EmailForm(notice=SENT)
+    return EmailForm(notice=SENT), BackgroundTask(_send_link, email)
 
 
 @ar("/org/login/verify", methods=["GET"])
-def org_login_verify(sess, token: str = ""):
+def org_login_confirm(token: str = ""):
+    """Changes nothing, so a mail scanner that fetches the link can't use it up."""
+    return Page(
+        "Sign in to Causematch",
+        Form(
+            Input(type="hidden", name="token", value=token[:200]),
+            Button("Sign in", cls=ButtonT.primary + " w-full"),
+            action="/org/login/verify",
+            method="post",
+        ),
+        intro="Press the button to finish signing in.",
+    )
+
+
+@ar("/org/login/verify", methods=["POST"])
+async def org_login_verify(req, sess):
+    form = await _form(req)
+    if form is None:
+        return Response("Bad request", status_code=400)
+    token = form.get("token", "")
     uid = data.consume_login_token(token) if 0 < len(token) <= 200 else None
     profile = data.get_profile(uid) if uid else None
     if (

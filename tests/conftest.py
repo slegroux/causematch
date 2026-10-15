@@ -106,7 +106,12 @@ def anon():
 def coordinator_for(org_index=0, email=None, role="coordinator"):
     """Profile id of a coordinator for the nth seeded org."""
     email = email or f"coord{org_index}@example.org"
-    return data.add_coordinator(email, orgs()[org_index].id, role), email
+    return (
+        data.add_coordinator(
+            email, orgs()[org_index].id, role, name="Pat Doe, coordinator"
+        ),
+        email,
+    )
 
 
 def org_sign_in(client, email):
@@ -114,7 +119,7 @@ def org_sign_in(client, email):
     client.post("/org/login/send", data={"email": email})
     _, _, body = notify.get_emailer().sent[-1]
     token = re.search(r"token=([\w-]+)", body).group(1)
-    r = client.get(f"/org/login/verify?token={token}", follow_redirects=False)
+    r = client.post("/org/login/verify", data={"token": token}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/org"
     return token
 

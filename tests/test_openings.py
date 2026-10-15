@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from conftest import coordinator_for, org_sign_in
@@ -7,9 +8,11 @@ from starlette.testclient import TestClient
 from app.db import causes, openings, orgs
 from main import app
 
+LA = ZoneInfo("America/Los_Angeles")
+
 
 def future(days=10):
-    return (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M")
+    return (datetime.now(LA) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M")
 
 
 def form(oid, **over):
@@ -79,6 +82,12 @@ def test_stored_opening_fields(coord):
         {"cause": "nonsense"},
         {"zip": "10001"},
         {"zip": "92101"},
+        {"zip": "90704"},  # Avalon: LA County, not the City of Los Angeles
+        {"zip": "91101"},  # Pasadena
+        {"starts_at": future(400)},
+        {"starts_at": "2027-03-14T02:30"},  # skipped by the spring-forward clock change
+        {"reply_channel": "text"},  # the coordinator has no phone
+        {"reply_channel": "either"},
         {"starts_at": "2020-01-01T09:00"},
         {"starts_at": "tomorrow"},
         {"starts_at": ""},
@@ -235,3 +244,126 @@ def test_create_opening_requires_membership():
     foreign = next(o for o in openings() if o.org_id != orgs()[0].id)
     with pytest.raises(PermissionError):
         data.close_opening(uid, foreign.id)
+
+
+def test_city_zip_accepted_for_opening_and_county_zip_still_ok_for_volunteers(
+    coord, new_user
+):
+    from conftest import FORM
+
+    assert post(coord, zip="90012").status_code == 303
+    assert post(coord, zip="90704", title="Avalon").status_code == 200
+    r = new_user.post(
+        "/onboarding", data={**FORM, "zip": "90704"}, follow_redirects=False
+    )
+    assert r.headers["location"] == "/deck"
+
+
+class _Frozen(datetime):
+    """18:00 UTC is 11:00 in Los Angeles (PDT)."""
+
+    @classmethod
+    def now(cls, tz=None):
+        base = datetime(2026, 10, 20, 18, 0, tzinfo=ZoneInfo("UTC"))
+        return base.astimezone(tz) if tz else base.replace(tzinfo=None)
+
+
+def test_future_check_uses_los_angeles_time(coord, monkeypatch):
+    monkeypatch.setattr("app.routes.org.datetime", _Frozen)
+    # UTC wall clock reads 18:00 and LA reads 11:00: only an LA comparison passes both.
+    assert post(coord, starts_at="2026-10-20T12:00").status_code == 303  # LA now + 1h
+    assert (
+        post(coord, starts_at="2026-10-20T10:00", title="Past").status_code == 200
+    )  # LA now - 1h
+    assert (
+        post(coord, starts_at="2026-10-20T17:00", title="Mid").status_code == 303
+    )  # before UTC now
+    titles = {o.title for o in openings()}
+    assert "Past" not in titles and "Mid" in titles
+
+
+def test_date_window_is_a_year_and_dst_gap_is_rejected(coord, monkeypatch):
+    monkeypatch.setattr("app.routes.org.datetime", _Frozen)
+    assert post(coord, starts_at="2027-10-19T10:00").status_code == 303
+    assert post(coord, starts_at="2027-10-22T10:00", title="Far").status_code == 200
+    assert post(coord, starts_at="2027-03-14T02:30", title="Gap").status_code == 200
+    assert post(coord, starts_at="2027-03-14T03:30", title="After").status_code == 303
+
+
+def test_huge_opening_id_is_404(coord):
+    r = coord.post(
+        "/org/openings/99999999999999999999999/close", follow_redirects=False
+    )
+    assert r.status_code == 404
+
+
+def test_name_is_required_before_posting(coord):
+    from app.db import profiles
+
+    profiles.update(id=profiles(where="role = 'coordinator'")[0].id, display_name="")
+    assert "Add your name" in coord.get("/org").text
+    assert (
+        coord.get("/org/openings/new", follow_redirects=False).headers["location"]
+        == "/org"
+    )
+    assert (
+        post(coord).status_code == 303
+        and coord.get("/org").text.count("Saturday fridge") == 0
+    )
+    assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+    r = coord.post(
+        "/org/details",
+        data={"name": "Maria Lopez, coordinator", "phone": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert post(coord).status_code == 303
+    assert "Maria Lopez, coordinator" in coord.get("/org").text
+
+
+def test_details_form_validation_and_text_needs_a_phone(coord):
+    from app.db import profiles
+
+    uid = profiles(where="role = 'coordinator'")[0].id
+    assert (
+        "Text"
+        not in coord.get("/org/openings/new")
+        .text.split('name="reply_channel"')[1]
+        .split("</select>")[0]
+    )
+    bad = coord.post("/org/details", data={"name": "Maria", "phone": "12345"})
+    assert bad.status_code == 200 and "Enter a US phone number" in bad.text
+    empty = coord.post("/org/details", data={"name": " ", "phone": ""})
+    assert "Enter your name" in empty.text
+    assert coord.post("/org/details", files={"name": ("a", b"x")}).status_code == 400
+    assert profiles[uid].display_name == "Pat Doe, coordinator"
+    assert (
+        coord.post(
+            "/org/details",
+            data={"name": "Maria", "phone": "(310) 555-0123"},
+            follow_redirects=False,
+        ).status_code
+        == 303
+    )
+    assert profiles[uid].contact_phone == "+13105550123"
+    reply = (
+        coord.get("/org/openings/new")
+        .text.split('name="reply_channel"')[1]
+        .split("</select>")[0]
+    )
+    assert "Text" in reply and "Either" in reply
+    assert post(coord, reply_channel="text").status_code == 303
+
+
+def test_volunteer_cannot_post_details(user):
+    assert (
+        user.post(
+            "/org/details", data={"name": "x"}, follow_redirects=False
+        ).status_code
+        == 403
+    )
+
+
+def test_no_inline_handlers_on_org_pages(coord):
+    for path in ("/org", "/org/openings/new", "/org/inbox"):
+        assert "onclick" not in coord.get(path).text

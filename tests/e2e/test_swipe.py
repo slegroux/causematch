@@ -131,6 +131,7 @@ def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
     _, _, body = notify.get_emailer().sent[-1]
     token = re.search(r"token=([\w-]+)", body).group(1)
     coord.goto(f"/org/login/verify?token={token}")
+    coord.get_by_role("button", name="Sign in").click()
     coord.goto("/org/inbox")
     coord.get_by_text("Sam").wait_for()
     coord.get_by_role("button", name="Accept").click()
