@@ -4,6 +4,7 @@ from fasthtml.common import (
     APIRouter,
     Button,
     Div,
+    Img,
     Input,
     Nav,
     Option,
@@ -304,4 +305,28 @@ def VolunteerNav(active=None):
         Div(A(Wordmark(small=True), href="/deck"), cls="flex items-center pt-3 pb-3"),
         AddToHomeScreen(),
         TabBar(active),
+    )
+
+
+# Avatar sizes; literal class strings, so Tailwind's scan of app/ finds them
+AVATAR = {"md": "h-14 w-14 text-2xl", "lg": "h-28 w-28 text-5xl"}
+
+
+def Avatar(name, photo_key=None, size="md", **kwargs):
+    """A volunteer's round photo (its 160 px square), or the first letter of their name.
+    Decorative: the name is always written next to it."""
+    cls = "shrink-0 rounded-full " + AVATAR[size]
+    if photo_key:
+        return Img(
+            src=f"/photos/thumb/{photo_key}.jpg",
+            alt="",
+            cls=cls + " object-cover ring-2 ring-white shadow-warm",
+            **kwargs,
+        )
+    return Span(
+        ((name or "").strip()[:1] or "?").upper(),
+        aria_hidden="true",
+        cls=cls + " grid place-items-center bg-brand font-display font-extrabold "
+        "text-white",
+        **kwargs,
     )

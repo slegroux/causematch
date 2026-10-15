@@ -26,7 +26,13 @@ ROOT = Path(__file__).resolve().parent.parent
 # Franken UI's class for each kind of field; an <input> with none of them draws no box
 FIELD_CLASSES = {"uk-input", "uk-checkbox", "uk-radio", "uk-range"}
 # GET routes that render no page of fields
-NOT_PAGES = {"/", "/favicon.ico", "/admin/metrics.csv"}
+NOT_PAGES = {
+    "/",
+    "/favicon.ico",
+    "/admin/metrics.csv",
+    "/photos/{key}.jpg",
+    "/photos/thumb/{key}.jpg",
+}
 
 
 class Fields(HTMLParser):
@@ -82,6 +88,7 @@ def pages(anon, user, coord):
         (user, "/history"),
         (user, "/profile"),
         (user, "/profile/delete"),
+        (user, "/me/profile"),
         (user, f"/chat/{m.id}"),
         (user, f"/matches/{m.id}/withdraw"),
         (user, f"/matches/{m.id}/report"),

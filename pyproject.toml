@@ -9,12 +9,12 @@ dependencies = [
     "fastlite>=0.2.4",
     "httpx>=0.28.1",
     "monsterui>=1.0.47",
+    "pillow>=12.3.0",
     "python-fasthtml>=0.14.13",
 ]
 
 [dependency-groups]
 dev = [
-    "pillow>=12.3.0",
     "playwright>=1.64.0",
     "pytest>=9.1.1",
     "pytest-playwright>=0.10.0",

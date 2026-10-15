@@ -13,6 +13,7 @@ from apswutils.db import NotFoundError
 
 from app import db as _db
 from app import match as _match
+from app import photos as _photos
 from app.choices import ANY_DISTANCE_KM
 from app.config import phone_hash_key
 from app.metrics_rows import fetch_rows
@@ -1920,6 +1921,96 @@ def remove_coordinator(email):
             [_now(), uid],
         )
     return uid
+
+
+# --- photos ------------------------------------------------------------------------------
+
+
+def _store_photo(owner_kind, owner_id, processed):
+    """Insert a re-encoded picture (photos.Processed) under a new random key; the key."""
+    key = _photos.new_key()
+    _db.photos.insert(
+        _db.Photo(
+            key=key,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            full=processed.full,
+            thumb=processed.thumb,
+            sha256=hashlib.sha256(processed.full).hexdigest(),
+            created_at=_now(),
+        )
+    )
+    return key
+
+
+def _drop_photo(key):
+    if key:
+        _db.db.execute("DELETE FROM photo WHERE key = ?", [key])
+
+
+def set_volunteer_photo(uid, processed):
+    """The volunteer's photo becomes this one, under a new key; the old one is deleted."""
+    with _db.db.conn:
+        p = get_profile(uid)
+        if p is None or p.role != "volunteer":
+            raise PermissionError("not a volunteer")
+        key = _store_photo("volunteer", uid, processed)
+        _db.profiles.update(id=uid, photo_key=key)
+        _drop_photo(p.photo_key)
+    return key
+
+
+def remove_volunteer_photo(uid):
+    with _db.db.conn:
+        p = get_profile(uid)
+        if p is None or p.role != "volunteer":
+            raise PermissionError("not a volunteer")
+        _drop_photo(p.photo_key)
+        _db.profiles.update(id=uid, photo_key=None)
+
+
+def _sees_volunteer(viewer, volunteer_id):
+    """A volunteer's photo is theirs, an admin's, and a coordinator's whose org can see one
+    of their matches: not org_blind, and no block between them either way."""
+    if viewer.id == volunteer_id or viewer.role == "admin":
+        return True
+    if viewer.role != "coordinator":
+        return False
+    return bool(
+        _db.db.execute(
+            "SELECT 1 FROM match m JOIN opening o ON o.id = m.opening_id "
+            "JOIN org_member om ON om.org_id = o.org_id AND om.user_id = ? "
+            "WHERE m.volunteer_id = ? AND coalesce(m.org_blind, 0) = 0 "
+            "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = ? "
+            "AND b.blocked_org_id = o.org_id) "
+            "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = ? "
+            "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id) LIMIT 1",
+            [viewer.id, volunteer_id, volunteer_id, volunteer_id],
+        ).fetchone()
+    )
+
+
+def photo_for(viewer_uid, key, thumb=False):
+    """(JPEG bytes, ETag) of the photo `key` when this signed-in viewer may see it, else
+    None: a photo they may not see and one that doesn't exist look the same."""
+    viewer = get_profile(viewer_uid) if _is_id(viewer_uid) else None
+    if viewer is None or not _photos.is_key(key):
+        return None
+    row = _db.db.execute(
+        f"SELECT owner_kind, owner_id, {'thumb' if thumb else 'full'}, sha256 "
+        "FROM photo WHERE key = ?",
+        [key],
+    ).fetchone()
+    if row is None:
+        return None
+    kind, owner_id, jpeg, sha = row
+    if kind == "volunteer":
+        owner = get_profile(owner_id)  # None once deleted or suspended
+        if (owner is None and viewer.role != "admin") or not _sees_volunteer(
+            viewer, owner_id
+        ):
+            return None
+    return jpeg, f'"{sha}{"-t" if thumb else ""}"'
 
 
 RATE_KEEP_SECONDS = 24 * 3600  # the longest window in app/security.py

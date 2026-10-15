@@ -44,7 +44,7 @@ NAME = "Zelda"  # volunteer A, whose data nobody else may see
 SECRETS = [NAME, TITLE]
 
 # (method, path) -> (who may use it, how the route is scoped)
-#   who: public | volunteer | coordinator | admin
+#   who: public | volunteer | coordinator | admin | signed-in (every role; the handler decides)
 #   scope: None | own-record (the signed-in volunteer's) | own-org (the coordinator's org's)
 ROUTES = {
     ("GET", "/login"): ("public", None),
@@ -121,6 +121,12 @@ ROUTES = {
     ),  # the scheduler's bearer token guards it
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
+    ("GET", "/me/profile"): ("volunteer", "own-record"),
+    ("POST", "/me/profile/photo"): ("volunteer", "own-record"),
+    ("POST", "/me/profile/photo/remove"): ("volunteer", "own-record"),
+    # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's
+    ("GET", "/photos/{key}.jpg"): ("signed-in", "own-record"),
+    ("GET", "/photos/thumb/{key}.jpg"): ("signed-in", "own-record"),
 }
 # Ids that arrive in a form body rather than the path: each needs an OWNERSHIP check too.
 BODY_IDS = {
@@ -129,8 +135,10 @@ BODY_IDS = {
 }
 PUBLIC_ROUTES = [r for r, (who, _) in ROUTES.items() if who == "public"]
 GUARDED = [r for r, (who, _) in ROUTES.items() if who != "public"]
-# Sign-out works for every signed-in role, so it is not a role-wrong case.
-ROLE_ROUTES = [r for r in GUARDED if r != ("POST", "/logout")]
+# Sign-out and photos work for every signed-in role, so they are not role-wrong cases.
+ROLE_ROUTES = [
+    r for r in GUARDED if r != ("POST", "/logout") and ROUTES[r][0] != "signed-in"
+]
 
 
 def app_routes(routes, prefix=""):
@@ -160,6 +168,7 @@ def concrete(path, match_id, opening_id):
         block_id=match_id,
         claim_id=match_id,
         org_id=match_id,
+        key="A" * 22,
     )
 
 
@@ -246,7 +255,7 @@ def test_every_route_has_an_access_classification():
 
 def test_classification_is_well_formed():
     for (method, path), (who, scope) in ROUTES.items():
-        assert who in ("public", "volunteer", "coordinator", "admin")
+        assert who in ("public", "volunteer", "coordinator", "admin", "signed-in")
         assert scope in (None, "own-record", "own-org")
         if "{" in path:
             assert scope, f"{path} takes an id: say whose record it is"
@@ -681,8 +690,32 @@ def check_admin_claim(action):
     return check
 
 
+def check_photo(template):
+    """Volunteer A's photo: 404 for B and for an org A never liked, as for a made-up key."""
+
+    def check(w):
+        from test_photos import jpeg
+
+        r = w.a.post(
+            "/me/profile/photo",
+            files={"photo": ("a.jpg", jpeg(), "image/jpeg")},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        key = profiles[w.a.uid].photo_key
+        for who in (w.b, w.org1):
+            for k in (key, "A" * 22, "nope", key[:-1] + "x"):
+                r = who.get(template.format(key=k), follow_redirects=False)
+                assert r.status_code == 404 and r.content == b"Not found"
+        assert w.a.get(template.format(key=key)).status_code == 200
+
+    return check
+
+
 # route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
+    ("GET", "/photos/{key}.jpg"): check_photo("/photos/{key}.jpg"),
+    ("GET", "/photos/thumb/{key}.jpg"): check_photo("/photos/thumb/{key}.jpg"),
     ("GET", "/matches/{match_id}/withdraw"): path_id_check(
         withdraw_page_other,
         lambda w: w.match.id,

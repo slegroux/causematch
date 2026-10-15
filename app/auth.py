@@ -106,6 +106,8 @@ def check_session(req, sess):
     req.scope["uid"] = profile.id
     if path == "/logout":
         return
+    if path.startswith("/photos/"):
+        return  # every role: data.photo_for decides who sees which photo
     if is_admin_path(path):
         if profile.role != "admin":
             # a coordinator is sent home; anyone else has no business here

@@ -93,6 +93,7 @@ class Profile:
     deleted_at: str
     suspended_at: str  # UTC; an admin suspended this account: it cannot sign in
     sms_opted_out: bool  # the number replied STOP: never text it again
+    photo_key: str  # volunteers: their Photo, shown as app/routes/photos.py allows
 
 
 class OrgMember:
@@ -251,6 +252,22 @@ class RateEvent:
 
 rate_events = db.create(RateEvent, pk="id", transform=True)
 rate_events.create_index(["key", "at"], if_not_exists=True)
+
+
+class Photo:
+    """A picture app/photos.py re-encoded. Bytes live here, so Litestream's copy of the
+    database is their backup too (about 70 KB a volunteer)."""
+
+    key: str  # 22 random URL-safe characters (photos.new_key); its URL
+    owner_kind: str  # volunteer
+    owner_id: int
+    full: bytes  # JPEG, longest side 800 px, no metadata
+    thumb: bytes  # JPEG, 160 px square
+    sha256: str  # of full: the ETag
+    created_at: str
+
+
+photos = db.create(Photo, pk="key", transform=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

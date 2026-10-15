@@ -240,11 +240,28 @@ def _past_shift(match_id, coordinator, days_ago, status):
     )
 
 
+def drawn_photo(seed=0):
+    """A JPEG drawn here (a sun over hills), for demo profiles: never a real person."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    sky = [(255, 214, 170), (190, 225, 240), (250, 200, 210)][seed % 3]
+    im = Image.new("RGB", (900, 900), sky)
+    d = ImageDraw.Draw(im)
+    d.ellipse((520, 140, 760, 380), fill=(255, 170, 60))
+    d.ellipse((-200, 520, 700, 1300), fill=(90, 160, 100))
+    d.ellipse((300, 600, 1200, 1400), fill=(60, 130, 80))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
 def seed(seed_file=None):
     """Orgs and openings, then people: a coordinator and an admin, volunteers who liked
     the coordinator's opening, and ME_PHONE's volunteer with an accepted match (chat,
     upcoming and past shifts) and a pending like. Returns what a demo needs to sign in."""
-    from app import data
+    from app import data, photos
     from app.db import ensure_causes, matches, openings, orgs, seed_demo
 
     ensure_causes()
@@ -283,6 +300,7 @@ def seed(seed_file=None):
         ["physical", "car"],
         "weekly",
     )
+    data.set_volunteer_photo(me, photos.process(drawn_photo()))
     m = data.swipe(me, first.id, True)
     data.decide(coord, m.id, True)
     data.send_message(

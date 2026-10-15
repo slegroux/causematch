@@ -100,6 +100,7 @@ def main():
             ("v06-chat", f"/chat/{info['match_id']}"),
             ("v07-history", "/history"),
             ("v08-profile", "/profile"),
+            ("v09-my-profile", "/me/profile"),
         ):
             v.goto(path)
             shot(v, name, full_page=name != "v06-chat")

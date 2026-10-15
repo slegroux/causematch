@@ -30,6 +30,7 @@ from app.ui import (
     SIGN_OUT,
     TITLE,
     TRASH,
+    Avatar,
     Choice,
     Field,
     Icon,
@@ -271,22 +272,20 @@ def HubRow(icon, label, href=None, danger=False):
 
 @ar("/profile", methods=["GET"])
 def profile_page(req):
-    name = (data.get_profile(req.scope["uid"]).display_name or "").strip()
+    me = data.get_profile(req.scope["uid"])
+    name = (me.display_name or "").strip()
     return Container(
         VolunteerNav("me"),
         H1("Me", cls=TITLE),
         Div(
-            Span(
-                (name[:1] or "?").upper(),
-                aria_hidden="true",
-                cls="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand "
-                "font-display text-2xl font-extrabold text-white",
-            ),
+            Avatar(name, me.photo_key),
             Div(
                 H2(name or "Your profile", cls="font-display text-lg font-extrabold"),
-                P(
-                    "Profile & preferences: editing them here is coming soon.",
-                    cls=TextPresets.muted_sm,
+                A(
+                    "Edit your profile and photo",
+                    href="/me/profile",
+                    cls="inline-flex min-h-11 items-center text-sm font-semibold "
+                    "text-brand-ink underline underline-offset-4",
                 ),
             ),
             cls="flex items-center gap-4 p-4 " + CARD,

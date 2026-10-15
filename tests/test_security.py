@@ -505,7 +505,7 @@ def test_tasks_take_the_token_without_an_origin(monkeypatch):
 # --- headers --------------------------------------------------------------------------------
 
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
     "connect-src 'self' wss://causematch.test; font-src 'self'; frame-ancestors 'none'; "
     "base-uri 'self'; form-action 'self'; object-src 'none'"
 )
@@ -568,6 +568,7 @@ def test_no_page_has_inline_script_style_or_external_asset(user, coord, anon):
         (user, "/deck"),
         (user, "/matches"),
         (user, "/profile"),
+        (user, "/me/profile"),
         (coord, "/org"),
         (coord, "/org/inbox"),
         (coord, "/org/openings/new"),
