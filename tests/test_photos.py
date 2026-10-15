@@ -486,6 +486,16 @@ im = Image.new("RGBA", (4000, 3000), (0, 0, 0, 0))
 for x in range(0, 4000, 200):
     ImageDraw.Draw(im).rectangle((x, 0, x + 100, 3000), fill=(x % 255, 90, 160, 255))
 im.save(f"{out}/12mp-rgba.png")
+# progressive JPEGs: libjpeg keeps every coefficient of a multi-scan file (review pass 2)
+stripes = Image.new("RGB", (7071, 7071), (40, 120, 200))
+for x in range(0, 7071, 400):
+    ImageDraw.Draw(stripes).rectangle((x, 0, x + 150, 7071), fill=(200, 60, 30))
+stripes.save(f"{out}/prog-444.jpg", progressive=True, subsampling=0, quality=80)
+stripes.convert("CMYK").save(f"{out}/prog-cmyk.jpg", progressive=True, quality=80)
+stripes.resize((4240, 2830)).save(
+    f"{out}/prog-12mp.jpg", progressive=True, subsampling=0, quality=80
+)
+stripes.convert("L").save(f"{out}/grey-prog.jpg", progressive=True, quality=80)
 """
 MEASURE = r"""
 import resource, sys
@@ -511,7 +521,29 @@ def crafted(tmp_path_factory):
     process, so making them doesn't raise the peak the measurements read."""
     out = tmp_path_factory.mktemp("crafted")
     subprocess.run([sys.executable, "-c", GENERATE, str(out)], check=True)
+    (out / "many-scans.jpg").write_bytes(repeat_last_scan(out / "grey-prog.jpg", 50))
     return out
+
+
+def scan_bounds(raw):
+    """[(start, end)] of each SOS segment and its entropy-coded data in a JPEG."""
+    i, out = 2, []
+    while raw[i + 1] != 0xD9:
+        start, marker = i, raw[i + 1]
+        i += 2 + int.from_bytes(raw[i + 2 : i + 4], "big")
+        if marker == 0xDA:
+            while raw[(j := raw.find(b"\xff", i)) + 1] in (0, *range(0xD0, 0xD8)):
+                i = j + 2
+            i = j
+            out.append((start, i))
+    return out
+
+
+def repeat_last_scan(path, times):
+    """The JPEG with its last scan repeated: more passes, nearly no more bytes each."""
+    raw = path.read_bytes()
+    start, end = scan_bounds(raw)[-1]
+    return raw[:end] + raw[start:end] * times + raw[end:]
 
 
 def peak_mb(path, kind):
@@ -539,6 +571,10 @@ def peak_mb(path, kind):
         ("7000.jpg", "volunteer", "ok"),  # a JPEG decodes at a smaller scale
         ("8mp.webp", "card", "ok"),  # just under WebP's cap
         ("12mp-rgba.png", "logo", "ok"),  # just under PNG's cap
+        ("prog-444.jpg", "volunteer", "refused"),  # 50 MP, was +384 MB
+        ("prog-cmyk.jpg", "volunteer", "refused"),  # was +527 MB
+        ("many-scans.jpg", "volunteer", "refused"),  # 56 scans, before any decoding
+        ("prog-12mp.jpg", "card", "ok"),  # 12 MP x 3 components: at the budget
     ],
 )
 def test_a_huge_bitmap_never_costs_more_than_200_mb(crafted, name, kind, expected):
@@ -623,3 +659,65 @@ def test_another_orgs_upload_is_refused_before_decoding(coord, monkeypatch):
         r = elsewhere.post(path, files={"photo": ("a.jpg", jpeg(), "image/jpeg")})
         assert r.status_code == 403, path
     assert orgs[coord.org_id].logo_key is None
+
+
+# --- review pass 2: JPEG scans and decode slots ------------------------------------------
+
+
+def test_scans_are_counted_by_the_marker_stream():
+    progressive = io.BytesIO()
+    Image.new("RGB", (64, 64), (9, 9, 9)).save(progressive, "JPEG", progressive=True)
+    raw = progressive.getvalue()
+    n = len(scan_bounds(raw))
+    assert n > 1 and photos.jpeg_scans(raw) == n
+    assert photos.jpeg_scans(jpeg((64, 64))) == 1
+    # stray bytes before a marker don't hide the scans after them from the count
+    start, _ = scan_bounds(raw)[1]
+    assert photos.jpeg_scans(raw[:start] + b"\x00\x00" + raw[start:]) == n
+    s, e = scan_bounds(raw)[-1]
+    many = raw[:e] + raw[s:e] * 60 + raw[e:]
+    assert photos.jpeg_scans(many) == photos.MAX_SCANS + 1  # stops counting there
+    with pytest.raises(photos.BadPhoto, match="scans"):
+        photos.process(many)
+
+
+def test_an_upload_waits_at_most_a_few_seconds_for_a_decode_slot(user, monkeypatch):
+    monkeypatch.setattr(photos, "WAIT", 0.2)
+    held = [photos._decoding.acquire(timeout=1) for _ in range(2)]
+    assert all(held)
+    try:
+        with pytest.raises(photos.Busy):
+            photos.process(jpeg())
+        r = upload(user, jpeg())
+        assert r.status_code == 503 and "Try again in a minute" in r.text
+    finally:
+        photos._decoding.release()
+        photos._decoding.release()
+    assert upload(user, jpeg()).status_code == 303
+
+
+@pytest.mark.parametrize("blocker", ["volunteer", "org"])
+def test_after_a_block_the_org_sees_no_profile_details(user, coord, blocker):
+    uid = uid_of(user)
+    profiles.update(
+        id=uid, last_name="Lee", pronouns="they/them", bio="Early riser.",
+        interests='["cooking"]',
+    )  # fmt: skip
+    upload(user, jpeg())
+    m = _liked(user, coord.org_id)
+    data.decide(_coord_uid(), m.id, True)
+    assert "Early riser." in coord.get("/org/inbox").text
+    if blocker == "volunteer":
+        data.block_org(uid, m.id)
+    else:
+        data.block_volunteer(_coord_uid(), m.id)
+    profiles.update(id=uid, bio="Edited after the block.")
+    rows = [r for box in data.org_inbox(_coord_uid()).values() for r in box]
+    assert rows, "the past match stays listed"
+    for page in ("/org/inbox", f"/org/chat/{m.id}", f"/org/matches/{m.id}/report"):
+        html = coord.get(page).text
+        for hidden in ("Early riser.", "Edited after", "they/them", "Cooking", "Lee"):
+            assert hidden not in html, (page, hidden)
+        assert "/photos/" not in html, page
+    (row,) = rows
+    assert row["name"] == "Sam" and row["bio"] is None and row["interests"] == []

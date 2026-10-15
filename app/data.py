@@ -386,6 +386,9 @@ def org_inbox(coordinator_uid):
     )
     out = {"pending": [], "decided": [], "past": []}
     for r in rows:
+        # A past match after a block keeps what the org saw at the time it ended (first
+        # name, answers), but none of the profile, which the volunteer may still edit.
+        blocked = bool(r["blocked"])
         out[
             {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
         ].append(
@@ -394,12 +397,16 @@ def org_inbox(coordinator_uid):
                 "status": r["status"],
                 "opening": r["title"],
                 "name": volunteer_name(
-                    r["display_name"], r["last_name"], r["status"] == "accepted"
+                    r["display_name"],
+                    None if blocked else r["last_name"],
+                    r["status"] == "accepted",
                 ),
-                "photo_key": None if r["blocked"] else r["photo_key"],
-                "pronouns": r["pronouns"],
-                "bio": r["bio"],
-                "interests": [
+                "photo_key": None if blocked else r["photo_key"],
+                "pronouns": None if blocked else r["pronouns"],
+                "bio": None if blocked else r["bio"],
+                "interests": []
+                if blocked
+                else [
                     interests[i]
                     for i in json.loads(r["interests"] or "[]")
                     if i in interests
@@ -649,7 +656,9 @@ def org_shifts(coordinator_uid):
         }
         row["first_name"] = _first_name(r["display_name"])
         row["name"] = volunteer_name(
-            r["display_name"], r["last_name"], r["match_status"] == "accepted"
+            r["display_name"],
+            None if r["blocked"] else r["last_name"],
+            r["match_status"] == "accepted",
         )
         row["photo_key"] = None if r["blocked"] else r["photo_key"]
         row["weekly"] = r["recurrence"] == "weekly"
@@ -709,9 +718,10 @@ def volunteer_name(first, last, full=False):
     """What a nonprofit calls a volunteer: "Sam L." until it accepts them, "Sam Lee" once
     it has (full); just "Sam" when they gave no last name."""
     first, last = _first_name(first), (last or "").strip()
-    if not last:
+    initial = next((c for c in last if c.isalpha()), None)
+    if not initial:
         return first
-    return f"{first} {last}" if full else f"{first} {last[0].upper()}."
+    return f"{first} {last}" if full else f"{first} {initial.upper()}."
 
 
 def _message_row(msg, volunteer_id, names):
@@ -780,12 +790,14 @@ def chat_header(uid, match_id):
         other = decider.display_name if decider and decider.display_name else org
     else:
         volunteer = get_profile(m.volunteer_id)
+        # what photo_for hides (a block, above all) hides the last name too
+        seen = bool(volunteer) and _sees_volunteer(get_profile(uid), volunteer.id)
         other = volunteer_name(
             volunteer.display_name if volunteer else "",
-            volunteer.last_name if volunteer else "",
+            volunteer.last_name if seen else "",
             m.status == "accepted",
         )
-        if volunteer and _sees_volunteer(get_profile(uid), volunteer.id):
+        if seen:
             photo = volunteer.photo_key
     return {
         "role": role,
@@ -1393,7 +1405,12 @@ def org_match_volunteer(coordinator_uid, match_id):
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
     p = _db.profiles[m.volunteer_id]
-    return volunteer_name(p.display_name, p.last_name, m.status == "accepted")
+    blocked = _org_blocked_volunteer(p.id, o.org_id) or _volunteer_blocked_org(
+        p.id, o.org_id
+    )
+    return volunteer_name(
+        p.display_name, None if blocked else p.last_name, m.status == "accepted"
+    )
 
 
 def report_org(uid, match_id, reason, details=""):

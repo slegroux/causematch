@@ -32,6 +32,21 @@ def query(req, name):
 
 # Characters that reorder how text is drawn: they let "good.org" display for another host
 BIDI = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+# What no name or bio needs: bidi controls, zero-width characters, and control characters
+# (a bio keeps its line breaks and tabs)
+HIDDEN = re.compile(
+    "[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff"
+    "\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]"
+)
+HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
+
+
+def hidden_chars(text, multiline=False):
+    """True when `text` holds a character that would hide, reorder or break what is
+    shown; a line break or tab is fine only in multiline text."""
+    return bool(HIDDEN.search(text)) or (
+        not multiline and any(c in text for c in "\t\n\r")
+    )
 
 
 def https_url(raw):
@@ -51,12 +66,22 @@ def https_url(raw):
     try:
         u = urlsplit(url)
         port = u.port  # raises ValueError on a malformed port
-        host = (u.hostname or "").encode("idna").decode("ascii")
+        if "%" in u.netloc:  # good.org%2eevil.com opens good.org.evil.com
+            return None
+        host = (u.hostname or "").encode("idna").decode("ascii").lower()
     except (ValueError, UnicodeError):
         return None
-    if u.scheme != "https" or u.username or u.password or "." not in host:
+    labels = host.split(".")
+    if (
+        u.scheme != "https"
+        or u.username
+        or u.password
+        or len(labels) < 2
+        or not all(len(x) <= 63 and HOST_LABEL.fullmatch(x) for x in labels)
+    ):
         return None
-    return urlunsplit(u._replace(netloc=host + (f":{port}" if port else "")))
+    url = urlunsplit(u._replace(netloc=host + (f":{port}" if port else "")))
+    return url if len(url) <= MAX_URL else None  # punycode can make it longer
 
 
 def domain(url):

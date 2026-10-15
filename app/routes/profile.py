@@ -7,7 +7,6 @@ server decodes and re-encodes it (app/photos.py) before storing anything.
 """
 
 import json
-import re
 
 from fasthtml.common import (
     H1,
@@ -39,7 +38,7 @@ from starlette.datastructures import UploadFile
 
 from app import data, photos
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
-from app.forms import bad_request, query, str_form
+from app.forms import bad_request, hidden_chars, query, str_form
 from app.ui import (
     BACK,
     CARD,
@@ -58,14 +57,13 @@ ar = Router()
 BAD_PHOTO = (
     "We couldn't read that picture. Choose a JPEG, PNG or WebP photo under 6 MB."
 )
+BUSY = "Many photos are being uploaded right now. Try again in a minute."
 NOTICE = {
     "saved": "Photo saved.",
     "removed": "Photo removed.",
     "details": "Profile saved.",
 }
 MAX_NAME = 80
-# Control characters have no business in a name or a bio (a bio keeps its line breaks)
-CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 # The types a phone's picker offers; the server decides what it accepts (photos.FORMATS)
 ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif"
 
@@ -278,6 +276,9 @@ async def save_photo(req):
     except photos.BadPhoto:
         page = await run_in_threadpool(ProfilePage, uid, BAD_PHOTO)
         return FtResponse(page, status_code=400)
+    except photos.Busy:
+        page = await run_in_threadpool(ProfilePage, uid, BUSY)
+        return FtResponse(page, status_code=503)
     await run_in_threadpool(data.set_volunteer_photo, uid, processed)
     return Redirect("/me/profile?notice=saved")
 
@@ -290,7 +291,9 @@ def remove_photo(req):
 
 def details_error(f):
     """Why these profile answers can't be saved, or None."""
-    if any(CONTROL.search(v) for k, v in f.items() if k != "interests"):
+    if any(
+        hidden_chars(v, multiline=k == "bio") for k, v in f.items() if k != "interests"
+    ):
         return "Something in that form wasn't recognized. Please try again."
     if not f["first_name"] or len(f["first_name"]) > MAX_NAME:
         return f"Enter your first name ({MAX_NAME} characters at most)."

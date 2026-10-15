@@ -91,6 +91,12 @@ def test_svg_is_not_a_picture():
         "https://evil.com\\good.org",  # a browser reads the backslash as a slash
         "https://good.org\u202e/moc.live",  # right-to-left override in the host
         "https://example.org/a\u2066b",  # and anywhere else
+        "https://good.org%2eevil.com/",  # a browser decodes the host: good.org.evil.com
+        "https://%65vil.com/",
+        "https://-bad.org/",  # every label, after IDNA, is letters, digits and hyphens
+        "https://bad-.org/",
+        "https://a_b.org/",
+        "https://bücher.de/" + "x" * 480,  # 498 typed, over 500 once in punycode
     ],
 )
 def test_only_plain_https_links_are_accepted(raw):

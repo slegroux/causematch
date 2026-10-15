@@ -23,6 +23,13 @@ MAX_UPLOAD = 6 * 1024 * 1024  # bytes; static/photo.js sends far less (1600 px J
 MAX_PIXELS_JPEG = 50_000_000
 MAX_PIXELS = {"JPEG": MAX_PIXELS_JPEG, "MPO": MAX_PIXELS_JPEG, "WEBP": 8_000_000}
 MAX_PIXELS_OTHER = 12_000_000  # PNG, GIF
+# draft() doesn't help a JPEG of several scans (progressive, or one scan per component):
+# libjpeg keeps every DCT coefficient of the whole image, 2 bytes each, until the last
+# scan. Such a file may have at most this many pixels x components (about 72 MB).
+MAX_COEFFICIENTS = 36_000_000
+# Each scan is another pass over the whole image: a file of hundreds of tiny repeated
+# scans keeps a decode slot busy for minutes. A real progressive JPEG has about 10.
+MAX_SCANS = 50
 # Pillow's own check stays as a backstop (an error at twice this); its warning between 1x
 # and 2x is redundant with _open's refusal, so it is silenced once, here.
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS_JPEG
@@ -40,6 +47,7 @@ WORK_PIXELS = 4_000_000
 # At most two pictures are being decoded at a time, whatever the thread pool's size: a
 # decode is the one moment a full-size bitmap is in memory.
 _decoding = threading.BoundedSemaphore(2)
+WAIT = 5  # seconds an upload waits for a decode slot, then Busy
 QUALITY = 82
 # static/theme.css --cm-ink: behind a logo drawn for dark backgrounds
 INK = (45, 30, 23)
@@ -49,6 +57,10 @@ Processed = namedtuple("Processed", "full thumb")
 
 class BadPhoto(ValueError):
     """Not a picture Pillow can read, or too big to decode safely."""
+
+
+class Busy(Exception):
+    """Both decode slots stayed taken for WAIT seconds: try again in a moment."""
 
 
 def new_key():
@@ -64,16 +76,60 @@ def is_key(key):
     )
 
 
+def jpeg_scans(raw):
+    """How many scans (SOS segments) a JPEG's top-level marker stream holds, counting at
+    most MAX_SCANS + 1. Segments are skipped by their length, so a thumbnail inside EXIF
+    doesn't count; entropy-coded data and stray bytes are skipped up to the next real
+    marker, the way libjpeg reads them."""
+    i, n, scans = 2, len(raw), 0
+    while i + 4 <= n and scans <= MAX_SCANS:
+        if raw[i] != 0xFF:  # stray bytes: libjpeg skips to the next marker, so do we
+            if (i := raw.find(b"\xff", i)) == -1:
+                break
+            continue
+        marker = raw[i + 1]
+        if marker == 0xFF:  # fill byte
+            i += 1
+            continue
+        if marker == 0xD9:  # end of image
+            break
+        if 0xD0 <= marker <= 0xD7 or marker == 0x01:  # no length
+            i += 2
+            continue
+        i += 2 + int.from_bytes(raw[i + 2 : i + 4], "big")
+        if marker != 0xDA:
+            continue
+        scans += 1
+        while (j := raw.find(b"\xff", i)) != -1 and j + 1 < n:
+            nxt = raw[j + 1]
+            if nxt != 0 and not 0xD0 <= nxt <= 0xD7:  # a marker, not stuffing or RSTn
+                break
+            i = j + 2
+        else:
+            break
+        i = j
+    return scans
+
+
 def _open(raw):
     """The decoded image, upright, at most WORK_PIXELS; BadPhoto for anything else,
-    including a picture with more pixels than its format may have."""
-    with _decoding:
+    including a picture with more pixels, components or scans than may be decoded
+    safely; Busy when no decode slot frees up within WAIT seconds."""
+    if not _decoding.acquire(timeout=WAIT):
+        raise Busy("both decode slots are taken")
+    try:
         try:
             with Image.open(io.BytesIO(raw), formats=FORMATS) as probe:
                 w, h = probe.size  # from the header: nothing is decoded yet
                 jpeg = probe.format in ("JPEG", "MPO")
                 if w * h > MAX_PIXELS.get(probe.format, MAX_PIXELS_OTHER):
                     raise BadPhoto("too many pixels")
+                if jpeg:
+                    scans = jpeg_scans(raw)
+                    if scans > MAX_SCANS:
+                        raise BadPhoto("too many scans")
+                    if scans > 1 and w * h * len(probe.getbands()) > MAX_COEFFICIENTS:
+                        raise BadPhoto("too many coefficients for a multi-scan JPEG")
                 probe.verify()  # structure only; a verified image can't be used after
             scale = min(1, (WORK_PIXELS / (w * h)) ** 0.5)
             size = (max(1, math.ceil(w * scale)), max(1, math.ceil(h * scale)))
@@ -96,6 +152,8 @@ def _open(raw):
             if isinstance(e, BadPhoto):
                 raise
             raise BadPhoto("not a readable picture") from e
+    finally:
+        _decoding.release()
 
 
 def _flat(im, background=(255, 255, 255)):

@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, photos
 from app.forms import bad_request, https_url, query, str_form
-from app.routes.profile import BAD_PHOTO, PhotoForm, read_photo
+from app.routes.profile import BAD_PHOTO, BUSY, PhotoForm, read_photo
 from app.ui import CARD, EventLink, Field, LogoBadge, Router, TextInput
 
 ar = Router()
@@ -192,8 +192,10 @@ def _sync_save_details(uid, org_id, form):
 
 async def _upload(req, authorize, save, page, done):
     """A picture from the form, processed then saved by save(processed); page(error) on a
-    bad picture. authorize() runs first: a coordinator of another org gets 403 before
-    anything is read or decoded."""
+    bad picture (400) or when no decode slot frees up (503). authorize() runs before the
+    picture is read or decoded, so a coordinator of another org gets 403 without either.
+    (FastHTML has already parsed the multipart body, at most 6 MB spooled to disk, before
+    any of this runs, even for a request that is then refused.)"""
     try:
         await run_in_threadpool(authorize)
     except PermissionError:
@@ -204,9 +206,13 @@ async def _upload(req, authorize, save, page, done):
         if raw is None:
             raise photos.BadPhoto("no file")
         processed = await run_in_threadpool(photos.process, raw, kind)
-    except photos.BadPhoto:
+    except (photos.BadPhoto, photos.Busy) as e:
+        busy = isinstance(e, photos.Busy)
         try:
-            return FtResponse(await run_in_threadpool(page, BAD_PHOTO), status_code=400)
+            return FtResponse(
+                await run_in_threadpool(page, BUSY if busy else BAD_PHOTO),
+                status_code=503 if busy else 400,
+            )
         except PermissionError:
             return Response("Forbidden", status_code=403)
     try:

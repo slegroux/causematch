@@ -73,6 +73,10 @@ def test_optional_fields_can_be_cleared(user):
             "Pick up to 6 interests",
         ),
         ({"pronouns": "she\x00her"}, "wasn't recognized"),
+        ({"last_name": "Le\u200be"}, "wasn't recognized"),  # zero-width space
+        ({"bio": "Hi \u202eereht"}, "wasn't recognized"),  # right-to-left override
+        ({"first_name": "Sam\ufeff"}, "wasn't recognized"),
+        ({"pronouns": "they\tthem"}, "wasn't recognized"),
     ],
 )
 def test_bad_details_are_refused_and_change_nothing(user, over, message):
@@ -115,6 +119,13 @@ def test_the_me_hub_links_to_the_profile(user):
         ("Sam", "  de la Cruz ", False, "Sam D."),
         ("Sam", "de la Cruz", True, "Sam de la Cruz"),
         ("", "Lee", False, "Volunteer L."),
+        (
+            "Sam",
+            "'O'Neil",
+            False,
+            "Sam O.",
+        ),  # the first letter, not the first character
+        ("Sam", "123", False, "Sam"),
     ],
 )
 def test_volunteer_name(first, last, full, shown):
@@ -129,6 +140,13 @@ def test_onboarding_asks_for_an_optional_last_name(new_user):
     r = new_user.post("/onboarding", data={**FORM, "last_name": "Lee"})
     assert r.status_code == 200  # followed to the deck
     assert profiles[uid_of(new_user)].last_name == "Lee"
+
+
+@pytest.mark.parametrize("last", ["Lee\x00", "Le\u200be", "Lee\u202e"])
+def test_onboarding_refuses_hidden_characters_in_a_name(new_user, last):
+    r = new_user.post("/onboarding", data={**FORM, "last_name": last})
+    assert "wasn't recognized" in r.text.replace("&#x27;", "'")
+    assert not profiles[uid_of(new_user)].onboarded_at
 
 
 def test_onboarding_without_a_last_name(new_user):
