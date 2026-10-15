@@ -1,11 +1,11 @@
 import re
 
-from fasthtml.common import APIRouter, Div, Input, Option, P, Redirect, Response, Select
-from monsterui.all import Button, ButtonT, Form, FormLabel, LabelCheckboxX, TextPresets
+from fasthtml.common import APIRouter, Div, Input, P, Redirect, Response
+from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
 
 from app import data
 from app.geo import zip_latlon
-from app.ui import Page
+from app.ui import Checks, Choice, Field, Page
 
 ar = APIRouter()
 
@@ -63,32 +63,6 @@ INTRO = (
     "Tell us what you care about and when you're free, then swipe through openings "
     "near you. When you like one and the nonprofit says yes too, you're matched."
 )
-
-
-def Field(label, *inputs):
-    return Div(FormLabel(label), *inputs, cls="space-y-2")
-
-
-def Checks(name, options, checked=()):
-    return Div(
-        *[
-            LabelCheckboxX(label, name=name, value=value, checked=value in checked)
-            for value, label in options
-        ],
-        cls="space-y-1",
-    )
-
-
-def Choice(name, options, selected="", placeholder=None):
-    return Select(
-        Option(placeholder or "Choose one", value="", selected=not selected),
-        *[
-            Option(label, value=value, selected=value == selected)
-            for value, label in options
-        ],
-        name=name,
-        cls="uk-select h-10",
-    )
 
 
 def OnboardingForm(f=None, error=None):

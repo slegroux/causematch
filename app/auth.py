@@ -1,7 +1,7 @@
 import logging
 import re
 
-from fasthtml.common import Beforeware, Redirect
+from fasthtml.common import Beforeware, Redirect, Response
 
 from app import data
 from app.config import is_dev
@@ -12,7 +12,16 @@ log = logging.getLogger("causematch")
 DEV_SECRET = "dev-only-secret-do-not-use-in-production"
 SESSION_MAX_AGE = 30 * 24 * 3600
 
-PUBLIC = [r"/login", r"/login/send", r"/login/verify", r"/favicon\.ico", r"/static/.*"]
+PUBLIC = [
+    r"/login",
+    r"/login/send",
+    r"/login/verify",
+    r"/org/login",
+    r"/org/login/send",
+    r"/org/login/verify",
+    r"/favicon\.ico",
+    r"/static/.*",
+]
 # Signed in but not yet onboarded: these stay reachable.
 ONBOARDING_OK = ("/onboarding", "/logout")
 
@@ -45,13 +54,29 @@ def normalize_phone(raw):
     return f"+1{digits}"
 
 
+def is_org_path(path):
+    return path == "/org" or path.startswith("/org/")
+
+
 def check_session(req, sess):
+    """Sign-in, then role: volunteers get the volunteer pages, coordinators /org/*, nobody both."""
+    path = req.url.path
     profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
     if not profile or sess.get("sv") != (profile.session_version or 1):
         sess.pop("uid", None)
-        return Redirect("/login")
+        return Redirect("/org/login" if is_org_path(path) else "/login")
     req.scope["uid"] = profile.id
-    if not profile.onboarded_at and req.url.path not in ONBOARDING_OK:
+    if path == "/logout":
+        return
+    if is_org_path(path):
+        # Membership is checked on every request: removing a coordinator takes effect at once.
+        if profile.role != "coordinator" or not data.coordinator_org_ids(profile.id):
+            return Response("Forbidden", status_code=403)
+    elif profile.role == "coordinator":
+        return Redirect("/org")
+    elif profile.role != "volunteer":
+        return Response("Forbidden", status_code=403)
+    elif not profile.onboarded_at and path not in ONBOARDING_OK:
         return Redirect("/onboarding")
 
 

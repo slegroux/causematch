@@ -8,28 +8,41 @@ _tmp = tempfile.mkdtemp()
 atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ["CAUSEMATCH_DB"] = os.path.join(_tmp, "test.db")
 os.environ["CAUSEMATCH_FAKE_SMS"] = "1"
+os.environ["CAUSEMATCH_FAKE_EMAIL"] = "1"
+os.environ["PUBLIC_BASE_URL"] = "https://causematch.test"
 os.environ["CAUSEMATCH_ENV"] = "test"
 os.environ.pop("K_SERVICE", None)
 
 import itertools
+import re
 
 import pytest
 from starlette.testclient import TestClient
 
-from app import notify
+from app import data, notify
 from app.auth import normalize_phone
-from app.db import causes, ensure_causes, openings, orgs, profiles, seed_demo
+from app.db import (
+    causes,
+    ensure_causes,
+    login_tokens,
+    openings,
+    org_members,
+    orgs,
+    profiles,
+    seed_demo,
+)
 from main import app
 
 
 @pytest.fixture(autouse=True)
 def fresh_db():
     """Every test starts from the same seeded rows, whatever ran before it."""
-    for table in (profiles, openings, orgs, causes):
+    for table in (profiles, openings, orgs, causes, org_members, login_tokens):
         table.delete_where()
     ensure_causes()
     seed_demo()
     notify.get_verifier().sent.clear()
+    notify.get_emailer().sent.clear()
 
 
 _phones = itertools.count(3105550100)
@@ -77,3 +90,29 @@ def user(new_user):
 @pytest.fixture
 def anon():
     return TestClient(app)
+
+
+def coordinator_for(org_index=0, email=None, role="coordinator"):
+    """Profile id of a coordinator for the nth seeded org."""
+    email = email or f"coord{org_index}@example.org"
+    return data.add_coordinator(email, orgs()[org_index].id, role), email
+
+
+def org_sign_in(client, email):
+    """Sign in through the emailed link, the way a coordinator does."""
+    client.post("/org/login/send", data={"email": email})
+    _, _, body = notify.get_emailer().sent[-1]
+    token = re.search(r"token=([\w-]+)", body).group(1)
+    r = client.get(f"/org/login/verify?token={token}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org"
+    return token
+
+
+@pytest.fixture
+def coord():
+    """Signed-in coordinator of the first seeded org."""
+    _, email = coordinator_for(0)
+    c = TestClient(app)
+    org_sign_in(c, email)
+    c.org_id = orgs()[0].id
+    return c

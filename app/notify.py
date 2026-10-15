@@ -1,8 +1,11 @@
+import logging
 import os
 
 import httpx
 
-from app.config import is_dev
+from app.config import is_dev, public_base_url
+
+log = logging.getLogger("causematch")
 
 FAKE_CODE = "000000"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
@@ -79,3 +82,66 @@ def send_code(phone):
 
 def check_code(phone, code):
     return get_verifier().check(phone, code)
+
+
+class FakeEmailer:
+    """Test and local-dev emailer: sends nothing, records messages, logs them."""
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, to, subject, body):
+        self.sent.append((to, subject, body))
+        log.warning("FAKE EMAIL to %s: %s\n%s", to, subject, body)
+
+
+class ResendEmailer:
+    def __init__(self, api_key, sender):
+        self.sender = sender
+        self.client = httpx.Client(
+            base_url="https://api.resend.com",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+
+    def send(self, to, subject, body):
+        self.client.post(
+            "/emails",
+            json={"from": self.sender, "to": [to], "subject": subject, "text": body},
+        ).raise_for_status()
+
+
+def make_emailer(env=os.environ):
+    if env.get("CAUSEMATCH_FAKE_EMAIL") == "1":
+        if not is_dev(env):
+            raise RuntimeError(
+                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development or test"
+            )
+        return FakeEmailer()
+    if not (env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM")):
+        raise RuntimeError(
+            "Email is not configured: set EMAIL_API_KEY and EMAIL_FROM "
+            "(or CAUSEMATCH_ENV=development with CAUSEMATCH_FAKE_EMAIL=1)"
+        )
+    return ResendEmailer(env["EMAIL_API_KEY"], env["EMAIL_FROM"])
+
+
+_emailer = None
+
+
+def get_emailer():
+    global _emailer
+    if _emailer is None:
+        _emailer = make_emailer()
+    return _emailer
+
+
+def send_login_link(email, token):
+    """The one place a coordinator sign-in link leaves the app."""
+    link = f"{public_base_url()}/org/login/verify?token={token}"
+    get_emailer().send(
+        email,
+        "Your Causematch sign-in link",
+        f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
+        "15 minutes. If you didn't ask for it, ignore this email.",
+    )

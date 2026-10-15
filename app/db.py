@@ -50,6 +50,9 @@ class Opening:
     slots: int
     orientation_required: str
     status: str  # open|filled|closed
+    notes: str
+    reply_channel: str  # email|text|either
+    adult_confirmed: bool  # 18+ and no one-to-one contact with vulnerable people
     created_at: str
 
 
@@ -78,11 +81,28 @@ class Profile:
     deleted_at: str
 
 
+class OrgMember:
+    id: int
+    org_id: int
+    user_id: int
+    role: str  # owner|coordinator
+
+
+class LoginToken:
+    token_hash: str  # SHA-256 of the emailed token; the token itself is never stored
+    user_id: int
+    expires_at: str
+    used_at: str
+
+
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
 openings = db.create(Opening, pk="id", transform=True)
 profiles = db.create(Profile, pk="id", transform=True)
+org_members = db.create(OrgMember, pk="id", transform=True)
+org_members.create_index(["org_id", "user_id"], unique=True, if_not_exists=True)
+login_tokens = db.create(LoginToken, pk="token_hash", transform=True)
 # One live profile per phone; a soft-deleted profile frees its number.
 db.execute("DROP INDEX IF EXISTS idx_profile_phone")
 db.execute(

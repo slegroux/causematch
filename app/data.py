@@ -1,10 +1,23 @@
+import hashlib
 import json
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
 
 import apsw
 from apswutils.db import NotFoundError
 
-from app.db import Profile, causes, openings, orgs, profiles
+from app.db import (
+    LoginToken,
+    Opening,
+    Profile,
+    causes,
+    db,
+    login_tokens,
+    openings,
+    org_members,
+    orgs,
+    profiles,
+)
 
 
 def deck(uid=None, limit=20):
@@ -102,3 +115,157 @@ def save_onboarding(
         heard_from=heard_from,
         onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )
+
+
+TOKEN_MINUTES = 15
+
+
+def _now():
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _hash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def org_exists(org_id):
+    return bool(orgs(where="id = ?", where_args=[org_id]))
+
+
+def add_coordinator(email, org_id, role="coordinator"):
+    """Admin-only entry point (scripts/add_coordinator.py): profile id of the coordinator."""
+    if role not in ("owner", "coordinator"):
+        raise ValueError(role)
+    if not org_exists(org_id):
+        raise LookupError(f"no org {org_id}")
+    email = email.strip().lower()
+    found = coordinator_by_email(email)
+    if found:
+        uid = found
+    else:
+        uid = profiles.insert(
+            Profile(
+                role="coordinator",
+                email=email,
+                session_version=1,
+                created_at=_now(),
+            )
+        ).id
+    if not org_members(where="org_id = ? AND user_id = ?", where_args=[org_id, uid]):
+        org_members.insert({"org_id": org_id, "user_id": uid, "role": role})
+    return uid
+
+
+def coordinator_by_email(email):
+    found = profiles(
+        where="role = 'coordinator' AND lower(email) = ? AND deleted_at IS NULL",
+        where_args=[email.strip().lower()],
+    )
+    return found[0].id if found else None
+
+
+def coordinator_org_ids(uid):
+    return [m.org_id for m in org_members(where="user_id = ?", where_args=[uid])]
+
+
+def coordinator_orgs(uid):
+    """[(org, member role)] for the orgs this coordinator belongs to."""
+    by_id = {o.id: o for o in orgs()}
+    return [
+        (by_id[m.org_id], m.role)
+        for m in org_members(where="user_id = ?", where_args=[uid], order_by="org_id")
+        if m.org_id in by_id
+    ]
+
+
+def create_login_token(uid):
+    """A fresh single-use token for the emailer; only its SHA-256 is stored."""
+    token = secrets.token_urlsafe(32)
+    login_tokens.delete_where("user_id = ? OR expires_at < ?", [uid, _now()])
+    login_tokens.insert(
+        LoginToken(
+            token_hash=_hash(token),
+            user_id=uid,
+            expires_at=(datetime.now(UTC) + timedelta(minutes=TOKEN_MINUTES)).isoformat(
+                timespec="seconds"
+            ),
+        )
+    )
+    return token
+
+
+def consume_login_token(token):
+    """User id the token was issued to, or None. Marks it used in one statement."""
+    db.execute(
+        "UPDATE login_token SET used_at = ? WHERE token_hash = ? "
+        "AND used_at IS NULL AND expires_at > ?",
+        [_now(), _hash(token), _now()],
+    )
+    if db.conn.changes() != 1:
+        return None
+    return login_tokens[_hash(token)].user_id
+
+
+def create_opening(
+    coordinator_uid,
+    org_id,
+    *,
+    title,
+    about,
+    cause,
+    lat,
+    lon,
+    neighborhood,
+    starts_at,
+    recurrence,
+    slots,
+    orientation_required,
+    notes,
+    reply_channel,
+):
+    """Opening id. Only an org member may post; the status always starts open."""
+    if org_id not in coordinator_org_ids(coordinator_uid):
+        raise PermissionError("not a member of this org")
+    return openings.insert(
+        Opening(
+            org_id=org_id,
+            title=title,
+            about=about,
+            causes=json.dumps([cause]),
+            skills="[]",
+            lat=lat,
+            lon=lon,
+            neighborhood=neighborhood,
+            remote=False,
+            starts_at=starts_at,
+            recurrence=recurrence,
+            slots=slots,
+            orientation_required=orientation_required,
+            status="open",
+            notes=notes,
+            reply_channel=reply_channel,
+            adult_confirmed=True,
+            created_at=_now(),
+        )
+    ).id
+
+
+def org_openings(coordinator_uid):
+    """{org id: [openings, soonest first]} for the coordinator's own orgs only."""
+    mine = coordinator_org_ids(coordinator_uid)
+    return {
+        org_id: openings(
+            where="org_id = ?", where_args=[org_id], order_by="starts_at DESC"
+        )
+        for org_id in mine
+    }
+
+
+def close_opening(coordinator_uid, opening_id):
+    try:
+        o = openings[opening_id]
+    except NotFoundError:
+        raise PermissionError("no such opening") from None
+    if o.org_id not in coordinator_org_ids(coordinator_uid):
+        raise PermissionError("not a member of this org")
+    openings.update(id=opening_id, status="closed")
