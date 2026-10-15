@@ -1,3 +1,5 @@
+import re
+
 from fasthtml.common import APIRouter, Div, Input, Option, P, Redirect, Select
 from monsterui.all import Button, ButtonT, Form, FormLabel, LabelCheckboxX, TextPresets
 
@@ -98,6 +100,15 @@ def OnboardingForm(f=None, error=None):
                 "I'm 18 or older", name="adult", value="1", checked=bool(f.get("adult"))
             ),
             Field(
+                "Email (optional)",
+                Input(
+                    name="email",
+                    type="email",
+                    value=f.get("email", ""),
+                    autocomplete="email",
+                ),
+            ),
+            Field(
                 "Your ZIP code",
                 Input(
                     name="zip",
@@ -176,6 +187,7 @@ async def onboarding_save(req):
     form = await req.form()
     f = {
         "first_name": form.get("first_name", "").strip(),
+        "email": form.get("email", "").strip(),
         "adult": form.get("adult"),
         "zip": form.get("zip", "").strip(),
         "neighborhood": form.get("neighborhood", "").strip(),
@@ -196,6 +208,8 @@ async def onboarding_save(req):
         return fail(ADULTS_ONLY)
     if not f["first_name"]:
         return fail("Please enter your first name.")
+    if f["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", f["email"]):
+        return fail("That email doesn't look right. Leave it blank to skip.")
     latlon = zip_latlon(f["zip"])
     if not latlon:
         return fail(LA_ONLY)
@@ -218,6 +232,7 @@ async def onboarding_save(req):
     data.save_onboarding(
         req.scope["uid"],
         display_name=f["first_name"],
+        email=f["email"],
         lat=latlon[0],
         lon=latlon[1],
         radius_km=radius,

@@ -59,6 +59,7 @@ def save_onboarding(
     uid,
     *,
     display_name,
+    email="",
     lat,
     lon,
     radius_km,
@@ -72,6 +73,7 @@ def save_onboarding(
     profiles.update(
         id=uid,
         display_name=display_name,
+        email=email,
         adult_attested=True,
         lat=lat,
         lon=lon,

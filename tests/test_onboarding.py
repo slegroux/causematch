@@ -99,3 +99,22 @@ def test_onboarded_user_login_goes_to_deck(user):
     assert (
         user.get("/onboarding", follow_redirects=False).headers["location"] == "/deck"
     )
+
+
+def test_email_is_optional_and_stored_when_given(new_user):
+    new_user.post("/onboarding", data={**FORM, "email": "sam@example.com"})
+    assert profile_of().email == "sam@example.com"
+
+
+def test_onboarding_without_email_succeeds(new_user):
+    r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
+    assert r.headers["location"] == "/deck"
+    assert not profile_of().email
+
+
+def test_malformed_email_rejected(new_user):
+    r = new_user.post(
+        "/onboarding", data={**FORM, "email": "nope"}, follow_redirects=False
+    )
+    assert r.status_code == 200 and "email" in r.text
+    assert not profile_of().onboarded_at
