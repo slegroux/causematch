@@ -47,9 +47,32 @@ class Opening:
     status: str  # open|filled|closed
 
 
+class Profile:
+    id: int
+    role: str  # volunteer|coordinator|admin
+    phone: str  # E.164
+    email: str
+    display_name: str
+    adult_attested: bool
+    lat: float  # private: never rendered
+    lon: float  # private: never rendered
+    radius_km: int
+    causes: str  # JSON list of cause slugs
+    skills: str  # JSON list
+    availability: str  # JSON list
+    frequency: str
+    heard_from: str  # personal|second_degree|public|other
+    other_causes: str
+    onboarded_at: str
+    created_at: str
+    deleted_at: str
+
+
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
 openings = db.create(Opening, pk="id", transform=True)
+profiles = db.create(Profile, pk="id", transform=True)
+profiles.create_index(["phone"], unique=True, if_not_exists=True)
 
 CAUSES = [
     Cause("food-insecurity", "Food insecurity", "utensils", 1, True),

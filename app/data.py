@@ -1,6 +1,9 @@
 import json
+from datetime import UTC, datetime
 
-from app.db import causes, openings, orgs
+from apswutils.db import NotFoundError
+
+from app.db import Profile, causes, openings, orgs, profiles
 
 
 def deck(uid=None, limit=20):
@@ -24,3 +27,60 @@ def deck(uid=None, limit=20):
             }
         )
     return cards[:limit]
+
+
+def active_causes():
+    return [c for c in causes(order_by="sort") if c.active]
+
+
+def get_or_create_volunteer(phone):
+    """Profile id for this E.164 phone, creating a volunteer profile on first sign-in."""
+    found = profiles(where="phone = ? AND deleted_at IS NULL", where_args=[phone])
+    if found:
+        return found[0].id
+    return profiles.insert(
+        Profile(
+            role="volunteer",
+            phone=phone,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+    ).id
+
+
+def get_profile(uid):
+    try:
+        p = profiles[uid]
+    except NotFoundError:
+        return None
+    return None if p.deleted_at else p
+
+
+def save_onboarding(
+    uid,
+    *,
+    display_name,
+    lat,
+    lon,
+    radius_km,
+    causes,
+    other_causes="",
+    availability=(),
+    skills=(),
+    frequency="",
+    heard_from,
+):
+    profiles.update(
+        id=uid,
+        display_name=display_name,
+        adult_attested=True,
+        lat=lat,
+        lon=lon,
+        radius_km=radius_km,
+        causes=json.dumps(list(causes)),
+        other_causes=other_causes,
+        availability=json.dumps(list(availability)),
+        skills=json.dumps(list(skills)),
+        frequency=frequency,
+        heard_from=heard_from,
+        onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
