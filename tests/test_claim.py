@@ -18,8 +18,8 @@ EIN = "861620575"
 FORM = {
     "ein": "86-1620575",
     "org_name": "Los Angeles Food Bank",
-    "name": "Maria Lopez",
-    "email": "Maria@FoodBank.example",
+    "name": "Test Claimant",
+    "email": "Claimant@FoodBank.example",
     "phone": "(310) 555-0123",
     "authorized": "1",
 }
@@ -78,7 +78,7 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     c = the_claim()
     assert (c.status, c.email, c.ein, c.phone) == (
         "pending",
-        "maria@foodbank.example",
+        "claimant@foodbank.example",
         EIN,
         "+13105550123",
     )
@@ -90,8 +90,8 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
 
     page = admin.get("/admin/claims").text
     for shown in (
-        "Maria Lopez",
-        "maria@foodbank.example",
+        "Test Claimant",
+        "claimant@foodbank.example",
         "Los Angeles Food Bank",
         "Los Angeles",
         "NTEE K31",
@@ -113,17 +113,19 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     assert member.role == "owner"
 
     to, subject, body = notify.get_emailer().sent[-1]
-    assert to == "maria@foodbank.example" and "approved" in subject
+    assert to == "claimant@foodbank.example" and "approved" in subject
     assert body.startswith(
         "Your request to manage Los Angeles Food Bank on Causematch was approved."
     )
     assert "https://causematch.test/org/login" in body
     assert "token=" not in body and "ignore" not in body  # nothing to expire or ignore
-    maria = TestClient(app)
-    org_sign_in(maria, "maria@foodbank.example")  # asks for a link, as the email says
-    home = maria.get("/org")
+    claimant = TestClient(app)
+    org_sign_in(
+        claimant, "claimant@foodbank.example"
+    )  # asks for a link, as the email says
+    home = claimant.get("/org")
     assert home.status_code == 200 and "Los Angeles Food Bank" in home.text
-    assert profiles[member.user_id].display_name == "Maria Lopez"
+    assert profiles[member.user_id].display_name == "Test Claimant"
     assert profiles[member.user_id].contact_phone == "+13105550123"
     assert (
         the_claim().status == "approved"
@@ -154,7 +156,7 @@ def test_a_rejection_is_recorded_and_grants_nothing(admin):
     assert len(notify.get_emailer().sent) == sent + 1
     to, _, body = notify.get_emailer().sent[-1]
     assert to == c.email and "was not approved" in body
-    assert "Los Angeles Food Bank" not in body and "Maria" not in body
+    assert "Los Angeles Food Bank" not in body and "Claimant" not in body
     # asking for a link as that address sends nothing
     TestClient(app).post("/org/login/send", data={"email": c.email})
     assert len(notify.get_emailer().sent) == sent + 1
@@ -198,7 +200,7 @@ def test_an_org_with_an_owner_needs_the_admins_confirmation(admin):
     assert r.status_code == 200 and "already claimed by Olive Owner (owner)" in r.text
     assert the_claim().status == "pending"
     assert len(org_members(where="org_id = ?", where_args=[org.id])) == 1
-    assert not data.coordinator_by_email("maria@foodbank.example")
+    assert not data.coordinator_by_email("claimant@foodbank.example")
 
     r = approve(admin, cid, confirm="1")
     assert r.status_code == 303 and the_claim().status == "approved"
@@ -245,7 +247,7 @@ def test_a_deactivated_org_cannot_be_claimed(admin):
 
 def test_an_existing_coordinator_is_linked_not_duplicated(admin):
     imported()
-    _, email = coordinator_for(0, "maria@foodbank.example")
+    _, email = coordinator_for(0, "claimant@foodbank.example")
     before = profiles.count
     claim(name="A Different Name")
     approve(admin, the_claim().id)
@@ -276,7 +278,7 @@ def test_a_failing_email_does_not_undo_the_approval(admin, monkeypatch):
     # the claimant can still ask for a link themselves
     monkeypatch.undo()
     TestClient(app).post("/org/login/send", data={"email": the_claim().email})
-    assert notify.get_emailer().sent[-1][0] == "maria@foodbank.example"
+    assert notify.get_emailer().sent[-1][0] == "claimant@foodbank.example"
 
 
 def test_deciding_twice_does_nothing_the_second_time(admin):
@@ -329,7 +331,7 @@ def test_nobody_but_an_admin_reaches_the_claims(who):
             r.status_code in (302, 303)
             and r.headers["location"] in ("/org", "/org/login", "/login")
         ), (who, path, r.status_code)
-        assert "Maria" not in r.text
+        assert "Claimant" not in r.text
     assert the_claim().status == "pending" and org_members.count == members
     assert len(notify.get_emailer().sent) == sent
 
@@ -600,7 +602,7 @@ def test_the_hourly_sweep_scrubs_old_claims(monkeypatch):
 
 def test_removing_a_coordinator_scrubs_their_claims(admin):
     imported()
-    _, email = coordinator_for(0, "maria@foodbank.example")
+    _, email = coordinator_for(0, "claimant@foodbank.example")
     claim()  # pending, from the same address
     data.remove_coordinator(email)
     row = the_claim()

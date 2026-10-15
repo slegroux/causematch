@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app import data
+from app import data, security
 from app.config import contact_email, is_dev, public_base_url
 
 log = logging.getLogger("causematch")
@@ -16,6 +16,7 @@ TWILIO_STOPPED = 21610  # the recipient replied STOP
 MESSAGE_WINDOW = 30 * 60  # seconds: at most one new-message text per match per window
 LIKES_WINDOW = 15 * 60  # seconds: at most one new-likes email per org per window
 MAX_ATTEMPTS = 5  # tries for one send before it is left failed
+MAX_REMINDERS_PER_SWEEP = 100  # the rest wait for the next hourly sweep
 LA = ZoneInfo("America/Los_Angeles")
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
@@ -253,13 +254,14 @@ def now():
     return datetime.now(UTC)
 
 
-def _deliver(kind, key, recipient_id, send, window=None, opt_out=None):
+def _deliver(kind, key, recipient_id, send, window=None, opt_out=None, gate=None):
     """Run `send` once for `key` (or once per `window` seconds), recording the outcome.
 
     Never raises. Call it from a worker thread and after the DB commit: it makes a network
     call. A claim that is never finished stays `pending` and is not retried (a lost send is
     better than a double text). A timeout is recorded `unknown` and not retried either: the
-    provider may have delivered.
+    provider may have delivered. When `gate` says no (the SMS ceiling), nothing is sent and
+    the send is recorded `deferred`, for the hourly sweep to try again.
     """
     try:
         at = now()
@@ -277,6 +279,9 @@ def _deliver(kind, key, recipient_id, send, window=None, opt_out=None):
             MAX_ATTEMPTS,
         )
         if nid is None:
+            return False
+        if gate is not None and not gate():
+            data.notification_done(nid, "deferred")
             return False
         try:
             send()
@@ -310,6 +315,7 @@ def _text(kind, key, uid, body, window=None):
         lambda: get_sms().send(phone, body),
         window,
         opt_out=lambda: data.sms_opted_out(uid),
+        gate=lambda: security.allow((security.sms_all(), "all")),
     )
 
 
@@ -342,7 +348,11 @@ def on_new_message(match_id, sender_id):
         or volunteer_online(match_id, info["volunteer_id"])
     ):
         return
-    _text(
+    return _message_text(match_id, info)
+
+
+def _message_text(match_id, info):
+    return _text(
         "message",
         f"msg:{match_id}",
         info["volunteer_id"],
@@ -378,7 +388,12 @@ def on_new_like(match_id):
 
 def send_due_reminders():
     """Text the volunteer of every scheduled shift starting 23 to 25 hours from now, once
-    per shift, and retry failed "you're matched" texts. How many were sent."""
+    per shift, and retry failed "you're matched" texts and texts the SMS ceiling deferred.
+    How many were sent.
+
+    At most one reminder per volunteer and MAX_REMINDERS_PER_SWEEP in all per sweep: a
+    coordinator adding dozens of shifts can't turn into dozens of texts at once. A held-back
+    reminder goes in a later sweep while its shift is still in the window."""
     t = now()
     first, last = (
         (t + timedelta(hours=h)).astimezone(LA).strftime(_LOCAL_FORMAT)
@@ -391,16 +406,24 @@ def send_due_reminders():
         info = data.match_notice(match_id)
         if info and info["status"] == "accepted":
             sent += bool(on_accepted(match_id))
+    for match_id in data.deferred_messages():
+        info = data.match_notice(match_id)
+        if info and info["status"] == "accepted" and not info["silent"]:
+            sent += bool(_message_text(match_id, info))
+    reminded = set()  # volunteers texted a reminder in this sweep
     for shift_id, volunteer_id in data.due_reminders(first, last):
+        if volunteer_id in reminded or len(reminded) >= MAX_REMINDERS_PER_SWEEP:
+            continue
         info = data.shift_notice(shift_id)
         if not info:
             continue
         start = datetime.strptime(info["starts_at"], _LOCAL_FORMAT)
-        sent += _text(
+        if _text(
             "reminder",
             f"reminder:{shift_id}",
             volunteer_id,
             f"Reminder: {info['opening']} with {info['org']} is on "
             f"{start.strftime('%a %b %-d, %-I:%M %p')}. Details: {public_base_url()}/matches",
-        )
-    return sent
+        ):
+            reminded.add(volunteer_id)
+    return sent + len(reminded)

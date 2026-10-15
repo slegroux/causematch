@@ -199,8 +199,11 @@ def test_get_and_head_do_not_consume_the_token(anon):
     token = token_of(notify.get_emailer().sent[-1][2])
     for method in (anon.get, anon.head, anon.get):
         r = method(f"/org/login/verify?token={token}", follow_redirects=False)
-        assert r.status_code == 200
-    assert 'name="token"' in anon.get(f"/org/login/verify?token={token}").text
+        # the token moves into the session; the page itself has no token in its URL
+        assert r.status_code == 303 and r.headers["location"] == "/org/login/verify"
+    page = anon.get(f"/org/login/verify?token={token}")
+    assert page.url.path == "/org/login/verify" and not page.url.query
+    assert token not in page.text and "Sign in" in page.text
     assert [t.used_at for t in login_tokens()] == [None]
     assert (
         anon.get("/org", follow_redirects=False).status_code == 303

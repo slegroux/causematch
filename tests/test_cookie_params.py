@@ -68,9 +68,14 @@ def test_login_form_beats_a_cookie(name):
 
 
 def test_org_token_in_the_link_beats_a_cookie():
+    _, email = coordinator_for(0)
     c = with_cookie(TestClient(app), "token")
-    html = c.get("/org/login/verify?token=real-token").text
-    assert 'value="real-token"' in html and HOSTILE not in html
+    c.post("/org/login/send", data={"email": email})
+    token = re.search(r"token=([\w-]+)", notify.get_emailer().sent[-1][2]).group(1)
+    html = c.get(f"/org/login/verify?token={token}").text  # kept in the session
+    assert HOSTILE not in html
+    r = c.post("/org/login/verify", data={}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org"
 
 
 # --- the volunteer and coordinator forms ---------------------------------------------------

@@ -1109,10 +1109,12 @@ def notification_claim(kind, key, recipient_id, at, cutoff=None, max_attempts=5)
                     attempts=1,
                 )
             ).id
+        # A deferred send (the SMS ceiling) is reserved again and keeps its attempts.
         _db.db.execute(
             "UPDATE notification SET status = 'pending', sent_at = ?, "
-            "attempts = CASE WHEN status = 'failed' THEN coalesce(attempts, 0) + 1 ELSE 1 END "
-            "WHERE key = ? AND ((status = 'failed' AND coalesce(attempts, 0) < ?) "
+            "attempts = CASE WHEN status = 'failed' THEN coalesce(attempts, 0) + 1 "
+            "WHEN status = 'deferred' THEN coalesce(attempts, 1) ELSE 1 END "
+            "WHERE key = ? AND ((status IN ('failed', 'deferred') AND coalesce(attempts, 0) < ?) "
             "OR (? IS NOT NULL AND status IN ('sent', 'unknown') AND sent_at < ?))",
             [at, key, max_attempts, cutoff, cutoff],
         )
@@ -1126,13 +1128,23 @@ def notification_done(notification_id, status):
 
 
 def failed_accepts(max_attempts):
-    """Match ids whose "you're matched" text failed and has tries left."""
+    """Match ids whose "you're matched" text failed, or was deferred, and has tries left."""
     return [
         int(r[0].split(":")[1])
         for r in _db.db.execute(
-            "SELECT key FROM notification WHERE kind = 'accepted' AND status = 'failed' "
-            "AND coalesce(attempts, 0) < ?",
+            "SELECT key FROM notification WHERE kind = 'accepted' "
+            "AND status IN ('failed', 'deferred') AND coalesce(attempts, 0) < ?",
             [max_attempts],
+        )
+    ]
+
+
+def deferred_messages():
+    """Match ids whose new-message text the SMS ceiling deferred."""
+    return [
+        int(r[0].split(":")[1])
+        for r in _db.db.execute(
+            "SELECT key FROM notification WHERE kind = 'message' AND status = 'deferred'"
         )
     ]
 
@@ -1911,9 +1923,10 @@ def remove_coordinator(email):
 RATE_KEEP_SECONDS = 24 * 3600  # the longest window in app/security.py
 
 
-def rate_take(keys, now):
-    """Count one event under every key, unless a key already holds `limit` events within
-    its window: then count nothing and return False. keys: [(key, limit, window_seconds)].
+def rate_take(keys, now, record=True):
+    """The first key that already holds `limit` events within its window, counting nothing;
+    else None, after counting one event under every key (unless `record` is False).
+    keys: [(key, limit, window_seconds)].
     """
     _db.db.execute("DELETE FROM rate_event WHERE at < ?", [now - RATE_KEEP_SECONDS])
     for key, limit, window in keys:
@@ -1922,11 +1935,12 @@ def rate_take(keys, now):
             [key, now - window],
         )
         if row["n"] >= limit:
-            return False
-    with _db.db.conn:
-        for key, _, _ in keys:
-            _db.rate_events.insert(key=key, at=now)
-    return True
+            return key
+    if record:
+        with _db.db.conn:
+            for key, _, _ in keys:
+                _db.rate_events.insert(key=key, at=now)
+    return None
 
 
 # One apsw connection is shared by every request thread (and, later, websockets); apsw

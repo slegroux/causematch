@@ -543,7 +543,7 @@ def test_admin_looks_up_then_approves(w, monkeypatch):
     monkeypatch.setattr(propublica, "make_client", client_for(serve_fixture))
     orgs.update(id=w.org, verified_at=None)
     assert "Not verified" in w.admin.get("/admin/orgs").text
-    page = w.admin.get(f"/admin/orgs/{w.org}/lookup", params={"ein": "86-1620575"})
+    page = w.admin.post(f"/admin/orgs/{w.org}/lookup", data={"ein": "86-1620575"})
     assert "Los Angeles Food Bank, Los Angeles, CA" in page.text
     assert not orgs[w.org].verified_at  # looking up approves nothing
     r = w.admin.post(
@@ -568,7 +568,7 @@ def test_the_admin_page_words_a_404_a_timeout_and_a_bad_ein(w, monkeypatch):
     for ein, handler, text in cases:
         if handler:
             monkeypatch.setattr(propublica, "make_client", client_for(handler))
-        r = w.admin.get(f"/admin/orgs/{w.org}/lookup", params={"ein": ein})
+        r = w.admin.post(f"/admin/orgs/{w.org}/lookup", data={"ein": ein})
         assert r.status_code == 200 and text in r.text
 
 

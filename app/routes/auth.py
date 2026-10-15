@@ -7,7 +7,7 @@ from monsterui.all import AT, Button, ButtonT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
-from app.auth import BAD_PHONE, normalize_phone
+from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
 from app.forms import bad_request, str_form
 from app.ui import Page
 
@@ -65,7 +65,8 @@ def CodeForm(phone, error=None):
 
 
 @ar("/login", methods=["GET"])
-def login_page():
+def login_page(sess):
+    pending_phone(sess)  # an expired number leaves the cookie
     return PhoneForm()
 
 
@@ -83,9 +84,7 @@ def _sync_send(req, form, sess):
     if not e164:
         return PhoneForm(phone, BAD_PHONE)
     # before the suspended check, so a refusal looks the same for every number
-    if not security.allow(
-        (security.SMS_PER_PHONE, e164), (security.SMS_PER_IP, security.ip_subject(req))
-    ):
+    if not security.allow(*security.sms_send_limits(req, e164)):
         return security.too_many()
     try:
         if not data.phone_suspended(e164):  # a suspended number costs no text
@@ -96,7 +95,7 @@ def _sync_send(req, form, sess):
             phone, "We couldn't send a text just now. Try again in a minute."
         )
     sess.clear()
-    sess["pending_phone"] = e164
+    set_pending(sess, e164)
     return CodeForm(e164)
 
 
@@ -109,13 +108,14 @@ async def verify(req, sess):
 
 
 def _sync_verify(req, form, sess):
-    e164 = sess.get("pending_phone")  # only the number a code was sent to
+    e164 = pending_phone(sess)  # only the number a code was sent to, for 15 minutes
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")
     code = form.get("code", "").strip()
     if not re.fullmatch(r"[0-9]{6}", code):
         return CodeForm(e164, "Enter the 6-digit code from the text.")
-    if not security.allow((security.VERIFY_PER_PHONE, e164)):
+    # only wrong codes count, so the right one always gets through below the limit
+    if not security.allow((security.VERIFY_PER_PHONE, e164), record=False):
         return security.too_many()
     try:
         ok = notify.check_code(e164, code)
@@ -123,14 +123,15 @@ def _sync_verify(req, form, sess):
         log.warning("checking a sign-in code failed: %s", type(e).__name__)
         return CodeForm(e164, "We couldn't check that code just now. Try again.")
     if not ok:
+        security.allow((security.VERIFY_PER_PHONE, e164))
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
     uid = data.get_or_create_volunteer(e164)
     profile = data.get_profile(uid)
+    sess.clear()  # the code is used: the number leaves the session either way
     if profile is None:  # suspended by an admin
         return PhoneForm(
             error="This number can't sign in. Contact us if that is a mistake."
         )
-    sess.clear()
     sess["uid"] = uid
     sess["sv"] = profile.session_version or 1
     return Redirect("/deck" if profile.onboarded_at else "/onboarding")

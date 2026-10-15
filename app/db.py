@@ -177,7 +177,7 @@ class Notification:
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
     recipient_id: int  # the volunteer's profile id; for "likes", the org id
     sent_at: str  # UTC; when this stream's last send was claimed
-    status: str  # pending|sent|failed|skipped|cancelled|unknown (a timeout: may have been delivered)
+    status: str  # pending|sent|failed|skipped|cancelled|deferred (the SMS ceiling)|unknown (a timeout: may have been delivered)
     attempts: (
         int  # tries of the current send, capped so a dead number is not retried forever
     )

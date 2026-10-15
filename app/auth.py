@@ -1,17 +1,19 @@
 import logging
 import os
 import re
+import time
 
 from fasthtml.common import Beforeware, Redirect, Response
 
 from app import data
-from app.config import is_dev, is_production
+from app.config import is_dev, is_production, strong_secret
 
 log = logging.getLogger("causematch")
 
 # Used only when CAUSEMATCH_ENV is explicitly development or test and SESSION_SECRET is unset.
 DEV_SECRET = "dev-only-secret-do-not-use-in-production"
 SESSION_MAX_AGE = 30 * 24 * 3600
+PENDING_TTL = 15 * 60  # seconds a sent code's number is kept in the session
 
 PUBLIC = [
     r"/login",
@@ -35,7 +37,7 @@ BAD_PHONE = "Enter a US mobile number, like (310) 555-0123."
 def session_secret(env):
     secret = env.get("SESSION_SECRET")
     if secret:
-        return secret
+        return strong_secret("SESSION_SECRET", secret, env)
     if not is_dev(env):
         raise RuntimeError(
             "SESSION_SECRET must be set (or CAUSEMATCH_ENV=development for local work)"
@@ -73,10 +75,29 @@ def is_admin_path(path):
     return path == "/admin" or path.startswith("/admin/")
 
 
+def set_pending(sess, phone):
+    """Remember the number a code was just sent to, with when."""
+    sess["pending_phone"] = phone
+    sess["pending_at"] = int(time.time())
+
+
+def pending_phone(sess):
+    """The number a code was sent to in the last 15 minutes, else None. An older one is
+    dropped from the session: it is signed, not encrypted, and lives 30 days."""
+    phone, at = sess.get("pending_phone"), sess.get("pending_at")
+    if phone and isinstance(at, int) and 0 <= time.time() - at <= PENDING_TTL:
+        return phone
+    sess.pop("pending_phone", None)
+    sess.pop("pending_at", None)
+    return None
+
+
 def check_session(req, sess):
     """Sign-in, then role: volunteers get the volunteer pages, coordinators /org/*, admins
     /admin/*; nobody more than one."""
     path = req.url.path
+    if "pending_phone" in sess:
+        pending_phone(sess)  # drops an expired one on any page
     profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
     if not profile or sess.get("sv") != (profile.session_version or 1):
         sess.pop("uid", None)

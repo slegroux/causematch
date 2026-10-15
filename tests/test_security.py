@@ -178,26 +178,102 @@ def test_sixth_code_request_within_ten_minutes_is_429(anon):
     assert other.post("/login/send", data={"phone": "3105550112"}).status_code == 200
 
 
-def test_code_limits_per_phone_slide_and_cap_the_day():
-    phone, t = "+13105550113", 1_000_000.0
-    rules = ((security.SMS_PER_PHONE, phone),)
+def test_code_limits_per_phone_and_address_slide_and_cap_the_day():
+    subject, t = "+13105550113|203.0.113.9", 1_000_000.0
+    rules = ((security.SMS_PER_PHONE_IP, subject),)
     assert all(security.allow(*rules, now=t + i) for i in range(5))
     assert not security.allow(*rules, now=t + 5)
-    assert security.allow(
-        *rules, now=t + 601
-    )  # the first ones left the 10-minute window
+    # the first ones left the 10-minute window
+    assert security.allow(*rules, now=t + 601)
     for i in range(4):
         assert security.allow(*rules, now=t + 1300 + i * 601)
-    assert not security.allow(*rules, now=t + 9000)  # 10 today
+    assert not security.allow(*rules, now=t + 9000)  # 10 today from this address
     assert security.allow(*rules, now=t + 24 * 3600 + 1)
 
 
-def test_codes_per_ip_cap_at_twenty_an_hour(anon):
-    for i in range(20):
-        r = anon.post("/login/send", data={"phone": f"31055502{i:02d}"})
+def test_someone_else_hammering_a_number_does_not_lock_its_owner_out():
+    """L1: the 10-minute limit is per (phone, address), so the owner, elsewhere, still
+    gets a code; the per-phone cap across addresses is 20 a day."""
+    attacker = TestClient(app, client=("198.51.100.66", 1))
+    codes = [
+        attacker.post("/login/send", data={"phone": "3105550130"}).status_code
+        for _ in range(6)
+    ]
+    assert codes == [200] * 5 + [429]
+    owner = TestClient(app, client=("203.0.113.40", 1))
+    assert owner.post("/login/send", data={"phone": "3105550130"}).status_code == 200
+    for i in range(14):  # spread over addresses: 20 in all for the number today
+        c = TestClient(app, client=(f"192.0.2.{i + 1}", 1))
+        assert c.post("/login/send", data={"phone": "3105550130"}).status_code == 200
+    late = TestClient(app, client=("203.0.113.41", 1))
+    assert late.post("/login/send", data={"phone": "3105550130"}).status_code == 429
+
+
+def test_codes_per_ip_cap_at_sixty_an_hour():
+    c = TestClient(app, client=("198.51.100.70", 1))
+    for i in range(60):
+        r = c.post("/login/send", data={"phone": f"310555{1000 + i}"})
         assert r.status_code == 200
-    assert anon.post("/login/send", data={"phone": "3105550299"}).status_code == 429
-    assert codes_sent() == 20
+    assert c.post("/login/send", data={"phone": "3105551999"}).status_code == 429
+    assert codes_sent() == 60
+
+
+def test_ipv6_clients_share_a_slash_48_for_codes(monkeypatch):
+    """M1: 120 an hour per /48, however many /64s it holds (each /64 alone gets 60)."""
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "1000")  # this test is about the /48
+    codes = []
+    for i in range(121):
+        c = TestClient(app, client=(f"2001:db8:aa:{i:x}::1", 1))
+        codes.append(
+            c.post("/login/send", data={"phone": f"310555{2000 + i}"}).status_code
+        )
+    assert codes == [200] * 120 + [429]
+    other = TestClient(app, client=("2001:db8:bb::1", 1))
+    assert other.post("/login/send", data={"phone": "3105552999"}).status_code == 200
+
+
+def test_the_global_sms_ceiling_stops_codes(monkeypatch):
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "3")
+    codes = [
+        TestClient(app, client=(f"192.0.2.{i + 1}", 1))
+        .post("/login/send", data={"phone": f"310555{3000 + i}"})
+        .status_code
+        for i in range(4)
+    ]
+    assert codes == [200] * 3 + [429]
+    assert codes_sent() == 3
+
+
+def test_the_global_sms_ceiling_counts_per_day_too(monkeypatch):
+    monkeypatch.setenv("SMS_MAX_PER_DAY", "2")
+    t = 1_000_000.0
+    assert security.allow((security.sms_all(), "all"), now=t)
+    assert security.allow((security.sms_all(), "all"), now=t + 4000)
+    assert not security.allow((security.sms_all(), "all"), now=t + 8000)
+    assert security.allow((security.sms_all(), "all"), now=t + 24 * 3600 + 1)
+
+
+@pytest.mark.parametrize(
+    "env,match",
+    [
+        ({"SMS_MAX_PER_HOUR": "0"}, "SMS_MAX_PER_HOUR"),
+        ({"SMS_MAX_PER_DAY": "lots"}, "SMS_MAX_PER_DAY"),
+    ],
+)
+def test_a_bad_sms_ceiling_refuses_to_start(env, match):
+    from app.config import sms_ceilings
+
+    assert sms_ceilings({}) == (100, 500)
+    with pytest.raises(RuntimeError, match=match):
+        sms_ceilings(env)
+
+
+def test_a_rate_limit_trip_is_logged_by_name_only(anon, caplog):
+    with caplog.at_level(logging.WARNING, logger="causematch"):
+        for _ in range(6):
+            anon.post("/login/send", data={"phone": "3105550131"})
+    (msg,) = [r.getMessage() for r in caplog.records if "rate limit" in r.getMessage()]
+    assert msg == "rate limit reached: sms-phone-ip-10m"
 
 
 def test_a_suspended_number_is_counted_like_any_other(anon):
@@ -212,6 +288,15 @@ def test_a_suspended_number_is_counted_like_any_other(anon):
         for _ in range(6)
     ]
     assert codes == [200] * 5 + [429]
+
+
+def test_right_codes_are_not_counted_against_the_check_limit(anon):
+    anon.post("/login/send", data={"phone": "3105550132"})
+    for _ in range(9):
+        anon.post("/login/verify", data={"code": "123456"})
+    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert len([e for e in rate_events() if e.key.startswith("verify-phone:")]) == 9
 
 
 def test_eleventh_code_check_in_ten_minutes_is_429_even_with_the_right_code(anon):
@@ -281,9 +366,13 @@ def test_propublica_lookups_and_imports_share_a_limit(monkeypatch):
     admin = admin_client()
     org = orgs()[0].id
     url, ein = f"/admin/orgs/{org}/lookup", {"ein": "86-1620575"}
-    assert admin.get(url, params=ein).status_code == 200
-    assert admin.get(url, params=ein).status_code == 200
-    assert admin.get(url, params=ein).status_code == 429
+    assert (
+        admin.post(url, data={"ein": "12"}).status_code == 200
+    )  # bad EIN: not counted
+    assert admin.post(url, data=ein).status_code == 200
+    assert admin.post(url, data=ein).status_code == 200
+    assert admin.post(url, data=ein).status_code == 429
+    assert admin.get(url, params=ein).status_code == 405  # no outbound call on a GET
 
 
 def test_counters_hold_no_phone_email_or_ip(anon):
@@ -576,35 +665,92 @@ def scope(xff=None, peer="10.0.0.1"):
     return {"type": "http", "headers": headers, "client": (peer, 1)}
 
 
-def test_off_cloud_run_the_header_is_ignored(monkeypatch):
+def test_with_no_trusted_hops_the_header_is_ignored(monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_HOPS", raising=False)
     monkeypatch.delenv("K_SERVICE", raising=False)
     assert security.client_ip(scope("1.2.3.4")) == "10.0.0.1"
+
+
+REAL = "203.0.113.5"
+SPOOFS = ["", "9.9.9.9, ", "9.9.9.9, 8.8.8.8, ", "nonsense, 9.9.9.9, "]
+
+
+@pytest.mark.parametrize("hops", [1, 2, 3])
+@pytest.mark.parametrize("spoof", SPOOFS)
+def test_the_client_is_the_nth_entry_from_the_right(monkeypatch, hops, spoof):
+    """Whatever a client puts in front, the address the proxies added is the one used."""
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", str(hops))
+    proxies = ", ".join(f"34.117.5.{i}" for i in range(hops - 1))  # the LB and friends
+    xff = spoof + REAL + (", " + proxies if proxies else "")
+    assert security.client_ip(scope(xff)) == REAL
 
 
 @pytest.mark.parametrize(
     "xff,expected",
     [
-        ("203.0.113.5", "203.0.113.5"),
-        ("1.1.1.1, 203.0.113.5", "203.0.113.5"),  # the client's own entry is ignored
-        ("1.1.1.1, 203.0.113.5, 35.191.3.4", "203.0.113.5"),  # a load balancer hop
-        ("203.0.113.5, 130.211.0.9, 35.191.0.1", "203.0.113.5"),
-        ("1.1.1.1, nonsense", "10.0.0.1"),  # unparseable on the right: the peer
-        ("", "10.0.0.1"),
+        ("", "10.0.0.1"),  # too short for 2 hops: the peer
         (None, "10.0.0.1"),
-        ("35.191.0.1", "10.0.0.1"),
-        ("2001:db8::1", "2001:db8::1"),
+        ("203.0.113.5", "10.0.0.1"),
+        ("nonsense, 34.117.5.5", "10.0.0.1"),  # unparseable at that place: the peer
+        ("::ffff:203.0.113.5, 34.117.5.5", REAL),  # IPv4-mapped is IPv4
+        ("2001:db8::1, 34.117.5.5", "2001:db8::1"),
     ],
 )
-def test_on_cloud_run_the_rightmost_untrusted_hop(monkeypatch, xff, expected):
-    monkeypatch.setenv("K_SERVICE", "causematch")
+def test_two_hops_edge_cases(monkeypatch, xff, expected):
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "2")
     assert security.client_ip(scope(xff)) == expected
 
 
-def test_ipv6_counts_per_64():
+def test_an_ipv4_mapped_peer_is_its_ipv4(monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_HOPS", raising=False)
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    assert security.client_ip(scope(peer="::ffff:203.0.113.5")) == REAL
+    # so mapped clients no longer share the ::/64 bucket
+    assert security._subject(security.client_ip(scope(peer="::ffff:1.2.3.4"))) != (
+        security._subject(security.client_ip(scope(peer="::ffff:5.6.7.8")))
+    )
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({}, 0),
+        ({"TRUSTED_PROXY_HOPS": "1", "K_SERVICE": "x"}, 1),
+        ({"TRUSTED_PROXY_HOPS": "2"}, 2),
+        ({"TRUSTED_PROXY_HOPS": "0", "K_SERVICE": "x"}, 0),  # explicit: the peer
+    ],
+)
+def test_trusted_hops_config(env, expected):
+    from app.config import trusted_proxy_hops
+
+    assert trusted_proxy_hops(env) == expected
+
+
+@pytest.mark.parametrize("env", [{"K_SERVICE": "x"}, {"TRUSTED_PROXY_HOPS": "-1"}])
+def test_trusted_hops_must_be_explicit_on_cloud_run_and_whole(env):
+    from app.config import trusted_proxy_hops
+
+    with pytest.raises(RuntimeError, match="TRUSTED_PROXY_HOPS"):
+        trusted_proxy_hops(env)
+
+
+def test_the_hashed_client_key_is_logged_at_debug_never_the_address(caplog):
+    c = TestClient(app, client=("198.51.100.77", 1))
+    with caplog.at_level(logging.DEBUG, logger="causematch"):
+        c.post("/login/send", data={"phone": "3105550133"})
+    keys = [r.getMessage() for r in caplog.records if "client key" in r.getMessage()]
+    assert keys and all(re.fullmatch(r"client key [0-9a-f]{12}", k) for k in keys)
+    assert not any("198.51.100" in r.getMessage() for r in caplog.records)
+
+
+def test_ipv6_counts_per_64_and_per_48():
     assert security._subject("2001:db8:1:2:aaaa::1") == security._subject(
         "2001:db8:1:2:bbbb::9"
     )
     assert security._subject("2001:db8:1:3::1") != security._subject("2001:db8:1:2::1")
+    assert security._subject("2001:db8:1:3::1", 48) == security._subject(
+        "2001:db8:1:2::1", 48
+    )
     assert security._subject("203.0.113.5") == "203.0.113.5"
 
 
@@ -634,8 +780,9 @@ def test_production_session_cookie_is_host_prefixed_and_secure(tmp_path):
         "K_SERVICE": "causematch",
         "CAUSEMATCH_DB": str(tmp_path / "p.db"),
         "SESSION_SECRET": "s" * 32,
+        "TRUSTED_PROXY_HOPS": "1",
         "PUBLIC_BASE_URL": "https://causematch.example",
-        "TASKS_TOKEN": "t",
+        "TASKS_TOKEN": "t" * 32,
         "TWILIO_ACCOUNT_SID": "AC0",
         "TWILIO_AUTH_TOKEN": "x",
         "TWILIO_VERIFY_SID": "VA0",
@@ -643,7 +790,7 @@ def test_production_session_cookie_is_host_prefixed_and_secure(tmp_path):
         "EMAIL_API_KEY": "x",
         "EMAIL_FROM": "hello@causematch.example",
         "CONTACT_EMAIL": "hello@causematch.example",
-        "PHONE_HASH_KEY": "k",
+        "PHONE_HASH_KEY": "k" * 32,
     }
     out = subprocess.run(
         [sys.executable, "-c", code],
@@ -788,3 +935,48 @@ def test_secret_scan_config_and_script_exist():
         timeout=60,
     )
     assert r.returncode != 0
+
+
+def test_only_the_listed_task_path_skips_the_origin_check(anon):
+    """L10: an exact list, so a future /tasks/ route isn't exempt by accident."""
+    assert security.ORIGIN_EXEMPT == {"/tasks/reminders"}
+    for path in ("/tasks/other", "/tasks/reminders/x", "/tasks/"):
+        assert anon.post(path, headers={"Origin": EVIL}).status_code == 403, path
+
+
+def test_htmx_eval_and_script_tags_are_off(anon):
+    """L3: set through htmx's own config meta, which htmx reads before processing the page."""
+    import html as html_lib
+    import json
+
+    page = anon.get("/login").text
+    m = re.search(r"<meta name=\"htmx-config\" content='([^']*)'", page) or re.search(
+        r'<meta name="htmx-config" content="([^"]*)"', page
+    )
+    config = json.loads(html_lib.unescape(m.group(1)))
+    assert config["allowEval"] is False and config["allowScriptTags"] is False
+    assert config["includeIndicatorStyles"] is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://causematch.example",
+        "https://causematch.example/app",
+        "https://causematch.example/?x=1",
+        "https://causematch.example#top",
+        "ftp://causematch.example",
+    ],
+)
+def test_production_base_url_must_be_an_https_origin(url):
+    """L7"""
+    from app.config import public_base_url
+
+    with pytest.raises(RuntimeError, match="PUBLIC_BASE_URL"):
+        public_base_url({"K_SERVICE": "x", "PUBLIC_BASE_URL": url})
+    assert (
+        public_base_url(
+            {"K_SERVICE": "x", "PUBLIC_BASE_URL": "https://causematch.example/"}
+        )
+        == "https://causematch.example"
+    )

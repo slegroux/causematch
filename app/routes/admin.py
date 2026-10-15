@@ -29,7 +29,7 @@ from monsterui.all import AT, Alert, AlertT, Container, LabelCheckboxX, TextPres
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, propublica, security
-from app.forms import bad_request, query, str_form
+from app.forms import bad_request, str_form
 from app.metrics import (
     BREAKDOWNS,
     DEFINITIONS,
@@ -325,7 +325,7 @@ def OrgRow(o, found=None, error=None):
             ),
             PlainButton("Look up", type="submit", cls="uk-btn uk-btn-default"),
             action=f"/admin/orgs/{o['id']}/lookup",
-            method="get",
+            method="post",  # it calls ProPublica: a GET would let a link spend the limit
             cls="flex gap-2 pt-2",
         ),
         Div(
@@ -368,12 +368,17 @@ def admin_orgs(req):
     return OrgsPage(data.admin_orgs(req.scope["uid"]))
 
 
-@ar("/admin/orgs/{org_id}/lookup", methods=["GET"])
+@ar("/admin/orgs/{org_id}/lookup", methods=["POST"])
 async def admin_org_lookup(req, org_id: int):
-    uid, ein = req.scope["uid"], query(req, "ein")
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    uid, ein = req.scope["uid"], form.get("ein", "")
     rows = await run_in_threadpool(data.admin_orgs, uid)
     if org_id not in {o["id"] for o in rows}:
         return Response("Not found", status_code=404)
+    if not propublica.normalize_ein(ein):  # a bad EIN spends no lookup
+        return OrgsPage(rows, org_id, error="An EIN is nine digits, like 53-0196605.")
     if not await run_in_threadpool(security.allow, (security.PROPUBLICA, "all")):
         return security.too_many()
     try:

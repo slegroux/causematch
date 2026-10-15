@@ -10,7 +10,15 @@ from conftest import coordinator_for, org_sign_in, sign_in
 from starlette.testclient import TestClient
 
 from app import config, data, notify
-from app.db import matches, notifications, openings, orgs, profiles, shifts
+from app.db import (
+    matches,
+    notifications,
+    openings,
+    orgs,
+    profiles,
+    rate_events,
+    shifts,
+)
 from main import app
 
 TITLE = "Sort and pack pantry boxes"
@@ -404,16 +412,16 @@ def test_reminders_pick_exactly_the_shifts_in_the_window_and_only_once(
     mk(local(clock, hours=22, minutes=59))  # too soon
     mk(local(clock, hours=25, minutes=1))  # too far
     mk(local(clock, hours=24, minutes=5), status="cancelled")
-    r = post_reminders(anon, Authorization=f"Bearer {TOKEN}")
-    assert r.status_code == 200
-    assert len(texts()) == 3
+    # one reminder per volunteer per sweep: the three go out over three sweeps
+    for n in (1, 2, 3, 3):
+        r = post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+        assert r.status_code == 200
+        assert len(texts()) == n
     assert all(
         t.startswith(f"Reminder: {TITLE} with {orgs()[0].name} is on ")
         and f"{BASE}/matches" in t
         for _, t in texts()
     )
-    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
-    assert len(texts()) == 3
 
 
 def test_reminders_skip_withdrawn_matches_and_opted_out_volunteers(world, clock, anon):
@@ -442,7 +450,9 @@ def test_production_refuses_to_start_without_twilio_email_or_tasks_token():
         config.tasks_token(prod)
     with pytest.raises(RuntimeError):
         config.tasks_token({"K_SERVICE": "x"})
-    assert config.tasks_token({**prod, "TASKS_TOKEN": "t"}) == "t"
+    with pytest.raises(RuntimeError, match="at least 32"):
+        config.tasks_token({**prod, "TASKS_TOKEN": "t" * 31})
+    assert config.tasks_token({**prod, "TASKS_TOKEN": "t" * 32}) == "t" * 32
     assert isinstance(
         notify.make_sms(
             {
@@ -590,3 +600,67 @@ def test_overlapping_reminder_calls_send_once(world, clock, monkeypatch):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert len(sms.sent) == 1
+
+
+# --- item 17: the SMS ceiling and the reminder cap ----------------------------------------
+
+
+def status_of(key):
+    return notifications(where="key = ?", where_args=[key])[0].status
+
+
+def at_the_ceiling(monkeypatch, anon):
+    """A ceiling of one text an hour, already used by a sign-in code."""
+    rate_events.delete_where()
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "1")
+    assert anon.post("/login/send", data={"phone": "3105550140"}).status_code == 200
+
+
+def test_over_the_ceiling_a_text_is_deferred_and_the_sweep_sends_it(
+    world, monkeypatch, anon
+):
+    at_the_ceiling(monkeypatch, anon)
+    accept(world.coord, world.match)
+    key = f"accepted:{world.match.id}"
+    assert texts() == [] and status_of(key) == "deferred"
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")  # still at the ceiling
+    assert texts() == [] and status_of(key) == "deferred"
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "10")
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 1 and "said yes" in texts()[0][1]
+    assert status_of(key) == "sent"
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 1  # once
+
+
+def test_a_deferred_message_text_is_sent_by_the_sweep(chat, monkeypatch, anon):
+    at_the_ceiling(monkeypatch, anon)
+    chat.coord.post(f"/org/chat/{chat.match.id}/send", data={"msg": "See you"})
+    assert texts() == [] and status_of(f"msg:{chat.match.id}") == "deferred"
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "10")
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 1 and "New message" in texts()[0][1]
+
+
+def test_codes_and_notifications_share_the_ceiling(world, monkeypatch, anon):
+    rate_events.delete_where()
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "1")
+    accept(world.coord, world.match)  # the text uses the hour's one
+    assert len(texts()) == 1
+    r = anon.post("/login/send", data={"phone": "3105550141"})
+    assert r.status_code == 429
+
+
+def test_reminders_per_sweep_are_capped(world, clock, anon, monkeypatch):
+    monkeypatch.setattr(notify, "MAX_REMINDERS_PER_SWEEP", 1)
+    other = volunteer("Yuri")
+    m2 = like(other)
+    accept(world.coord, world.match)
+    accept(world.coord, m2)
+    texts().clear()
+    for s in shifts():
+        shifts.update(id=s.id, starts_at=local(clock, hours=24))
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 1
+    post_reminders(anon, Authorization=f"Bearer {TOKEN}")
+    assert len(texts()) == 2  # the other volunteer, one sweep later

@@ -9,7 +9,6 @@ import hashlib
 import hmac
 import ipaddress
 import logging
-import os
 import re
 import threading
 import time
@@ -22,14 +21,21 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import HTMLResponse
 
 from app import data
-from app.config import is_production, phone_hash_key, public_base_url
+from app.config import (
+    is_production,
+    phone_hash_key,
+    public_base_url,
+    sms_ceilings,
+    trusted_proxy_hops,
+)
 
 log = logging.getLogger("causematch")
 
 MAX_BODY = 64 * 1024  # bytes; every form here is far smaller, and nothing uploads files
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
-# Cloud Scheduler calls these with a bearer token and sends no Origin.
-ORIGIN_EXEMPT = ("/tasks/",)
+# Cloud Scheduler calls these with a bearer token and sends no Origin. Exact paths: a
+# future /tasks/ route isn't exempt until it is listed (and checks the token).
+ORIGIN_EXEMPT = frozenset({"/tasks/reminders"})
 # Static assets may be cached; every other response may hold someone's data.
 CACHEABLE = ("/static/", "/favicon.ico")
 STYLESHEETS = (
@@ -205,11 +211,7 @@ class Guard:
             await send(message)
 
         early = None
-        if (
-            method in UNSAFE
-            and not path.startswith(ORIGIN_EXEMPT)
-            and not same_origin(headers)
-        ):
+        if method in UNSAFE and path not in ORIGIN_EXEMPT and not same_origin(headers):
             early = _forbidden()
         elif int(headers.get("content-length") or 0) > MAX_BODY:
             early = _too_large()
@@ -251,45 +253,43 @@ class Guard:
 
 # --- client IP -----------------------------------------------------------------------
 
-# Google's front-end ranges, as seen in X-Forwarded-For when an external HTTPS load
-# balancer sits in front of Cloud Run (https://cloud.google.com/load-balancing/docs/firewall-rules).
-GOOGLE_PROXIES = tuple(
-    ipaddress.ip_network(n) for n in ("35.191.0.0/16", "130.211.0.0/22")
-)
-
 
 def client_ip(scope):
-    """The address rate limits count against.
+    """The address rate limits count against, IPv4-mapped IPv6 written as IPv4.
 
-    On Cloud Run (K_SERVICE set), Google's front end appends the address it took the
-    connection from to X-Forwarded-For, after anything the client sent itself, so only the
-    right end can be trusted. Read from the right, skip Google's own proxies (an external
-    load balancer adds one), and take the first other address. Anywhere else nothing in
-    front of the app is trusted to set the header, so the socket peer is used, as it is
-    when the header has no usable entry.
+    TRUSTED_PROXY_HOPS (app/config.py) says how many addresses the proxies in front append
+    to X-Forwarded-For. The client is that many places from the right; anything further
+    left is whatever the client sent, and is ignored. With 0 (off Cloud Run), or a header
+    too short or unparseable at that place, the socket peer is used.
     """
     peer = (scope.get("client") or ("unknown", 0))[0]
-    if "K_SERVICE" not in os.environ:
-        return peer
-    hops = Headers(scope=scope).get("x-forwarded-for", "").split(",")
-    for hop in reversed(hops):
+    hops = trusted_proxy_hops()
+    ip = peer
+    if hops:
+        entries = Headers(scope=scope).get("x-forwarded-for", "").split(",")
+        if len(entries) >= hops:
+            ip = entries[-hops].strip()
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
         try:
-            ip = ipaddress.ip_address(hop.strip())
+            addr = ipaddress.ip_address(peer)
         except ValueError:
-            return peer  # a malformed entry right of any real one: don't guess
-        if not any(ip in net for net in GOOGLE_PROXIES):
-            return str(ip)
-    return peer
+            return peer  # not an address at all (the test client says "testclient")
+    if addr.version == 6 and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return str(addr)
 
 
-def _subject(ip):
-    """An IPv6 client is counted by its /64: one subscriber usually holds a whole one."""
+def _subject(ip, v6_prefix=64):
+    """An IPv6 client is counted by its /64 (one subscriber usually holds a whole one), or
+    by a coarser prefix for the network-wide SMS limit."""
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return ip
     if addr.version == 6:
-        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+        return str(ipaddress.ip_network(f"{addr}/{v6_prefix}", strict=False))
     return ip
 
 
@@ -297,9 +297,15 @@ def _subject(ip):
 
 # (name, limit, window seconds), counted in a SQLite table so a restart doesn't reset
 # them: these send texts or email (which cost money) or would let someone enumerate.
-SMS_PER_PHONE = (("sms-phone-10m", 5, 600), ("sms-phone-day", 10, 24 * 3600))
-SMS_PER_IP = (("sms-ip", 20, 3600),)
-VERIFY_PER_PHONE = (("verify-phone", 10, 600),)  # then locked until the window passes
+# Codes are limited per (phone, client address) first, so someone else hammering a
+# number from elsewhere doesn't lock its owner out; the per-phone day cap is looser.
+SMS_PER_PHONE_IP = (("sms-phone-ip-10m", 5, 600), ("sms-phone-ip-day", 10, 24 * 3600))
+SMS_PER_PHONE = (("sms-phone-day", 20, 24 * 3600),)
+SMS_PER_IP = (("sms-ip", 60, 3600),)  # IPv4 address or IPv6 /64
+SMS_PER_NET = (("sms-net", 120, 3600),)  # IPv6 /48 (IPv4: the address again)
+VERIFY_PER_PHONE = (
+    ("verify-phone", 10, 600),
+)  # wrong codes; then locked for the window
 LINK_PER_EMAIL = (("link-email", 5, 3600),)
 LINK_PER_IP = (("link-ip", 20, 3600),)
 CLAIM_PER_IP = (("claim-ip", 5, 3600),)
@@ -309,10 +315,17 @@ PROPUBLICA = (
 )  # admin lookups and imports, all admins together
 assert all(
     w <= data.RATE_KEEP_SECONDS
-    for rules in (SMS_PER_PHONE, SMS_PER_IP, VERIFY_PER_PHONE, LINK_PER_EMAIL)
-    + (LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL, PROPUBLICA)
+    for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
+    + (VERIFY_PER_PHONE, LINK_PER_EMAIL, LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL)
+    + (PROPUBLICA,)
     for _, _, w in rules
 )
+
+
+def sms_all():
+    """The ceiling on every text the app sends (codes and notifications), subject "all"."""
+    hour, day = sms_ceilings()
+    return (("sms-all-hour", hour, 3600), ("sms-all-day", day, 24 * 3600))
 
 
 def _key(name, subject):
@@ -321,19 +334,39 @@ def _key(name, subject):
     return f"{name}:{mac.hexdigest()[:32]}"
 
 
-def allow(*limits, now=None):
+def allow(*limits, now=None, record=True):
     """Count one action against every (rules, subject) pair; False, counting nothing, when
-    any of them is already at its limit. Calls data, so run it off the event loop."""
+    any of them is already at its limit (logged by name, never the subject). With
+    record=False only check. Calls data, so run it off the event loop."""
     keys = [
         (_key(name, subject), limit, window)
         for rules, subject in limits
         for name, limit, window in rules
     ]
-    return data.rate_take(keys, time.time() if now is None else now)
+    over = data.rate_take(keys, time.time() if now is None else now, record)
+    if over is not None:
+        log.warning("rate limit reached: %s", over.split(":")[0])
+    return over is None
 
 
-def ip_subject(req):
-    return _subject(client_ip(req.scope))
+def ip_subject(req, v6_prefix=64):
+    subject = _subject(client_ip(req.scope), v6_prefix)
+    # For the deploy check that X-Forwarded-For is read right (TRUSTED_PROXY_HOPS): a
+    # spoofed header must not change this, another network must. Hashed, never the address.
+    log.debug("client key %s", _key("client", subject)[-12:])
+    return subject
+
+
+def sms_send_limits(req, phone):
+    """Every limit one sign-in code counts against."""
+    ip = ip_subject(req)
+    return (
+        (SMS_PER_PHONE_IP, f"{phone}|{ip}"),
+        (SMS_PER_PHONE, phone),
+        (SMS_PER_IP, ip),
+        (SMS_PER_NET, ip_subject(req, 48)),
+        (sms_all(), "all"),
+    )
 
 
 # --- in-memory token buckets ---------------------------------------------------------

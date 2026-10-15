@@ -89,17 +89,21 @@ def _sync_org_login_send(req, form):
 
 
 @ar("/org/login/verify", methods=["GET"])
-def org_login_confirm(req):
-    """Changes nothing, so a mail scanner that fetches the link can't use it up.
+def org_login_confirm(req, sess):
+    """Consumes nothing, so a mail scanner that fetches the link can't use it up.
 
-    The token is in this page's URL, so no Referer from here may leave the site. Not
-    no-referrer: under it a browser sends `Origin: null` with the button's own POST, which
-    security.Guard refuses."""
+    The emailed link's token moves into the session and the browser is sent to the same
+    path without it, so the page and its assets' Referers never carry it; the button's POST
+    reads it from the session. Only the link's own request line still shows it. The policy
+    is same-origin, not no-referrer: under no-referrer a browser sends `Origin: null` with
+    the button's POST, which security.Guard refuses."""
     token = query(req, "token")
+    if token:
+        sess["login_token"] = token[:200]
+        return Redirect("/org/login/verify")
     return HttpHeader("Referrer-Policy", "same-origin"), Page(
         "Sign in to Causematch",
         Form(
-            Input(type="hidden", name="token", value=token[:200]),
             Button("Sign in", cls=ButtonT.primary + " w-full"),
             action="/org/login/verify",
             method="post",
@@ -117,7 +121,7 @@ async def org_login_verify(req, sess):
 
 
 def _sync_org_login_verify(req, form, sess):
-    token = form.get("token", "")
+    token = sess.pop("login_token", "") or form.get("token", "")
     uid = data.consume_login_token(token) if 0 < len(token) <= 200 else None
     profile = data.get_profile(uid) if uid else None
     is_coordinator = bool(

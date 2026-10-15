@@ -15,7 +15,9 @@ from app.config import (
     phone_hash_key,
     public_base_url,
     require_env,
+    sms_ceilings,
     tasks_token,
+    trusted_proxy_hops,
 )
 from app.routes.admin import ar as admin_router
 from app.routes.auth import ar as auth_router
@@ -39,6 +41,8 @@ tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact
 phone_hash_key()  # ... or deleted accounts' blocks can't be kept
+trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
+sms_ceilings()  # ... or the SMS ceiling is unreadable
 # uvicorn settings; the Procfile (item 14's entrypoint) runs the same ones.
 UVICORN = {
     "ws_max_size": 65536,  # bytes per websocket frame (default 16 MiB); a message is <= 2000 chars
@@ -48,6 +52,14 @@ UVICORN = {
     "proxy_headers": False,  # app/security.py reads X-Forwarded-For itself, only on Cloud Run
 }
 logging.getLogger("uvicorn.access").addFilter(security.RedactTokens())
+# The app's own lines on stderr (Cloud Run collects it). CAUSEMATCH_LOG_LEVEL=DEBUG adds the
+# hashed client key that item 14's X-Forwarded-For check reads.
+_log = logging.getLogger("causematch")
+_log.setLevel(os.environ.get("CAUSEMATCH_LOG_LEVEL") or "INFO")
+if not _log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    _log.addHandler(_handler)
 
 app, rt = fast_app(
     before=(beforeware, security.throttle),
@@ -69,7 +81,12 @@ app, rt = fast_app(
     pico=False,
     hdrs=(
         # htmx would otherwise inject its indicator styles inline (theme.css has them)
-        Meta(name="htmx-config", content='{"includeIndicatorStyles": false}'),
+        # Eval and script tags off too: the CSP blocks them already; nothing here uses them.
+        Meta(
+            name="htmx-config",
+            content='{"includeIndicatorStyles": false, "allowEval": false, '
+            '"allowScriptTags": false}',
+        ),
         Script(src="/static/vendor/htmx-2.0.7.min.js"),
         Script(src="/static/vendor/htmx-ext-ws-2.0.4.min.js"),
         # MonsterUI's Theme.blue.headers(), self-hosted so the CSP allows only 'self': its

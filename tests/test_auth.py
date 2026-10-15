@@ -147,8 +147,11 @@ def test_session_secret_fails_closed():
         session_secret({"CAUSEMATCH_ENV": "production"})
     with pytest.raises(RuntimeError, match="SESSION_SECRET"):
         session_secret({"K_SERVICE": "causematch", "CAUSEMATCH_ENV": "development"})
+    with pytest.raises(RuntimeError, match="at least 32"):  # too short for production
+        session_secret({"CAUSEMATCH_ENV": "production", "SESSION_SECRET": "x" * 31})
+    good = "x" * 32
     assert (
-        session_secret({"CAUSEMATCH_ENV": "production", "SESSION_SECRET": "x"}) == "x"
+        session_secret({"CAUSEMATCH_ENV": "production", "SESSION_SECRET": good}) == good
     )
     assert session_secret({"CAUSEMATCH_ENV": "development"}) == DEV_SECRET
     assert session_secret({"CAUSEMATCH_ENV": "test"}) == DEV_SECRET
@@ -204,3 +207,65 @@ def test_undeclared_environment_refuses_to_start():
         {"K_SERVICE": "s"},
     ):
         require_env(env)
+
+
+# --- item 17 (L6): the number a code went to doesn't outlive the code ---------------------
+
+
+class Later:
+    """app.auth's clock, moved forward."""
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def time(self):
+        import time
+
+        return time.time() + self.seconds
+
+
+def session_of(client):
+    import base64
+    import json
+
+    from app.auth import session_cookie
+
+    raw = client.cookies.get(session_cookie(), "")
+    payload = raw.split(".")[0] if raw else ""
+    return json.loads(base64.b64decode(payload + "==")) if payload else {}
+
+
+def test_the_pending_number_expires_after_15_minutes(anon, monkeypatch):
+    import app.auth as auth_module
+
+    anon.post("/login/send", data={"phone": "3105550160"})
+    assert session_of(anon)["pending_phone"] == "+13105550160"
+    monkeypatch.setattr(auth_module, "time", Later(15 * 60 + 1))
+    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 200 and "Enter your number to get a code." in r.text
+    assert "pending_phone" not in session_of(anon)
+
+
+def test_the_pending_number_works_within_15_minutes(anon, monkeypatch):
+    import app.auth as auth_module
+
+    anon.post("/login/send", data={"phone": "3105550161"})
+    monkeypatch.setattr(auth_module, "time", Later(14 * 60))
+    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert "pending_phone" not in session_of(anon)  # cleared after verify
+
+
+def test_an_expired_number_leaves_the_cookie_on_the_next_page(anon, monkeypatch):
+    import app.auth as auth_module
+
+    anon.post("/login/send", data={"phone": "3105550162"})
+    monkeypatch.setattr(auth_module, "time", Later(16 * 60))
+    anon.get("/login")
+    assert "pending_phone" not in session_of(anon)
+
+
+def test_a_new_send_replaces_the_pending_number(anon):
+    anon.post("/login/send", data={"phone": "3105550163"})
+    anon.post("/login/send", data={"phone": "3105550164"})
+    assert session_of(anon)["pending_phone"] == "+13105550164"

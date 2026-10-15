@@ -106,7 +106,7 @@ ROUTES = {
     ("POST", "/admin/claims/{claim_id}/reject"): ("admin", "own-record"),
     ("POST", "/admin/claims/{claim_id}/import"): ("admin", "own-record"),
     ("GET", "/admin/orgs"): ("admin", None),
-    ("GET", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
+    ("POST", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
     ("GET", "/history"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
@@ -660,7 +660,9 @@ def check_admin_claim(action):
             34.0,
             -118.3,
         )
-        data.submit_claim("861620575", "Food Bank", "Maria", "maria@example.org")
+        data.submit_claim(
+            "861620575", "Food Bank", "Test Claimant", "claimant@example.org"
+        )
         cid = claim_requests()[0].id
         members = org_members.count
         for who in (w.b, w.org1, w.anon):
@@ -749,7 +751,7 @@ OWNERSHIP = {
     ("POST", "/admin/claims/{claim_id}/approve"): check_admin_claim("approve"),
     ("POST", "/admin/claims/{claim_id}/reject"): check_admin_claim("reject"),
     ("POST", "/admin/claims/{claim_id}/import"): check_admin_claim("import"),
-    ("GET", "/admin/orgs/{org_id}/lookup"): check_admin_org("GET", "lookup"),
+    ("POST", "/admin/orgs/{org_id}/lookup"): check_admin_org("POST", "lookup"),
     ("POST", "/admin/orgs/{org_id}/verify"): check_admin_org("POST", "verify"),
 }
 
