@@ -53,10 +53,10 @@ jobs:
       - name: Tests
         run: uv run pytest -q -rs
 
-      # On macOS this test skips (RLIMIT_AS isn't enforced there); Linux is where production
+      # On macOS these tests skip (RLIMIT_AS isn't enforced there); Linux is where production
       # runs, so here it must have run and passed, not skipped.
       - name: Photo worker memory cap ran on Linux
         run: |
-          uv run pytest -q -rs tests/test_photos.py -k test_the_childs_memory_is_capped | tee cap.log
-          grep -q "1 passed" cap.log
+          uv run pytest -q -rs -s tests/test_photos.py -k "test_the_childs_memory_is_capped or test_the_production_cap" | tee cap.log
+          grep -q "2 passed" cap.log
           ! grep -qi "skipped" cap.log

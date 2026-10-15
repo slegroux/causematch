@@ -499,6 +499,11 @@ stripes.resize((4240, 2830)).save(
     f"{out}/prog-12mp.jpg", progressive=True, subsampling=0, quality=80
 )
 stripes.convert("L").save(f"{out}/grey-prog.jpg", progressive=True, quality=80)
+# 6000 x 6000 x 1 component = the coefficient budget exactly: accepted, and its decode
+# holds a 72 MB coefficient buffer whatever draft() asks for
+stripes.convert("L").resize((6000, 6000)).save(
+    f"{out}/prog-grey-36mp.jpg", progressive=True, quality=80
+)
 """
 MEASURE = r"""
 import resource, sys
@@ -902,20 +907,89 @@ def test_a_picture_at_the_caps_fits_the_childs_limits(crafted):
     assert photos.process((crafted / "12mp-rgba.png").read_bytes(), "logo").full
 
 
+def worker_report(err):
+    """The worker's stderr lines as {first word: {key: value}} (app/photo_worker.py)."""
+    out = {}
+    for line in err.decode(errors="replace").splitlines():
+        word, *pairs = line.split()
+        out[word] = dict(p.split("=", 1) for p in pairs if "=" in p)
+    return out
+
+
+def run_capped(raw, kind, memory, monkeypatch):
+    monkeypatch.setattr(photos, "WORKER_MEMORY", memory)
+    code, out, err = photos._run_worker(kind, raw)
+    return code, out, worker_report(err), err
+
+
+# The worst files photos.process accepts, by kind of decode (test_a_huge_bitmap_...)
+WORST_ACCEPTED = [
+    ("prog-grey-36mp.jpg", "volunteer"),  # a 72 MB coefficient buffer
+    ("prog-12mp.jpg", "card"),
+    ("7000.jpg", "volunteer"),  # 49 MP baseline, decoded at reduced scale
+    ("8mp.webp", "card"),
+    ("12mp-rgba.png", "logo"),
+]
+
+
 @pytest.mark.skipif(
     sys.platform == "darwin",
     reason="macOS doesn't enforce RLIMIT_AS; production (Cloud Run) is Linux, where "
     "this runs",
 )
 def test_the_childs_memory_is_capped(monkeypatch, crafted):
-    """192 MB: enough for the interpreter and Pillow to load (the child says "ready"),
-    not for decoding a 12 MP picture, so it is the decode that is stopped."""
-    monkeypatch.setattr(photos, "WORKER_MEMORY", 192 * 2**20)
-    raw = (crafted / "12mp-rgba.png").read_bytes()
-    code, out, err = photos._run_worker("logo", raw)
-    assert b"ready" in err and code not in (0, 2) and out == b""
+    """RLIMIT_AS is set in the child and stops a decode that needs more: under a cap of
+    the address space after imports plus 48 MB, the 72 MB coefficient buffer of an
+    accepted progressive JPEG can't be had; under the production cap it decodes."""
+    MB = 2**20
+    raw = (crafted / "prog-grey-36mp.jpg").read_bytes()
+
+    code, out, report, err = run_capped(
+        raw, "volunteer", photos.WORKER_MEMORY, monkeypatch
+    )
+    assert code == 0 and out, err
+    assert int(report["ready"]["as_limit"]) == photos.WORKER_MEMORY  # read back
+    imported = int(report["ready"]["vmsize_kb"]) * 1024
+    peak = int(report["done"]["vmpeak_kb"]) * 1024
+    assert peak - imported > 64 * MB  # this decode really needs the room
+
+    cap = imported + 48 * MB
+    code, out, report, err = run_capped(raw, "volunteer", cap, monkeypatch)
+    assert int(report["ready"]["as_limit"]) == cap  # got past the imports, capped
+    assert code != 0 and out == b"" and "done" not in report, err
+    assert b"memory" in err.lower(), (
+        err
+    )  # MemoryError, or libjpeg's "Insufficient memory"
     with pytest.raises(photos.BadPhoto):
-        photos.process(raw, "logo")
+        photos.process(raw, "volunteer")
+    print(
+        f"\nRLIMIT_AS: after imports {imported / MB:.0f} MB; stopped under "
+        f"{cap / MB:.0f} MB; decodes under {photos.WORKER_MEMORY / MB:.0f} MB with a "
+        f"peak of {peak / MB:.0f} MB"
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="macOS doesn't enforce RLIMIT_AS; production (Cloud Run) is Linux, where "
+    "this runs",
+)
+def test_the_production_cap_leaves_room_for_the_worst_accepted_files(
+    monkeypatch, crafted
+):
+    MB = 2**20
+    rows = []
+    for name, kind in WORST_ACCEPTED:
+        raw = (crafted / name).read_bytes()
+        code, out, report, err = run_capped(
+            raw, kind, photos.WORKER_MEMORY, monkeypatch
+        )
+        assert code == 0 and out, (name, err)
+        peak = int(report["done"]["vmpeak_kb"]) * 1024
+        assert peak < photos.WORKER_MEMORY, name
+        rows.append(f"{name} ({kind}): peak {peak / MB:.0f} MB")
+    print("\nunder the production cap of", photos.WORKER_MEMORY // MB, "MB:")
+    print("\n".join(rows))
 
 
 # --- review pass 5: what the child sees, how much it may say, and the parent's logs -------
