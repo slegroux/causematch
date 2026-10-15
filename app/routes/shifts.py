@@ -1,4 +1,4 @@
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Response
+from fasthtml.common import H1, H2, A, Div, P, Redirect
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     AT,
@@ -13,7 +13,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data
-from app.forms import bad_request, query, str_form
+from app.forms import query, str_form
 from app.routes.deck import when
 from app.ui import (
     CARD,
@@ -22,6 +22,7 @@ from app.ui import (
     OrgShell,
     Page,
     Pill,
+    Refusal,
     Router,
     TextInput,
     VolunteerNav,
@@ -169,7 +170,7 @@ async def mark(req, shift_id: int):
     form = await str_form(req)
     result = form.get("result") if form else None
     if result not in ("attended", "no_show"):
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_mark, req, form, shift_id)
 
 
@@ -178,7 +179,7 @@ def _sync_mark(req, form, shift_id: int):
     try:
         data.complete_shift(req.scope["uid"], shift_id, result == "attended")
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError:
         return Redirect("/org/shifts?notice=unavailable")
     return Redirect("/org/shifts")
@@ -189,7 +190,7 @@ def cancel(req, shift_id: int):
     try:
         data.cancel_shift(req.scope["uid"], shift_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError:
         return Redirect("/org/shifts?notice=unavailable")
     return Redirect("/org/shifts")
@@ -200,7 +201,7 @@ def repeat(req, match_id: int):
     try:
         data.repeat_shift(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError:
         return Redirect("/org/shifts?notice=repeat")
     return Redirect("/org/shifts")
@@ -250,7 +251,7 @@ def new_shift_page(req, match_id: int):
     try:
         head = _writable_head(req.scope["uid"], match_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return ShiftForm(req.scope["uid"], match_id, head)
 
 
@@ -258,7 +259,7 @@ def new_shift_page(req, match_id: int):
 async def new_shift_save(req, match_id: int):
     form = await str_form(req)
     if form is None:
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_new_shift_save, req, form, match_id)
 
 
@@ -269,7 +270,7 @@ def _sync_new_shift_save(req, form, match_id: int):
         head = _writable_head(uid, match_id)
         data.add_shift(uid, match_id, starts_at)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError as e:
         return ShiftForm(
             uid, match_id, head, f"Couldn't schedule that: {e}.", starts_at

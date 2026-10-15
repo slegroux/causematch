@@ -6,8 +6,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
-from app.forms import bad_request, str_form
-from app.ui import BigButton, Field, Router, SignInPage, TextInput
+from app.forms import str_form
+from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
 ar = Router()
 
@@ -103,7 +103,7 @@ def claim_page():
 async def claim_submit(req):
     form = await str_form(req)
     if form is None:
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_claim_submit, req, form)
 
 

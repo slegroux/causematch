@@ -414,3 +414,20 @@ def SimplePage(title, *content):
         ),
         cls="mx-auto max-w-2xl px-4 pb-12",
     )
+
+
+def Refusal(status):
+    """A route's 403 or 400 in the shared look (app/security.py's page), not a bare word."""
+    from app.security import page  # imported here: security loads the data layer
+
+    if status == 403:
+        return page(
+            403,
+            "Not available",
+            "That isn't yours to see or change. Go back and try again.",
+        )
+    return page(
+        400,
+        "Something was missing",
+        "That request was incomplete. Go back to the page and try again.",
+    )

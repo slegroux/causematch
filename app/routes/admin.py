@@ -29,7 +29,7 @@ from monsterui.all import Alert, AlertT, Container, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, propublica, security
-from app.forms import bad_request, str_form
+from app.forms import str_form
 from app.metrics import (
     BREAKDOWNS,
     DEFINITIONS,
@@ -44,7 +44,7 @@ from app.metrics import (
     pilot_metrics,
 )
 from app.org_import import import_ein
-from app.ui import CARD, Router, TextInput, TopNav
+from app.ui import CARD, Refusal, Router, TextInput, TopNav
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -267,7 +267,7 @@ def _resolve_with(fn):
         except LookupError:
             pass  # already resolved by someone else
         except (ValueError, PermissionError):
-            return bad_request()
+            return Refusal(400)
         return Redirect("/admin/reports")
 
     return run
@@ -398,7 +398,7 @@ def admin_orgs(req):
 async def admin_org_lookup(req, org_id: int):
     form = await str_form(req)
     if form is None:
-        return bad_request()
+        return Refusal(400)
     uid, ein = req.scope["uid"], form.get("ein", "")
     rows = await run_in_threadpool(data.admin_orgs, uid)
     if org_id not in {o["id"] for o in rows}:
@@ -425,7 +425,7 @@ async def admin_org_verify(req, org_id: int):
     form = await str_form(req)
     ein = propublica.normalize_ein(form.get("ein", "")) if form else None
     if not ein:
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_org_verify, req.scope["uid"], org_id, ein)
 
 
@@ -521,7 +521,7 @@ def _tell(send, *args):
 async def admin_claim_approve(req, claim_id: int):
     form = await str_form(req)
     if form is None:
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_admin_claim_approve, req, form, claim_id)
 
 

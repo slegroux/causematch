@@ -513,3 +513,13 @@ def test_opening_counts_match_the_inbox_page_with_blind_and_blocked_likes(coord)
     # another coordinator's org: none of its openings are counted for this one
     other = {o.id for o in openings() if o.org_id != coord.org_id}
     assert not other & set(counts)
+
+
+def test_org_and_admin_refusals_wear_the_shared_look(coord):
+    theirs = next(o for o in openings() if o.org_id != coord.org_id)
+    r = coord.post(f"/org/openings/{theirs.id}/close")
+    assert (
+        r.status_code == 403 and "Not available" in r.text and "rounded-3xl" in r.text
+    )
+    r = coord.post("/org/matches/1/decide", data={"decision": "maybe"})
+    assert r.status_code == 400 and "Something was missing" in r.text

@@ -11,7 +11,6 @@ from fasthtml.common import (
     P,
     Progress,
     Redirect,
-    Response,
     Span,
     Textarea,
 )
@@ -30,7 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from app import data, notify
 from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
-from app.forms import bad_request, query, str_form
+from app.forms import query, str_form
 from app.geo import city_zip_latlon
 from app.routes.shifts import RepeatForm, waiting
 from app.ui import (
@@ -44,6 +43,7 @@ from app.ui import (
     Icon,
     OrgShell,
     Pill,
+    Refusal,
     Router,
     TextInput,
 )
@@ -389,7 +389,7 @@ def OpeningForm(uid, f=None, error=None):
 async def save_details(req):
     form = await req.form()
     if any(not isinstance(v, str) for _, v in form.multi_items()):
-        return Response("Bad request", status_code=400)
+        return Refusal(400)
     return await run_in_threadpool(_sync_save_details, req, form)
 
 
@@ -416,7 +416,7 @@ def new_opening_page(req):
 async def new_opening_save(req):
     form = await str_form(req)
     if form is None:
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_new_opening_save, req, form)
 
 
@@ -510,7 +510,7 @@ def _sync_new_opening_save(req, form):
             reply_channel=f["reply_channel"],
         )
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect("/org")
 
 
@@ -519,7 +519,7 @@ def close(req, opening_id: int):
     try:
         data.close_opening(req.scope["uid"], opening_id)
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     return Redirect("/org")
 
 
@@ -661,7 +661,7 @@ async def decide(req, match_id: int):
     form = await str_form(req)
     decision = form.get("decision") if form else None
     if decision not in ("accept", "decline"):
-        return bad_request()
+        return Refusal(400)
     return await run_in_threadpool(_sync_decide, req, form, match_id)
 
 
@@ -670,7 +670,7 @@ def _sync_decide(req, form, match_id: int):
     try:
         data.decide(req.scope["uid"], match_id, decision == "accept")
     except PermissionError:
-        return Response("Forbidden", status_code=403)
+        return Refusal(403)
     except ValueError as e:
         return Redirect(
             f"/org/inbox?notice={'full' if 'slots' in str(e) else 'decided'}"
