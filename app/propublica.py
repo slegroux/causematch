@@ -50,7 +50,12 @@ def lookup(ein, client=None):
         if r.status_code == 404:
             return None
         r.raise_for_status()
-        org = r.json()["organization"]
+        body = r.json()
+        if "error" in body:
+            return None
+        org = body["organization"]
+        if org is None or org["name"] is None:
+            return None  # a made-up EIN can answer 200 with nulls
         name = org["name"]
         if not isinstance(name, str) or not name:
             raise ValueError("no name")

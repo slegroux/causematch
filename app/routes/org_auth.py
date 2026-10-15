@@ -4,6 +4,7 @@ import re
 from fasthtml.common import APIRouter, Form, Input, P, Redirect, Response
 from monsterui.all import Button, ButtonT, TextPresets
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
 from app.forms import query
@@ -51,7 +52,7 @@ def _send_link(email):
     uid = data.coordinator_by_email(email)
     if not (uid and data.coordinator_org_ids(uid)):
         uid = data.admin_by_email(email)
-    if not uid:
+    if not uid or data.get_profile(uid) is None:  # unknown, deleted or suspended
         return
     try:
         notify.send_login_link(email, data.create_login_token(uid))
@@ -71,6 +72,10 @@ async def org_login_send(req):
     form = await _form(req)
     if form is None:
         return Response("Bad request", status_code=400)
+    return await run_in_threadpool(_sync_org_login_send, req, form)
+
+
+def _sync_org_login_send(req, form):
     email = form.get("email", "").strip().lower()
     if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return EmailForm(email[:254], BAD_EMAIL)
@@ -98,6 +103,10 @@ async def org_login_verify(req, sess):
     form = await _form(req)
     if form is None:
         return Response("Bad request", status_code=400)
+    return await run_in_threadpool(_sync_org_login_verify, req, form, sess)
+
+
+def _sync_org_login_verify(req, form, sess):
     token = form.get("token", "")
     uid = data.consume_login_token(token) if 0 < len(token) <= 200 else None
     profile = data.get_profile(uid) if uid else None

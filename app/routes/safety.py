@@ -5,6 +5,7 @@ from fasthtml.common import (
     H2,
     A,
     APIRouter,
+    Div,
     Li,
     P,
     Redirect,
@@ -14,6 +15,7 @@ from fasthtml.common import (
 )
 from fasthtml.common import Form as PlainForm
 from monsterui.all import AT, Button, ButtonT, Container, LabelCheckboxX, TextPresets
+from starlette.concurrency import run_in_threadpool
 
 from app import data
 from app.choices import SHARED_WITH_NONPROFIT
@@ -75,24 +77,36 @@ def BlockPage(action, back, title, effects):
     )
 
 
-async def _submit(req, match_id, report, block):
+async def _submit(req, match_id, report, block, done, page):
+    """Read the form, then run every data call off the event loop. `done` is where a saved
+    report goes; `page(uid, match_id, error, values)` redraws the form."""
     form = await str_form(req)
     if form is None:
-        return None, bad_request()
+        return bad_request()
     f = {
         "reason": form.get("reason", ""),
         "details": form.get("details", ""),
         "also_block": form.get("also_block"),
     }
+    return await run_in_threadpool(
+        _submit_sync, req.scope["uid"], match_id, f, report, block, done, page
+    )
+
+
+def _submit_sync(uid, match_id, f, report, block, done, page):
     try:
-        report(req.scope["uid"], match_id, f["reason"], f["details"])
+        report(uid, match_id, f["reason"], f["details"])
         if f["also_block"] == "1":
-            block(req.scope["uid"], match_id)
+            block(uid, match_id)
     except PermissionError:
-        return f, Response("Forbidden", status_code=403)
-    except ValueError:
-        return f, None
-    return f, True
+        return Response("Forbidden", status_code=403)
+    except ValueError as e:
+        error = str(e).capitalize() if str(e).startswith("you can") else BAD_REPORT
+        try:
+            return page(uid, match_id, error, f)
+        except PermissionError:
+            return Response("Forbidden", status_code=403)
+    return Redirect(done)
 
 
 # --- volunteer side --------------------------------------------------------------------------
@@ -113,16 +127,16 @@ def report_org_page(req, match_id: int):
 
 @ar("/matches/{match_id}/report", methods=["POST"])
 async def report_org_save(req, match_id: int):
-    f, result = await _submit(req, match_id, data.report_org, data.block_org)
-    if result is True:
-        return Redirect("/matches?notice=reported")
-    if result is not None:
-        return result
-    try:
-        org = _org_of(req.scope["uid"], match_id)
-    except PermissionError:
-        return Response("Forbidden", status_code=403)
-    return ReportPage(f"/matches/{match_id}/report", "/matches", org, BAD_REPORT, f)
+    return await _submit(
+        req,
+        match_id,
+        data.report_org,
+        data.block_org,
+        "/matches?notice=reported",
+        lambda uid, mid, error, f: ReportPage(
+            f"/matches/{mid}/report", "/matches", _org_of(uid, mid), error, f
+        ),
+    )
 
 
 @ar("/matches/{match_id}/block", methods=["GET"])
@@ -171,19 +185,19 @@ def report_volunteer_page(req, match_id: int):
 
 @ar("/org/matches/{match_id}/report", methods=["POST"])
 async def report_volunteer_save(req, match_id: int):
-    f, result = await _submit(
-        req, match_id, data.report_volunteer, data.block_volunteer
-    )
-    if result is True:
-        return Redirect("/org/inbox?notice=reported")
-    if result is not None:
-        return result
-    try:
-        who = _volunteer_of(req.scope["uid"], match_id)
-    except PermissionError:
-        return Response("Forbidden", status_code=403)
-    return ReportPage(
-        f"/org/matches/{match_id}/report", "/org/inbox", who, BAD_REPORT, f
+    return await _submit(
+        req,
+        match_id,
+        data.report_volunteer,
+        data.block_volunteer,
+        "/org/inbox?notice=reported",
+        lambda uid, mid, error, f: ReportPage(
+            f"/org/matches/{mid}/report",
+            "/org/inbox",
+            _volunteer_of(uid, mid),
+            error,
+            f,
+        ),
     )
 
 
@@ -272,47 +286,98 @@ def delete_save(req, sess):
 
 # --- privacy ---------------------------------------------------------------------------------
 
+EFFECTIVE = "October 15, 2026"
+
+
+def Section(title, *paras):
+    return Div(
+        H2(title, cls="text-lg font-semibold mt-6"),
+        *[P(p, cls="mt-2") for p in paras],
+    )
+
 
 @ar("/privacy", methods=["GET"])
 def privacy():
+    contact = contact_email()
     return Container(
         H1("Privacy", cls="text-2xl font-bold my-4"),
-        H2("What we collect", cls="text-lg font-semibold mt-4"),
-        P(
-            "Volunteers: your mobile number, first name, optionally an email, your ZIP code "
-            "and neighborhood, the causes and skills you pick, when you are free, how often "
-            "you'd like to help, and how you heard of us. Nonprofits: a coordinator's email, "
-            "name and optional phone, and the openings they post."
+        P("Draft, pending legal review.", cls="font-semibold text-red-600"),
+        P(f"Effective {EFFECTIVE}.", cls=TextPresets.muted_sm),
+        Section(
+            "What we collect",
+            "Volunteers: your mobile number; your first name; an email if you give one; "
+            "your ZIP code (we turn it into an approximate location we never show), your "
+            "neighborhood and how far you will travel; the causes and skills you pick, "
+            "other causes you type, languages other than English and whether you "
+            "volunteered last year; when you are free and how often you'd like to help; "
+            "how you heard of Causematch; and your confirmation that you are 18 or over.",
+            "Activity: the openings you like or pass, your matches, your chat messages, "
+            "and your shifts, including whether a nonprofit marked you as attended or as "
+            "a no-show.",
+            "Nonprofits: a coordinator's email, name and optional phone, and the openings "
+            "they post.",
+            "Reports and blocks: if you report someone or block them, we keep what you "
+            "wrote and who it was about.",
+            "Your browser keeps one cookie that signs you in. We use no advertising or "
+            "analytics cookies.",
         ),
-        H2("Who sees what", cls="text-lg font-semibold mt-4"),
-        P(SHARED_WITH_NONPROFIT),
-        P(
-            "Chat messages are seen by the two sides of the match and nobody else. A "
-            "Causematch admin sees a message only if it is part of a report.",
-            cls="mt-2",
+        Section(
+            "Who sees what",
+            SHARED_WITH_NONPROFIT,
+            "Your chat messages are seen by you and by the coordinators of the nonprofit "
+            "you matched with. Causematch staff can see reports, including what the "
+            "reporter wrote, and the pilot's aggregate statistics.",
         ),
-        H2("Texts and email", cls="text-lg font-semibold mt-4"),
-        P(
+        Section(
+            "Who else handles your data",
+            "Twilio sends your sign-in codes and our texts. Our email provider (Resend) "
+            "sends coordinators' sign-in links and notices. Google Cloud hosts the app and "
+            "keeps its backups. Each sees only what it needs to do that job. We don't sell "
+            "your data or share it for advertising.",
+        ),
+        Section(
+            "Texts and email",
             "We text your sign-in code, a note when a nonprofit says yes, a reminder the "
-            "day before a shift and a note about a new chat message. Reply STOP to end texts. "
-            "We email coordinators their sign-in link and a note when volunteers like an opening."
+            "day before a shift and a note when a nonprofit sends a chat message. Reply "
+            "STOP to end texts. We email coordinators their sign-in link and a note when "
+            "volunteers like an opening.",
         ),
-        H2("How long we keep it", cls="text-lg font-semibold mt-4"),
-        P(
-            "We keep your account while you use Causematch. Chat messages stay for the "
-            "nonprofit's record unless you delete your account."
+        Section(
+            "How long we keep it, and what stays after you delete",
+            "We keep your account until you delete it. Volunteers can delete theirs any "
+            "time from Profile; coordinators ask us to delete theirs. Deleting erases your "
+            "name, phone, email, location, neighborhood and the free text you typed. Your "
+            "matches are withdrawn and your future shifts cancelled, and your chat messages "
+            'are replaced with "[message removed]".',
+            "What remains, without your name: your answers (causes, skills, availability, "
+            "how often, how you heard of us), your likes and your match and shift history "
+            "including attendance, kept for the pilot's statistics. The nonprofit keeps its "
+            "own messages to you. Reports you filed stay with the details you wrote, and "
+            "reports about you stay.",
+            "If you were blocked or reported, or suspended, when you delete your account, "
+            "we also keep a one-way keyed hash of your phone number (not the number). If "
+            "the same number signs up again, the blocks still apply, and a suspension "
+            "stays in force. We keep nothing of this kind for an account with no blocks "
+            "or reports.",
         ),
-        H2("Deleting your account", cls="text-lg font-semibold mt-4"),
-        P(
-            "Volunteers can delete their account any time from Profile. Your name, phone, "
-            "email and location are erased, your matches are withdrawn and your messages are "
-            'replaced with "[message removed]". Coordinators ask us to delete theirs.'
+        Section(
+            "Seeing or correcting your data",
+            f"You can't edit your answers in the app yet. Write to {contact} and we'll "
+            "send you what we hold or fix it, or delete your account and sign up again.",
         ),
-        H2("Questions", cls="text-lg font-semibold mt-4"),
-        P(
-            "Write to ",
-            A(contact_email(), href=f"mailto:{contact_email()}", cls=AT.muted),
-            ".",
+        Section(
+            "Do Not Track",
+            "We don't track you across other sites or services, so we have nothing to "
+            "change when your browser sends a Do Not Track signal.",
+        ),
+        Div(
+            H2("Questions", cls="text-lg font-semibold mt-6"),
+            P(
+                "Write to ",
+                A(contact, href=f"mailto:{contact}", cls=AT.muted),
+                ".",
+                cls="mt-2",
+            ),
         ),
         P(A("Back", href="/", cls=AT.muted), cls="pt-8"),
         cls="max-w-md pb-8",

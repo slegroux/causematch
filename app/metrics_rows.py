@@ -35,7 +35,10 @@ def fetch_rows(q):
         "swipes": _causes(
             q(
                 "SELECT s.volunteer_id AS volunteer_id, s.liked AS liked, "
-                f"{_TAG} FROM swipe s " + _JOIN.format(t="s")
+                f"{_TAG} FROM swipe s "
+                + _JOIN.format(t="s")
+                + " WHERE NOT EXISTS (SELECT 1 FROM match x WHERE x.org_blind "
+                "AND x.volunteer_id = s.volunteer_id AND x.opening_id = s.opening_id)"
             )
         ),
         "matches": _causes(
@@ -44,6 +47,7 @@ def fetch_rows(q):
                 "m.created_at AS created_at, m.decided_at AS decided_at, "
                 f"m.withdrawn_at AS withdrawn_at, {_TAG} FROM match m "
                 + _JOIN.format(t="m")
+                + " WHERE coalesce(m.org_blind, 0) = 0"
             )
         ),
         "shifts": _causes(

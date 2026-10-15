@@ -294,7 +294,9 @@ def _text(kind, key, uid, body, window=None):
 def on_accepted(match_id):
     """Called after a coordinator accepts. Texts the volunteer, once per match."""
     info = data.match_notice(match_id)
-    if info and info["status"] == "accepted":  # a block withdraws the match: no text
+    if (
+        info and info["status"] == "accepted" and not info["silent"]
+    ):  # a block withdraws it
         return _text(
             "accepted",
             f"accepted:{match_id}",
@@ -313,6 +315,7 @@ def on_new_message(match_id, sender_id):
     if (
         not info
         or info["status"] != "accepted"  # blocked or withdrawn: no text
+        or info["silent"]
         or info["volunteer_id"] == sender_id
         or volunteer_online(match_id, info["volunteer_id"])
     ):
@@ -330,7 +333,7 @@ def on_new_like(match_id):
     """Called after a volunteer likes an opening. Emails the org's coordinators, at most
     once per org per 15 minutes."""
     info = data.match_notice(match_id)
-    if not info or info["status"] != "pending":
+    if not info or info["status"] != "pending" or info["silent"]:
         return
     org_id = info["org_id"]
     emails = data.org_coordinator_emails(org_id)

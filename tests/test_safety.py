@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 from conftest import FORM, coordinator_for, org_sign_in, sign_in
+from fasthtml.common import to_xml
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -25,6 +26,7 @@ from app.db import (
     shifts,
     swipes,
 )
+from app.routes.matches import MatchRow
 from main import app
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -197,7 +199,10 @@ def test_volunteer_block_withdraws_matches_cancels_shifts_and_freezes_chat(w):
         with pytest.raises(PermissionError):
             data.send_message(uid, m.id, "more")
     assert messages.count == 1
-    assert "Sam" not in w.coord.get("/org/inbox").text
+    inbox = w.coord.get("/org/inbox").text
+    assert "Past matches" in inbox and "Withdrawn" in inbox
+    assert f"/org/matches/{m.id}/report" in inbox  # the coordinator can still report
+    assert data.org_inbox(w.coord_uid)["pending"] == []
 
 
 def test_volunteer_block_withdraws_a_pending_match(w):
@@ -230,33 +235,65 @@ def test_coordinator_block_declines_pending_and_closes_accepted(w):
     for uid in (w.vol.uid, w.coord_uid):
         with pytest.raises(PermissionError):
             data.send_message(uid, pending.id, "more")
-    assert "Sam" not in w.coord.get("/org/inbox").text
+    inbox = data.org_inbox(w.coord_uid)
+    assert (
+        inbox["pending"] == [] and inbox["decided"] == []
+    )  # the declined one is hidden
+    assert [r["id"] for r in inbox["past"]] == [
+        pending.id
+    ]  # the accepted one stays reportable
     assert "Sam" not in w.coord.get("/org/shifts").text
 
 
-def test_a_blocked_volunteers_future_likes_are_silently_dropped(w):
-    m = like(w)
-    data.block_volunteer(w.coord_uid, m.id)
+def test_a_blocked_volunteers_like_looks_normal_to_them_and_never_reaches_the_org(w):
+    first = like(w)
+    data.block_volunteer(w.coord_uid, first.id)
     third = openings.insert(
         openings.dataclass()(
             **{**openings[w.opening.id].__dict__, "id": None, "title": "Third"}
         )
     )
+    control = w.other
     notify.get_emailer().sent.clear()
     assert third.id in deck_ids(w.vol)  # the deck does not reveal the block
-    r = w.vol.post(
-        "/swipe",
-        data={"opening_id": str(third.id), "liked": "1"},
-        follow_redirects=False,
-    )
-    assert r.status_code == 303  # the same answer as any like
-    assert swipes(
+    for who in (w.vol, control):
+        r = who.post(
+            "/swipe",
+            data={"opening_id": str(third.id), "liked": "1"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303  # the same answer as any like
+    mine = data.my_matches(w.vol.uid)[0]
+    theirs = data.my_matches(control.uid)[0]
+    assert mine["status"] == theirs["status"] == "pending"
+    strip = lambda row: to_xml(MatchRow({**row, "id": 0}))
+    assert strip(mine) == strip(theirs)  # indistinguishable to the volunteer
+    assert "Waiting for the nonprofit" in w.vol.get("/matches").text
+    blind = matches(
         where="volunteer_id = ? AND opening_id = ?", where_args=[w.vol.uid, third.id]
     )
-    assert matches.count == 1  # no new match
-    assert third.id not in deck_ids(w.vol)  # swiped, so it moves on like any other
-    assert notify.get_emailer().sent == []
+    assert len(blind) == 1 and blind[0].org_blind
+    # the org never hears of it: no inbox row, one email only for the control
+    inbox = data.org_inbox(w.coord_uid)
+    assert [r["id"] for r in inbox["pending"]] == [
+        matches(where="volunteer_id = ?", where_args=[control.uid])[0].id
+    ]
+    assert (
+        len(notify.get_emailer().sent) == 1
+        and "1 volunteer is" in notify.get_emailer().sent[0][2]
+    )
     assert "Sam" not in w.coord.get("/org/inbox").text
+    with pytest.raises(PermissionError):  # nor can it be decided by id
+        data.decide(w.coord_uid, blind[0].id, True)
+    # and it counts toward no rate
+    rows = data.metrics_rows()
+    assert blind[0].id not in {m["id"] for m in rows["matches"]}
+    n_swipes = swipes.count
+    assert len(rows["swipes"]) == n_swipes - 1
+    assert not any(
+        x["volunteer_id"] == w.vol.uid and x["id"] == blind[0].id
+        for x in rows["matches"]
+    )
 
 
 def test_blocks_are_per_org(w):
@@ -741,3 +778,311 @@ def test_contact_email_is_required_in_production():
     assert contact_email({"CONTACT_EMAIL": "a@b.org"}) == "a@b.org"
     with pytest.raises(RuntimeError):
         contact_email({"CAUSEMATCH_ENV": "production"})
+
+
+# --- review fixes --------------------------------------------------------------------------------
+
+
+def sms_log():
+    return list(notify.get_sms().sent)
+
+
+def test_deactivating_an_org_ends_every_live_match_and_silences_it(w):
+    accepted = like(w)
+    accept(w, accepted)
+    pending = like(w, w.other)
+    data.send_message(w.vol.uid, accepted.id, "hello")
+    data.report_org(w.vol.uid, accepted.id, "unsafe")
+    rid = reports()[0].id
+    sms_before = sms_log()
+    w.admin.post(f"/admin/reports/{rid}/deactivate")
+    assert matches[pending.id].status == "declined"
+    assert matches[accepted.id].status == "withdrawn"
+    assert (
+        shifts(where="match_id = ?", where_args=[accepted.id])[0].status == "cancelled"
+    )
+    # chat is read-only for both sides, by page, post and data call
+    assert w.vol.get(f"/chat/{accepted.id}").status_code == 200
+    r = w.coord.post(
+        f"/org/chat/{accepted.id}/send", data={"msg": "hi"}, follow_redirects=False
+    )
+    assert r.status_code == 403
+    for uid in (w.vol.uid, w.coord_uid):
+        with pytest.raises(PermissionError):
+            data.send_message(uid, accepted.id, "more")
+    assert messages.count == 1
+    # even a match that is somehow still live is refused by every coordinator action
+    matches.update(id=pending.id, status="pending", decided_at=None)
+    with pytest.raises(PermissionError):
+        data.decide(w.coord_uid, pending.id, True)
+    r = w.coord.post(
+        f"/org/matches/{pending.id}/decide",
+        data={"decision": "accept"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403 and matches[pending.id].status == "pending"
+    matches.update(id=accepted.id, status="accepted")
+    future = "2030-01-01T10:00"
+    with pytest.raises(PermissionError):
+        data.add_shift(w.coord_uid, accepted.id, future)
+    with pytest.raises(PermissionError):
+        data.repeat_shift(w.coord_uid, accepted.id)
+    with pytest.raises(PermissionError):
+        data.send_message(w.coord_uid, accepted.id, "still here?")
+    # nothing was texted or emailed to anyone
+    notify.on_accepted(accepted.id)
+    notify.on_new_message(accepted.id, w.coord_uid)
+    notify.on_new_like(pending.id)
+    assert sms_log() == sms_before and not shifts(
+        where="starts_at = ?", where_args=[future]
+    )
+
+
+def test_a_deactivated_orgs_reminders_stop(w):
+    m = like(w)
+    accept(w, m)
+    sid = shifts(where="match_id = ?", where_args=[m.id])[0].id
+    data.report_org(w.vol.uid, m.id, "unsafe")
+    w.admin.post(f"/admin/reports/{reports()[0].id}/deactivate")
+    start = shifts[sid].starts_at
+    assert data.due_reminders(start, start) == []
+
+
+def test_the_deactivated_filter_alone_hides_a_reopened_opening(w):
+    m = like(w)
+    data.report_org(w.vol.uid, m.id, "unsafe")
+    w.admin.post(f"/admin/reports/{reports()[0].id}/deactivate")
+    openings.update(id=w.opening.id, status="open")  # reopened by hand: still hidden
+    assert w.opening.id not in deck_ids(w.other)
+
+
+# S1: a number keeps its blocks and suspension through delete and sign-up
+
+
+def retained():
+    return list(data.__dict__["_db"].retained_phones())
+
+
+def test_delete_and_sign_up_again_keeps_a_block(w):
+    m = like(w)
+    data.block_volunteer(w.coord_uid, m.id)
+    phone = w.vol.phone
+    data.delete_account(w.vol.uid)
+    (row,) = retained()
+    assert phone not in json.dumps(row.__dict__) and "block" in row.reason
+    fresh = TestClient(app)
+    sign_in(fresh, phone)
+    new_uid = data.get_or_create_volunteer(phone)
+    assert new_uid != w.vol.uid and not profiles[new_uid].suspended_at
+    assert blocks(where="blocked_user_id = ?", where_args=[new_uid])
+    profiles.update(
+        id=new_uid, display_name="Sam New", onboarded_at="2026-01-01T00:00:00"
+    )
+    liked = data.swipe(new_uid, w.opening.id, True)
+    assert matches[liked.id].org_blind  # the block followed the number
+    assert "Sam New" not in w.coord.get("/org/inbox").text
+
+
+def test_a_suspended_account_cannot_come_back_by_deleting_itself(w):
+    m = like(w)
+    accept(w, m)
+    data.report_volunteer(w.coord_uid, m.id, "harassment")
+    rid = reports()[0].id
+    phone = w.vol.phone
+    data.delete_account(w.vol.uid)  # deleted while the report is open
+    assert len(retained()) == 1
+    w.admin.post(f"/admin/reports/{rid}/suspend")  # suspended after the fact
+    assert retained()[0].suspended
+    again = TestClient(app)
+    again.post("/login/send", data={"phone": phone})
+    r = again.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 200 and "can't sign in" in r.text
+
+
+def test_an_account_with_no_blocks_or_reports_leaves_no_hash(w):
+    like(w)
+    data.delete_account(w.vol.uid)
+    assert retained() == []
+    assert profiles[w.vol.uid].phone is None
+
+
+def test_a_dismissed_report_or_lifted_block_releases_the_hash(w):
+    m = like(w)
+    data.report_org(w.other.uid, like(w, w.other).id, "spam")  # unrelated report
+    data.report_volunteer(w.coord_uid, m.id, "spam")
+    data.block_volunteer(w.coord_uid, m.id)
+    data.delete_account(w.vol.uid)
+    assert len(retained()) == 1
+    rid = next(r.id for r in reports() if r.target_user_id)
+    data.dismiss_report(w.admin.uid, rid)
+    assert len(retained()) == 1  # the block still needs it
+    data.unblock(w.admin.uid, blocks()[0].id)
+    assert retained() == []
+
+
+def test_phone_hash_key_is_required_in_production():
+    from app.config import phone_hash_key
+
+    assert phone_hash_key({"PHONE_HASH_KEY": "k"}) == "k"
+    with pytest.raises(RuntimeError):
+        phone_hash_key({"CAUSEMATCH_ENV": "production"})
+
+
+def test_env_example_lists_the_new_variables():
+    text = (ROOT / ".env.example").read_text()
+    for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY="):
+        assert name in text
+        assert name.rstrip("=") in (ROOT / "README.md").read_text()
+
+
+# S3: no data call on the event loop
+
+
+def test_no_async_route_calls_data_directly():
+    import ast
+
+    offenders = []
+    for f in sorted((ROOT / "app" / "routes").glob("*.py")):
+        for fn in ast.walk(ast.parse(f.read_text())):
+            if not isinstance(fn, ast.AsyncFunctionDef):
+                continue
+            if "data" in {a.arg for a in fn.args.args}:
+                continue  # chat's ws handler: `data` is the frame there
+            for call in ast.walk(fn):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and isinstance(call.func.value, ast.Name)
+                    and call.func.value.id in ("data", "notify")
+                ):
+                    offenders.append(f"{f.name}:{fn.name}:{call.func.attr}")
+    assert offenders == []
+
+
+# S4: the privacy page
+
+
+def test_privacy_page_is_complete_and_honest(anon):
+    text = anon.get("/privacy").text.replace("&#x27;", "'").replace("&quot;", '"')
+    for needed in (
+        "Draft, pending legal review.",
+        "Effective ",
+        "Twilio",
+        "Resend",
+        "Google Cloud",
+        "Do Not Track",
+        "no-show",
+        "[message removed]",
+        "one-way keyed hash",
+        "other causes",
+        "hello@causematch.test",
+        SHARED_WITH_NONPROFIT,
+    ):
+        assert needed in text, needed
+    assert "only if it is part of a report" not in text
+
+
+# S6: ProPublica
+
+
+def test_a_made_up_ein_that_answers_200_with_nulls_is_unknown():
+    nulls = {"organization": {"id": None, "ein": None, "name": None, "city": None}}
+    c = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=nulls))
+    )
+    assert propublica.lookup("123456789", c) is None
+    c = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"organization": None})
+        )
+    )
+    assert propublica.lookup("123456789", c) is None
+
+
+def test_the_recorded_404_body_is_unknown():
+    body = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "propublica"
+            / "organization_not_found.json"
+        ).read_text()
+    )
+    c = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(404, json=body))
+    )
+    assert propublica.lookup("123456789", c) is None
+    c = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))
+    )
+    assert propublica.lookup("123456789", c) is None
+
+
+# S7 and the nits
+
+
+def test_a_coordinator_can_report_after_the_volunteer_withdraws(w):
+    m = like(w)
+    accept(w, m)
+    w.vol.post(f"/matches/{m.id}/withdraw")
+    assert f"/org/matches/{m.id}/report" in w.coord.get("/org/inbox").text
+    r = w.coord.post(
+        f"/org/matches/{m.id}/report",
+        data={"reason": "harassment"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and reports.count == 1
+
+
+def test_admin_functions_refuse_a_non_admin(w):
+    m = like(w)
+    data.report_org(w.vol.uid, m.id, "spam")
+    rid = reports()[0].id
+    org = orgs()[0].id
+    calls = [
+        lambda u: data.admin_reports(u),
+        lambda u: data.admin_blocks(u),
+        lambda u: data.admin_orgs(u),
+        lambda u: data.dismiss_report(u, rid),
+        lambda u: data.suspend_target(u, rid),
+        lambda u: data.deactivate_target_org(u, rid),
+        lambda u: data.unblock(u, 1),
+        lambda u: data.verify_org_as(u, org, "530196605"),
+    ]
+    for call in calls:
+        for uid in (w.coord_uid, w.vol.uid):
+            with pytest.raises(PermissionError):
+                call(uid)
+    assert reports[rid].status == "open" and not orgs[org].ein
+
+
+def test_a_reporter_is_capped_at_ten_reports_a_day(w):
+    others = [volunteer(f"V{i}") for i in range(data.REPORTS_PER_DAY)]
+    ms = [like(w, v) for v in others]
+    for m in ms[: data.REPORTS_PER_DAY - 1]:
+        data.report_volunteer(w.coord_uid, m.id, "spam")
+    data.report_volunteer(w.coord_uid, ms[-1].id, "spam")
+    extra = like(w)
+    with pytest.raises(ValueError, match="reports a day"):
+        data.report_volunteer(w.coord_uid, extra.id, "spam")
+    assert reports.count == data.REPORTS_PER_DAY
+    r = w.coord.post(f"/org/matches/{extra.id}/report", data={"reason": "spam"})
+    assert r.status_code == 200 and "reports a day" in r.text
+
+
+def test_two_coordinators_blocking_one_volunteer_make_one_block(w):
+    second, _ = coordinator_for(0, "second@example.org")
+    m = like(w)
+    data.block_volunteer(w.coord_uid, m.id)
+    data.block_volunteer(second, m.id)
+    assert blocks.count == 1
+
+
+def test_a_suspended_number_is_sent_no_code(w):
+    m = like(w)
+    data.report_volunteer(w.coord_uid, m.id, "spam")
+    w.admin.post(f"/admin/reports/{reports()[0].id}/suspend")
+    notify.get_verifier().sent.clear()
+    fresh = TestClient(app)
+    r = fresh.post("/login/send", data={"phone": w.vol.phone})
+    assert r.status_code == 200 and notify.get_verifier().sent == []

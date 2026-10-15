@@ -2,6 +2,7 @@ import re
 
 from fasthtml.common import A, APIRouter, Div, Input, P, Redirect, Response
 from monsterui.all import AT, Button, ButtonT, Form, LabelCheckboxX, TextPresets
+from starlette.concurrency import run_in_threadpool
 
 from app import data
 from app.choices import (
@@ -169,6 +170,10 @@ async def onboarding_save(req):
     form = await req.form()
     if any(not isinstance(v, str) for _, v in form.multi_items()):
         return Response("Bad request", status_code=400)
+    return await run_in_threadpool(_sync_onboarding_save, req, form)
+
+
+def _sync_onboarding_save(req, form):
     text = lambda k: form.get(k, "").strip()
     f = {
         **{k: text(k) for k in LIMITS},

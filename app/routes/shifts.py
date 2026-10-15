@@ -13,6 +13,7 @@ from monsterui.all import (
     Label,
     TextPresets,
 )
+from starlette.concurrency import run_in_threadpool
 
 from app import data
 from app.forms import bad_request, query, str_form
@@ -141,6 +142,11 @@ async def mark(req, shift_id: int):
     result = form.get("result") if form else None
     if result not in ("attended", "no_show"):
         return bad_request()
+    return await run_in_threadpool(_sync_mark, req, form, shift_id)
+
+
+def _sync_mark(req, form, shift_id: int):
+    result = form.get("result") if form else None
     try:
         data.complete_shift(req.scope["uid"], shift_id, result == "attended")
     except PermissionError:
@@ -215,10 +221,14 @@ def new_shift_page(req, match_id: int):
 
 @ar("/org/matches/{match_id}/shifts/new", methods=["POST"])
 async def new_shift_save(req, match_id: int):
-    uid = req.scope["uid"]
     form = await str_form(req)
     if form is None:
         return bad_request()
+    return await run_in_threadpool(_sync_new_shift_save, req, form, match_id)
+
+
+def _sync_new_shift_save(req, form, match_id: int):
+    uid = req.scope["uid"]
     starts_at = form.get("starts_at", "").strip()
     try:
         head = _writable_head(uid, match_id)

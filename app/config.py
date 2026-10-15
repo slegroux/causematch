@@ -54,3 +54,14 @@ def contact_email(env=os.environ):
             return "hello@causematch.test"
         raise RuntimeError("CONTACT_EMAIL must be set (the address on /privacy)")
     return addr
+
+
+def phone_hash_key(env=os.environ):
+    """Key for the hash kept of a deleted account's phone (see data.delete_account). Required
+    in production; losing or changing it only means old blocks stop following a number."""
+    key = env.get("PHONE_HASH_KEY") or ""
+    if not key:
+        if is_dev(env):
+            return "dev-only-phone-hash-key"
+        raise RuntimeError("PHONE_HASH_KEY must be set (any long random string)")
+    return key

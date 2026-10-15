@@ -546,7 +546,7 @@ def test_inbox_excludes_other_orgs_and_deleted_volunteers():
     data.swipe(v.uid, opening().id, True)
     data.swipe(gone.uid, opening().id, True)
     profiles.update(id=gone.uid, deleted_at="2026-10-15T00:00:00")
-    assert data.org_inbox(other_coord) == {"pending": [], "decided": []}
+    assert data.org_inbox(other_coord) == {"pending": [], "decided": [], "past": []}
     names = [r["first_name"] for r in data.org_inbox(coordinator_for(0)[0])["pending"]]
     assert names == ["Here"]
 

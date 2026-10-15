@@ -1,5 +1,6 @@
 import functools
 import hashlib
+import hmac
 import inspect
 import json
 import secrets
@@ -13,6 +14,7 @@ from apswutils.db import NotFoundError
 from app import db as _db
 from app import match as _match
 from app.choices import ANY_DISTANCE_KM
+from app.config import phone_hash_key
 from app.metrics_rows import fetch_rows
 
 
@@ -100,7 +102,7 @@ def _org_reply_rates():
         "count(*) AS eligible "
         "FROM match m JOIN opening o ON o.id = m.opening_id "
         "JOIN profile p ON p.id = m.volunteer_id "
-        "WHERE p.deleted_at IS NULL AND ("
+        "WHERE p.deleted_at IS NULL AND coalesce(m.org_blind, 0) = 0 AND ("
         "m.status IN ('accepted', 'declined') "
         "OR (m.status = 'pending' AND julianday('now') - julianday(m.created_at) > 2.0) "
         "OR (m.status = 'withdrawn' AND (m.decided_at IS NOT NULL "
@@ -201,14 +203,14 @@ def _swipe(uid, opening_id, liked):
         )
         if not liked:
             return None, False
-        if _org_blocked_volunteer(uid, _db.openings[opening_id].org_id):
-            return None, False  # dropped silently: the volunteer is not told
         return _db.matches.insert(
             _db.Match(
                 opening_id=opening_id,
                 volunteer_id=uid,
                 status="pending",
                 created_at=_now(),
+                # a blocked volunteer's like looks normal to them and never reaches the org
+                org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id),
             )
         ), True
 
@@ -225,7 +227,7 @@ def swipe(uid, opening_id, liked):
 def swipe_created(uid, opening_id, liked):
     """Like `swipe`, but the Match only when this call created it (not a pass or a repeat)."""
     match, created = _swipe(uid, opening_id, liked)
-    return match if created else None
+    return match if created and not match.org_blind else None
 
 
 def decide(coordinator_uid, match_id, accept):
@@ -242,6 +244,10 @@ def decide(coordinator_uid, match_id, accept):
         raise PermissionError("no such match") from None
     if o.org_id not in coordinator_org_ids(coordinator_uid):
         raise PermissionError("not a member of this org")
+    if _db.orgs[o.org_id].deactivated_at or _org_blocked_volunteer(
+        m.volunteer_id, o.org_id
+    ):
+        raise PermissionError("no such match")
     status = "accepted" if accept else "declined"
     with _db.db.conn:
         # One statement, so two coordinators can't both take the last slot.
@@ -337,7 +343,9 @@ def my_matches(uid):
 
 
 def org_inbox(coordinator_uid):
-    """{"pending": [...], "decided": [...]} for this coordinator's orgs only.
+    """{"pending": [...], "decided": [...], "past": [...]} for this coordinator's orgs only.
+
+    past: matches that were accepted and then withdrawn or closed; they keep a Report link.
 
     Each row carries what the volunteer agreed to share (see choices.SHARED_WITH_NONPROFIT):
     first name, causes, availability, neighborhood, frequency. One query selects only
@@ -354,18 +362,22 @@ def org_inbox(coordinator_uid):
         "JOIN profile p ON p.id = m.volunteer_id "
         "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
         "AND p.deleted_at IS NULL AND p.suspended_at IS NULL "
-        "AND m.status IN ('pending', 'accepted', 'declined') "
-        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = p.id "
-        "AND b.blocked_org_id = o.org_id) "
+        "AND coalesce(m.org_blind, 0) = 0 "
+        "AND (m.status IN ('pending', 'accepted', 'declined') "
+        "OR (m.status = 'withdrawn' AND m.decided_at IS NOT NULL)) "
+        "AND (m.status = 'withdrawn' OR (NOT EXISTS (SELECT 1 FROM block b "
+        "WHERE b.blocked_user_id = p.id AND b.blocked_org_id = o.org_id) "
         "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = p.id "
-        "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id) "
+        "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id))) "
         "ORDER BY m.id DESC",
         [coordinator_uid],
     )
-    out = {"pending": [], "decided": []}
+    out = {"pending": [], "decided": [], "past": []}
     for r in rows:
         name = (r["display_name"] or "").split(maxsplit=1)
-        out["pending" if r["status"] == "pending" else "decided"].append(
+        out[
+            {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
+        ].append(
             {
                 "id": r["id"],
                 "status": r["status"],
@@ -442,6 +454,8 @@ def add_shift(coordinator_uid, match_id, starts_at):
     except NotFoundError:
         raise PermissionError("no such match") from None
     _member_of(coordinator_uid, o.org_id)
+    if _db.orgs[o.org_id].deactivated_at:
+        raise PermissionError("this org is deactivated")
     if m.status != "accepted":
         raise ValueError("the match is not accepted")
     start = _parse_local(starts_at)
@@ -479,6 +493,8 @@ def repeat_shift(coordinator_uid, match_id):
     except NotFoundError:
         raise PermissionError("no such match") from None
     _member_of(coordinator_uid, o.org_id)
+    if _db.orgs[o.org_id].deactivated_at:
+        raise PermissionError("this org is deactivated")
     if o.recurrence != "weekly":
         raise ValueError("this opening does not repeat weekly")
     latest = _db.shifts(
@@ -644,7 +660,8 @@ def chat_access(uid, match_id, write=False):
         if write and m.status != "accepted":
             raise PermissionError("this chat is read-only")
         if write and (
-            _org_blocked_volunteer(m.volunteer_id, o.org_id)
+            _db.orgs[o.org_id].deactivated_at
+            or _org_blocked_volunteer(m.volunteer_id, o.org_id)
             or _volunteer_blocked_org(m.volunteer_id, o.org_id)
         ):
             raise PermissionError("this chat is read-only")
@@ -741,17 +758,36 @@ def get_or_create_volunteer(phone):
     where = {"where": "phone = ? AND deleted_at IS NULL", "where_args": [phone]}
     if found := _db.profiles(**where):
         return found[0].id
+    # A number whose deleted account had a block, a report or a suspension against it comes
+    # back with them: suspended stays suspended, org blocks apply to the new profile.
+    kept = _db.retained_phones(where="hash = ?", where_args=[_phone_hash(phone)])
     try:
-        return _db.profiles.insert(
-            _db.Profile(
-                role="volunteer",
-                phone=phone,
-                session_version=1,
-                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
-            )
-        ).id
+        with _db.db.conn:
+            uid = _db.profiles.insert(
+                _db.Profile(
+                    role="volunteer",
+                    phone=phone,
+                    session_version=1,
+                    created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                    suspended_at=_now() if kept and kept[0].suspended else None,
+                )
+            ).id
+            for blocker_id, org_id in json.loads(kept[0].blocks_json) if kept else []:
+                _add_block(
+                    blocker_id=blocker_id, blocked_user_id=uid, blocked_org_id=org_id
+                )
+        return uid
     except apsw.ConstraintError:  # a concurrent first sign-in won the race
         return _db.profiles(**where)[0].id
+
+
+def phone_suspended(phone):
+    """True when a live profile holds this number and an admin suspended it."""
+    return bool(
+        _db.profiles.count_where(
+            "phone = ? AND deleted_at IS NULL AND suspended_at IS NOT NULL", [phone]
+        )
+    )
 
 
 def sign_out_everywhere(uid):
@@ -1128,13 +1164,16 @@ def match_notice(match_id):
         "org": org.name,
         "opening": o.title,
         "status": m.status,
+        # a blocked volunteer's like never reaches the org; a deactivated org sends nothing
+        "silent": bool(m.org_blind or org.deactivated_at),
     }
 
 
 def org_pending_count(org_id):
     return _db.db.execute(
         "SELECT count(*) FROM match JOIN opening ON opening.id = match.opening_id "
-        "WHERE opening.org_id = ? AND match.status = 'pending'",
+        "WHERE opening.org_id = ? AND match.status = 'pending' "
+        "AND coalesce(match.org_blind, 0) = 0",
         [org_id],
     ).fetchone()[0]
 
@@ -1238,7 +1277,20 @@ def _checked_report_text(reason, details):
     return details.strip()
 
 
+REPORTS_PER_DAY = 10  # one reporter; item 17 lists it with the other limits
+
+
 def _add_report(reporter_id, match_id, reason, details, *, user_id=None, org_id=None):
+    since = (datetime.now(UTC) - timedelta(days=1)).isoformat(timespec="seconds")
+    if (
+        _db.reports.count_where(
+            "reporter_id = ? AND created_at > ?", [reporter_id, since]
+        )
+        >= REPORTS_PER_DAY
+    ):
+        raise ValueError(
+            f"you can send {REPORTS_PER_DAY} reports a day; try again tomorrow"
+        )
     if _db.reports.count_where(
         "reporter_id = ? AND match_id = ? AND status = 'open'", [reporter_id, match_id]
     ):
@@ -1355,7 +1407,10 @@ def unblock(admin_uid, block_id):
     _admin(admin_uid)
     if not _is_id(block_id) or not _db.blocks.count_where("id = ?", [block_id]):
         raise LookupError("no such block")
+    b = _db.blocks[block_id]
     _db.blocks.delete(block_id)
+    if b.blocked_user_id:
+        _refresh_retained(b.blocked_user_id)
 
 
 def admin_reports(admin_uid):
@@ -1417,8 +1472,10 @@ def _resolve(admin_uid, where, args, status):
 def dismiss_report(admin_uid, report_id):
     """Close one report with no action. LookupError unless it is open."""
     with _db.db.conn:
-        _open_report(admin_uid, report_id)
+        r = _open_report(admin_uid, report_id)
         _resolve(admin_uid, "id = ?", [report_id], "dismissed")
+        if r.target_user_id:
+            _refresh_retained(r.target_user_id)
 
 
 def suspend_target(admin_uid, report_id):
@@ -1442,11 +1499,13 @@ def suspend_target(admin_uid, report_id):
         ):
             _end_match(m, admin_uid, "withdrawn")
         _resolve(admin_uid, "target_user_id = ?", [uid], "actioned")
+        _refresh_retained(uid, suspended=True)  # a deleted account cannot come back
 
 
 def deactivate_target_org(admin_uid, report_id):
-    """Deactivate the reported org: its openings close and their future shifts are cancelled,
-    it leaves every deck and cannot post. Every open report on it is actioned."""
+    """Deactivate the reported org: its openings close, every pending match is declined and
+    every accepted one withdrawn (chat read-only, future shifts cancelled, no texts), it leaves
+    every deck and cannot post, accept, schedule or message. Every open report on it is actioned."""
     with _db.db.conn:
         r = _open_report(admin_uid, report_id)
         org_id = r.target_org_id
@@ -1462,14 +1521,21 @@ def deactivate_target_org(admin_uid, report_id):
             "WHERE o.org_id = ?)",
             [_now(), admin_uid, _local_now(), org_id],
         )
+        for m in _db.matches(
+            where="status IN ('pending', 'accepted') AND opening_id IN "
+            "(SELECT id FROM opening WHERE org_id = ?)",
+            where_args=[org_id],
+        ):
+            _end_match(m, admin_uid, "declined")  # pending declined, accepted withdrawn
         _db.db.execute(
             "UPDATE opening SET status = 'closed' WHERE org_id = ?", [org_id]
         )
         _resolve(admin_uid, "target_org_id = ?", [org_id], "actioned")
 
 
-def admin_orgs():
-    """Every org with its EIN and verification state, for /admin/orgs."""
+def admin_orgs(admin_uid):
+    """Every org with its EIN and verification state, for /admin/orgs. Admin only."""
+    _admin(admin_uid)
     return [
         {
             "id": o.id,
@@ -1669,7 +1735,67 @@ def reject_claim(admin_uid, claim_id):
     )
 
 
+def verify_org_as(admin_uid, org_id, ein):
+    """verify_org for the admin page: PermissionError unless admin_uid is an admin."""
+    _admin(admin_uid)
+    verify_org(org_id, ein)
+
+
 PLACEHOLDER = "[message removed]"
+
+
+def _phone_hash(phone):
+    return hmac.new(phone_hash_key().encode(), phone.encode(), "sha256").hexdigest()
+
+
+def _blocks_against(uid):
+    return [
+        [b.blocker_id, b.blocked_org_id]
+        for b in _db.blocks(where="blocked_user_id = ?", where_args=[uid])
+    ]
+
+
+def _reports_against(uid):
+    return _db.reports.count_where(
+        "target_user_id = ? AND status IN ('open', 'actioned')", [uid]
+    )
+
+
+def _retain_phone(uid, phone, suspended):
+    """Keep a keyed hash of a deleted account's phone only when a block, a report that is
+    open or actioned, or a suspension must outlive the account. Never the number."""
+    blocks, reports = _blocks_against(uid), _reports_against(uid)
+    if not (blocks or reports or suspended):
+        return
+    reason = ", ".join(
+        x
+        for x, on in (("block", blocks), ("report", reports), ("suspended", suspended))
+        if on
+    )
+    _db.db.execute(
+        "INSERT OR REPLACE INTO retained_phone_hash "
+        "(hash, profile_id, reason, blocks_json, suspended, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [_phone_hash(phone), uid, reason, json.dumps(blocks), int(suspended), _now()],
+    )
+
+
+def _refresh_retained(uid, suspended=False):
+    """After a report is dismissed, a block lifted or a deleted account suspended: bring the
+    kept hash of profile `uid` in line, or drop it when nothing needs it any more."""
+    rows = _db.retained_phones(where="profile_id = ?", where_args=[uid])
+    if not rows:
+        return
+    row = rows[0]
+    blocks = _blocks_against(uid)
+    sus = bool(row.suspended) or suspended
+    if blocks or sus or _reports_against(uid):
+        _db.db.execute(
+            "UPDATE retained_phone_hash SET blocks_json = ?, suspended = ? WHERE hash = ?",
+            [json.dumps(blocks), int(sus), row.hash],
+        )
+    else:
+        _db.db.execute("DELETE FROM retained_phone_hash WHERE hash = ?", [row.hash])
 
 
 def delete_account(uid):
@@ -1689,6 +1815,8 @@ def delete_account(uid):
             raise PermissionError("not a volunteer")
         if p.deleted_at:
             return
+        if p.phone:
+            _retain_phone(uid, p.phone, bool(p.suspended_at))
         for m in _db.matches(
             where="volunteer_id = ? AND status IN ('pending', 'accepted')",
             where_args=[uid],

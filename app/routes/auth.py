@@ -4,6 +4,7 @@ import re
 import httpx
 from fasthtml.common import A, APIRouter, Form, Input, P, Redirect
 from monsterui.all import AT, Button, ButtonT, TextPresets
+from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
 from app.auth import BAD_PHONE, normalize_phone
@@ -73,12 +74,17 @@ async def send(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
+    return await run_in_threadpool(_sync_send, req, form, sess)
+
+
+def _sync_send(req, form, sess):
     phone = form.get("phone", "")
     e164 = normalize_phone(phone)
     if not e164:
         return PhoneForm(phone, BAD_PHONE)
     try:
-        notify.send_code(e164)
+        if not data.phone_suspended(e164):  # a suspended number costs no text
+            notify.send_code(e164)
     except httpx.HTTPError as e:
         log.warning("sending a sign-in code failed: %s", type(e).__name__)
         return PhoneForm(
@@ -94,6 +100,10 @@ async def verify(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
+    return await run_in_threadpool(_sync_verify, req, form, sess)
+
+
+def _sync_verify(req, form, sess):
     e164 = sess.get("pending_phone")  # only the number a code was sent to
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")

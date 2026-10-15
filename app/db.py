@@ -140,6 +140,7 @@ class Match:
     decided_at: str
     decided_by: int
     withdrawn_at: str
+    org_blind: bool  # liked after the org blocked this volunteer: the org never sees it
 
 
 class Message:
@@ -221,12 +222,31 @@ messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id", transform=True)
 notifications = db.create(Notification, pk="id", transform=True)
 notifications.create_index(["key"], unique=True, if_not_exists=True)
+
+
+class RetainedPhoneHash:
+    """A keyed hash of a deleted account's phone, kept only when a block, a report or a
+    suspension must survive deleting the account. Never the number itself."""
+
+    hash: str  # HMAC-SHA256(PHONE_HASH_KEY, E.164), hex
+    profile_id: int  # the deleted profile this was taken from
+    reason: str
+    blocks_json: str  # JSON [[blocker_id, org_id], ...] to re-apply on sign-up
+    suspended: bool
+    created_at: str
+
+
 reports = db.create(Report, pk="id", transform=True)
+retained_phones = db.create(RetainedPhoneHash, pk="hash", transform=True)
 blocks = db.create(Block, pk="id", transform=True)
 claim_requests = db.create(ClaimRequest, pk="id", transform=True)
+# One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
+# org however many coordinators of it pressed the button.
+db.execute("DROP INDEX IF EXISTS block_once")
 db.execute(
-    "CREATE UNIQUE INDEX IF NOT EXISTS block_once ON block"
-    "(blocker_id, coalesce(blocked_user_id, 0), coalesce(blocked_org_id, 0))"
+    "CREATE UNIQUE INDEX IF NOT EXISTS block_once_v2 ON block"
+    "(coalesce(blocked_user_id, 0), coalesce(blocked_org_id, 0), "
+    "CASE WHEN blocked_user_id IS NULL THEN blocker_id ELSE 0 END)"
 )
 # One live shift per match and start; a cancelled one frees its time.
 db.execute("DROP INDEX IF EXISTS idx_shift_match_id_starts_at")

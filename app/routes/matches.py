@@ -39,10 +39,14 @@ NOTICE = {
 
 @ar("/swipe", methods=["POST"])
 async def swipe(req):
-    uid = req.scope["uid"]
     form = await str_form(req)
     if form is None or form.get("liked") not in ("0", "1"):
         return bad_request()
+    return await run_in_threadpool(_sync_swipe, req, form)
+
+
+def _sync_swipe(req, form):
+    uid = req.scope["uid"]
     raw = form.get("opening_id", "")
     try:
         if not re.fullmatch(r"[0-9]{1,19}", raw):
@@ -52,7 +56,7 @@ async def swipe(req):
         pass  # closed or gone since the card was drawn: just show the next one
     else:
         if m:
-            await run_in_threadpool(notify.on_new_like, m.id)
+            notify.on_new_like(m.id)
     if req.headers.get("HX-Request"):
         return DeckArea(uid)
     return Redirect("/deck")

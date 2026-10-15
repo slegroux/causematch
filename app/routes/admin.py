@@ -206,6 +206,8 @@ def ReportRow(r):
             cls=TextPresets.muted_sm,
         ),
         P(r["details"] or "No details.", cls="whitespace-pre-wrap break-words"),
+        P("Already suspended.", cls="text-red-600") if r["suspended"] else None,
+        P("Already deactivated.", cls="text-red-600") if r["deactivated"] else None,
         Div(
             _post(f"/admin/reports/{r['id']}/dismiss", "Dismiss"),
             _post(f"/admin/reports/{r['id']}/suspend", "Suspend user")
@@ -361,17 +363,18 @@ def OrgsPage(rows, only=None, found=None, error=None):
 
 
 @ar("/admin/orgs", methods=["GET"])
-def admin_orgs():
-    return OrgsPage(data.admin_orgs())
+def admin_orgs(req):
+    return OrgsPage(data.admin_orgs(req.scope["uid"]))
 
 
 @ar("/admin/orgs/{org_id}/lookup", methods=["GET"])
 async def admin_org_lookup(req, org_id: int):
-    rows = data.admin_orgs()
+    uid, ein = req.scope["uid"], query(req, "ein")
+    rows = await run_in_threadpool(data.admin_orgs, uid)
     if org_id not in {o["id"] for o in rows}:
         return Response("Not found", status_code=404)
     try:
-        found = await run_in_threadpool(propublica.lookup, query(req, "ein"))
+        found = await run_in_threadpool(propublica.lookup, ein)
     except ValueError as e:
         return OrgsPage(rows, org_id, error=str(e))
     except propublica.LookupFailed as e:
@@ -389,12 +392,16 @@ async def admin_org_verify(req, org_id: int):
     ein = propublica.normalize_ein(form.get("ein", "")) if form else None
     if not ein:
         return bad_request()
+    return await run_in_threadpool(_sync_org_verify, req.scope["uid"], org_id, ein)
+
+
+def _sync_org_verify(uid, org_id, ein):
     try:
-        data.verify_org(org_id, ein)
+        data.verify_org_as(uid, org_id, ein)
     except LookupError:
         return Response("Not found", status_code=404)
     except ValueError as e:
-        return OrgsPage(data.admin_orgs(), org_id, error=str(e))
+        return OrgsPage(data.admin_orgs(uid), org_id, error=str(e))
     return Redirect("/admin/orgs")
 
 
@@ -479,17 +486,21 @@ def _email_link(uid, email):
 
 @ar("/admin/claims/{claim_id}/approve", methods=["POST"])
 async def admin_claim_approve(req, claim_id: int):
-    uid = req.scope["uid"]
     form = await str_form(req)
     if form is None:
         return bad_request()
+    return await run_in_threadpool(_sync_admin_claim_approve, req, form, claim_id)
+
+
+def _sync_admin_claim_approve(req, form, claim_id: int):
+    uid = req.scope["uid"]
     try:
         who, email = data.approve_claim(uid, claim_id, form.get("confirm") == "1")
     except LookupError:
         return Redirect("/admin/claims")  # already decided
     except ValueError as e:
         return ClaimsPage(uid, claim_id, str(e))
-    await run_in_threadpool(_email_link, who, email)
+    _email_link(who, email)
     return Redirect("/admin/claims")
 
 

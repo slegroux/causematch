@@ -286,10 +286,14 @@ def OpeningForm(uid, f=None, error=None):
 
 @ar("/org/details", methods=["POST"])
 async def save_details(req):
-    uid = req.scope["uid"]
     form = await req.form()
     if any(not isinstance(v, str) for _, v in form.multi_items()):
         return Response("Bad request", status_code=400)
+    return await run_in_threadpool(_sync_save_details, req, form)
+
+
+def _sync_save_details(req, form):
+    uid = req.scope["uid"]
     name, phone = form.get("name", "").strip(), form.get("phone", "").strip()
     if not name or len(name) > 80:
         return org_home(req, "Enter your name and role (80 characters at most).")
@@ -309,13 +313,17 @@ def new_opening_page(req):
 
 @ar("/org/openings/new", methods=["POST"])
 async def new_opening_save(req):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    return await run_in_threadpool(_sync_new_opening_save, req, form)
+
+
+def _sync_new_opening_save(req, form):
     uid = req.scope["uid"]
     profile = data.get_profile(uid)
     if not profile.display_name:
         return Redirect("/org")
-    form = await str_form(req)
-    if form is None:
-        return bad_request()
     text = lambda k: form.get(k, "").strip()
     f = {
         **{k: text(k) for k in LIMITS},
@@ -418,7 +426,12 @@ def label_of(options, value):
     return dict(options).get(value, "")
 
 
-INBOX_STATUS = {"pending": "Waiting", "accepted": "Accepted", "declined": "Declined"}
+INBOX_STATUS = {
+    "pending": "Waiting",
+    "accepted": "Accepted",
+    "declined": "Declined",
+    "withdrawn": "Withdrawn",
+}
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
@@ -446,7 +459,7 @@ def InboxRow(m):
         P(f"Neighborhood: {m['neighborhood'] or 'not given'}"),
         P(f"Wants to help: {label_of(FREQUENCY, m['frequency']) or 'not given'}"),
         A("Chat", href=f"/org/chat/{m['id']}", cls=AT.muted + " mr-4")
-        if m["status"] == "accepted"
+        if m["status"] in ("accepted", "withdrawn")
         else None,
         A(
             "Schedule another shift",
@@ -488,8 +501,15 @@ def inbox(req):
         H2("Decided", cls="text-xl font-semibold"),
         Div(
             *([InboxRow(m) for m in box["decided"]] or [P("Nothing yet.")]),
-            cls="flex flex-col gap-3 pb-8",
+            cls="flex flex-col gap-3 pb-6",
         ),
+        H2("Past matches", cls="text-xl font-semibold") if box["past"] else None,
+        Div(
+            *[InboxRow(m) for m in box["past"]],
+            cls="flex flex-col gap-3 pb-8",
+        )
+        if box["past"]
+        else None,
         cls="max-w-3xl",
     )
 
@@ -500,6 +520,11 @@ async def decide(req, match_id: int):
     decision = form.get("decision") if form else None
     if decision not in ("accept", "decline"):
         return bad_request()
+    return await run_in_threadpool(_sync_decide, req, form, match_id)
+
+
+def _sync_decide(req, form, match_id: int):
+    decision = form.get("decision") if form else None
     try:
         data.decide(req.scope["uid"], match_id, decision == "accept")
     except PermissionError:
@@ -509,5 +534,5 @@ async def decide(req, match_id: int):
             f"/org/inbox?notice={'full' if 'slots' in str(e) else 'decided'}"
         )
     if decision == "accept":
-        await run_in_threadpool(notify.on_accepted, match_id)
+        notify.on_accepted(match_id)
     return Redirect("/org/inbox")

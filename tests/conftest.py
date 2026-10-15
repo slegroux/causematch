@@ -39,6 +39,7 @@ from app.db import (
     orgs,
     profiles,
     reports,
+    retained_phones,
     seed_demo,
     shifts,
     swipes,
@@ -64,6 +65,7 @@ def fresh_db():
         notifications,
         reports,
         blocks,
+        retained_phones,
         claim_requests,
     ):
         table.delete_where()

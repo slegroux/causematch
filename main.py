@@ -10,6 +10,7 @@ from app.auth import SESSION_MAX_AGE, beforeware, session_secret
 from app.config import (
     contact_email,
     is_production,
+    phone_hash_key,
     public_base_url,
     require_env,
     tasks_token,
@@ -35,6 +36,7 @@ notify.get_sms()  # ... or texts
 tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact
+phone_hash_key()  # ... or deleted accounts' blocks can't be kept
 app, rt = fast_app(
     before=beforeware,
     secret_key=session_secret(os.environ),

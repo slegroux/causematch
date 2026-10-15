@@ -2,6 +2,7 @@ import re
 
 from fasthtml.common import APIRouter, Input, P
 from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
+from starlette.concurrency import run_in_threadpool
 
 from app import data, propublica
 from app.auth import BAD_PHONE, normalize_phone
@@ -99,6 +100,10 @@ async def claim_submit(req):
     form = await str_form(req)
     if form is None:
         return bad_request()
+    return await run_in_threadpool(_sync_claim_submit, req, form)
+
+
+def _sync_claim_submit(req, form):
     text = lambda k: form.get(k, "").strip()
     v = {k: text(k) for k in ("ein", "org_name", "name", "email", "phone")}
     # Only these keys are read: a posted status or org_id goes nowhere.
