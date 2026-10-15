@@ -854,6 +854,18 @@ def test_migrations_apply_pending_steps_then_none(tmp_path):
         assert c.execute("SELECT count(*) FROM profile").fetchone() is not None
 
 
+def test_migration_2_turns_homelessness_services_on(tmp_path):
+    db = v1_copy(tmp_path)
+    with sqlite3.connect(db) as c:
+        c.execute("UPDATE cause SET active = 0 WHERE slug = 'homelessness-services'")
+    assert run_migrations(db).returncode == 0
+    with sqlite3.connect(db) as c:
+        row = c.execute(
+            "SELECT active FROM cause WHERE slug = 'homelessness-services'"
+        ).fetchone()
+    assert row == (1,)
+
+
 def test_a_missing_database_is_an_error(tmp_path):
     r = run_migrations(tmp_path / "none.db")
     assert r.returncode == 1 and not (tmp_path / "none.db").exists()

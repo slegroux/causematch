@@ -23,8 +23,8 @@ NTEE code -> cause:
            (not C01-C19 alliances, management and support groups)
   D20-D23  animal protection, humane societies  -> animal-shelters
            (not D30 wildlife, D40 veterinary services, D50 zoos)
-  L        housing and shelter                  -> homelessness-services (inactive)
-           Revisit before activating it: L2x is housing development, not homeless
+  L        housing and shelter                  -> homelessness-services
+           Imports want review: L2x is housing development, not homeless
            services, and P85 (homeless centers) is not mapped yet.
 
 Imported orgs are unverified and unclaimed, with intro "cold". Re-running updates the

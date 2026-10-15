@@ -96,6 +96,13 @@ def fresh_db():
     notify.get_emailer().sent.clear()
 
 
+@pytest.fixture
+def homelessness_off():
+    """An inactive cause, for the tests of what one does. Any cause can be switched off;
+    homelessness services was, until 2026-10-15, and its seeded openings stay."""
+    causes.update(slug="homelessness-services", active=False)
+
+
 _phones = itertools.count(3105550100)
 
 FORM = {

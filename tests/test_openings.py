@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -110,16 +111,17 @@ def test_stored_opening_fields(coord):
         {"org_id": "abc"},
     ],
 )
-def test_invalid_opening_rejected(coord, over):
+def test_invalid_opening_rejected(homelessness_off, coord, over):
     r = post(coord, **over)
     assert r.status_code == 200  # form shown again with an error
     assert "uk-alert" in r.text or 'role="alert"' in r.text
     assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
 
 
-def test_inactive_cause_not_offered(coord):
+def test_inactive_cause_not_offered(homelessness_off, coord):
     html = coord.get("/org/openings/new").text
-    assert "Food insecurity" in html and "Homelessness services" not in html
+    assert 'value="food-insecurity"' in html
+    assert 'value="homelessness-services"' not in html  # (its note stays, hidden)
 
 
 def test_cause_deactivated_after_form_loaded_is_rejected(coord):
@@ -434,3 +436,33 @@ def test_every_seeded_opening_skill_is_a_shared_choice():
 
     for o in openings():
         assert set(json.loads(o.skills)) <= shared, o.title
+
+
+# --- homelessness services (2026-10-15: active, group shifts only) ---------------------------
+
+
+NOTE = "Homelessness services: group shifts only"
+
+
+def test_homelessness_services_is_offered_and_its_opening_reaches_the_deck(coord, user):
+    page = coord.get("/org/openings/new").text
+    assert "Homelessness services" in page
+    # the note is in the page for :has() to reveal, hidden until the cause is picked
+    assert NOTE in page and "cm-homeless-note" in page and 'cm-homeless"' not in page
+    r = post(
+        coord,
+        cause="homelessness-services",
+        title="Serve dinner at the shelter",
+        starts_at=future(1),
+    )
+    assert r.status_code == 303
+    assert "Serve dinner at the shelter" in deck_titles(user)
+
+
+def test_a_homelessness_opening_still_needs_the_adults_only_confirmation(coord):
+    r = post(coord, cause="homelessness-services", adult_only_ok="")
+    assert r.status_code == 200 and ("uk-alert" in r.text or 'role="alert"' in r.text)
+    # the redrawn form shows what qualifies, with or without :has()
+    assert re.search(r'<form[^>]*class="[^"]*\bcm-homeless\b', r.text)
+    assert NOTE in r.text and "background check" in r.text
+    assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []

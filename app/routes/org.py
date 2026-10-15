@@ -347,11 +347,22 @@ def OpeningForm(uid, f=None, error=None):
                 "Anything volunteers should know? Shoes, physical demands, parking. (optional)",
                 Textarea(f.get("notes", ""), name="notes", rows=3, cls="uk-textarea"),
             ),
-            LabelCheckboxX(
-                ADULT_ONLY,
-                name="adult_only_ok",
-                value="1",
-                checked=bool(f.get("adult_only_ok")),
+            # cm-adult-box (static/theme.css): stands out, with what qualifies, once the
+            # cause is homelessness services
+            Div(
+                P(
+                    "Homelessness services: group shifts only, like meal service, "
+                    "hygiene kits, donation sorting or events. Not case management, "
+                    "mentoring, or anything that needs a background check.",
+                    cls="cm-homeless-note text-sm font-semibold text-brand-ink",
+                ),
+                LabelCheckboxX(
+                    ADULT_ONLY,
+                    name="adult_only_ok",
+                    value="1",
+                    checked=bool(f.get("adult_only_ok")),
+                ),
+                cls="cm-adult-box space-y-3 rounded-2xl border border-line p-4",
             ),
         ),
         Group(
@@ -368,7 +379,9 @@ def OpeningForm(uid, f=None, error=None):
         Button("Post opening", cls=ButtonT.primary + " w-full h-12 text-lg"),
         action="/org/openings/new",
         method="post",
-        cls="space-y-4",
+        # without :has() (static/theme.css), a redrawn form still shows the note
+        cls="space-y-4"
+        + (" cm-homeless" if f.get("cause") == "homelessness-services" else ""),
     )
     return OrgShell(
         "openings",

@@ -235,3 +235,19 @@ body:has(.cm-tabbar) .cm-composer {
   background-color: hsl(var(--cm-parks));
   border-radius: 9999px;
 }
+/* The opening form (app/routes/org.py): for homelessness services, the adults-only, no
+   one-to-one confirmation stands out and says what qualifies (group shifts). :has() needs
+   no script; .cm-homeless covers a form redrawn with that cause. */
+.cm-homeless-note {
+  display: none;
+}
+form:has(select[name="cause"] option[value="homelessness-services"]:checked) .cm-homeless-note,
+form.cm-homeless .cm-homeless-note {
+  display: block;
+}
+form:has(select[name="cause"] option[value="homelessness-services"]:checked) .cm-adult-box,
+form.cm-homeless .cm-adult-box {
+  border-width: 2px;
+  border-color: hsl(var(--cm-brand));
+  background-color: hsl(var(--cm-brand-soft));
+}

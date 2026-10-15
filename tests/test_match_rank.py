@@ -122,7 +122,7 @@ def test_out_of_radius_cannot_be_liked_by_id(me):
     assert matches() == []
 
 
-def test_inactive_cause_is_excluded(me):
+def test_inactive_cause_is_excluded(homelessness_off, me):
     (dead,) = [c for c in causes() if not c.active][:1]
     add("live", where=at_km(1))
     add("dead cause", cause=dead.slug)
@@ -350,7 +350,7 @@ def test_creating_an_in_person_opening_without_coordinates_is_refused():
         )  # fmt: skip
 
 
-def test_inactive_cause_does_not_dilute_the_cause_score(me):
+def test_inactive_cause_does_not_dilute_the_cause_score(homelessness_off, me):
     (dead,) = [c for c in causes() if not c.active][:1]
     add("pure", cause="food-insecurity", starts_at="2099-01-01T20:00")
     mixed = add("mixed", cause="food-insecurity", starts_at="2099-01-01T19:00")
@@ -359,7 +359,9 @@ def test_inactive_cause_does_not_dilute_the_cause_score(me):
     assert titles(me) == ["mixed", "pure"]
 
 
-def test_a_volunteer_whose_cause_went_inactive_loses_only_that_cause(me):
+def test_a_volunteer_whose_cause_went_inactive_loses_only_that_cause(
+    homelessness_off, me
+):
     (dead,) = [c for c in causes() if not c.active][:1]
     profiles.update(id=me.uid, causes=json.dumps(["food-insecurity", dead.slug]))
     add("pure", starts_at="2099-01-01T20:00")

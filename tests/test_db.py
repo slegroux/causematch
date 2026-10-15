@@ -21,11 +21,11 @@ from app.db import (
 
 
 def test_ensure_causes_adds_missing_without_overwriting():
-    causes.update(slug="homelessness-services", active=True)
+    causes.update(slug="homelessness-services", active=False)
     causes.delete("environment-parks")
     ensure_causes()
     assert causes["environment-parks"].label == "Environment & parks"
-    assert causes["homelessness-services"].active  # edited row left alone
+    assert not causes["homelessness-services"].active  # edited row left alone
 
 
 def test_demo_seed_is_idempotent():

@@ -183,3 +183,17 @@ def test_nonprofit_pages_fit_a_small_phone(browser, live_url):
         assert width[0] <= width[1], (path, width)
         assert page.get_by_role("navigation", name="Nonprofit").is_visible(), path
     page.context.close()
+
+
+def test_the_homelessness_note_shows_only_for_that_cause(browser, live_url):
+    from helpers import coordinator_page
+
+    page = coordinator_page(browser, live_url)
+    page.goto("/org/openings/new")
+    note = page.get_by_text("Homelessness services: group shifts only")
+    assert not note.is_visible()
+    page.locator('select[name="cause"]').select_option("homelessness-services")
+    assert note.is_visible()
+    page.locator('select[name="cause"]').select_option("food-insecurity")
+    assert not note.is_visible()
+    page.context.close()

@@ -300,7 +300,12 @@ def seed(seed_file=None):
         ME_PHONE,
         "Sam",
         "Sawtelle",
-        ["food-insecurity", "animal-shelters", "environment-parks"],
+        [
+            "food-insecurity",
+            "animal-shelters",
+            "environment-parks",
+            "homelessness-services",
+        ],
         ["physical", "car"],
         "weekly",
     )

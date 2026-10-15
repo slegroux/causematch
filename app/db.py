@@ -284,7 +284,7 @@ CAUSES = [
     Cause("food-insecurity", "Food insecurity", "utensils", 1, True),
     Cause("environment-parks", "Environment & parks", "tree-pine", 2, True),
     Cause("animal-shelters", "Animal shelters", "paw-print", 3, True),
-    Cause("homelessness-services", "Homelessness services", "house", 4, False),
+    Cause("homelessness-services", "Homelessness services", "house", 4, True),
 ]
 
 LA = ZoneInfo("America/Los_Angeles")

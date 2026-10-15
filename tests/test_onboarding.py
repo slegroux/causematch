@@ -16,7 +16,7 @@ def test_new_user_cannot_reach_deck_until_onboarded(new_user):
     assert r.headers["location"] == "/onboarding"
 
 
-def test_onboarding_form_lists_active_causes_only(new_user):
+def test_onboarding_form_lists_active_causes_only(homelessness_off, new_user):
     html = new_user.get("/onboarding").text
     assert "Food insecurity" in html
     assert "Homelessness services" not in html
@@ -61,7 +61,7 @@ def test_zip_outside_la_rejected(new_user):
     assert not profile_of(new_user).onboarded_at
 
 
-def test_inactive_cause_rejected_if_posted(new_user):
+def test_inactive_cause_rejected_if_posted(homelessness_off, new_user):
     r = new_user.post(
         "/onboarding",
         data={**FORM, "causes": ["homelessness-services"]},
@@ -88,7 +88,7 @@ def test_consent_required(new_user):
     assert not profile_of(new_user).onboarded_at
 
 
-def test_newly_activated_cause_is_offered(new_user):
+def test_newly_activated_cause_is_offered(homelessness_off, new_user):
     causes.update(slug="homelessness-services", active=True)
     try:
         assert "Homelessness services" in new_user.get("/onboarding").text

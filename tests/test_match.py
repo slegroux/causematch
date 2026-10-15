@@ -142,7 +142,7 @@ def test_withdraw_pending_and_only_own_match():
         data.decide(coord, m.id, True)  # a withdrawn match can't be accepted
 
 
-def test_swipe_on_unavailable_openings_is_refused():
+def test_swipe_on_unavailable_openings_is_refused(homelessness_off):
     v = volunteer()
     for title in (
         "Holiday pantry drive (past sign-up deadline)",  # closed

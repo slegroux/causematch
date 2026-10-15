@@ -229,7 +229,9 @@ def test_by_cause_and_heard_from(pilot):
     assert pilot["labels"]["food-insecurity"] == "Food insecurity"
 
 
-def test_soft_deleted_volunteers_count_and_inactive_causes_have_no_row(pilot):
+def test_soft_deleted_volunteers_count_and_inactive_causes_have_no_row(
+    homelessness_off, pilot
+):
     assert "homelessness-services" not in pilot["cause"]
     assert pilot["overall"]["like_rate"]["d"] == 9  # v4's pass is in the 9
 

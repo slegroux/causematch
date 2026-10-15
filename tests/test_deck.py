@@ -49,7 +49,11 @@ def test_deck_shows_seeded_opening(user):
     assert "<title>Causematch</title>" in r.text
 
 
-def test_inactive_cause_hidden(user):
+def test_homelessness_services_openings_are_on_the_deck(user):
+    assert "Pack hygiene kits for outreach" in deck_titles(user)
+
+
+def test_inactive_cause_hidden(homelessness_off, user):
     assert SEEN in deck_titles(user)
     assert "Pack hygiene kits for outreach" not in deck_titles(user)
 
@@ -59,7 +63,7 @@ def test_closed_opening_hidden(user):
     assert "Holiday pantry drive" not in deck_titles(user)
 
 
-def test_mixed_cause_opening_shows_only_active_label(user):
+def test_mixed_cause_opening_shows_only_active_label(homelessness_off, user):
     add_opening(
         "Mixed cause shift",
         ["food-insecurity", "homelessness-services"],
