@@ -122,5 +122,7 @@ def logout(sess):
         data.sign_out_everywhere(profile.id)  # open chat sockets and other tabs end too
     sess.clear()
     return Redirect(
-        "/org/login" if profile and profile.role == "coordinator" else "/login"
+        "/org/login"
+        if profile and profile.role in ("coordinator", "admin")
+        else "/login"
     )

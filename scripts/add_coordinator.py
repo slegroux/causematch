@@ -31,7 +31,7 @@ def main():
         sys.exit(f"not a US phone number: {a.phone}")
     try:
         uid = data.add_coordinator(a.email, a.org_id, a.role, a.name.strip(), phone)
-    except LookupError as e:
+    except (LookupError, ValueError) as e:
         sys.exit(str(e))
     print(f"{a.email.strip().lower()} is {a.role} of org {a.org_id} (profile {uid})")
 

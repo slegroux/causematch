@@ -13,6 +13,7 @@ from apswutils.db import NotFoundError
 from app import db as _db
 from app import match as _match
 from app.choices import ANY_DISTANCE_KM
+from app.metrics_rows import fetch_rows
 
 
 def start(demo):
@@ -712,6 +713,8 @@ def add_coordinator(email, org_id, role="coordinator", name="", phone=""):
     if not org_exists(org_id):
         raise LookupError(f"no org {org_id}")
     email = email.strip().lower()
+    if admin_by_email(email):
+        raise ValueError("that address is an admin")
     found = coordinator_by_email(email)
     if found:
         uid = found
@@ -803,6 +806,16 @@ def _staff(email, role):
     return found[0].id if found else None
 
 
+def remove_admin(email):
+    """Revoke an admin: the profile is soft-deleted, so their session ends at once.
+    LookupError when there is no such admin."""
+    uid = _staff(email, "admin")
+    if not uid:
+        raise LookupError(f"no admin {email}")
+    _db.profiles.update(id=uid, deleted_at=_now())
+    return uid
+
+
 def admin_by_email(email):
     return _staff(email, "admin")
 
@@ -810,46 +823,7 @@ def admin_by_email(email):
 def metrics_rows():
     """Plain rows for app.metrics.pilot_metrics: no names, phones or emails, only the
     attributes the breakdowns need. Soft-deleted volunteers are included."""
-    cause_rows = [
-        {"slug": c.slug, "label": c.label, "active": bool(c.active), "sort": c.sort}
-        for c in _db.causes(order_by="sort")
-    ]
-    tag = (
-        "o.causes AS causes, g.intro AS intro, coalesce(p.heard_from, '') AS heard_from"
-    )
-    join = (
-        "JOIN opening o ON o.id = {t}.opening_id JOIN org g ON g.id = o.org_id "
-        "JOIN profile p ON p.id = {t}.volunteer_id"
-    )
-    rows = {"causes": cause_rows}
-    rows["swipes"] = _json_causes(
-        _db.db.q(f"SELECT s.liked AS liked, {tag} FROM swipe s " + join.format(t="s"))
-    )
-    rows["matches"] = _json_causes(
-        _db.db.q(
-            "SELECT m.id AS id, m.volunteer_id AS volunteer_id, m.status AS status, "
-            f"m.created_at AS created_at, m.decided_at AS decided_at, {tag} "
-            "FROM match m " + join.format(t="m")
-        )
-    )
-    rows["shifts"] = _json_causes(
-        _db.db.q(
-            "SELECT h.match_id AS match_id, m.volunteer_id AS volunteer_id, "
-            f"h.starts_at AS starts_at, h.status AS status, {tag} "
-            "FROM shift h JOIN match m ON m.id = h.match_id "
-            "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
-            "JOIN profile p ON p.id = m.volunteer_id"
-        )
-    )
-    return rows
-
-
-def _json_causes(rows):
-    return [{**r, "causes": json.loads(r["causes"] or "[]")} for r in rows]
-
-
-def open_openings_count():
-    return _db.openings.count_where("status = 'open'")
+    return fetch_rows(_db.db.q)
 
 
 def create_login_token(uid):
