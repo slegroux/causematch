@@ -14,7 +14,7 @@ from apswutils.db import NotFoundError
 from app import db as _db
 from app import match as _match
 from app import photos as _photos
-from app.choices import ANY_DISTANCE_KM
+from app.choices import ANY_DISTANCE_KM, INTERESTS
 from app.config import phone_hash_key
 from app.metrics_rows import fetch_rows
 
@@ -357,14 +357,17 @@ def org_inbox(coordinator_uid):
     past: matches that were accepted and then withdrawn or closed; they keep a Report link.
 
     Each row carries what the volunteer agreed to share (see choices.SHARED_WITH_NONPROFIT):
-    first name, causes, availability, neighborhood, frequency. One query selects only
-    those columns, so phone, email, location and surname never leave SQLite.
+    their photo (none while a block stands), name ("Sam L.", "Sam Lee" once accepted),
+    pronouns, bio, interests, causes, availability, neighborhood, frequency. One query
+    selects only those columns, so phone, email and location never leave SQLite.
     """
     labels = {c.slug: c.label for c in _db.causes()}
+    interests = dict(INTERESTS)
     rows = _db.db.query(
         "SELECT m.id, m.status, o.title, o.recurrence, p.display_name, p.causes, "
         "p.availability, "
-        "p.neighborhood, p.frequency, "
+        "p.neighborhood, p.frequency, p.last_name, p.pronouns, p.bio, p.interests, "
+        "p.photo_key, " + _BLOCKED + " AS blocked, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
         "AND a.status = 'accepted') >= o.slots AS full "
         "FROM match m JOIN opening o ON o.id = m.opening_id "
@@ -383,7 +386,6 @@ def org_inbox(coordinator_uid):
     )
     out = {"pending": [], "decided": [], "past": []}
     for r in rows:
-        name = (r["display_name"] or "").split(maxsplit=1)
         out[
             {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
         ].append(
@@ -391,7 +393,17 @@ def org_inbox(coordinator_uid):
                 "id": r["id"],
                 "status": r["status"],
                 "opening": r["title"],
-                "first_name": name[0] if name else "A volunteer",
+                "name": volunteer_name(
+                    r["display_name"], r["last_name"], r["status"] == "accepted"
+                ),
+                "photo_key": None if r["blocked"] else r["photo_key"],
+                "pronouns": r["pronouns"],
+                "bio": r["bio"],
+                "interests": [
+                    interests[i]
+                    for i in json.loads(r["interests"] or "[]")
+                    if i in interests
+                ],
                 "causes": [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
                 "availability": json.loads(r["availability"] or "[]"),
                 "neighborhood": r["neighborhood"],
@@ -576,9 +588,15 @@ def complete_shift(coordinator_uid, shift_id, attended):
         return _db.shifts[shift_id]
 
 
+# 1 when the volunteer p and the org of opening o blocked each other, either way
+_BLOCKED = (
+    "EXISTS (SELECT 1 FROM block b WHERE b.blocked_org_id = o.org_id AND "
+    "(b.blocked_user_id = p.id OR (b.blocker_id = p.id AND b.blocked_user_id IS NULL)))"
+)
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "o.title, o.recurrence, g.name AS org, p.display_name "
+    "o.title, o.recurrence, g.name AS org, p.display_name, p.last_name, p.photo_key, "
+    "m.status AS match_status, " + _BLOCKED + " AS blocked "
     "FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "JOIN profile p ON p.id = m.volunteer_id "
@@ -630,6 +648,10 @@ def org_shifts(coordinator_uid):
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
         row["first_name"] = _first_name(r["display_name"])
+        row["name"] = volunteer_name(
+            r["display_name"], r["last_name"], r["match_status"] == "accepted"
+        )
+        row["photo_key"] = None if r["blocked"] else r["photo_key"]
         row["weekly"] = r["recurrence"] == "weekly"
         if r["status"] == "scheduled":
             out["upcoming" if r["starts_at"] > now else "to_mark"].append(row)
@@ -745,24 +767,32 @@ def chat_header(uid, match_id):
     """What the chat page shows about the other side.
 
     The volunteer sees the org name and the contact name of the coordinator who accepted
-    them; the coordinator sees the volunteer's first name only. Also whether the caller
-    may still write.
+    them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
+    photo when data.photo_for would serve it. Also whether the caller may still write.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
     o = _db.openings[m.opening_id]
     org = _db.orgs[o.org_id].name
+    photo = None
     if role == "volunteer":
         decider = get_profile(m.decided_by) if m.decided_by else None
         other = decider.display_name if decider and decider.display_name else org
     else:
         volunteer = get_profile(m.volunteer_id)
-        other = _first_name(volunteer.display_name if volunteer else "")
+        other = volunteer_name(
+            volunteer.display_name if volunteer else "",
+            volunteer.last_name if volunteer else "",
+            m.status == "accepted",
+        )
+        if volunteer and _sees_volunteer(get_profile(uid), volunteer.id):
+            photo = volunteer.photo_key
     return {
         "role": role,
         "title": o.title,
         "org": org,
         "other": other,
+        "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
     }
 
@@ -1357,10 +1387,12 @@ def _add_report(reporter_id, match_id, reason, details, *, user_id=None, org_id=
 
 
 def org_match_volunteer(coordinator_uid, match_id):
-    """First name of the volunteer on a match of the coordinator's org; PermissionError otherwise."""
+    """The name the org sees of the volunteer on a match of the coordinator's org ("Sam
+    L.", "Sam Lee" once accepted); PermissionError otherwise."""
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
-    return _first_name(_db.profiles[m.volunteer_id].display_name)
+    p = _db.profiles[m.volunteer_id]
+    return volunteer_name(p.display_name, p.last_name, m.status == "accepted")
 
 
 def report_org(uid, match_id, reason, details=""):
@@ -2058,7 +2090,8 @@ def set_opening_link(coordinator_uid, opening_id, url):
 
 def _sees_volunteer(viewer, volunteer_id):
     """A volunteer's photo is theirs, an admin's, and a coordinator's whose org can see one
-    of their matches: not org_blind, and no block between them either way."""
+    of their matches in its inbox (pending, accepted, declined, or withdrawn after the org
+    decided), not org_blind, and with no block between them either way."""
     if viewer.id == volunteer_id or viewer.role == "admin":
         return True
     if viewer.role != "coordinator":
@@ -2068,6 +2101,8 @@ def _sees_volunteer(viewer, volunteer_id):
             "SELECT 1 FROM match m JOIN opening o ON o.id = m.opening_id "
             "JOIN org_member om ON om.org_id = o.org_id AND om.user_id = ? "
             "WHERE m.volunteer_id = ? AND coalesce(m.org_blind, 0) = 0 "
+            "AND (m.status IN ('pending', 'accepted', 'declined') "
+            "OR (m.status = 'withdrawn' AND m.decided_at IS NOT NULL)) "
             "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = ? "
             "AND b.blocked_org_id = o.org_id) "
             "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = ? "

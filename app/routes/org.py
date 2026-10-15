@@ -35,7 +35,7 @@ from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
 from app.routes.shifts import RepeatForm
-from app.ui import Checks, Choice, Field, Page, Router, TextInput
+from app.ui import Checks, Choice, Field, Page, Router, TextInput, VolunteerHeader
 
 ar = Router()
 
@@ -456,9 +456,12 @@ def InboxRow(m):
     )
     return Card(
         DivFullySpaced(
-            P(m["first_name"], cls="font-semibold"), Label(INBOX_STATUS[m["status"]])
+            VolunteerHeader(m["name"], m["photo_key"], m["pronouns"]),
+            Label(INBOX_STATUS[m["status"]]),
         ),
         P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm),
+        P(m["bio"], cls="whitespace-pre-line") if m["bio"] else None,
+        P("Interests: " + ", ".join(m["interests"])) if m["interests"] else None,
         P("Causes: " + (", ".join(m["causes"]) or "none given")),
         P(
             "Available: "

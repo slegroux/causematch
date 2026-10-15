@@ -310,12 +310,17 @@ def VolunteerNav(active=None):
 
 
 # Avatar sizes; literal class strings, so Tailwind's scan of app/ finds them
-AVATAR = {"md": "h-14 w-14 text-2xl", "lg": "h-28 w-28 text-5xl"}
+AVATAR = {
+    "sm": "h-9 w-9 text-base",
+    "md": "h-14 w-14 text-2xl",
+    "lg": "h-28 w-28 text-5xl",
+}
 
 
 def Avatar(name, photo_key=None, size="md", **kwargs):
     """A volunteer's round photo (its 160 px square), or the first letter of their name.
-    Decorative: the name is always written next to it."""
+    Decorative: the name is always written next to it. Pass a photo_key only to someone
+    data.photo_for serves it to (the org's lists blank it under a block)."""
     cls = "shrink-0 rounded-full " + AVATAR[size]
     if photo_key:
         return Img(
@@ -360,4 +365,16 @@ def LogoBadge(key, cls):
         draggable="false",
         cls="pointer-events-none rounded-full object-cover ring-4 ring-white "
         "shadow-warm " + cls,
+    )
+
+
+def VolunteerHeader(name, photo_key=None, pronouns=None, size="sm"):
+    """A volunteer as a nonprofit sees them: photo or initial, name, pronouns."""
+    return Div(
+        Avatar(name, photo_key, size),
+        Span(
+            Span(name, cls="font-semibold text-ink"),
+            Span(f" ({pronouns})", cls="text-sm text-ink-muted") if pronouns else None,
+        ),
+        cls="flex items-center gap-3",
     )

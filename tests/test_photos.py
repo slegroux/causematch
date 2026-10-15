@@ -269,3 +269,96 @@ def test_a_block_hides_it_from_the_org(user, coord):
 def test_an_admin_sees_it(user):
     upload(user, jpeg())
     assert admin_client().get(f"/photos/{key_of(user)}.jpg").status_code == 200
+
+
+# --- the matrix: which of an org's matches show it the photo -------------------------------
+
+
+def _coord_uid():
+    from conftest import coordinator_for
+
+    return data.coordinator_by_email(coordinator_for(0)[1])
+
+
+def _no_like(user, m):
+    matches.delete(m.id)
+
+
+def _pending(user, m):
+    pass
+
+
+def _accepted(user, m):
+    data.decide(_coord_uid(), m.id, True)
+
+
+def _declined(user, m):
+    data.decide(_coord_uid(), m.id, False)
+
+
+def _withdrawn_after_accept(user, m):
+    data.decide(_coord_uid(), m.id, True)
+    data.withdraw(uid_of(user), m.id)
+
+
+def _withdrawn_while_pending(user, m):
+    data.withdraw(uid_of(user), m.id)
+
+
+def _org_blind(user, m):
+    matches.update(id=m.id, org_blind=True)
+
+
+def _volunteer_blocked_org(user, m):
+    data.block_org(uid_of(user), m.id)
+
+
+def _org_blocked_volunteer(user, m):
+    data.decide(_coord_uid(), m.id, True)
+    data.block_volunteer(_coord_uid(), m.id)
+
+
+def _suspended(user, m):
+    profiles.update(id=uid_of(user), suspended_at="2026-10-15T00:00:00")
+
+
+@pytest.mark.parametrize(
+    ("state", "seen"),
+    [
+        (_no_like, False),
+        (_pending, True),
+        (_accepted, True),
+        (_declined, True),
+        (_withdrawn_after_accept, True),  # still in the org's past matches
+        (_withdrawn_while_pending, False),  # never reached the org's inbox
+        (_org_blind, False),
+        (_volunteer_blocked_org, False),
+        (_org_blocked_volunteer, False),
+        (_suspended, False),
+    ],
+    ids=lambda v: v.__name__.strip("_") if callable(v) else str(v),
+)
+def test_the_org_sees_the_photo_only_for_a_match_it_can_see(user, coord, state, seen):
+    upload(user, jpeg())
+    key = key_of(user)
+    m = _liked(user, coord.org_id)
+    state(user, m)
+    for url in (f"/photos/{key}.jpg", f"/photos/thumb/{key}.jpg"):
+        assert coord.get(url).status_code == (200 if seen else 404), url
+    rows = [r for box in data.org_inbox(_coord_uid()).values() for r in box]
+    # the inbox never links a photo the route would refuse
+    assert all(r["photo_key"] in (None, key) for r in rows)
+    if not seen:
+        assert all(r["photo_key"] is None for r in rows)
+
+
+def test_the_inbox_chat_and_shifts_show_the_photo(user, coord):
+    upload(user, jpeg())
+    key = key_of(user)
+    m = _liked(user, coord.org_id)
+    thumb = f"/photos/thumb/{key}.jpg"
+    assert thumb in coord.get("/org/inbox").text
+    data.decide(_coord_uid(), m.id, True)
+    assert thumb in coord.get(f"/org/chat/{m.id}").text
+    assert thumb in coord.get("/org/shifts").text
+    assert thumb not in user.get(f"/chat/{m.id}").text  # the volunteer sees the org

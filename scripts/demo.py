@@ -329,6 +329,30 @@ def seed(seed_file=None):
             ]
         )
     ]
+    for n, (uid, last, pronouns, bio, interests) in enumerate(
+        zip(
+            others,
+            ("Okafor", "Reyes", ""),
+            ("she/her", "", "he/him"),
+            (
+                "Nurse on night shifts, free most mornings. I love a busy kitchen.",
+                "Retired teacher. Happy to drive and to garden.",
+                "",
+            ),
+            (["cooking", "kids"], ["gardening", "teaching"], ["animals"]),
+            strict=True,
+        )
+    ):
+        if n < 2:  # Priya stays without a photo: the initial shows instead
+            data.set_volunteer_photo(uid, photos.process(drawn_photo(n + 1)))
+        data.save_profile_details(
+            uid,
+            first_name=data.get_profile(uid).display_name,
+            last_name=last,
+            pronouns=pronouns,
+            bio=bio,
+            interests=interests,
+        )
     for uid in others:
         data.swipe(uid, first.id, True)
     data.decide(

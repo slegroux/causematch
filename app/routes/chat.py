@@ -20,7 +20,15 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
-from app.ui import BACK, SEND, Icon, Router, TextInput, VolunteerNav
+from app.ui import (
+    BACK,
+    SEND,
+    Icon,
+    Router,
+    TextInput,
+    VolunteerHeader,
+    VolunteerNav,
+)
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -124,7 +132,15 @@ def ChatPage(uid, match_id, role, notice=""):
                 head["title"],
                 cls="font-display text-xl font-extrabold leading-snug text-ink",
             ),
-            P(f"{head['org']} - {head['other']}", cls=TextPresets.muted_sm),
+            VolunteerHeader(head["other"], head["photo_key"])
+            if role == "coordinator"
+            else None,
+            P(
+                head["org"]
+                if role == "coordinator"
+                else f"{head['org']} - {head['other']}",
+                cls=TextPresets.muted_sm,
+            ),
             cls="border-b border-line pb-3",
         ),
         box,

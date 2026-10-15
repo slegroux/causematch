@@ -324,8 +324,9 @@ def test_inbox_never_shows_contact_or_location(user, coord):
     ):
         assert secret not in html, secret
     assert set(data.org_inbox(coordinator_for(0)[0])["decided"][0]) == {
-        "id", "status", "opening", "first_name", "causes",
-        "availability", "neighborhood", "frequency", "full", "weekly",
+        "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
+        "interests", "causes", "availability", "neighborhood", "frequency", "full",
+        "weekly",
     }  # fmt: skip
 
 
@@ -483,7 +484,17 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
     user.post("/onboarding", data=FORM)
     # the consent promises exactly these things ...
     assert SHARED_WITH_NONPROFIT in onboarding
-    for promised in ("first name", "causes", "availability", "neighborhood"):
+    for promised in (
+        "photo",
+        "first name and last initial",
+        "full last name once they accept you",
+        "pronouns",
+        "bio",
+        "interests",
+        "causes",
+        "availability",
+        "neighborhood",
+    ):
         assert promised in SHARED_WITH_NONPROFIT
     assert "Never your phone, email or exact location" in SHARED_WITH_NONPROFIT
     # ... and the inbox shows exactly those, nothing private
@@ -499,10 +510,23 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
         causes='["food-insecurity"]',
         availability='["weekend_morning"]',
         frequency="weekly",
+        last_name="Lee",
+        pronouns="they/them",
+        bio="I like early mornings.",
+        interests='["cooking"]',
     )
     user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
     html = coord.get("/org/inbox").text
-    for shown in ("Sam", "Food insecurity", "Weekend mornings", "Chinatown", "weekly"):
+    for shown in (
+        "Sam L.",
+        "they/them",
+        "I like early mornings.",
+        "Cooking",
+        "Food insecurity",
+        "Weekend mornings",
+        "Chinatown",
+        "weekly",
+    ):
         assert shown in html
     for private in (
         user.phone,
@@ -515,8 +539,9 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
         assert private not in html
     (row,) = data.org_inbox(coordinator_for(0)[0])["pending"]
     assert set(row) == {
-        "id", "status", "opening", "first_name", "causes",
-        "availability", "neighborhood", "frequency", "full", "weekly",
+        "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
+        "interests", "causes", "availability", "neighborhood", "frequency", "full",
+        "weekly",
     }  # fmt: skip
 
 
@@ -547,7 +572,7 @@ def test_inbox_excludes_other_orgs_and_deleted_volunteers():
     data.swipe(gone.uid, opening().id, True)
     profiles.update(id=gone.uid, deleted_at="2026-10-15T00:00:00")
     assert data.org_inbox(other_coord) == {"pending": [], "decided": [], "past": []}
-    names = [r["first_name"] for r in data.org_inbox(coordinator_for(0)[0])["pending"]]
+    names = [r["name"] for r in data.org_inbox(coordinator_for(0)[0])["pending"]]
     assert names == ["Here"]
 
 
@@ -641,3 +666,32 @@ def test_twenty_concurrent_swipes_over_http_with_sign_ins_in_flight(live_url):
     assert len(matches()) == 20
     for c in clients:
         c.close()
+
+
+# --- the name an org sees: "Sam L.", then "Sam Lee" once accepted --------------------------
+
+
+def test_the_org_sees_the_last_initial_until_it_accepts(user, coord):
+    uid = data.get_or_create_volunteer(user.phone)
+    profiles.update(id=uid, last_name="Lee", pronouns="they/them")
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    mid = matches()[0].id
+    inbox = coord.get("/org/inbox").text
+    assert "Sam L." in inbox and "Lee" not in inbox and "they/them" in inbox
+    assert "Report Sam L." in coord.get(f"/org/matches/{mid}/report").text
+    coord.post(f"/org/matches/{mid}/decide", data={"decision": "accept"})
+    assert "Sam Lee" in coord.get("/org/inbox").text
+    assert "Sam Lee" in coord.get(f"/org/chat/{mid}").text
+    assert "Sam Lee" in coord.get("/org/shifts").text
+    data.withdraw(uid, mid)
+    past = coord.get("/org/inbox").text
+    assert "Sam L." in past and "Sam Lee" not in past
+
+
+def test_a_declined_volunteer_keeps_the_initial(user, coord):
+    uid = data.get_or_create_volunteer(user.phone)
+    profiles.update(id=uid, last_name="Lee")
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    coord.post(f"/org/matches/{matches()[0].id}/decide", data={"decision": "decline"})
+    html = coord.get("/org/inbox").text
+    assert "Sam L." in html and "Lee" not in html
