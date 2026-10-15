@@ -1,3 +1,6 @@
+import logging
+import re
+
 import httpx
 from fasthtml.common import A, APIRouter, Form, Input, P, Redirect
 from monsterui.all import AT, Button, ButtonT, TextPresets
@@ -7,6 +10,7 @@ from app.auth import BAD_PHONE, normalize_phone
 from app.ui import Page
 
 ar = APIRouter()
+log = logging.getLogger("causematch")
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 
@@ -39,7 +43,6 @@ def CodeForm(phone, error=None):
     return Page(
         "Enter your code",
         Form(
-            Input(name="phone", value=phone, type="hidden"),
             Input(
                 name="code",
                 inputmode="numeric",
@@ -65,35 +68,43 @@ def login_page():
 
 
 @ar("/login/send", methods=["POST"])
-def send(phone: str = ""):
+def send(sess, phone: str = ""):
     e164 = normalize_phone(phone)
     if not e164:
         return PhoneForm(phone, BAD_PHONE)
     try:
         notify.send_code(e164)
-    except httpx.HTTPError:
+    except httpx.HTTPError as e:
+        log.warning("sending a sign-in code failed: %s", type(e).__name__)
         return PhoneForm(
             phone, "We couldn't send a text just now. Try again in a minute."
         )
+    sess.clear()
+    sess["pending_phone"] = e164
     return CodeForm(e164)
 
 
 @ar("/login/verify", methods=["POST"])
-def verify(sess, phone: str = "", code: str = ""):
-    e164 = normalize_phone(phone)
+def verify(sess, code: str = ""):
+    e164 = sess.get("pending_phone")  # only the number a code was sent to
     if not e164:
-        return PhoneForm(phone, BAD_PHONE)
+        return PhoneForm(error="Enter your number to get a code.")
+    code = code.strip()
+    if not re.fullmatch(r"[0-9]{6}", code):
+        return CodeForm(e164, "Enter the 6-digit code from the text.")
     try:
-        ok = notify.check_code(e164, code.strip())
-    except httpx.HTTPError:
+        ok = notify.check_code(e164, code)
+    except httpx.HTTPError as e:
+        log.warning("checking a sign-in code failed: %s", type(e).__name__)
         return CodeForm(e164, "We couldn't check that code just now. Try again.")
     if not ok:
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
     uid = data.get_or_create_volunteer(e164)
+    profile = data.get_profile(uid)
     sess.clear()
     sess["uid"] = uid
-    onboarded = data.get_profile(uid).onboarded_at
-    return Redirect("/deck" if onboarded else "/onboarding")
+    sess["sv"] = profile.session_version or 1
+    return Redirect("/deck" if profile.onboarded_at else "/onboarding")
 
 
 @ar("/logout", methods=["POST"])

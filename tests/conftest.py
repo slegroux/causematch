@@ -8,13 +8,16 @@ _tmp = tempfile.mkdtemp()
 atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ["CAUSEMATCH_DB"] = os.path.join(_tmp, "test.db")
 os.environ["CAUSEMATCH_FAKE_SMS"] = "1"
-os.environ.pop("CAUSEMATCH_ENV", None)
+os.environ["CAUSEMATCH_ENV"] = "test"
+os.environ.pop("K_SERVICE", None)
 
 import itertools
 
 import pytest
 from starlette.testclient import TestClient
 
+from app import notify
+from app.auth import normalize_phone
 from app.db import causes, ensure_causes, openings, orgs, profiles, seed_demo
 from main import app
 
@@ -26,6 +29,7 @@ def fresh_db():
         table.delete_where()
     ensure_causes()
     seed_demo()
+    notify.get_verifier().sent.clear()
 
 
 _phones = itertools.count(3105550100)
@@ -47,10 +51,9 @@ FORM = {
 
 def sign_in(client, phone=None):
     phone = phone or str(next(_phones))
+    client.phone = normalize_phone(phone)
     client.post("/login/send", data={"phone": phone})
-    r = client.post(
-        "/login/verify", data={"phone": phone, "code": "000000"}, follow_redirects=False
-    )
+    r = client.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
     assert r.status_code == 303
     return r
 

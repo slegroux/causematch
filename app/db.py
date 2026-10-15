@@ -60,11 +60,15 @@ class Profile:
     email: str
     display_name: str
     adult_attested: bool
+    session_version: int  # bump to sign every device out
     lat: float  # private: never rendered
     lon: float  # private: never rendered
+    neighborhood: str
     radius_km: int
     causes: str  # JSON list of cause slugs
     skills: str  # JSON list
+    language_other: str
+    volunteered_last_year: str  # yes|no
     availability: str  # JSON list
     frequency: str
     heard_from: str  # personal|second_degree|public|other
@@ -79,7 +83,11 @@ orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
 openings = db.create(Opening, pk="id", transform=True)
 profiles = db.create(Profile, pk="id", transform=True)
-profiles.create_index(["phone"], unique=True, if_not_exists=True)
+# One live profile per phone; a soft-deleted profile frees its number.
+db.execute("DROP INDEX IF EXISTS idx_profile_phone")
+db.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS profile_phone_live ON profile(phone) WHERE deleted_at IS NULL"
+)
 
 CAUSES = [
     Cause("food-insecurity", "Food insecurity", "utensils", 1, True),

@@ -2,6 +2,8 @@ import os
 
 import httpx
 
+from app.config import is_dev
+
 FAKE_CODE = "000000"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
 
@@ -16,7 +18,7 @@ class FakeVerifier:
         self.sent.append((phone, FAKE_CODE))
 
     def check(self, phone, code):
-        return code == FAKE_CODE
+        return code == FAKE_CODE and any(p == phone for p, _ in self.sent)
 
 
 class TwilioVerifier:
@@ -38,23 +40,24 @@ class TwilioVerifier:
         if r.status_code == 404:
             return False
         r.raise_for_status()
-        return r.json().get("status") == "approved"
-
-
-def is_production(env=os.environ):
-    return env.get("CAUSEMATCH_ENV") == "production"
+        try:
+            return r.json().get("status") == "approved"
+        except ValueError as e:
+            raise httpx.DecodingError("Twilio returned a non-JSON body") from e
 
 
 def make_verifier(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if is_production(env):
-            raise RuntimeError("CAUSEMATCH_FAKE_SMS=1 is not allowed in production")
+        if not is_dev(env):
+            raise RuntimeError(
+                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development or test"
+            )
         return FakeVerifier()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
     if not all(env.get(k) for k in keys):
         raise RuntimeError(
             "Twilio is not configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and "
-            "TWILIO_VERIFY_SID (or CAUSEMATCH_FAKE_SMS=1 for local development)"
+            "TWILIO_VERIFY_SID (or CAUSEMATCH_ENV=development with CAUSEMATCH_FAKE_SMS=1)"
         )
     return TwilioVerifier(*(env[k] for k in keys))
 

@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import APIRouter, Div, Input, Option, P, Redirect, Select
+from fasthtml.common import APIRouter, Div, Input, Option, P, Redirect, Response, Select
 from monsterui.all import Button, ButtonT, Form, FormLabel, LabelCheckboxX, TextPresets
 
 from app import data
@@ -34,6 +34,15 @@ SKILLS = [
     ("admin", "Admin, data or spreadsheets"),
     ("media", "Photos, video or social media"),
 ]
+VOLUNTEERED = [("yes", "Yes"), ("no", "No")]
+# Longest accepted value per free-text field.
+LIMITS = {
+    "first_name": 80,
+    "email": 254,
+    "neighborhood": 80,
+    "other_causes": 300,
+    "language_other": 80,
+}
 FREQUENCY = [
     ("once", "Once, to try it"),
     ("monthly", "About monthly"),
@@ -156,6 +165,14 @@ def OnboardingForm(f=None, error=None):
                 Choice("frequency", FREQUENCY, f.get("frequency", "")),
             ),
             Field(
+                "Have you volunteered in the last 12 months?",
+                Choice(
+                    "volunteered_last_year",
+                    VOLUNTEERED,
+                    f.get("volunteered_last_year", ""),
+                ),
+            ),
+            Field(
                 "How did you hear about Causematch?",
                 Choice("heard_from", HEARD_FROM, f.get("heard_from", "")),
             ),
@@ -185,18 +202,19 @@ def onboarding_page(req):
 @ar("/onboarding", methods=["POST"])
 async def onboarding_save(req):
     form = await req.form()
+    if any(not isinstance(v, str) for _, v in form.multi_items()):
+        return Response("Bad request", status_code=400)
+    text = lambda k: form.get(k, "").strip()
     f = {
-        "first_name": form.get("first_name", "").strip(),
-        "email": form.get("email", "").strip(),
+        **{k: text(k) for k in LIMITS},
         "adult": form.get("adult"),
-        "zip": form.get("zip", "").strip(),
-        "neighborhood": form.get("neighborhood", "").strip(),
+        "zip": text("zip"),
         "travel": form.get("travel", ""),
         "causes": form.getlist("causes"),
-        "other_causes": form.get("other_causes", "").strip(),
         "availability": form.getlist("availability"),
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
+        "volunteered_last_year": form.get("volunteered_last_year", ""),
         "heard_from": form.get("heard_from", ""),
         "consent": form.get("consent"),
     }
@@ -204,8 +222,10 @@ async def onboarding_save(req):
     def fail(msg):
         return OnboardingForm(f, msg)
 
-    if not f["adult"]:
+    if f["adult"] != "1":
         return fail(ADULTS_ONLY)
+    if any(len(f[k]) > n for k, n in LIMITS.items()):
+        return fail("One of your answers is too long. Please shorten it.")
     if not f["first_name"]:
         return fail("Please enter your first name.")
     if f["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", f["email"]):
@@ -225,6 +245,8 @@ async def onboarding_save(req):
         return fail("Something in that form wasn't recognized. Please try again.")
     if f["frequency"] not in {v for v, _ in FREQUENCY} | {""}:
         return fail("Something in that form wasn't recognized. Please try again.")
+    if f["volunteered_last_year"] not in {v for v, _ in VOLUNTEERED} | {""}:
+        return fail("Something in that form wasn't recognized. Please try again.")
     if f["heard_from"] not in {v for v, _ in HEARD_FROM}:
         return fail("Please tell us how you heard about Causematch.")
     if not f["consent"]:
@@ -233,6 +255,9 @@ async def onboarding_save(req):
         req.scope["uid"],
         display_name=f["first_name"],
         email=f["email"],
+        neighborhood=f["neighborhood"],
+        language_other=f["language_other"],
+        volunteered_last_year=f["volunteered_last_year"],
         lat=latlon[0],
         lon=latlon[1],
         radius_km=radius,

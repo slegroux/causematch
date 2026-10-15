@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 
+import apsw
 from apswutils.db import NotFoundError
 
 from app.db import Profile, causes, openings, orgs, profiles
@@ -35,16 +36,25 @@ def active_causes():
 
 def get_or_create_volunteer(phone):
     """Profile id for this E.164 phone, creating a volunteer profile on first sign-in."""
-    found = profiles(where="phone = ? AND deleted_at IS NULL", where_args=[phone])
-    if found:
+    where = {"where": "phone = ? AND deleted_at IS NULL", "where_args": [phone]}
+    if found := profiles(**where):
         return found[0].id
-    return profiles.insert(
-        Profile(
-            role="volunteer",
-            phone=phone,
-            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        )
-    ).id
+    try:
+        return profiles.insert(
+            Profile(
+                role="volunteer",
+                phone=phone,
+                session_version=1,
+                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+        ).id
+    except apsw.ConstraintError:  # a concurrent first sign-in won the race
+        return profiles(**where)[0].id
+
+
+def sign_out_everywhere(uid):
+    """Invalidate every session cookie this profile holds."""
+    profiles.update(id=uid, session_version=(profiles[uid].session_version or 1) + 1)
 
 
 def get_profile(uid):
@@ -60,6 +70,7 @@ def save_onboarding(
     *,
     display_name,
     email="",
+    neighborhood="",
     lat,
     lon,
     radius_km,
@@ -67,6 +78,8 @@ def save_onboarding(
     other_causes="",
     availability=(),
     skills=(),
+    language_other="",
+    volunteered_last_year="",
     frequency="",
     heard_from,
 ):
@@ -74,6 +87,9 @@ def save_onboarding(
         id=uid,
         display_name=display_name,
         email=email,
+        neighborhood=neighborhood,
+        language_other=language_other,
+        volunteered_last_year=volunteered_last_year,
         adult_attested=True,
         lat=lat,
         lon=lon,
