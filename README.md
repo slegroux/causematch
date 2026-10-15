@@ -21,7 +21,7 @@ Environment variables (`.env.example` lists them all, without values). The app r
 
 ## Admin
 
-Orgs start unverified and their openings stay out of every deck until an admin approves them at `/admin/orgs` (EIN checked against ProPublica) or with `scripts/verify_org.py`. Reports, suspensions, org deactivation and unblocking are in `/admin/reports` and `/admin/blocks`. A report from a volunteer names an org, so to remove one coordinator use `scripts/remove_coordinator.py`.
+Orgs start unverified and their openings stay out of every deck until an admin approves them at `/admin/orgs` (EIN checked against ProPublica) or with `scripts/verify_org.py`. Reports, suspensions, org deactivation and unblocking are in `/admin/reports` and `/admin/blocks`. Nonprofits come from [ProPublica Nonprofit Explorer](https://projects.propublica.org/nonprofits/) (IRS public data): `scripts/import_orgs.py --city "Los Angeles" --state CA` imports a sample of Los Angeles ones, `--ein` imports one, and a coordinator asks for access at `/org/claim` (an admin approves at `/admin/claims`). A report from a volunteer names an org, so to remove one coordinator use `scripts/remove_coordinator.py`.
 
 ## License
 

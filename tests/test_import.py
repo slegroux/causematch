@@ -114,9 +114,44 @@ def test_the_ntee_mapping_is_the_documented_one():
         "D": "animal-shelters",
         "L": "homelessness-services",
     }
-    for letter, cause in import_orgs.NTEE_CAUSES.items():
-        assert f"{letter}  " in import_orgs.__doc__ and cause in import_orgs.__doc__
+    for cause in import_orgs.NTEE_CAUSES.values():
+        assert cause in import_orgs.__doc__
     assert set(import_orgs.NTEE_CAUSES) == set(import_orgs.NTEE_GROUP_IDS)
+
+
+@pytest.mark.parametrize(
+    "code,cause",
+    [
+        ("K30", "food-insecurity"),  # food banks and pantries ...
+        ("K31", "food-insecurity"),
+        ("K36", "food-insecurity"),
+        ("k31z", "food-insecurity"),
+        ("K03", None),  # ... but not a professional society,
+        ("K20", None),  # agriculture,
+        ("K37", None),
+        ("K40", None),  # nutrition advocacy
+        ("K50", None),
+        ("C20", "environment-parks"),
+        ("C99", "environment-parks"),
+        ("C01", None),  # alliances and support groups
+        ("C19", None),
+        ("D20", "animal-shelters"),  # animal protection
+        ("D22", "animal-shelters"),  # humane societies
+        ("D23", "animal-shelters"),
+        ("D40", None),  # veterinary services
+        ("D30", None),  # wildlife
+        ("D50", None),  # zoos
+        ("L41", "homelessness-services"),
+        ("L20", "homelessness-services"),
+        ("P85", None),  # homeless centers: not mapped yet
+        ("", None),
+        (None, None),
+        ("K", None),
+        ("Z99", None),
+    ],
+)
+def test_ntee_codes_map_to_causes_by_range(code, cause):
+    assert import_orgs.ntee_cause(code) == cause
 
 
 def test_every_mapped_cause_is_a_cause_row():
@@ -202,63 +237,99 @@ def test_a_search_hit_seen_under_every_query_is_one_org(capsys):
     api = Api()
     run(api, *FOOD, capsys=capsys)
     assert len(api.searches) == 4  # the city's name and three food words
-    assert sorted(api.lookups) == ["861620575", "921003084"]
+    assert (
+        sorted(api.lookups)
+        == [
+            "393042704",  # Northridge and Sunland are City of LA places: looked up, no record
+            "861620575",
+            "921003084",
+            "931989260",
+        ]
+    )
 
 
-def test_only_this_city_and_a_city_zip_are_kept(capsys):
+def test_only_a_city_zip_is_kept(capsys):
     hits = [
         *SEARCH["organizations"],
         hit(
             "111111111", "County Pantry"
         ),  # Los Angeles in search, ZIP outside the city
-        hit("222222222", "Moved Pantry"),  # the lookup says it is in Pasadena now
-        hit("333333333", "Texas Pantry"),  # same city name, other state
+        hit("222222222", "Moved Pantry"),  # the lookup says Pasadena, ZIP 91101
+        hit("333333333", "Texas Pantry", city="Houston"),
         hit("444444444", "No Code Pantry", ntee=""),
         hit("555555555", "Wrong Group Pantry", ntee="P20"),
-        hit("666666666", "Shelter", ntee="L41"),  # another cause's letter
+        hit("666666666", "Shelter", ntee="L41"),  # another cause's code
+        hit("777777771", "Veterinary", ntee="K40"),  # a K code outside K30-K36
     ]
     details = {
         **DETAILS,
         "111111111": detail("111111111", "County Pantry", zipcode="90704"),
-        "222222222": detail("222222222", "Moved Pantry", city="Pasadena"),
-        "333333333": detail("333333333", "Texas Pantry", state="TX"),
+        "222222222": detail(
+            "222222222", "Moved Pantry", city="Pasadena", zipcode="91101"
+        ),
     }
     api = Api(hits, details)
     _, lines, _ = run(api, *FOOD, "--dry-run", capsys=capsys)
     assert lines[-1] == "2 orgs"
-    # Sunland, Woodland, Northridge, no code, P20 and L41 never cost a lookup
+    # Woodland, Houston, no code, P20, L41 and K40 never cost a lookup
     assert sorted(set(api.lookups)) == [
         "111111111",
         "222222222",
-        "333333333",
+        "393042704",
         "861620575",
         "921003084",
+        "931989260",
     ]
 
 
-def test_the_city_must_be_exact_not_a_neighbourhood(capsys):
-    api = Api([hit("931989260", "Glendale Food Bank", city="Sunland")])
+def test_city_neighbourhoods_are_in_when_their_zip_is_a_city_zip(capsys):
+    """Van Nuys and San Pedro are in the City of Los Angeles; the ZIP list is the boundary."""
+    hits = [
+        hit("111111111", "Valley Pantry", city="Van Nuys", ntee="K31"),
+        hit("222222222", "Harbor Pantry", city="San Pedro", ntee="K30"),
+        hit("333333333", "Pasadena Pantry", city="Pasadena", ntee="K31"),
+    ]
+    details = {
+        "111111111": detail(
+            "111111111", "Valley Pantry", city="Van Nuys", zipcode="91401"
+        ),
+        "222222222": detail(
+            "222222222", "Harbor Pantry", city="San Pedro", zipcode="90731"
+        ),
+    }
+    api = Api(hits, details)
+    _, lines, _ = run(api, *FOOD, capsys=capsys)
+    assert lines[-1] == "2 orgs" and "333333333" not in api.lookups
+    assert {o.city for o in orgs() if o.ein} == {"Van Nuys", "San Pedro"}
+
+
+def test_a_city_name_alone_is_not_enough(capsys):
+    """Los Angeles in the search result, but the record's ZIP is in the county."""
+    api = Api(
+        [hit("111111111", "County Pantry")],
+        {"111111111": detail("111111111", "County Pantry", zipcode="90704")},
+    )
     _, lines, _ = run(api, *FOOD, "--dry-run", capsys=capsys)
-    assert lines[-1] == "0 orgs" and api.lookups == []
+    assert lines[-1] == "0 orgs"
 
 
 @pytest.mark.parametrize(
-    "cause,letter",
+    "cause,letter,code",
     [
-        ("environment-parks", "C"),
-        ("animal-shelters", "D"),
-        ("homelessness-services", "L"),
-        ("food-insecurity", "K"),
+        ("environment-parks", "C", "C30"),
+        ("animal-shelters", "D", "D22"),
+        ("homelessness-services", "L", "L41"),
+        ("food-insecurity", "K", "K31"),
     ],
 )
-def test_each_ntee_letter_goes_to_its_cause(capsys, cause, letter):
+def test_each_ntee_letter_goes_to_its_cause(capsys, cause, letter, code):
     ein = "777777777"
     api = Api(
         [
-            hit(ein, "Some Org", ntee=f"{letter}20"),
+            hit(ein, "Some Org", ntee=code),
             hit("888888888", "Other", ntee="Z99"),
         ],
-        {ein: detail(ein, "Some Org", zipcode="90012", ntee=f"{letter}20")},
+        {ein: detail(ein, "Some Org", zipcode="90012", ntee=code)},
     )
     code, lines, _ = run(api, "--cause", cause, capsys=capsys)
     assert code == 0 and lines[-1] == "1 orgs"
@@ -280,11 +351,15 @@ def test_malformed_records_are_skipped_and_the_run_goes_on(capsys):
         {"ein": 999999991, "name": "Bad city", "city": 7, "ntee_code": "K31"},
         hit("999999992", "Server Error"),
         hit("999999993", "Garbage Body"),
+        hit("999999994", "Numbers For Text"),
         hit("861620575", "Los Angeles Food Bank"),
     ]
+    numbers = detail("999999994", "Numbers For Text")
+    numbers["organization"].update(ntee_code=31, city=7, state=["CA"], zipcode=90019)
     details = {
         "999999992": 500,
         "999999993": {"nope": 1},
+        "999999994": numbers,
         "861620575": ORG,
     }
     code, lines, err = run(Api(hits, details), *FOOD, capsys=capsys)
@@ -327,7 +402,8 @@ def test_the_page_cap_has_a_ceiling(capsys):
 def test_limit_stops_the_run_early(capsys):
     api, before = Api(), orgs.count
     _, lines, _ = run(api, *FOOD, "--limit", "1", capsys=capsys)
-    assert lines[-1] == "1 orgs" and api.lookups == ["861620575"]
+    assert lines[-1] == "1 orgs"
+    assert api.lookups == ["931989260", "861620575"]  # Sunland has no record here
     assert orgs.count == before + 1
 
 
@@ -373,3 +449,92 @@ def test_the_import_function_checks_what_it_is_given():
             "123456789", " ", "Los Angeles", "90012", "K31", "food-insecurity", *place
         )
     assert not orgs(where="ein = ?", where_args=["123456789"])
+
+
+# --- one org by EIN, rate limits ------------------------------------------------------------
+
+
+def run_ein(api, *argv, capsys):
+    client = httpx.Client(transport=httpx.MockTransport(api))
+    code = import_orgs.main(list(argv), client=client, sleep=lambda s: None)
+    out = capsys.readouterr()
+    return code, out.out.strip().splitlines(), out.err
+
+
+def test_ein_imports_one_org_under_the_same_rules(capsys):
+    api = Api()
+    code, lines, _ = run_ein(api, "--ein", "86-1620575", capsys=capsys)
+    assert code == 0 and lines[-1] == "1 orgs" and lines[0].startswith("created:")
+    assert api.lookups == ["861620575"] and api.searches == []
+    org = orgs(where="ein = ?", where_args=["861620575"])[0]
+    assert (org.intro, json.loads(org.causes)) == ("cold", ["food-insecurity"])
+    assert not org.verified_at
+
+
+def test_ein_dry_run_writes_nothing(capsys):
+    before = snapshot()
+    _, lines, _ = run_ein(Api(), "--ein", "861620575", "--dry-run", capsys=capsys)
+    assert lines[-1] == "1 orgs" and lines[0].startswith("would import:")
+    assert snapshot() == before
+
+
+@pytest.mark.parametrize(
+    "org,why",
+    [
+        (detail("123456780", "Society", ntee="K03"), "maps to no cause"),
+        (detail("123456780", "No Code", ntee=""), "maps to no cause"),
+        (
+            detail("123456780", "County", zipcode="90704"),
+            "not a City of Los Angeles ZIP",
+        ),
+    ],
+)
+def test_ein_applies_the_zip_and_ntee_rules(capsys, org, why):
+    code, lines, err = run_ein(
+        Api(details={"123456780": org}), "--ein", "123456780", capsys=capsys
+    )
+    assert lines[-1] == "0 orgs" and why in err and code == 0
+    assert not orgs(where="ein = ?", where_args=["123456780"])
+
+
+def test_ein_cause_overrides_the_ntee_mapping_but_not_the_zip(capsys):
+    society = detail("123456780", "Society", ntee="K03")
+    _, lines, _ = run_ein(
+        Api(details={"123456780": society}),
+        "--ein", "123456780", "--cause", "food-insecurity",
+        capsys=capsys,
+    )  # fmt: skip
+    assert lines[-1] == "1 orgs"
+    county = detail("123456781", "County", zipcode="90704")
+    _, lines, _ = run_ein(
+        Api(details={"123456781": county}),
+        "--ein", "123456781", "--cause", "food-insecurity",
+        capsys=capsys,
+    )  # fmt: skip
+    assert lines[-1] == "0 orgs"
+
+
+def test_ein_unknown_to_propublica_and_a_bad_ein(capsys):
+    _, lines, err = run_ein(Api(details={}), "--ein", "123456780", capsys=capsys)
+    assert lines[-1] == "0 orgs" and "no nonprofit with that EIN" in err
+    _, lines, err = run_ein(Api(), "--ein", "12", capsys=capsys)
+    assert lines[-1] == "0 orgs" and "nine digits" in err
+
+
+def test_city_and_state_are_required_without_an_ein():
+    with pytest.raises(SystemExit):
+        import_orgs.main(["--dry-run"])
+
+
+def test_a_429_stops_the_whole_run(capsys):
+    seen = []
+
+    def api(request):
+        seen.append(request.url.path)
+        return httpx.Response(429, headers={"Retry-After": "60"})
+
+    client = httpx.Client(transport=httpx.MockTransport(api))
+    code = import_orgs.main(ARGS, client=client, sleep=lambda s: None)
+    out = capsys.readouterr()
+    assert out.out.strip().splitlines()[-1] == "0 orgs" and code == 1
+    assert len(seen) == 1 and "slow down" in out.err

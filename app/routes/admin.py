@@ -43,6 +43,7 @@ from app.metrics import (
     label,
     pilot_metrics,
 )
+from app.org_import import import_ein
 
 ar = APIRouter()
 log = logging.getLogger("causematch")
@@ -408,10 +409,9 @@ def _sync_org_verify(uid, org_id, ein):
 def ClaimRow(c, error=None):
     org = c["org"]
     if org is None:
-        record = P(
-            f"No org here has EIN {c['ein']}. Import it (scripts/import_orgs.py) "
-            "or reject the request.",
-            cls="text-red-600",
+        record = Div(
+            P(f"No org here has EIN {c['ein']}.", cls="text-red-600"),
+            _post(f"/admin/claims/{c['id']}/import", "Import this EIN"),
         )
     else:
         record = P(
@@ -420,6 +420,7 @@ def ClaimRow(c, error=None):
             + (" - verified" if org["verified"] else " - not verified")
             + (" - DEACTIVATED" if org["deactivated"] else ""),
         )
+    members = ", ".join(f"{m['name']} ({m['role']})" for m in c["members"])
     return Div(
         P(f"{c['name']} <{c['email']}>", cls="font-semibold"),
         P(
@@ -428,18 +429,16 @@ def ClaimRow(c, error=None):
             cls=TextPresets.muted_sm,
         ),
         record,
-        P(f"Already claimed by {c['owner']}.", cls="font-semibold")
-        if c["owner"]
-        else None,
+        P(f"Already claimed by {members}.", cls="font-semibold") if members else None,
         Alert(error, cls=AlertT.error) if error else None,
         Div(
             Form(
                 LabelCheckboxX(
-                    f"Yes, add them too (already claimed by {c['owner']})",
+                    "Yes, add them too (the people above can already sign in)",
                     name="confirm",
                     value="1",
                 )
-                if c["owner"]
+                if members
                 else None,
                 PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
                 action=f"/admin/claims/{c['id']}/approve",
@@ -477,11 +476,11 @@ def admin_claims(req):
     return ClaimsPage(req.scope["uid"])
 
 
-def _email_link(uid, email):
+def _tell(send, *args):
     try:
-        notify.send_login_link(email, data.create_login_token(uid))
-    except Exception as e:  # noqa: BLE001  the approval stands; the claimant can ask for a link
-        log.warning("sending a claim sign-in link failed: %s", type(e).__name__)
+        send(*args)
+    except Exception as e:  # noqa: BLE001  the decision stands; a failed notice is not an error for the admin
+        log.warning("sending a claim notice failed: %s", type(e).__name__)
 
 
 @ar("/admin/claims/{claim_id}/approve", methods=["POST"])
@@ -495,19 +494,45 @@ async def admin_claim_approve(req, claim_id: int):
 def _sync_admin_claim_approve(req, form, claim_id: int):
     uid = req.scope["uid"]
     try:
-        who, email = data.approve_claim(uid, claim_id, form.get("confirm") == "1")
+        _, email, org_name = data.approve_claim(
+            uid, claim_id, form.get("confirm") == "1"
+        )
     except LookupError:
         return Redirect("/admin/claims")  # already decided
     except ValueError as e:
         return ClaimsPage(uid, claim_id, str(e))
-    _email_link(who, email)
+    _tell(notify.send_claim_approved, email, org_name)
     return Redirect("/admin/claims")
 
 
 @ar("/admin/claims/{claim_id}/reject", methods=["POST"])
-def admin_claim_reject(req, claim_id: int):
+async def admin_claim_reject(req, claim_id: int):
+    return await run_in_threadpool(_sync_admin_claim_reject, req, claim_id)
+
+
+def _sync_admin_claim_reject(req, claim_id: int):
     try:
-        data.reject_claim(req.scope["uid"], claim_id)
+        email = data.reject_claim(req.scope["uid"], claim_id)
     except LookupError:
-        pass
+        return Redirect("/admin/claims")
+    _tell(notify.send_claim_rejected, email)
+    return Redirect("/admin/claims")
+
+
+@ar("/admin/claims/{claim_id}/import", methods=["POST"])
+async def admin_claim_import(req, claim_id: int):
+    """Add the org a claim names from its ProPublica record, by the import's own rules."""
+    return await run_in_threadpool(_sync_admin_claim_import, req, claim_id)
+
+
+def _sync_admin_claim_import(req, claim_id: int):
+    uid = req.scope["uid"]
+    try:
+        ein = data.pending_claim_ein(uid, claim_id)
+    except LookupError:
+        return Redirect("/admin/claims")
+    try:
+        import_ein(ein)
+    except (ValueError, propublica.LookupFailed) as e:
+        return ClaimsPage(uid, claim_id, f"Not imported: {e}")
     return Redirect("/admin/claims")

@@ -13,7 +13,10 @@ USER_AGENT = "causematch/0.1 (open-source volunteer matching pilot, Los Angeles)
 
 
 class LookupFailed(Exception):
-    """ProPublica could not be asked, or answered nonsense. Worded for an admin."""
+    """ProPublica could not be asked, or answered nonsense. Worded for an admin.
+    status is the HTTP status when it answered with an error (429: slow down)."""
+
+    status = None
 
 
 def normalize_ein(raw):
@@ -24,6 +27,13 @@ def normalize_ein(raw):
 
 def _text(value):
     return value if isinstance(value, str) else ""
+
+
+def _failed(e):
+    err = LookupFailed(f"ProPublica did not answer ({type(e).__name__})")
+    if isinstance(e, httpx.HTTPStatusError):
+        err.status = e.response.status_code
+    return err
 
 
 def make_client():
@@ -62,13 +72,13 @@ def lookup(ein, client=None):
         return {
             "ein": ein,
             "name": name,
-            "city": org.get("city") or "",
-            "state": org.get("state") or "",
-            "zip": (org.get("zipcode") or "")[:5],
-            "ntee": org.get("ntee_code") or "",
+            "city": _text(org.get("city")),
+            "state": _text(org.get("state")),
+            "zip": _text(org.get("zipcode"))[:5],
+            "ntee": _text(org.get("ntee_code")),
         }
     except httpx.HTTPError as e:
-        raise LookupFailed(f"ProPublica did not answer ({type(e).__name__})") from e
+        raise _failed(e) from e
     except (ValueError, KeyError, TypeError) as e:
         raise LookupFailed("ProPublica sent a response we could not read") from e
     finally:
@@ -101,7 +111,7 @@ def search(q, state, ntee_id, page=0, client=None):
         if not isinstance(records, list) or not isinstance(pages, int):
             raise TypeError("not a search page")
     except httpx.HTTPError as e:
-        raise LookupFailed(f"ProPublica did not answer ({type(e).__name__})") from e
+        raise _failed(e) from e
     except (ValueError, KeyError, TypeError) as e:
         raise LookupFailed("ProPublica sent a response we could not read") from e
     finally:

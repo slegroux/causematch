@@ -1629,15 +1629,21 @@ def submit_claim(ein, org_name, name, email, phone=""):
     )
 
 
-def _active_owner(org_id):
-    """Display name of an org's owner who can still sign in, else None."""
-    rows = _db.db.q(
-        "SELECT p.display_name FROM org_member m JOIN profile p ON p.id = m.user_id "
-        "WHERE m.org_id = ? AND m.role = 'owner' AND p.deleted_at IS NULL "
-        "AND p.suspended_at IS NULL ORDER BY m.id LIMIT 1",
-        [org_id],
-    )
-    return (rows[0]["display_name"] or "an owner") if rows else None
+def _live_members(org_id):
+    """[{"name", "role"}] of an org's members who can still sign in, oldest first."""
+    return [
+        {"name": r["display_name"] or "(no name yet)", "role": r["role"]}
+        for r in _db.db.q(
+            "SELECT p.display_name, m.role FROM org_member m JOIN profile p "
+            "ON p.id = m.user_id WHERE m.org_id = ? AND p.deleted_at IS NULL "
+            "AND p.suspended_at IS NULL ORDER BY m.id",
+            [org_id],
+        )
+    ]
+
+
+def _members_text(members):
+    return ", ".join(f"{m['name']} ({m['role']})" for m in members)
 
 
 def _claim_org(ein):
@@ -1647,7 +1653,7 @@ def _claim_org(ein):
 
 def admin_claims(admin_uid):
     """Pending claims, oldest first, each beside the org its EIN names (None when no org
-    has that EIN) and who already owns it."""
+    has that EIN) and the people who can already sign in to it."""
     _admin(admin_uid)
     out = []
     for c in _db.claim_requests(where="status = 'pending'", order_by="id"):
@@ -1670,7 +1676,7 @@ def admin_claims(admin_uid):
                 }
                 if org
                 else None,
-                "owner": _active_owner(org.id) if org else None,
+                "members": _live_members(org.id) if org else [],
             }
         )
     return out
@@ -1689,12 +1695,14 @@ def _pending_claim(claim_id):
 
 def approve_claim(admin_uid, claim_id, confirm_claimed=False):
     """Admin approval: the only way a claimant gets membership. Creates or links the
-    coordinator, adds them to the org (owner when it has none, else coordinator), verifies
-    the org if it is not yet, and returns (profile id, email) for the sign-in link.
+    coordinator, adds them to the org (owner when it has no live owner, else coordinator),
+    verifies the org if it is not yet, and returns (profile id, email, org name) for the
+    approval email.
 
     LookupError for a claim that is not pending; ValueError when no org has the EIN, the org
-    is deactivated, the address is an admin's, or the org already has an owner and
-    confirm_claimed is false."""
+    is deactivated, the address is an admin's or a suspended coordinator's, or the org
+    already has someone who can sign in (an owner or a coordinator) and confirm_claimed is
+    false."""
     _admin(admin_uid)
     c = _pending_claim(claim_id)
     org = _claim_org(c.ein)
@@ -1702,15 +1710,24 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
         raise ValueError("no org has that EIN; import it or reject the request")
     if org.deactivated_at:
         raise ValueError("that org is deactivated")
-    owner = _active_owner(org.id)
-    if owner and not confirm_claimed:
-        raise ValueError(f"already claimed by {owner}: confirm to add another person")
+    members = _live_members(org.id)
+    if members and not confirm_claimed:
+        raise ValueError(
+            f"already claimed by {_members_text(members)}: confirm to add another person"
+        )
+    if _db.profiles(
+        where="role = 'coordinator' AND lower(email) = ? AND suspended_at IS NOT NULL "
+        "AND deleted_at IS NULL",
+        where_args=[c.email],
+    ):
+        raise ValueError("that address belongs to a suspended coordinator")
+    has_owner = any(m["role"] == "owner" for m in members)
     with _db.db.conn:
         existing = coordinator_by_email(c.email)
         uid = add_coordinator(
             c.email,
             org.id,
-            "coordinator" if owner else "owner",
+            "coordinator" if has_owner else "owner",
             name="" if existing else c.name,
             phone="" if existing else (c.phone or ""),
         )
@@ -1723,15 +1740,40 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
             decided_at=_now(),
             decided_by=admin_uid,
         )
-    return uid, c.email
+    return uid, c.email, org.name
 
 
 def reject_claim(admin_uid, claim_id):
-    """Record a rejection. LookupError for a claim that is not pending."""
+    """Record a rejection; the claimant's email, for the notice. LookupError for a claim
+    that is not pending."""
     _admin(admin_uid)
     c = _pending_claim(claim_id)
     _db.claim_requests.update(
         id=c.id, status="rejected", decided_at=_now(), decided_by=admin_uid
+    )
+    return c.email
+
+
+def pending_claim_ein(admin_uid, claim_id):
+    """The EIN a pending claim names, for the admin's "Import this EIN". LookupError when
+    the claim is not pending."""
+    _admin(admin_uid)
+    return _pending_claim(claim_id).ein
+
+
+CLAIM_KEEP_DAYS = 90
+
+
+def scrub_decided_claims(days=CLAIM_KEEP_DAYS):
+    """Blank the name, email and phone of claims decided more than `days` ago. How many."""
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+    return len(
+        _db.db.q(
+            "UPDATE claim_request SET name = NULL, email = NULL, phone = NULL "
+            "WHERE status != 'pending' AND decided_at < ? "
+            "AND (name IS NOT NULL OR email IS NOT NULL OR phone IS NOT NULL) RETURNING id",
+            [cutoff],
+        )
     )
 
 
@@ -1850,6 +1892,11 @@ def remove_coordinator(email):
     if not uid:
         raise LookupError(f"no coordinator {email}")
     with _db.db.conn:
+        _db.db.execute(
+            "UPDATE claim_request SET name = NULL, email = NULL, phone = NULL "
+            "WHERE lower(email) = ?",
+            [email.strip().lower()],
+        )
         _db.db.execute("DELETE FROM org_member WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
         _db.db.execute(

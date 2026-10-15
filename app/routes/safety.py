@@ -315,7 +315,9 @@ def privacy():
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
             "Nonprofits: a coordinator's email, name and optional phone, and the openings "
-            "they post.",
+            "they post. Someone who asks to manage a nonprofit gives the same, plus the "
+            "organization's EIN and name; we blank their name, email and phone 90 days "
+            "after we approve or reject the request.",
             "Reports and blocks: if you report someone or block them, we keep what you "
             "wrote and who it was about.",
             "Your browser keeps one cookie that signs you in. We use no advertising or "

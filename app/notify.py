@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import data
-from app.config import is_dev, public_base_url
+from app.config import contact_email, is_dev, public_base_url
 
 log = logging.getLogger("causematch")
 
@@ -154,6 +154,28 @@ def send_login_link(email, token):
         "Your Causematch sign-in link",
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
+    )
+
+
+def send_claim_approved(email, org_name):
+    """An admin approved a claim. No token: it would be stale by the time it is read."""
+    get_emailer().send(
+        email,
+        "Your Causematch request was approved",
+        f"Your request to manage {org_name} on Causematch was approved.\n\n"
+        f"Sign in any time at {public_base_url()}/org/login: enter this email address "
+        "and we'll send you a sign-in link.\n\n"
+        f"Questions? Write to {contact_email()}.",
+    )
+
+
+def send_claim_rejected(email):
+    """Neutral on purpose: no reason, and none of what the requester typed."""
+    get_emailer().send(
+        email,
+        "Your Causematch request",
+        "Your request to manage an organization on Causematch was not approved.\n\n"
+        f"If you think that is a mistake, write to {contact_email()}.",
     )
 
 

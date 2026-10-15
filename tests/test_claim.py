@@ -1,12 +1,16 @@
 """A coordinator claims their org: request, admin approval, magic link; coordinator claims org."""
 
+import json
 import re
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import httpx
 import pytest
 from conftest import coordinator_for, org_sign_in, sign_in
 from starlette.testclient import TestClient
 
-from app import data, notify
+from app import data, notify, propublica
 from app.db import claim_requests, org_members, orgs, profiles
 from main import app
 
@@ -109,11 +113,14 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     assert member.role == "owner"
 
     to, subject, body = notify.get_emailer().sent[-1]
-    assert to == "maria@foodbank.example" and "sign-in link" in subject
-    token = re.search(r"token=([\w-]+)", body).group(1)
+    assert to == "maria@foodbank.example" and "approved" in subject
+    assert body.startswith(
+        "Your request to manage Los Angeles Food Bank on Causematch was approved."
+    )
+    assert "https://causematch.test/org/login" in body
+    assert "token=" not in body and "ignore" not in body  # nothing to expire or ignore
     maria = TestClient(app)
-    r = maria.post("/org/login/verify", data={"token": token}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/org"
+    org_sign_in(maria, "maria@foodbank.example")  # asks for a link, as the email says
     home = maria.get("/org")
     assert home.status_code == 200 and "Los Angeles Food Bank" in home.text
     assert profiles[member.user_id].display_name == "Maria Lopez"
@@ -143,10 +150,14 @@ def test_a_rejection_is_recorded_and_grants_nothing(admin):
     assert not org_members(where="org_id = ?", where_args=[org.id])
     assert data.coordinator_by_email(c.email) is None
     assert not orgs[org.id].verified_at
-    assert len(notify.get_emailer().sent) == sent
+    # one short, neutral notice: no reason, none of what they typed
+    assert len(notify.get_emailer().sent) == sent + 1
+    to, _, body = notify.get_emailer().sent[-1]
+    assert to == c.email and "was not approved" in body
+    assert "Los Angeles Food Bank" not in body and "Maria" not in body
     # asking for a link as that address sends nothing
     TestClient(app).post("/org/login/send", data={"email": c.email})
-    assert len(notify.get_emailer().sent) == sent
+    assert len(notify.get_emailer().sent) == sent + 1
     # a decided request cannot be approved afterwards
     approve(admin, c.id)
     assert the_claim().status == "rejected" and not data.coordinator_by_email(c.email)
@@ -182,9 +193,9 @@ def test_an_org_with_an_owner_needs_the_admins_confirmation(admin):
     claim()
     cid = the_claim().id
     page = admin.get("/admin/claims").text
-    assert "Already claimed by Olive Owner" in page
+    assert "Already claimed by Olive Owner (owner)" in page
     r = approve(admin, cid)  # no confirmation
-    assert r.status_code == 200 and "already claimed by Olive Owner" in r.text
+    assert r.status_code == 200 and "already claimed by Olive Owner (owner)" in r.text
     assert the_claim().status == "pending"
     assert len(org_members(where="org_id = ?", where_args=[org.id])) == 1
     assert not data.coordinator_by_email("maria@foodbank.example")
@@ -259,7 +270,7 @@ def test_a_failing_email_does_not_undo_the_approval(admin, monkeypatch):
     def boom(*a):
         raise RuntimeError("mail down")
 
-    monkeypatch.setattr(notify, "send_login_link", boom)
+    monkeypatch.setattr(notify, "send_claim_approved", boom)
     r = approve(admin, the_claim().id)
     assert r.status_code == 303 and the_claim().status == "approved"
     # the claimant can still ask for a link themselves
@@ -414,3 +425,216 @@ def test_no_inline_event_handlers_on_the_claim_pages(admin):
         html = client.get(path).text
         assert not re.search(r"\son[a-z]+\s*=", html), path
         assert "javascript:" not in html, path
+
+
+# --- review fixes -----------------------------------------------------------------------------
+
+
+def test_an_org_run_by_coordinators_only_still_needs_the_confirmation(admin):
+    """B1: scripts/add_coordinator.py defaults to the coordinator role."""
+    org = imported()
+    data.add_coordinator("rita@example.org", org.id, name="Rita Run")  # coordinator
+    claim(email="mallory@example.org")
+    cid = the_claim().id
+    assert (
+        "Already claimed by Rita Run (coordinator)" in admin.get("/admin/claims").text
+    )
+    r = approve(admin, cid)
+    assert (
+        r.status_code == 200 and "already claimed by Rita Run (coordinator)" in r.text
+    )
+    assert the_claim().status == "pending" and not data.coordinator_by_email(
+        "mallory@example.org"
+    )
+    assert approve(admin, cid, confirm="1").status_code == 303
+    roles = {
+        profiles[m.user_id].email: m.role
+        for m in org_members(where="org_id = ?", where_args=[org.id])
+    }
+    # nobody owned it, so the approved claimant is its owner; Rita is not demoted
+    assert roles == {"rita@example.org": "coordinator", "mallory@example.org": "owner"}
+
+
+def test_the_claim_row_lists_everyone_who_can_sign_in(admin):
+    org = imported()
+    data.add_coordinator("a@example.org", org.id, "owner", name="Ann Owner")
+    data.add_coordinator("b@example.org", org.id, name="Bo Coord")
+    gone = data.add_coordinator("c@example.org", org.id, name="Cy Gone")
+    profiles.update(id=gone, deleted_at="2026-01-01T00:00:00+00:00")
+    claim()
+    page = admin.get("/admin/claims").text
+    assert "Ann Owner (owner), Bo Coord (coordinator)" in page and "Cy Gone" not in page
+
+
+def test_a_suspended_coordinators_address_is_refused(admin):
+    imported()
+    uid, email = coordinator_for(0, "sus@example.org")
+    profiles.update(id=uid, suspended_at="2026-01-01T00:00:00+00:00")
+    claim(email=email)
+    r = approve(admin, the_claim().id)
+    assert r.status_code == 200 and "suspended coordinator" in r.text
+    assert the_claim().status == "pending"
+
+
+# S2: import the EIN a claim names
+
+
+def serve_org(request):
+    ein = request.url.path.rsplit("/", 1)[1].removesuffix(".json")
+    if ein == EIN:
+        return httpx.Response(200, json=ORG_FIXTURE)
+    return httpx.Response(404, json={"error": "Organization not found"})
+
+
+ORG_FIXTURE = json.loads(
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "propublica"
+        / "organization_861620575.json"
+    ).read_text()
+)
+
+
+def propublica_says(monkeypatch, handler):
+    monkeypatch.setattr(
+        propublica,
+        "make_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler), timeout=10),
+    )
+
+
+def test_a_claim_for_an_org_not_yet_here_can_import_it_then_be_approved(
+    admin, monkeypatch
+):
+    propublica_says(monkeypatch, serve_org)
+    claim()
+    cid = the_claim().id
+    page = admin.get("/admin/claims").text
+    assert (
+        f"/admin/claims/{cid}/import" in page
+        and f"/admin/claims/{cid}/approve" not in page
+    )
+    r = admin.post(f"/admin/claims/{cid}/import", follow_redirects=False)
+    assert r.status_code == 303
+    org = orgs(where="ein = ?", where_args=[EIN])[0]
+    assert (org.name, org.zip, org.intro) == ("Los Angeles Food Bank", "90019", "cold")
+    assert not org.verified_at and the_claim().status == "pending"
+    page = admin.get("/admin/claims").text
+    assert (
+        f"/admin/claims/{cid}/import" not in page
+        and f"/admin/claims/{cid}/approve" in page
+    )
+    assert approve(admin, cid).status_code == 303 and orgs[org.id].verified_at
+
+
+@pytest.mark.parametrize(
+    "handler,message",
+    [
+        (lambda r: httpx.Response(404, json={}), "no nonprofit with that EIN"),
+        (lambda r: httpx.Response(500), "did not answer"),
+        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90704", "ntee_code": "K31"}}), "not a City of Los Angeles ZIP"),
+        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90019", "ntee_code": "K03"}}), "maps to no cause"),
+    ],
+)  # fmt: skip
+def test_an_import_that_cannot_happen_says_why_and_changes_nothing(
+    admin, monkeypatch, handler, message
+):
+    propublica_says(monkeypatch, handler)
+    claim()
+    before = orgs.count
+    r = admin.post(f"/admin/claims/{the_claim().id}/import", follow_redirects=False)
+    assert r.status_code == 200 and "Not imported" in r.text and message in r.text
+    assert orgs.count == before and the_claim().status == "pending"
+
+
+def test_only_an_admin_can_import_and_nothing_is_fetched(monkeypatch):
+    def boom(request):
+        raise AssertionError("no request expected")
+
+    propublica_says(monkeypatch, boom)
+    claim()
+    for who, caller in outsiders().items():
+        r = caller.post(
+            f"/admin/claims/{the_claim().id}/import", follow_redirects=False
+        )
+        assert r.status_code in (302, 303, 403), who
+        assert r.headers.get("location") != "/admin/claims"
+    assert not orgs(where="ein = ?", where_args=[EIN])
+
+
+# S6: how long a claim keeps its contact details
+
+
+def decided(days_ago, status="approved"):
+    when = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat(timespec="seconds")
+    claim_requests.update(id=the_claim().id, status=status, decided_at=when)
+
+
+def test_decided_claims_lose_their_contact_details_after_90_days():
+    imported()
+    claim()
+    cid = the_claim().id
+    assert data.scrub_decided_claims() == 0  # pending: kept
+    decided(89)
+    assert data.scrub_decided_claims() == 0 and claim_requests[cid].email
+    decided(91, "rejected")
+    assert data.scrub_decided_claims() == 1
+    row = claim_requests[cid]
+    assert (row.name, row.email, row.phone) == (None, None, None)
+    assert (row.ein, row.status) == (
+        EIN,
+        "rejected",
+    )  # the record of the decision stays
+    assert data.scrub_decided_claims() == 0
+
+
+def test_the_hourly_sweep_scrubs_old_claims(monkeypatch):
+    monkeypatch.setenv("TASKS_TOKEN", "t")
+    imported()
+    claim()
+    decided(120)
+    r = TestClient(app).post("/tasks/reminders", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200 and claim_requests()[0].email is None
+
+
+def test_removing_a_coordinator_scrubs_their_claims(admin):
+    imported()
+    _, email = coordinator_for(0, "maria@foodbank.example")
+    claim()  # pending, from the same address
+    data.remove_coordinator(email)
+    row = the_claim()
+    assert (row.name, row.email, row.phone) == (None, None, None)
+    claim(email="other@example.org")
+    assert claim_requests.count == 2 and any(
+        c.email == "other@example.org" for c in claim_requests()
+    )
+
+
+def test_the_privacy_page_says_what_a_claim_keeps():
+    text = TestClient(app).get("/privacy").text.replace("&#x27;", "'")
+    assert "asks to manage a nonprofit" in text and "90 days" in text
+
+
+# S7: the data layer checks the caller itself
+
+
+def test_the_data_layer_refuses_a_caller_who_is_not_an_admin():
+    imported()
+    claim()
+    cid = the_claim().id
+    coord_uid, _ = coordinator_for(0)
+    vol = data.get_or_create_volunteer("+13105550177")
+    members = org_members.count
+    sent = len(notify.get_emailer().sent)
+    for uid in (coord_uid, vol, 10**6):
+        for fn, args in (
+            (data.admin_claims, ()),
+            (data.approve_claim, (cid, True)),
+            (data.reject_claim, (cid,)),
+            (data.pending_claim_ein, (cid,)),
+        ):
+            with pytest.raises(PermissionError):
+                fn(uid, *args)
+    assert the_claim().status == "pending" and org_members.count == members
+    assert len(notify.get_emailer().sent) == sent
