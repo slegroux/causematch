@@ -39,6 +39,9 @@ class Org:
     intro: str  # warm|cold
     created_at: str
     deactivated_at: str  # UTC; an admin closed this org after a report
+    city: str  # ProPublica record, set by scripts/import_orgs.py
+    zip: str  # five digits
+    ntee_code: str
 
 
 class Opening:
@@ -105,6 +108,20 @@ class LoginToken:
     user_id: int
     expires_at: str
     used_at: str
+
+
+class ClaimRequest:
+    id: int
+    ein: str  # nine digits as typed; may match no org
+    org_name: str  # as typed
+    name: str
+    email: str
+    phone: str  # E.164 or empty
+    status: str  # pending|approved|rejected
+    org_id: int  # set on approval
+    created_at: str
+    decided_at: str
+    decided_by: int
 
 
 class Swipe:
@@ -206,6 +223,7 @@ notifications = db.create(Notification, pk="id", transform=True)
 notifications.create_index(["key"], unique=True, if_not_exists=True)
 reports = db.create(Report, pk="id", transform=True)
 blocks = db.create(Block, pk="id", transform=True)
+claim_requests = db.create(ClaimRequest, pk="id", transform=True)
 db.execute(
     "CREATE UNIQUE INDEX IF NOT EXISTS block_once ON block"
     "(blocker_id, coalesce(blocked_user_id, 0), coalesce(blocked_org_id, 0))"

@@ -1499,6 +1499,176 @@ def verify_org(org_id, ein):
         raise ValueError("another org already has that EIN") from None
 
 
+def upsert_imported_org(ein, name, city, zip_code, ntee_code, cause, lat, lon):
+    """scripts/import_orgs.py's one write: "created" or "updated", keyed by EIN.
+
+    A new org is unverified and unclaimed, with intro "cold" and its one cause. An org that
+    already exists gets only its ProPublica record refreshed (name, city, ZIP, NTEE code,
+    place): its cause, intro, about and verification stay as an admin left them.
+    ValueError for a malformed EIN or an unknown cause.
+    """
+    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
+        raise ValueError("an EIN is nine digits")
+    if not (isinstance(name, str) and name.strip()):
+        raise ValueError("a name")
+    if not _db.causes(where="slug = ?", where_args=[cause]):
+        raise ValueError(f"no cause {cause!r}")
+    record = {
+        "name": name.strip(),
+        "city": city,
+        "zip": zip_code,
+        "ntee_code": ntee_code,
+        "lat": lat,
+        "lon": lon,
+    }
+    found = _db.orgs(where="ein = ?", where_args=[ein])
+    if found:
+        _db.orgs.update(id=found[0].id, **record)
+        return "updated"
+    _db.orgs.insert(
+        _db.Org(
+            ein=ein,
+            causes=json.dumps([cause]),
+            intro="cold",
+            created_at=_now(),
+            **record,
+        )
+    )
+    return "created"
+
+
+CLAIM_LIMITS = {"org_name": 200, "name": 100, "email": 254}
+
+
+def submit_claim(ein, org_name, name, email, phone=""):
+    """A pending ClaimRequest from the public claim page. Nothing is checked against the orgs
+    and nothing is reported back, so the page can't reveal which EINs exist or are claimed.
+    A repeat of a pending request (same EIN and email) is dropped. ValueError for a
+    malformed EIN or an over-long or empty field (the route has checked them already)."""
+    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
+        raise ValueError("an EIN is nine digits")
+    fields = {"org_name": org_name, "name": name, "email": email.strip().lower()}
+    for key, limit in CLAIM_LIMITS.items():
+        if not 0 < len(fields[key]) <= limit:
+            raise ValueError(key)
+    if _db.claim_requests(
+        where="status = 'pending' AND ein = ? AND email = ?",
+        where_args=[ein, fields["email"]],
+    ):
+        return
+    _db.claim_requests.insert(
+        _db.ClaimRequest(
+            ein=ein, phone=phone, status="pending", created_at=_now(), **fields
+        )
+    )
+
+
+def _active_owner(org_id):
+    """Display name of an org's owner who can still sign in, else None."""
+    rows = _db.db.q(
+        "SELECT p.display_name FROM org_member m JOIN profile p ON p.id = m.user_id "
+        "WHERE m.org_id = ? AND m.role = 'owner' AND p.deleted_at IS NULL "
+        "AND p.suspended_at IS NULL ORDER BY m.id LIMIT 1",
+        [org_id],
+    )
+    return (rows[0]["display_name"] or "an owner") if rows else None
+
+
+def _claim_org(ein):
+    found = _db.orgs(where="ein = ?", where_args=[ein])
+    return found[0] if found else None
+
+
+def admin_claims(admin_uid):
+    """Pending claims, oldest first, each beside the org its EIN names (None when no org
+    has that EIN) and who already owns it."""
+    _admin(admin_uid)
+    out = []
+    for c in _db.claim_requests(where="status = 'pending'", order_by="id"):
+        org = _claim_org(c.ein)
+        out.append(
+            {
+                "id": c.id,
+                "ein": c.ein,
+                "org_name": c.org_name,
+                "name": c.name,
+                "email": c.email,
+                "phone": c.phone or "",
+                "created_at": c.created_at,
+                "org": {
+                    "name": org.name,
+                    "city": org.city or "",
+                    "ntee": org.ntee_code or "",
+                    "verified": bool(org.verified_at),
+                    "deactivated": bool(org.deactivated_at),
+                }
+                if org
+                else None,
+                "owner": _active_owner(org.id) if org else None,
+            }
+        )
+    return out
+
+
+def _pending_claim(claim_id):
+    found = (
+        _db.claim_requests(where="id = ? AND status = 'pending'", where_args=[claim_id])
+        if _is_id(claim_id)
+        else []
+    )
+    if not found:
+        raise LookupError(f"no pending claim {claim_id}")
+    return found[0]
+
+
+def approve_claim(admin_uid, claim_id, confirm_claimed=False):
+    """Admin approval: the only way a claimant gets membership. Creates or links the
+    coordinator, adds them to the org (owner when it has none, else coordinator), verifies
+    the org if it is not yet, and returns (profile id, email) for the sign-in link.
+
+    LookupError for a claim that is not pending; ValueError when no org has the EIN, the org
+    is deactivated, the address is an admin's, or the org already has an owner and
+    confirm_claimed is false."""
+    _admin(admin_uid)
+    c = _pending_claim(claim_id)
+    org = _claim_org(c.ein)
+    if org is None:
+        raise ValueError("no org has that EIN; import it or reject the request")
+    if org.deactivated_at:
+        raise ValueError("that org is deactivated")
+    owner = _active_owner(org.id)
+    if owner and not confirm_claimed:
+        raise ValueError(f"already claimed by {owner}: confirm to add another person")
+    with _db.db.conn:
+        existing = coordinator_by_email(c.email)
+        uid = add_coordinator(
+            c.email,
+            org.id,
+            "coordinator" if owner else "owner",
+            name="" if existing else c.name,
+            phone="" if existing else (c.phone or ""),
+        )
+        if not org.verified_at:
+            _db.orgs.update(id=org.id, verified_at=_now())
+        _db.claim_requests.update(
+            id=c.id,
+            status="approved",
+            org_id=org.id,
+            decided_at=_now(),
+            decided_by=admin_uid,
+        )
+    return uid, c.email
+
+
+def reject_claim(admin_uid, claim_id):
+    """Record a rejection. LookupError for a claim that is not pending."""
+    _admin(admin_uid)
+    c = _pending_claim(claim_id)
+    _db.claim_requests.update(
+        id=c.id, status="rejected", decided_at=_now(), decided_by=admin_uid
+    )
+
+
 PLACEHOLDER = "[message removed]"
 
 

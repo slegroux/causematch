@@ -23,6 +23,7 @@ from app.auth import (
 )
 from app.db import (
     blocks,
+    claim_requests,
     matches,
     messages,
     openings,
@@ -53,6 +54,8 @@ ROUTES = {
     ("POST", "/org/login/send"): ("public", None),
     ("GET", "/org/login/verify"): ("public", None),
     ("POST", "/org/login/verify"): ("public", None),
+    ("GET", "/org/claim"): ("public", None),
+    ("POST", "/org/claim"): ("public", None),
     ("GET", "/onboarding"): ("volunteer", "own-record"),
     ("POST", "/onboarding"): ("volunteer", "own-record"),
     ("GET", "/"): ("volunteer", None),
@@ -97,6 +100,9 @@ ROUTES = {
     ("POST", "/admin/reports/{report_id}/deactivate"): ("admin", "own-record"),
     ("GET", "/admin/blocks"): ("admin", None),
     ("POST", "/admin/blocks/{block_id}/unblock"): ("admin", "own-record"),
+    ("GET", "/admin/claims"): ("admin", None),
+    ("POST", "/admin/claims/{claim_id}/approve"): ("admin", "own-record"),
+    ("POST", "/admin/claims/{claim_id}/reject"): ("admin", "own-record"),
     ("GET", "/admin/orgs"): ("admin", None),
     ("GET", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
@@ -150,6 +156,7 @@ def concrete(path, match_id, opening_id):
         shift_id=match_id,
         report_id=match_id,
         block_id=match_id,
+        claim_id=match_id,
         org_id=match_id,
     )
 
@@ -639,6 +646,35 @@ def check_admin_org(method, tail):
     return check
 
 
+def check_admin_claim(action):
+    def check(w):
+        data.upsert_imported_org(
+            "861620575",
+            "Food Bank",
+            "Los Angeles",
+            "90019",
+            "K31",
+            "food-insecurity",
+            34.0,
+            -118.3,
+        )
+        data.submit_claim("861620575", "Food Bank", "Maria", "maria@example.org")
+        cid = claim_requests()[0].id
+        members = org_members.count
+        for who in (w.b, w.org1, w.anon):
+            for i in (cid, *GONE):
+                r = who.post(f"/admin/claims/{i}/{action}", follow_redirects=False)
+                assert r.status_code == 403 or (
+                    r.status_code == 303 and r.headers["location"] != "/admin/claims"
+                ), (r.status_code, r.headers.get("location"))
+                no_secrets(r)
+        assert claim_requests[cid].status == "pending" and org_members.count == members
+        r = w.admin.post(f"/admin/claims/{cid}/{action}", follow_redirects=False)
+        assert r.status_code == 303 and claim_requests[cid].status != "pending"
+
+    return check
+
+
 # route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
     ("GET", "/matches/{match_id}/withdraw"): path_id_check(
@@ -706,6 +742,8 @@ OWNERSHIP = {
         "deactivate"
     ),
     ("POST", "/admin/blocks/{block_id}/unblock"): check_admin_unblock,
+    ("POST", "/admin/claims/{claim_id}/approve"): check_admin_claim("approve"),
+    ("POST", "/admin/claims/{claim_id}/reject"): check_admin_claim("reject"),
     ("GET", "/admin/orgs/{org_id}/lookup"): check_admin_org("GET", "lookup"),
     ("POST", "/admin/orgs/{org_id}/verify"): check_admin_org("POST", "verify"),
 }

@@ -29,7 +29,12 @@ from main import app
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = json.loads(
-    (Path(__file__).parent / "fixtures" / "propublica_530196605.json").read_text()
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "propublica"
+        / "organization_861620575.json"
+    ).read_text()
 )
 TITLE = "Sort and pack pantry boxes"  # org 0's opening
 
@@ -443,26 +448,28 @@ def client_for(handler):
 
 
 def serve_fixture(request):
-    assert str(request.url) == propublica.URL.format(ein="530196605")
+    assert str(request.url) == propublica.URL.format(ein="861620575")
     return httpx.Response(200, json=FIXTURE)
 
 
 def test_lookup_reads_the_recorded_response():
     c = httpx.Client(transport=httpx.MockTransport(serve_fixture))
-    assert propublica.lookup("53-0196605", c) == {
-        "ein": "530196605",
-        "name": "American National Red Cross",
-        "city": "Washington",
-        "state": "DC",
+    assert propublica.lookup("86-1620575", c) == {
+        "ein": "861620575",
+        "name": "Los Angeles Food Bank",
+        "city": "Los Angeles",
+        "state": "CA",
+        "zip": "90019",
+        "ntee": "K31",
     }
 
 
-@pytest.mark.parametrize("raw", ["530196605", "53-0196605", " 53 0196605 "])
+@pytest.mark.parametrize("raw", ["861620575", "86-1620575", " 86 1620575 "])
 def test_eins_normalize_to_nine_digits(raw):
-    assert propublica.normalize_ein(raw) == "530196605"
+    assert propublica.normalize_ein(raw) == "861620575"
 
 
-@pytest.mark.parametrize("raw", ["", "5301966", "53019660512", "53-019660x", None])
+@pytest.mark.parametrize("raw", ["", "5301966", "86162057512", "53-019660x", None])
 def test_a_malformed_ein_never_reaches_the_network(raw):
     def boom(request):
         raise AssertionError("no request expected")
@@ -492,23 +499,23 @@ def test_an_unknown_ein_is_none():
 def test_a_timeout_or_a_malformed_answer_is_a_lookup_failure(handler):
     c = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(propublica.LookupFailed):
-        propublica.lookup("530196605", c)
+        propublica.lookup("861620575", c)
 
 
 def test_admin_looks_up_then_approves(w, monkeypatch):
     monkeypatch.setattr(propublica, "make_client", client_for(serve_fixture))
     orgs.update(id=w.org, verified_at=None)
     assert "Not verified" in w.admin.get("/admin/orgs").text
-    page = w.admin.get(f"/admin/orgs/{w.org}/lookup", params={"ein": "53-0196605"})
-    assert "American National Red Cross, Washington, DC" in page.text
+    page = w.admin.get(f"/admin/orgs/{w.org}/lookup", params={"ein": "86-1620575"})
+    assert "Los Angeles Food Bank, Los Angeles, CA" in page.text
     assert not orgs[w.org].verified_at  # looking up approves nothing
     r = w.admin.post(
         f"/admin/orgs/{w.org}/verify",
-        data={"ein": "53-0196605"},
+        data={"ein": "86-1620575"},
         follow_redirects=False,
     )
     assert r.status_code == 303
-    assert (orgs[w.org].ein, bool(orgs[w.org].verified_at)) == ("530196605", True)
+    assert (orgs[w.org].ein, bool(orgs[w.org].verified_at)) == ("861620575", True)
 
 
 def test_the_admin_page_words_a_404_a_timeout_and_a_bad_ein(w, monkeypatch):
@@ -529,9 +536,9 @@ def test_the_admin_page_words_a_404_a_timeout_and_a_bad_ein(w, monkeypatch):
 
 
 def test_an_ein_belongs_to_one_org(w):
-    data.verify_org(orgs()[0].id, "530196605")
+    data.verify_org(orgs()[0].id, "861620575")
     with pytest.raises(ValueError):
-        data.verify_org(orgs()[1].id, "530196605")
+        data.verify_org(orgs()[1].id, "861620575")
     with pytest.raises(ValueError):
         data.verify_org(orgs()[1].id, "5301966")
     with pytest.raises(LookupError):
@@ -546,7 +553,7 @@ def test_openings_from_unverified_orgs_are_hidden(w):
     with pytest.raises(LookupError):
         data.swipe(w.vol.uid, w.opening.id, True)
     assert deck_ids(w.vol)  # verified orgs still show
-    data.verify_org(w.org, "530196605")
+    data.verify_org(w.org, "861620575")
     assert w.opening.id in deck_ids(w.vol)
 
 

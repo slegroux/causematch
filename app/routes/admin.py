@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 from datetime import UTC, datetime
 
 from fasthtml.common import (
@@ -24,10 +25,10 @@ from fasthtml.common import (
     Tr,
 )
 from fasthtml.common import Button as PlainButton
-from monsterui.all import AT, Alert, AlertT, Container, TextPresets
+from monsterui.all import AT, Alert, AlertT, Container, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
-from app import data, propublica
+from app import data, notify, propublica
 from app.forms import bad_request, query, str_form
 from app.metrics import (
     BREAKDOWNS,
@@ -44,6 +45,7 @@ from app.metrics import (
 )
 
 ar = APIRouter()
+log = logging.getLogger("causematch")
 NO_STORE = {"Cache-Control": "no-store"}
 NO_STORE_HEADER = HttpHeader("Cache-Control", "no-store")
 
@@ -59,6 +61,7 @@ def AdminPage(title, *content):
             A("Metrics", href="/admin/metrics", cls=AT.muted),
             A("Reports", href="/admin/reports", cls=AT.muted),
             A("Orgs", href="/admin/orgs", cls=AT.muted),
+            A("Claims", href="/admin/claims", cls=AT.muted),
             A("Blocks", href="/admin/blocks", cls=AT.muted),
             A("Download CSV", href="/admin/metrics.csv", cls=AT.muted),
             Form(
@@ -133,6 +136,7 @@ def admin_home():
         P(A("Pilot metrics", href="/admin/metrics"), cls="py-2"),
         P(A("Reports", href="/admin/reports"), cls="py-2"),
         P(A("Organizations", href="/admin/orgs"), cls="py-2"),
+        P(A("Claims", href="/admin/claims"), cls="py-2"),
     )
 
 
@@ -392,3 +396,107 @@ async def admin_org_verify(req, org_id: int):
     except ValueError as e:
         return OrgsPage(data.admin_orgs(), org_id, error=str(e))
     return Redirect("/admin/orgs")
+
+
+def ClaimRow(c, error=None):
+    org = c["org"]
+    if org is None:
+        record = P(
+            f"No org here has EIN {c['ein']}. Import it (scripts/import_orgs.py) "
+            "or reject the request.",
+            cls="text-red-600",
+        )
+    else:
+        record = P(
+            f"ProPublica record: {org['name']}, {org['city'] or 'no city'}, "
+            f"NTEE {org['ntee'] or 'none'}"
+            + (" - verified" if org["verified"] else " - not verified")
+            + (" - DEACTIVATED" if org["deactivated"] else ""),
+        )
+    return Div(
+        P(f"{c['name']} <{c['email']}>", cls="font-semibold"),
+        P(
+            f"{c['phone'] or 'no phone'} - asked {c['created_at']} - "
+            f"typed: {c['org_name']}, EIN {c['ein']}",
+            cls=TextPresets.muted_sm,
+        ),
+        record,
+        P(f"Already claimed by {c['owner']}.", cls="font-semibold")
+        if c["owner"]
+        else None,
+        Alert(error, cls=AlertT.error) if error else None,
+        Div(
+            Form(
+                LabelCheckboxX(
+                    f"Yes, add them too (already claimed by {c['owner']})",
+                    name="confirm",
+                    value="1",
+                )
+                if c["owner"]
+                else None,
+                PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
+                action=f"/admin/claims/{c['id']}/approve",
+                method="post",
+                cls="flex gap-3 items-center",
+            )
+            if org and not org["deactivated"]
+            else None,
+            _post(f"/admin/claims/{c['id']}/reject", "Reject"),
+            cls="flex gap-3 pt-2",
+        ),
+        cls="border rounded-lg p-3",
+    )
+
+
+def ClaimsPage(uid, only=None, error=None):
+    rows = data.admin_claims(uid)
+    return (
+        AdminPage(
+            "Claim requests",
+            Div(
+                *(
+                    [ClaimRow(c, error if c["id"] == only else None) for c in rows]
+                    or [P("No pending requests.")]
+                ),
+                cls="flex flex-col gap-3 max-w-2xl",
+            ),
+        ),
+        NO_STORE_HEADER,
+    )
+
+
+@ar("/admin/claims", methods=["GET"])
+def admin_claims(req):
+    return ClaimsPage(req.scope["uid"])
+
+
+def _email_link(uid, email):
+    try:
+        notify.send_login_link(email, data.create_login_token(uid))
+    except Exception as e:  # noqa: BLE001  the approval stands; the claimant can ask for a link
+        log.warning("sending a claim sign-in link failed: %s", type(e).__name__)
+
+
+@ar("/admin/claims/{claim_id}/approve", methods=["POST"])
+async def admin_claim_approve(req, claim_id: int):
+    uid = req.scope["uid"]
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    try:
+        who, email = data.approve_claim(uid, claim_id, form.get("confirm") == "1")
+    except LookupError:
+        return Redirect("/admin/claims")  # already decided
+    except ValueError as e:
+        return ClaimsPage(uid, claim_id, str(e))
+    await run_in_threadpool(_email_link, who, email)
+    return Redirect("/admin/claims")
+
+
+@ar("/admin/claims/{claim_id}/reject", methods=["POST"])
+def admin_claim_reject(req, claim_id: int):
+    try:
+        data.reject_claim(req.scope["uid"], claim_id)
+    except LookupError:
+        pass
+    return Redirect("/admin/claims")

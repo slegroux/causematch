@@ -17,6 +17,7 @@ from app.config import (
 from app.routes.admin import ar as admin_router
 from app.routes.auth import ar as auth_router
 from app.routes.chat import ar as chat_router
+from app.routes.claim import ar as claim_router
 from app.routes.deck import ar as deck_router
 from app.routes.matches import ar as matches_router
 from app.routes.onboarding import ar as onboarding_router
@@ -68,6 +69,7 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"))
 for router in (
     auth_router,
     org_auth_router,
+    claim_router,
     admin_router,
     onboarding_router,
     deck_router,

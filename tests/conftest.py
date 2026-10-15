@@ -28,6 +28,7 @@ from app.auth import normalize_phone
 from app.db import (
     blocks,
     causes,
+    claim_requests,
     ensure_causes,
     login_tokens,
     matches,
@@ -63,6 +64,7 @@ def fresh_db():
         notifications,
         reports,
         blocks,
+        claim_requests,
     ):
         table.delete_where()
     chat_routes._sockets.clear()  # no socket outlives its test
