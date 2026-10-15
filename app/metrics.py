@@ -3,6 +3,7 @@
 Every figure is an aggregate; no row here carries a name, phone or email.
 """
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from statistics import median
 from zoneinfo import ZoneInfo
@@ -64,7 +65,10 @@ DEFINITIONS = {
         "Accepted matches withdrawn with no shift left: counted as not showing up in the "
         "first-shift rate."
     ),
-    "unmarked_past_shifts": "Any shift that has started and is still unmarked.",
+    "unmarked_past_shifts": (
+        "Every shift that has started and is still unmarked: later shifts and shifts on "
+        "withdrawn matches too, not only first shifts."
+    ),
     "shift2_rate": (
         "Volunteers with 2+ completed shifts (any opening) / volunteers whose first "
         f"completed shift was {REPEAT_WINDOW_DAYS}+ days ago. Only completed shifts "
@@ -72,7 +76,7 @@ DEFINITIONS = {
         "by their first completed shift."
     ),
     "shift2_same_org_rate": (
-        "As above, but the 2+ completed shifts must be at the org of the first one."
+        "As above, but the 2+ completed shifts must be at one org (any two openings of it)."
     ),
     "eligible_for_repeat": (
         f"Volunteers whose first completed shift was {REPEAT_WINDOW_DAYS}+ days ago / "
@@ -118,7 +122,7 @@ def _volunteers(shifts, now):
             "intro": first["intro"],
             "heard_from": first["heard_from"],
             "completed": len(ss),
-            "same_org": sum(1 for s in ss if s["org_id"] == first["org_id"]),
+            "same_org": max(Counter(s["org_id"] for s in ss).values()),
             "eligible": first["starts_at"] <= cutoff,
         }
         for vid, ss in done.items()

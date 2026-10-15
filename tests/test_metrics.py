@@ -197,6 +197,25 @@ def test_recent_first_shifts_are_not_judged_for_repeat():
     assert (o["shift2_rate"]["n"], o["shift2_rate"]["d"]) == (1, 1)
 
 
+def test_same_org_repeat_groups_by_org_not_opening():
+    def done(org, day):
+        return {"org_id": org, "starts_at": f"2026-10-{day}T09:00"}
+
+    two_orgs = made([{"status": "accepted"}], [done(1, "05"), done(2, "06")])["overall"]
+    assert (two_orgs["shift2_rate"]["n"], two_orgs["shift2_rate"]["d"]) == (1, 1)
+    assert (
+        two_orgs["shift2_same_org_rate"]["n"],
+        two_orgs["shift2_same_org_rate"]["d"],
+    ) == (0, 1)
+    one_org = made([{"status": "accepted"}], [done(1, "05"), done(1, "06")])["overall"]
+    assert (
+        one_org["shift2_same_org_rate"]["n"],
+        one_org["shift2_same_org_rate"]["d"],
+    ) == (1, 1)
+    for o in (two_orgs, one_org):
+        assert o["shift2_same_org_rate"]["n"] <= o["shift2_rate"]["n"]
+
+
 def test_by_cause_and_heard_from(pilot):
     assert value(pilot, "cause", "food-insecurity", "accept_rate") == 0.75
     assert value(pilot, "cause", "environment-parks", "accept_rate") == 1.0
