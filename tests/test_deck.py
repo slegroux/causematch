@@ -31,7 +31,7 @@ def add_opening(title, causes, starts_at=None, status="open", **kw):
             slots=3,
             status=status,
             created_at=now(),
-            **kw,
+            **{"lat": 34.066, "lon": -118.239, **kw},
         )
     )
 
@@ -40,6 +40,7 @@ def test_deck_shows_seeded_opening(user):
     r = user.get("/deck")
     assert r.status_code == 200
     assert SEEN in deck_titles(user)
+    assert deck_titles(user)[0] in r.text  # the page renders the top card
     assert "Westside Pantry Collective" in str(
         data.deck(data.get_or_create_volunteer(user.phone), 50)
     )

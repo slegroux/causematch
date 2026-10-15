@@ -41,10 +41,25 @@ def availability_bucket(starts_at):
 
 
 def availability_overlap(volunteer_availability, starts_at, recurrence=""):
-    """1.0 when free then; otherwise 0.5 for a recurring or flexible opening, else 0.0."""
+    """1.0 when free then; otherwise 0.5 for a flexible opening, else 0.0.
+
+    Weekly and monthly openings repeat in the same bucket, so they get no partial credit.
+    """
     if availability_bucket(starts_at) in set(volunteer_availability):
         return 1.0
-    return 0.5 if recurrence in ("weekly", "monthly", "flexible") else 0.0
+    return 0.5 if recurrence == "flexible" else 0.0
+
+
+def skill_coverage(volunteer_skills, opening_skills):
+    """Share of the skills an opening asks for that the volunteer has; 0.5 when it asks none.
+
+    Coverage, not overlap: listing more skills can never raise an opening's score for a
+    volunteer who lacks them, and an opening that needs nothing is neutral.
+    """
+    wanted = set(opening_skills)
+    if not wanted:
+        return 0.5
+    return len(wanted & set(volunteer_skills)) / len(wanted)
 
 
 def reply_rate(decided_within_48h, eligible):
@@ -69,11 +84,11 @@ def score(
     availability,
     reply,
 ):
-    """Weighted fit in 0..1; each argument is already a 0..1 term, except causes and skills,
-    which are (volunteer, opening) pairs of collections."""
+    """Weighted fit in 0..1; each argument is already a 0..1 term, except causes
+    (compared by jaccard) and skills (by coverage), which are (volunteer, opening) pairs."""
     return (
         WEIGHTS["causes"] * jaccard(*causes)
-        + WEIGHTS["skills"] * jaccard(*skills)
+        + WEIGHTS["skills"] * skill_coverage(*skills)
         + WEIGHTS["distance"] * distance
         + WEIGHTS["availability"] * availability
         + WEIGHTS["reply"] * reply

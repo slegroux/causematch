@@ -12,6 +12,7 @@ from apswutils.db import NotFoundError
 
 from app import db as _db
 from app import match as _match
+from app.choices import ANY_DISTANCE_KM
 
 
 def start(demo):
@@ -56,10 +57,17 @@ def _deck_openings(uid):
         if not cause_labels or o.id in seen:
             continue
         km = None
-        if not o.remote and None not in (me.lat, me.lon, o.lat, o.lon):
-            km = _match.haversine_km(me.lat, me.lon, o.lat, o.lon)
-            if me.radius_km and km > me.radius_km:
-                continue
+        if not o.remote:
+            if None in (o.lat, o.lon):
+                continue  # an in-person opening with no place cannot be ranked or gated
+            if None not in (me.lat, me.lon):
+                km = _match.haversine_km(me.lat, me.lon, o.lat, o.lon)
+                if (
+                    me.radius_km
+                    and me.radius_km < ANY_DISTANCE_KM
+                    and km > me.radius_km
+                ):
+                    continue
         out.append((o, cause_labels, km))
     return out
 
@@ -67,17 +75,22 @@ def _deck_openings(uid):
 def _org_reply_rates():
     """{org_id: reply rate} for every org with eligible matches, in one query.
 
-    Eligible: decided, or still pending after 48 h. Withdrawn matches are not the
-    org's doing and do not count.
+    Eligible: decided, pending after 48 h, or withdrawn after 48 h without a decision
+    (counted as not answered in time). Withdrawn within 48 h does not count. Matches of
+    deleted volunteers do not count: the org's inbox hides them.
     """
     rows = _db.db.query(
         "SELECT o.org_id AS org_id, "
-        "sum(m.status != 'pending' AND "
+        "total(m.decided_at IS NOT NULL AND "
         "julianday(m.decided_at) - julianday(m.created_at) <= 2.0) AS fast, "
         "count(*) AS eligible "
         "FROM match m JOIN opening o ON o.id = m.opening_id "
-        "WHERE m.status IN ('accepted', 'declined') "
+        "JOIN profile p ON p.id = m.volunteer_id "
+        "WHERE p.deleted_at IS NULL AND ("
+        "m.status IN ('accepted', 'declined') "
         "OR (m.status = 'pending' AND julianday('now') - julianday(m.created_at) > 2.0) "
+        "OR (m.status = 'withdrawn' AND (m.decided_at IS NOT NULL "
+        "OR julianday(m.withdrawn_at) - julianday(m.created_at) > 2.0))) "
         "GROUP BY o.org_id"
     )
     return {r["org_id"]: _match.reply_rate(r["fast"], r["eligible"]) for r in rows}
@@ -93,20 +106,21 @@ def deck(uid, limit=20):
     Cards carry the distance rounded to whole km, never coordinates.
     """
     me = _db.profiles[uid]
-    mine = json.loads(me.causes or "[]"), json.loads(me.skills or "[]")
+    active = {c.slug for c in _db.causes() if c.active}
+    mine = set(json.loads(me.causes or "[]")) & active, json.loads(me.skills or "[]")
     free = json.loads(me.availability or "[]")
     org_names = {o.id: o.name for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
     for o, cause_labels, km in _deck_openings(uid):
         fit = _match.score(
-            causes=(mine[0], json.loads(o.causes or "[]")),
+            causes=(mine[0], set(json.loads(o.causes or "[]")) & active),
             skills=(mine[1], json.loads(o.skills or "[]")),
             distance=_match.distance_score(km, me.radius_km, o.remote),
             availability=_match.availability_overlap(free, o.starts_at, o.recurrence),
             reply=rates.get(o.org_id, 0.5),
         )
-        ranked.append((-fit, o.starts_at, o.id, o, cause_labels, km))
+        ranked.append((-round(fit, 6), o.starts_at, o.id, o, cause_labels, km))
     ranked.sort(key=lambda r: r[:3])
     return [
         {
@@ -620,17 +634,23 @@ def create_opening(
     orientation_required,
     notes,
     reply_channel,
+    skills=(),
 ):
-    """Opening id. Only an org member may post; the status always starts open."""
+    """Opening id. Only an org member may post; the status always starts open.
+
+    ValueError without coordinates: an in-person opening needs a place to be ranked.
+    """
     if org_id not in coordinator_org_ids(coordinator_uid):
         raise PermissionError("not a member of this org")
+    if lat is None or lon is None:
+        raise ValueError("an opening needs coordinates")
     return _db.openings.insert(
         _db.Opening(
             org_id=org_id,
             title=title,
             about=about,
             causes=json.dumps([cause]),
-            skills="[]",
+            skills=json.dumps(sorted(set(skills))),
             lat=lat,
             lon=lon,
             neighborhood=neighborhood,

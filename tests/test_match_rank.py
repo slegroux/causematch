@@ -3,6 +3,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import coordinator_for
 
 from app import data
 from app.data import LA
@@ -20,6 +21,7 @@ from app.db import (
 )
 
 HOME = (34.0560, -118.2365)  # Union Station
+KM_PER_DEG = 6371.0088 * 3.141592653589793 / 180
 FMT = "%Y-%m-%dT%H:%M"
 
 
@@ -30,8 +32,8 @@ def saturday(hour=9, weeks=2):
 
 
 def at_km(km_north):
-    """A point due north of HOME, about km_north away (1 degree of latitude is 111.2 km)."""
-    return HOME[0] + km_north / 111.2, HOME[1]
+    """A point due north of HOME, about km_north away (KM_PER_DEG km per degree of latitude)."""
+    return HOME[0] + km_north / KM_PER_DEG, HOME[1]
 
 
 def add(title, cause="food-insecurity", org=0, where=None, starts_at=None, **kw):
@@ -58,7 +60,7 @@ def add(title, cause="food-insecurity", org=0, where=None, starts_at=None, **kw)
 
 @pytest.fixture
 def me(user):
-    """A volunteer at HOME with an 10 km radius, free Saturday mornings, in a bare world."""
+    """A volunteer at HOME with a 10 km radius, free Saturday mornings, in a bare world."""
     for o in openings():
         openings.update(id=o.id, status="closed")
     uid = data.get_or_create_volunteer(user.phone)
@@ -284,6 +286,31 @@ def test_deck_of_2000_open_openings_in_under_300_ms(me):
                 starts_at=saturday(9 + i % 10, weeks=2 + i % 20),
             )
     assert len(openings(where="status = 'open'")) == 2000
+    stamp = lambda h: (datetime.now(UTC) - timedelta(hours=h)).isoformat(
+        timespec="seconds"
+    )
+    org_openings = [o.id for o in openings(limit=30)]
+    with db.conn:
+        vids = [
+            profiles.insert(Profile(role="volunteer", phone=f"+1998{i:07d}")).id
+            for i in range(100)
+        ]
+        for n, (vid, oid) in enumerate((v, o) for v in vids for o in org_openings):
+            status = ("accepted", "declined", "pending", "withdrawn")[n % 4]
+            decided = (
+                stamp(100 - n % 70) if status in ("accepted", "declined") else None
+            )
+            matches.insert(
+                Match(
+                    opening_id=oid,
+                    volunteer_id=vid,
+                    status=status,
+                    created_at=stamp(100),
+                    decided_at=decided,
+                    withdrawn_at=stamp(1),
+                )
+            )
+    assert len(matches()) == 3000
     best = min(_timed(lambda: data.deck(me.uid, 20)) for _ in range(3))
     assert best < 0.3, f"deck took {best * 1000:.0f} ms"
 
@@ -293,3 +320,143 @@ def _timed(fn):
     out = fn()
     assert len(out) == 20
     return time.perf_counter() - t
+
+
+def test_any_distance_volunteer_sees_a_far_city_opening(me):
+    from app.choices import ANY_DISTANCE_KM
+
+    san_pedro, porter_ranch = (33.732353, -118.278151), (34.281775, -118.555697)
+    assert data.get_profile(me.uid)  # a profile exists
+    profiles.update(
+        id=me.uid, lat=san_pedro[0], lon=san_pedro[1], radius_km=ANY_DISTANCE_KM
+    )
+    add("66 km away", where=porter_ranch)
+    assert titles(me) == ["66 km away"]
+    profiles.update(id=me.uid, radius_km=25)
+    assert titles(me) == []  # a 25 km volunteer still does not
+
+
+def test_in_person_opening_without_coordinates_is_never_shown(me):
+    add("placeless", where=(None, None))
+    assert titles(me) == []
+
+
+def test_creating_an_in_person_opening_without_coordinates_is_refused():
+    with pytest.raises(ValueError):
+        data.create_opening(
+            coordinator_for(0)[0], orgs()[0].id, title="x", about="", cause="food-insecurity",
+            lat=None, lon=None, neighborhood="", starts_at=saturday(), recurrence="one_time",
+            slots=1, orientation_required="no", notes="", reply_channel="email",
+        )  # fmt: skip
+
+
+def test_inactive_cause_does_not_dilute_the_cause_score(me):
+    (dead,) = [c for c in causes() if not c.active][:1]
+    add("pure", cause="food-insecurity", starts_at="2099-01-01T20:00")
+    mixed = add("mixed", cause="food-insecurity", starts_at="2099-01-01T19:00")
+    openings.update(id=mixed, causes=json.dumps(["food-insecurity", dead.slug]))
+    # equal fit, so the sooner start wins; before the fix "pure" outranked "mixed"
+    assert titles(me) == ["mixed", "pure"]
+
+
+def test_a_volunteer_whose_cause_went_inactive_loses_only_that_cause(me):
+    (dead,) = [c for c in causes() if not c.active][:1]
+    profiles.update(id=me.uid, causes=json.dumps(["food-insecurity", dead.slug]))
+    add("pure", starts_at="2099-01-01T20:00")
+    add("sooner but same", starts_at="2099-01-01T19:00")
+    assert titles(me) == ["sooner but same", "pure"]
+
+
+def test_weekend_evening_volunteer_gets_full_availability(me):
+    profiles.update(id=me.uid, availability='["weekend_evening"]')
+    add("weekday morning", starts_at="2099-01-05T09:00")  # Monday
+    add("sunday evening", starts_at="2099-01-11T19:00")
+    assert titles(me) == ["sunday evening", "weekday morning"]
+
+
+def test_a_car_volunteer_ranks_the_car_opening_first_between_identical_ones(me):
+    add("no car", skills='["animals"]', starts_at="2099-01-01T19:00")
+    add("car", skills='["car"]', starts_at="2099-01-01T20:00")
+    assert titles(me) == ["car", "no car"]
+
+
+def test_stuffing_skills_does_not_beat_an_honest_opening(me):
+    add(
+        "stuffed",
+        skills=json.dumps(["car", "physical", "admin"]),
+        starts_at="2099-01-01T19:00",
+    )
+    add("honest", skills='["car"]', starts_at="2099-01-01T20:00")
+    add("asks nothing", skills="[]", starts_at="2099-01-01T21:00")
+    assert titles(me) == ["honest", "asks nothing", "stuffed"]
+
+
+def test_equal_fits_built_from_different_terms_tie_on_start_time(me):
+    # A: skill 1, not free, 2.5 km scores 0.7500000000000001. B: skill neutral, free,
+    # 5 km scores 0.75. Equal fits, so the sooner start must win even though A's float is higher.
+    add("a: later", where=at_km(2.5), skills='["car"]', starts_at="2099-01-12T09:00")
+    add("b: sooner", where=at_km(5), starts_at="2099-01-10T09:00")
+    assert titles(me)[0] == "b: sooner"
+
+
+def withdrawn_match(org, created_h_ago, withdrawn_h_ago=None, decided_h_ago=None):
+    oid = add("history", org=org, status="closed")
+    vid = profiles.insert(Profile(role="volunteer", phone=f"+1997{org}{oid:06d}")).id
+    ago = lambda h: (
+        None
+        if h is None
+        else (datetime.now(UTC) - timedelta(hours=h)).isoformat(timespec="seconds")
+    )
+    matches.insert(
+        Match(opening_id=oid, volunteer_id=vid, status="withdrawn", created_at=ago(created_h_ago),
+              withdrawn_at=ago(withdrawn_h_ago), decided_at=ago(decided_h_ago))
+    )  # fmt: skip
+
+
+def test_withdrawing_after_48h_of_silence_still_counts_against_the_org(me):
+    for _ in range(3):
+        withdrawn_match(
+            1, created_h_ago=120, withdrawn_h_ago=10
+        )  # waited 110 h, gave up
+    reply_history(org=0, decided_fast=0, decided_slow=0, silent=0)
+    add("silent org", org=1)
+    add("new org", org=0)
+    assert titles(me) == ["new org", "silent org"]  # 0.0 vs the 0.5 default
+
+
+def test_withdrawing_within_48h_is_not_held_against_the_org(me):
+    for _ in range(3):
+        withdrawn_match(1, created_h_ago=120, withdrawn_h_ago=100)  # gave up after 20 h
+    add("org 1", org=1, starts_at="2099-01-01T20:00")
+    add("org 0", org=0, starts_at="2099-01-01T21:00")
+    assert titles(me) == ["org 1", "org 0"]  # both at the 0.5 default; sooner first
+
+
+def test_an_accepted_then_withdrawn_match_keeps_its_fast_reply(me):
+    for _ in range(3):
+        withdrawn_match(1, created_h_ago=120, withdrawn_h_ago=10, decided_h_ago=119)
+    add("fast org", org=1, starts_at="2099-01-01T21:00")
+    add("new org", org=0, starts_at="2099-01-01T20:00")
+    assert titles(me) == ["fast org", "new org"]  # 1.0 beats the 0.5 default
+
+
+def test_deleted_volunteers_matches_do_not_count(me):
+    reply_history(org=1, decided_fast=0, decided_slow=0, silent=3)
+    for v in profiles(where="phone LIKE ?", where_args=["+1999%"]):
+        profiles.update(id=v.id, deleted_at=now())
+    add("org 1", org=1, starts_at="2099-01-01T20:00")
+    add("org 0", org=0, starts_at="2099-01-01T21:00")
+    assert titles(me) == [
+        "org 1",
+        "org 0",
+    ]  # all three silent matches ignored: 0.5 each
+
+
+def test_a_decided_match_with_no_decision_time_does_not_break_the_deck(me):
+    oid = add("history", org=1, status="closed")
+    vid = profiles.insert(Profile(role="volunteer", phone="+19996660001")).id
+    matches.insert(
+        Match(opening_id=oid, volunteer_id=vid, status="accepted", created_at=now())
+    )
+    add("ok", org=1)
+    assert titles(me) == ["ok"]

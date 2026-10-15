@@ -120,3 +120,14 @@ def test_malformed_email_rejected(new_user):
     )
     assert r.status_code == 200 and "email" in r.text
     assert not profile_of(new_user).onboarded_at
+
+
+def test_weekend_evening_availability_is_accepted_and_shown(new_user):
+    assert "Weekend evenings" in new_user.get("/onboarding").text
+    r = new_user.post(
+        "/onboarding",
+        data={**FORM, "availability": ["weekend_evening"]},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert json.loads(profile_of(new_user).availability) == ["weekend_evening"]

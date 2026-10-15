@@ -1,4 +1,7 @@
-"""Answer lists shared by the volunteer form and the coordinator inbox."""
+"""Answer lists shared by the volunteer form, the opening form and the coordinator inbox."""
+
+# The radius "Any distance" stores. It scales the distance score but gates nothing.
+ANY_DISTANCE_KM = 60
 
 AVAILABILITY = [
     ("weekday_morning", "Weekday mornings"),
@@ -6,7 +9,19 @@ AVAILABILITY = [
     ("weekday_evening", "Weekday evenings"),
     ("weekend_morning", "Weekend mornings"),
     ("weekend_afternoon", "Weekend afternoons"),
+    ("weekend_evening", "Weekend evenings"),
 ]
+
+SKILLS = [
+    ("physical", "Physical work / lifting"),
+    ("car", "A car, happy to drive"),
+    ("food_handling", "Cooking or food handling"),
+    ("animals", "Experience with animals"),
+    ("language", "A language other than English"),
+    ("admin", "Admin, data or spreadsheets"),
+    ("media", "Photos, video or social media"),
+]
+MAX_OPENING_SKILLS = 3
 
 FREQUENCY = [
     ("once", "Once, to try it"),

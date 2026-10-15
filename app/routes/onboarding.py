@@ -4,7 +4,13 @@ from fasthtml.common import APIRouter, Div, Input, P, Redirect, Response
 from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
 
 from app import data
-from app.choices import AVAILABILITY, FREQUENCY, SHARED_WITH_NONPROFIT
+from app.choices import (
+    ANY_DISTANCE_KM,
+    AVAILABILITY,
+    FREQUENCY,
+    SHARED_WITH_NONPROFIT,
+    SKILLS,
+)
 from app.geo import zip_latlon
 from app.ui import Checks, Choice, Field, Page
 
@@ -17,16 +23,7 @@ TRAVEL = [  # (value, label, radius_km)
     ("15", "Up to 15 min", 8),
     ("30", "Up to 30 min", 16),
     ("45", "Up to 45 min", 25),
-    ("any", "Any distance", 60),
-]
-SKILLS = [
-    ("physical", "Physical work / lifting"),
-    ("car", "A car, happy to drive"),
-    ("food_handling", "Cooking or food handling"),
-    ("animals", "Experience with animals"),
-    ("language", "A language other than English"),
-    ("admin", "Admin, data or spreadsheets"),
-    ("media", "Photos, video or social media"),
+    ("any", "Any distance", ANY_DISTANCE_KM),
 ]
 VOLUNTEERED = [("yes", "Yes"), ("no", "No")]
 # Longest accepted value per free-text field.

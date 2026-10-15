@@ -32,10 +32,10 @@ from monsterui.all import (
 
 from app import data
 from app.auth import normalize_phone
-from app.choices import AVAILABILITY, FREQUENCY
+from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
-from app.ui import Choice, Field, Page
+from app.ui import Checks, Choice, Field, Page
 
 ar = APIRouter()
 
@@ -251,6 +251,10 @@ def OpeningForm(uid, f=None, error=None):
                 ),
             ),
             Field(
+                f"Skills that help (optional, up to {MAX_OPENING_SKILLS})",
+                Checks("skills", SKILLS, f.get("skills", ())),
+            ),
+            Field(
                 "Anything volunteers should know? Shoes, physical demands, parking. (optional)",
                 Textarea(f.get("notes", ""), name="notes", rows=3, cls="uk-textarea"),
             ),
@@ -306,12 +310,13 @@ async def new_opening_save(req):
     profile = data.get_profile(uid)
     if not profile.display_name:
         return Redirect("/org")
-    form = await req.form()
-    if any(not isinstance(v, str) for _, v in form.multi_items()):
-        return Response("Bad request", status_code=400)
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
     text = lambda k: form.get(k, "").strip()
     f = {
         **{k: text(k) for k in LIMITS},
+        "skills": form.getlist("skills"),
         "org_id": text("org_id"),
         "cause": text("cause"),
         "zip": text("zip"),
@@ -357,6 +362,11 @@ async def new_opening_save(req):
         return fail("Please say whether the opening repeats.")
     if not re.fullmatch(r"[0-9]{1,3}", f["slots"]) or not 1 <= int(f["slots"]) <= 200:
         return fail("Volunteers needed must be a number from 1 to 200.")
+    if (
+        not set(f["skills"]) <= {v for v, _ in SKILLS}
+        or len(set(f["skills"])) > MAX_OPENING_SKILLS
+    ):
+        return fail("Something in that form wasn't recognized. Please try again.")
     if f["orientation_required"] not in {v for v, _ in ORIENTATION}:
         return fail("Please say whether an orientation is required.")
     if f["reply_channel"] not in {
@@ -383,6 +393,7 @@ async def new_opening_save(req):
             recurrence=f["recurrence"],
             slots=int(f["slots"]),
             orientation_required=f["orientation_required"],
+            skills=f["skills"],
             notes=f["notes"],
             reply_channel=f["reply_channel"],
         )

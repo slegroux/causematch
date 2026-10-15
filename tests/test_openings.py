@@ -368,3 +368,51 @@ def test_volunteer_cannot_post_details(user):
 def test_no_inline_handlers_on_org_pages(coord):
     for path in ("/org", "/org/openings/new", "/org/inbox"):
         assert "onclick" not in coord.get(path).text
+
+
+def test_posted_skills_are_stored_and_ranked(coord, user):
+    r = coord.post(
+        "/org/openings/new",
+        data=form(coord.org_id, skills=["car", "admin"], starts_at=future(2)),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    assert o.skills == '["admin", "car"]'
+
+
+def test_posted_opening_without_skills_stores_none(coord):
+    post(coord)
+    (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    assert o.skills == "[]"
+
+
+@pytest.mark.parametrize(
+    "skills", [["telepathy"], ["car", "admin", "media", "physical"], ["car", "bogus"]]
+)
+def test_unknown_or_too_many_skills_are_rejected(coord, skills):
+    r = coord.post(
+        "/org/openings/new",
+        data=form(coord.org_id, skills=skills),
+        follow_redirects=False,
+    )
+    assert r.status_code == 200 and "wasn't recognized" in r.text
+    assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+
+
+def test_opening_form_offers_the_shared_skills(coord):
+    from app.choices import SKILLS
+
+    html = coord.get("/org/openings/new").text
+    for _, label in SKILLS:
+        assert label in html
+
+
+def test_every_seeded_opening_skill_is_a_shared_choice():
+    from app.choices import SKILLS
+
+    shared = {v for v, _ in SKILLS}
+    import json
+
+    for o in openings():
+        assert set(json.loads(o.skills)) <= shared, o.title

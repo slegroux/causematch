@@ -25,19 +25,19 @@ def when(starts_at):
     return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
 
 
+def distance_line(c):
+    if c["remote"]:
+        return P("Remote", cls=TextPresets.muted_sm)
+    if c["distance"]:
+        return P(f"about {c['distance']} away", cls=TextPresets.muted_sm)
+
+
 def OpeningCard(c):
     return Card(
         DivLAligned(*[Label(name) for name in c["causes"]], cls="flex-wrap gap-1"),
         P(c["org"], cls=TextPresets.muted_sm),
         DivFullySpaced(P(when(c["starts_at"])), P(c["neighborhood"])),
-        P(
-            "Remote"
-            if c["remote"]
-            else f"about {c['distance']} away"
-            if c["distance"]
-            else "",
-            cls=TextPresets.muted_sm,
-        ),
+        distance_line(c),
         P(f"{c['slots']} spots", cls=TextPresets.muted_sm),
         header=CardTitle(c["title"]),
         cls="w-full select-none",

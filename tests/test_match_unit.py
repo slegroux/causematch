@@ -80,9 +80,14 @@ def test_availability_overlap_not_free_one_time():
     assert match.availability_overlap([], "2026-10-24T09:00", "one_time") == 0.0
 
 
-@pytest.mark.parametrize("recurrence", ["weekly", "monthly", "flexible"])
-def test_availability_overlap_recurring_or_flexible_is_half(recurrence):
-    assert match.availability_overlap([], "2026-10-24T09:00", recurrence) == 0.5
+def test_availability_overlap_flexible_is_half():
+    assert match.availability_overlap([], "2026-10-24T09:00", "flexible") == 0.5
+
+
+@pytest.mark.parametrize("recurrence", ["weekly", "monthly", "one_time", ""])
+def test_availability_overlap_repeating_gets_no_partial_credit(recurrence):
+    # a weekly Saturday 09:00 is Saturday 09:00 every week
+    assert match.availability_overlap([], "2026-10-24T09:00", recurrence) == 0.0
 
 
 def test_availability_overlap_match_beats_recurring_half():
@@ -142,3 +147,30 @@ def test_each_term_carries_its_weight(term, weight):
     one = {**zero, term: (["a"], ["a"]) if term in ("causes", "skills") else 1}
     assert match.score(**zero) == 0
     assert match.score(**one) == pytest.approx(weight)
+
+
+def test_skill_coverage_is_share_of_what_the_opening_asks():
+    assert match.skill_coverage(["car"], ["car"]) == 1
+    assert match.skill_coverage(["car", "admin"], ["car", "physical"]) == 0.5
+    assert match.skill_coverage(["admin"], ["car", "physical"]) == 0
+    assert match.skill_coverage([], ["car"]) == 0
+    assert (
+        match.skill_coverage(["car", "admin", "media"], ["car"]) == 1
+    )  # extra skills are free
+
+
+def test_skill_coverage_of_an_opening_asking_nothing_is_neutral():
+    assert match.skill_coverage([], []) == 0.5
+    assert match.skill_coverage(["car"], []) == 0.5
+
+
+def test_listing_more_skills_never_beats_honesty():
+    volunteer = ["car"]
+    honest = match.skill_coverage(volunteer, ["car"])
+    stuffed = match.skill_coverage(volunteer, ["car", "physical", "admin"])
+    nothing = match.skill_coverage(volunteer, [])
+    assert stuffed < honest and stuffed < nothing
+    # and for a volunteer with none of them, stuffing is no better than asking for one
+    assert match.skill_coverage(
+        [], ["car", "physical", "admin"]
+    ) == match.skill_coverage([], ["car"])
