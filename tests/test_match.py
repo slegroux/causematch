@@ -6,7 +6,7 @@ from conftest import coordinator_for, org_sign_in, sign_in
 from starlette.testclient import TestClient
 
 from app import data
-from app.db import db, matches, openings, profiles, swipes
+from app.db import db, matches, openings, places, profiles, swipes
 from main import app
 
 FMT = "%Y-%m-%dT%H:%M"
@@ -488,6 +488,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
     assert "Never your phone, email or exact location" in SHARED_WITH_NONPROFIT
     # ... and the inbox shows exactly those, nothing private
     uid = data.get_or_create_volunteer(user.phone)
+    places.delete_where("user_id = ?", [uid])  # placed by its profile columns below
     profiles.update(
         id=uid,
         display_name="Sam Surname",

@@ -270,14 +270,15 @@ def Group(title, cls, name, options, value):
     )
 
 
-def PlaceFields(slot, pf):
+def PlaceFields(slot, pf, named=True):
     """One place: its name, where it is (a neighborhood, a ZIP or the device location), how
-    the volunteer gets there and how long they'd travel. Field names: place1_*, place2_*."""
+    the volunteer gets there and how long they'd travel. Field names: place1_*, place2_*.
+    named=False (onboarding): no name field, the place is Home."""
     n = f"place{slot + 1}"
     return Fieldset(
         Legend(
             "Your main place" if slot == 0 else "A second place (optional)",
-            cls="font-bold text-ink",
+            cls="font-bold text-ink" if named else "sr-only",
         ),
         P(
             "Leave “Neighborhood or ZIP” empty to skip it.",
@@ -295,7 +296,9 @@ def PlaceFields(slot, pf):
                 autocomplete="off",
             ),
             cls="space-y-1.5",
-        ),
+        )
+        if named
+        else None,
         Div(
             Label("Neighborhood or ZIP", fr=f"{n}_where", cls="uk-form-label"),
             TextInput(

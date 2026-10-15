@@ -255,7 +255,7 @@ def test_city_zip_accepted_for_opening_and_county_zip_still_ok_for_volunteers(
     assert post(coord, zip="90012").status_code == 303
     assert post(coord, zip="90704", title="Avalon").status_code == 200
     r = new_user.post(
-        "/onboarding", data={**FORM, "zip": "90704"}, follow_redirects=False
+        "/onboarding", data={**FORM, "place1_where": "90704"}, follow_redirects=False
     )
     assert r.headers["location"] == "/deck"
 

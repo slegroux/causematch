@@ -211,8 +211,12 @@ body:has(.cm-tabbar) {
 body:has(.cm-tabbar) .cm-composer {
   bottom: calc(4rem + env(safe-area-inset-bottom));
 }
-/* A long form's save button (app/routes/prefs.py) stays in reach above the tab bar. */
+/* A long form's save button (preferences, onboarding) stays in reach: at the bottom of the
+   screen, or just above the volunteer's tab bar. */
 .cm-savebar {
   position: sticky;
+  bottom: env(safe-area-inset-bottom);
+}
+body:has(.cm-tabbar) .cm-savebar {
   bottom: calc(4rem + env(safe-area-inset-bottom));
 }

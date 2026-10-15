@@ -116,13 +116,12 @@ def test_extra_onboarding_fields_are_stored(new_user):
         "/onboarding",
         data={
             **FORM,
-            "skills": ["language"],
-            "language_other": "Spanish",
+            "other_causes": "rescue owls",
             "volunteered_last_year": "yes",
         },
     )
     (p,) = profiles(where="phone = ?", where_args=[new_user.phone])
-    assert p.language_other == "Spanish" and p.volunteered_last_year == "yes"
+    assert p.other_causes == "rescue owls" and p.volunteered_last_year == "yes"
 
 
 def test_bad_volunteered_value_rejected(new_user):

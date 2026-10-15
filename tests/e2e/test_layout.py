@@ -144,3 +144,30 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(se_page):
     for name in ("Pass", "Like"):
         box = se_page.get_by_role("button", name=name).bounding_box()
         assert box["y"] + box["height"] <= bar["y"], (name, box, bar)
+
+
+def test_onboarding_fills_and_submits_on_a_small_phone(se_page):
+    se_page.goto("/login")
+    se_page.get_by_label("Mobile number").fill("(310) 555-0165")
+    se_page.get_by_role("button", name="Text me a code").click()
+    se_page.get_by_label("Code").fill("000000")
+    se_page.get_by_role("button", name="Sign in").click()
+    se_page.wait_for_url("**/onboarding")
+    width = se_page.evaluate(
+        "[document.scrollingElement.scrollWidth, window.innerWidth]"
+    )
+    assert width[0] <= width[1], width
+    se_page.locator("input[name=first_name]").fill("Sam")
+    se_page.get_by_text("I'm 18 or older").click()
+    se_page.get_by_label("Neighborhood or ZIP").fill("90012")
+    se_page.locator(
+        "label:has(input[name='cause_food-insecurity'][value=love])"
+    ).click()
+    se_page.locator("label:has(input[name=availability][value=sat_morning])").click()
+    se_page.locator("select[name=heard_from]").select_option("public")
+    se_page.get_by_text("I agree", exact=True).click()
+    start = se_page.get_by_role("button", name="Start swiping")
+    box = start.bounding_box()
+    assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
+    start.click()
+    se_page.wait_for_url("**/deck")

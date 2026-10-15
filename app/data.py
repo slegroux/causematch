@@ -1213,27 +1213,39 @@ def save_onboarding(
     volunteered_last_year="",
     frequency="",
     heard_from,
+    cause_prefs=None,
+    place=None,
 ):
-    _db.profiles.update(
-        id=uid,
-        display_name=display_name,
-        email=email,
-        neighborhood=neighborhood,
-        language_other=language_other,
-        volunteered_last_year=volunteered_last_year,
-        adult_attested=True,
-        lat=lat,
-        lon=lon,
-        radius_km=radius_km,
-        causes=json.dumps(list(causes)),
-        cause_prefs=json.dumps(dict.fromkeys(causes, _prefs.LOVE)),
-        other_causes=other_causes,
-        availability=json.dumps(list(availability)),
-        skills=json.dumps(list(skills)),
-        frequency=frequency,
-        heard_from=heard_from,
-        onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    """cause_prefs: {slug: love|open|no} (default: causes, all loved). place: the Home
+    place (label, lat, lon, area, mode, max_minutes), saved as the volunteer's first place;
+    without one, the profile's lat, lon and radius_km read as Home."""
+    rated = (
+        cause_prefs if cause_prefs is not None else dict.fromkeys(causes, _prefs.LOVE)
     )
+    with _db.db.conn:
+        _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
+        if place:
+            _db.places.insert(_db.Place(user_id=uid, **place))
+        _db.profiles.update(
+            id=uid,
+            display_name=display_name,
+            email=email,
+            neighborhood=neighborhood,
+            language_other=language_other,
+            volunteered_last_year=volunteered_last_year,
+            adult_attested=True,
+            lat=lat,
+            lon=lon,
+            radius_km=radius_km,
+            causes=json.dumps(_prefs.picked(rated)),
+            cause_prefs=json.dumps(rated),
+            other_causes=other_causes,
+            availability=json.dumps(list(availability)),
+            skills=json.dumps(list(skills)),
+            frequency=frequency,
+            heard_from=heard_from,
+            onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
 
 
 def preferences(uid):
