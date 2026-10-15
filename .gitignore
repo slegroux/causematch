@@ -19,3 +19,5 @@ __pycache__/
 node_modules/
 package-lock.json
 .sesskey
+CLAUDE.md
+.claude/

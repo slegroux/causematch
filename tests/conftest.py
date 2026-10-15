@@ -1,8 +1,12 @@
+import atexit
 import os
+import shutil
 import tempfile
 
 # Must be set before app.db / main are imported.
-os.environ["CAUSEMATCH_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
+_tmp = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
+os.environ["CAUSEMATCH_DB"] = os.path.join(_tmp, "test.db")
 os.environ["CAUSEMATCH_FAKE_SMS"] = "1"
 os.environ.pop("CAUSEMATCH_ENV", None)
 
@@ -11,7 +15,18 @@ import itertools
 import pytest
 from starlette.testclient import TestClient
 
+from app.db import causes, ensure_causes, openings, orgs, profiles, seed_demo
 from main import app
+
+
+@pytest.fixture(autouse=True)
+def fresh_db():
+    """Every test starts from the same seeded rows, whatever ran before it."""
+    for table in (profiles, openings, orgs, causes):
+        table.delete_where()
+    ensure_causes()
+    seed_demo()
+
 
 _phones = itertools.count(3105550100)
 

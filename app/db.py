@@ -1,11 +1,15 @@
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastlite import database
 
-DB_PATH = os.environ.get("CAUSEMATCH_DB", "data/causematch.db")
-Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = Path(
+    os.environ.get("CAUSEMATCH_DB") or ROOT / "data" / "causematch.db"
+).resolve()
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 db = database(DB_PATH)
 
 
@@ -27,6 +31,7 @@ class Org:
     lon: float
     about: str
     intro: str  # warm|cold
+    created_at: str
 
 
 class Opening:
@@ -45,6 +50,7 @@ class Opening:
     slots: int
     orientation_required: str
     status: str  # open|filled|closed
+    created_at: str
 
 
 class Profile:
@@ -70,6 +76,7 @@ class Profile:
 
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
+orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
 openings = db.create(Opening, pk="id", transform=True)
 profiles = db.create(Profile, pk="id", transform=True)
 profiles.create_index(["phone"], unique=True, if_not_exists=True)
@@ -202,11 +209,27 @@ OPENINGS = [
 ]
 
 
-def seed():
-    if causes.count or orgs.count or openings.count:
-        return
+def now():
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def ensure_causes():
+    """Insert any cause slug the table lacks; never overwrites an edited row."""
+    have = {c.slug for c in causes()}
     for c in CAUSES:
-        causes.insert(c)
+        if c.slug not in have:
+            causes.insert(c)
+
+
+def seed_demo():
+    """Invented orgs and openings, in one transaction; only into an empty DB."""
+    if orgs.count or openings.count:
+        return
+    with db.conn:
+        _seed_demo()
+
+
+def _seed_demo():
     ids = []
     for name, cs, lat, lon in ORGS:
         org = orgs.insert(
@@ -217,6 +240,7 @@ def seed():
                 lon=lon,
                 about="An invented organization.",
                 intro="cold",
+                created_at=now(),
             )
         )
         ids.append(org.id)
@@ -237,5 +261,6 @@ def seed():
                 slots=slots,
                 orientation_required="",
                 status=status,
+                created_at=now(),
             )
         )
