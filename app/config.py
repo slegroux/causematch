@@ -25,3 +25,13 @@ def public_base_url(env=os.environ):
     ):
         raise RuntimeError("PUBLIC_BASE_URL must be an https:// origin in production")
     return url
+
+
+def require_env(env=os.environ):
+    """Refuse to start unless CAUSEMATCH_ENV is declared (Cloud Run counts as production)."""
+    if "K_SERVICE" in env:
+        return
+    if env.get("CAUSEMATCH_ENV") not in ("development", "test", "production"):
+        raise RuntimeError(
+            "CAUSEMATCH_ENV must be set to development, test or production"
+        )

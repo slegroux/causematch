@@ -121,3 +121,21 @@ def test_la_zip_list_is_county_only():
     assert zip_latlon("90012")
     for z in ("90620", "91320", "91709", "10001"):
         assert zip_latlon(z) is None
+
+
+@pytest.mark.parametrize("ext", ["js", "css", "png"])
+def test_encoded_dotdot_does_not_serve_a_public_extension_file(anon, tmp_path, ext):
+    """The old bug served these, signed out, from anywhere on disk."""
+    import os
+
+    marker = tmp_path / f"x.{ext}"
+    marker.write_text("OUTSIDE-MARKER")
+    rel = (
+        os.path.relpath(marker, os.getcwd())
+        .replace("/..", "/%2e%2e")
+        .replace("../", "%2e%2e/")
+    )
+    for path in (f"/{rel}", f"/%2e%2e/{rel}"):
+        r = get_raw(anon, path)
+        assert r.status_code in (303, 400, 403, 404)
+        assert "OUTSIDE-MARKER" not in r.text

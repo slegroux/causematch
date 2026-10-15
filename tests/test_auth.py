@@ -182,3 +182,25 @@ def test_production_without_twilio_refuses_to_start():
         notify.make_verifier({"CAUSEMATCH_ENV": "production", **cfg}),
         notify.TwilioVerifier,
     )
+
+
+def test_undeclared_environment_refuses_to_start():
+    import pytest
+
+    from app.config import require_env
+
+    for env in (
+        {},
+        {"CAUSEMATCH_ENV": ""},
+        {"CAUSEMATCH_ENV": "staging"},
+        {"SESSION_SECRET": "x"},
+    ):
+        with pytest.raises(RuntimeError):
+            require_env(env)
+    for env in (
+        {"CAUSEMATCH_ENV": "development"},
+        {"CAUSEMATCH_ENV": "test"},
+        {"CAUSEMATCH_ENV": "production"},
+        {"K_SERVICE": "s"},
+    ):
+        require_env(env)
