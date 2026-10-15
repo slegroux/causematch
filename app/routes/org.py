@@ -8,7 +8,6 @@ from fasthtml.common import (
     A,
     APIRouter,
     Div,
-    Input,
     P,
     Redirect,
     Response,
@@ -37,9 +36,9 @@ from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
 from app.routes.shifts import RepeatForm
-from app.ui import Checks, Choice, Field, Page
+from app.ui import Checks, Choice, Field, Page, TextInput, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 LA = ZoneInfo("America/Los_Angeles")
 RECURRENCE = [
@@ -67,7 +66,7 @@ def DetailsForm(profile, error=None):
     return Form(
         Field(
             'Your name and role, e.g. "Maria Lopez, volunteer coordinator"',
-            Input(
+            TextInput(
                 name="name",
                 value=profile.display_name or "",
                 maxlength="80",
@@ -76,7 +75,7 @@ def DetailsForm(profile, error=None):
         ),
         Field(
             "Phone (optional)",
-            Input(
+            TextInput(
                 name="phone",
                 type="tel",
                 inputmode="tel",
@@ -184,7 +183,7 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 'Opening title, e.g. "Saturday pantry sorting"',
-                Input(name="title", value=f.get("title", ""), required=True),
+                TextInput(name="title", value=f.get("title", ""), required=True),
             ),
             Field(
                 "What will volunteers do?",
@@ -206,7 +205,7 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 "ZIP code",
-                Input(
+                TextInput(
                     name="zip",
                     value=f.get("zip", ""),
                     inputmode="numeric",
@@ -216,13 +215,13 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 "Neighborhood",
-                Input(
+                TextInput(
                     name="neighborhood", value=f.get("neighborhood", ""), required=True
                 ),
             ),
             Field(
                 "Date and time of the next shift",
-                Input(
+                TextInput(
                     name="starts_at",
                     type="datetime-local",
                     value=f.get("starts_at", ""),
@@ -235,7 +234,7 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 "How many volunteers do you need?",
-                Input(
+                TextInput(
                     name="slots",
                     type="number",
                     min="1",

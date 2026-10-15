@@ -60,3 +60,127 @@
   opacity: 1;
   transition: opacity 200ms ease-in;
 }
+
+/* --- Causematch: "Warm & friendly" ------------------------------------------------------
+   Design tokens as HSL channels ("h s% l%"), the form Franken UI's variables take. Tailwind
+   reads the same tokens (tailwind.config.js), so `bg-cause-food` and a Franken button agree.
+   Contrast (WCAG): ink on cream 15.2:1, muted ink on cream 6.2:1, white on brand 5.1:1,
+   brand on cream 4.8:1, white on every cause color >= 5.0:1, each cause's ink on its soft
+   tint >= 6.4:1, input border on white 3.4:1 (non-text, AA asks 3:1). */
+@font-face {
+  font-family: "Nunito";
+  src: url("/static/vendor/fonts/nunito-latin-wght-normal.woff2") format("woff2");
+  font-weight: 200 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --cm-cream: 32 100% 97.1%;         /* #FFF8F0 page */
+  --cm-card: 0 0% 100%;              /* #FFFFFF cards and fields */
+  --cm-sand: 31.2 55.6% 91.2%;       /* #F5E9DC quiet fills */
+  --cm-line: 31 40.8% 86.1%;         /* #EADCCD dividers, card edges */
+  --cm-input: 25.7 17.9% 54.1%;      /* #9F8775 field borders */
+  --cm-ink: 19.1 32.4% 13.3%;        /* #2D1E17 text */
+  --cm-ink-muted: 22.5 17% 36.9%;    /* #6E5A4E secondary text */
+  --cm-brand: 10.8 64.1% 45.9%;      /* #C0452A terracotta: primary buttons, links */
+  --cm-brand-strong: 10.8 64.6% 38.8%; /* #A33A23 pressed */
+  --cm-brand-soft: 15.5 79.5% 92.4%; /* #FBE4DC tint */
+  --cm-brand-ink: 10.3 65.6% 36.5%;  /* #9A3520 text on the tint */
+  --cm-danger: 4.2 76.5% 40%;        /* #B42318 */
+  /* one accent per cause: solid (white text on it), soft tint, ink (text on the tint) */
+  --cm-food: 26 90.5% 37.1%;         /* #B45309 food-insecurity */
+  --cm-food-soft: 30.8 90.2% 92%;    /* #FDEBD8 */
+  --cm-food-ink: 25.9 91.7% 28.2%;   /* #8A3F06 */
+  --cm-parks: 142.1 45.2% 32.9%;     /* #2E7A4A environment-parks */
+  --cm-parks-soft: 140 39.1% 91%;    /* #DFF1E5 */
+  --cm-parks-ink: 144.6 49.6% 24.1%; /* #1F5C38 */
+  --cm-animals: 266.2 43.7% 50.6%;   /* #7A4AB8 animal-shelters */
+  --cm-animals-soft: 265.7 67.7% 93.9%; /* #EEE5FA */
+  --cm-animals-ink: 265.3 48.2% 38.6%;  /* #5B3392 */
+  --cm-homeless: 212.3 59.6% 42.7%;  /* #2C68AE homelessness-services */
+  --cm-homeless-soft: 210 63.2% 92.5%; /* #E0ECF8 */
+  --cm-homeless-ink: 212.3 62.7% 32.5%; /* #1F4F87 */
+  --cm-font: "Nunito", ui-rounded, ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Franken UI's theme variables (static/theme.js puts uk-theme-warm on <html>); daisyUI
+   follows through the mapping above. */
+.uk-theme-warm {
+  --background: var(--cm-cream);
+  --foreground: var(--cm-ink);
+  --muted: var(--cm-sand);
+  --muted-foreground: var(--cm-ink-muted);
+  --popover: var(--cm-card);
+  --popover-foreground: var(--cm-ink);
+  --card: var(--cm-card);
+  --card-foreground: var(--cm-ink);
+  --border: var(--cm-line);
+  --input: var(--cm-input);
+  --primary: var(--cm-brand);
+  --primary-foreground: 0 0% 100%;
+  --secondary: var(--cm-sand);
+  --secondary-foreground: var(--cm-ink);
+  --accent: var(--cm-brand-soft);
+  --accent-foreground: var(--cm-brand-ink);
+  --destructive: var(--cm-danger);
+  --destructive-foreground: 0 0% 100%;
+  --ring: var(--cm-brand);
+  --radius: 0.75rem;
+  /* soft corners, gentle warm shadows, 16 px fields (iOS zooms into smaller ones) and
+     44 px tap targets */
+  --uk-global-radius-s: 0.5rem;
+  --uk-global-radius: 0.75rem;
+  --uk-card-radius: 1.25rem;
+  --uk-btn-radius: 9999px;
+  --uk-btn-height: 2.75rem;
+  --uk-btn-font-size: 1rem;
+  --uk-form-input-height: 2.75rem;
+  --uk-form-input-font-size: 1rem;
+  --uk-form-input-padding: 0.5rem 0.875rem;
+  --uk-global-shadow-s: 0 1px 2px 0 rgb(45 30 23 / 0.06);
+  --uk-global-shadow: 0 1px 2px 0 rgb(45 30 23 / 0.04), 0 10px 28px -12px rgb(45 30 23 / 0.18);
+  /* Franken draws the check and the radio dot as data: SVGs with the color baked in */
+  --uk-form-checkbox-image: url("data:image/svg+xml,%3Csvg width='15' height='15' viewBox='0 0 15 15' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' fill='%23C0452A' /%3E%3Cpath d='M11.4669 3.72684C11.7558 3.91574 11.8369 4.30308 11.648 4.59198L7.39799 11.092C7.29783 11.2452 7.13556 11.3467 6.95402 11.3699C6.77247 11.3931 6.58989 11.3355 6.45446 11.2124L3.70446 8.71241C3.44905 8.48022 3.43023 8.08494 3.66242 7.82953C3.89461 7.57412 4.28989 7.55529 4.5453 7.78749L6.75292 9.79441L10.6018 3.90792C10.7907 3.61902 11.178 3.53795 11.4669 3.72684Z' fill='%23FFFFFF' fill-rule='evenodd' clip-rule='evenodd' %3E%3C/path%3E%3C/svg%3E");
+  --uk-form-checkbox-image-indeterminate: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Crect fill='%23C0452A' x='3' y='7' width='10' height='2' /%3E%3C/svg%3E");
+  --uk-form-radio-image: url("data:image/svg+xml,%3Csvg width='15' height='15' viewBox='0 0 15 15' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='7.5' cy='7.5' r='4' fill='%23C0452A' /%3E%3C/svg%3E");
+  --uk-form-radio-radius: 0.3125rem; /* the checkbox's corners too */
+  --uk-form-list-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='%236E5A4E' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' /%3E%3C/svg%3E");
+  --uk-form-list-image-position: right 0.875rem center;
+  --uk-divider-icon-image: url("data:image/svg+xml,%3Csvg width='20' height='20' viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle fill='none' stroke='%23EADCCD' stroke-width='2' cx='10' cy='10' r='7' /%3E%3C/svg%3E");
+  --uk-list-bullet-image: url("data:image/svg+xml,%3Csvg width='6' height='6' viewBox='0 0 6 6' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle fill='%232D1E17' cx='3' cy='3' r='3' /%3E%3C/svg%3E");
+}
+
+body {
+  background-color: hsl(var(--cm-cream));
+  color: hsl(var(--cm-ink));
+  font-family: var(--cm-font);
+}
+h1, h2, h3, .font-display {
+  font-family: var(--cm-font);
+  letter-spacing: -0.01em;
+}
+.uk-form-label {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: hsl(var(--cm-ink));
+}
+.uk-input, .uk-select, .uk-textarea {
+  background-color: hsl(var(--cm-card));
+}
+.uk-select:not([multiple]):not([size]) {
+  padding-right: 2.5rem;
+}
+/* 20 px boxes that keep their size beside a long label */
+.uk-checkbox, .uk-radio {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0;
+  flex-shrink: 0;
+  border-color: hsl(var(--cm-input));
+  background-color: hsl(var(--cm-card));
+}
+.uk-btn {
+  font-weight: 700;
+  white-space: nowrap;
+}

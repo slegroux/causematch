@@ -7,10 +7,11 @@ from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app import data, notify, security
+from app import data, notify, security, ui
 from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
     contact_email,
+    demo_banner,
     is_production,
     phone_hash_key,
     public_base_url,
@@ -43,6 +44,7 @@ contact_email()  # ... or the privacy page has no contact
 phone_hash_key()  # ... or deleted accounts' blocks can't be kept
 trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
 sms_ceilings()  # ... or the SMS ceiling is unreadable
+demo_banner()  # ... or production was asked to show the demo banner
 # uvicorn settings; the Procfile (item 14's entrypoint) runs the same ones.
 UVICORN = {
     "ws_max_size": 65536,  # bytes per websocket frame (default 16 MiB); a message is <= 2000 chars
@@ -74,6 +76,7 @@ app, rt = fast_app(
     max_age=SESSION_MAX_AGE,
     debug=False,  # no traceback pages; security.Guard serves a plain 500 in production
     title="Causematch",
+    body_wrap=ui.body_wrap,  # the demo banner; each APIRouter passes it too
     # Self-hosted, pinned htmx. Not loaded: fasthtml's surreal@main, css-scope-inline@main,
     # pico@latest (unpinned CDN branches the app doesn't use) and fasthtml.js.
     htmx=False,
@@ -99,7 +102,7 @@ app, rt = fast_app(
         Link(rel="manifest", href="/static/manifest.webmanifest"),
         Link(rel="icon", href="/favicon.ico", sizes="any"),
         Link(rel="apple-touch-icon", href="/static/icons/apple-touch-icon.png"),
-        Meta(name="theme-color", content="#2563eb"),
+        Meta(name="theme-color", content="#FFF8F0"),  # static/theme.css: cream
         Meta(name="mobile-web-app-capable", content="yes"),
         Meta(name="apple-mobile-web-app-capable", content="yes"),
         Meta(name="apple-mobile-web-app-title", content="Causematch"),

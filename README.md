@@ -40,6 +40,12 @@ Run the app with the flags in the `Procfile` (`--ws-max-size 65536`, `--limit-co
 
 Everything the browser loads is served from `/static`: htmx, Franken UI and daisyUI are vendored under `static/vendor/` (versions and checksums in `static/vendor/README.md`), and MonsterUI's inline theme code lives in `static/theme.js` and `static/theme.css`. Tailwind is compiled ahead of time into `static/vendor/app.css`: after adding Tailwind classes, run `scripts/build_css.sh` (it fetches a pinned, checksum-verified Tailwind CLI) and commit the result.
 
+The design tokens (warm palette, one color per cause, the self-hosted Nunito font) are CSS variables in `static/theme.css`, also Tailwind colors (`bg-cause-food`, `text-brand`, ...) through `tailwind.config.js`. Form fields go through `app/ui.py` (`TextInput`, `Choice`, `Checks`) so each one carries its Franken UI class; `tests/test_ui.py` checks every page.
+
+### Demo
+
+`uv run python scripts/demo.py` serves the app on a throwaway database with demo data and prints how to sign in as a volunteer, a coordinator and an admin. It refuses production. `--seed-file PATH` loads nonprofits from a JSON file kept outside the repo (its docstring has the format); their openings are titled "Sample: ..." and every page shows a demo banner. `scripts/screenshots.py --out DIR` screenshots every page of the same demo with Playwright.
+
 ### Schema changes
 
 Adding a column or a table: edit the class in `app/db.py` (`transform=True` does the rest). Renames, data changes, index changes and anything touching triggers need a numbered migration in `app/migrations/` instead; its docstring says how. Pending migrations run at startup, or by hand with `uv run python -m app.migrations [--db PATH]`.

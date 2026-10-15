@@ -5,7 +5,6 @@ from fasthtml.common import (
     A,
     APIRouter,
     Div,
-    Input,
     P,
     Redirect,
     Response,
@@ -20,9 +19,9 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
-from app.ui import VolunteerNav
+from app.ui import TextInput, VolunteerNav, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 log = logging.getLogger("causematch")
 
 NOTICES = {
@@ -70,13 +69,12 @@ def ChatPage(uid, match_id, role, notice=""):
         ),
         ChatError(NOTICES.get(notice, "")),
         PlainForm(
-            Input(
+            TextInput(
                 name="msg",
                 maxlength=data.MAX_MESSAGE,
                 required=True,
                 autocomplete="off",
                 aria_label="Message",
-                cls="uk-input",
             ),
             Button("Send", cls=ButtonT.primary),
             action=f"{base}/{match_id}/send",

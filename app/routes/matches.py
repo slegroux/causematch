@@ -19,9 +19,9 @@ from starlette.concurrency import run_in_threadpool
 from app import data, notify
 from app.forms import bad_request, query, str_form
 from app.routes.deck import DeckArea, when
-from app.ui import VolunteerNav
+from app.ui import VolunteerNav, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 STATUS = {
     "pending": "Waiting for the nonprofit",

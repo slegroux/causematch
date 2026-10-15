@@ -1,0 +1,129 @@
+"""Screenshot every page of a demo (scripts/demo.py's data), for reviewing the design.
+
+uv run python scripts/screenshots.py --out DIR [--seed-file PATH] [--port 5078]
+
+Volunteer pages at iPhone 13 size (v*.png), nonprofit and admin pages at 1280x860 (o*.png,
+a*.png). Runs the demo in this process, on a throwaway database, and needs Playwright's
+chromium (uv run playwright install chromium).
+"""
+
+import argparse
+import threading
+import time
+from pathlib import Path
+
+import demo  # scripts/demo.py: this script's folder is first on sys.path
+
+
+def start_server(port):
+    import uvicorn
+
+    from main import UVICORN, app
+
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", **UVICORN)
+    )
+    threading.Thread(target=server.run, daemon=True).start()
+    deadline = time.monotonic() + 15
+    while not server.started:
+        if time.monotonic() > deadline:
+            raise SystemExit("the demo server did not start")
+        time.sleep(0.05)
+    return server
+
+
+def volunteer_sign_in(page, phone):
+    page.goto("/login")
+    page.get_by_label("Mobile number").fill(phone)
+    page.get_by_role("button", name="Text me a code").click()
+    page.get_by_label("Code").fill("000000")
+    page.get_by_role("button", name="Sign in").click()
+
+
+def staff_sign_in(page, email, lands_on):
+    page.goto(demo.sign_in_link(email))
+    page.get_by_role("button", name="Sign in").click()
+    page.wait_for_url(f"**{lands_on}")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--seed-file", help="nonprofits JSON, kept outside the repo")
+    p.add_argument("--port", type=int, default=5078)
+    a = p.parse_args()
+    demo.refuse_production()
+    a.out.mkdir(parents=True, exist_ok=True)
+    demo.configure(a.port, seed_file=a.seed_file)
+    info = demo.seed(a.seed_file)
+    server = start_server(a.port)
+    url = f"http://127.0.0.1:{a.port}"
+    shots = []
+
+    from playwright.sync_api import sync_playwright
+
+    def shot(page, name, full_page=True):
+        page.wait_for_load_state("networkidle")
+        page.screenshot(path=a.out / f"{name}.png", full_page=full_page)
+        shots.append(name)
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        phone = browser.new_context(**pw.devices["iPhone 13"], base_url=url)
+        v = phone.new_page()
+        v.goto("/login")
+        shot(v, "v01-login", full_page=False)
+        v.get_by_label("Mobile number").fill("(310) 555-0142")
+        v.get_by_role("button", name="Text me a code").click()
+        v.get_by_label("Code").wait_for()
+        shot(v, "v02-code", full_page=False)
+        v.get_by_label("Code").fill("000000")
+        v.get_by_role("button", name="Sign in").click()
+        v.wait_for_url("**/onboarding")
+        shot(v, "v03-onboarding")
+        phone.clear_cookies()
+        volunteer_sign_in(v, demo.ME_PHONE)
+        v.wait_for_url("**/deck")
+        shot(v, "v04-deck", full_page=False)
+        for name, path in (
+            ("v05-matches", "/matches"),
+            ("v06-chat", f"/chat/{info['match_id']}"),
+            ("v07-history", "/history"),
+            ("v08-profile", "/profile"),
+        ):
+            v.goto(path)
+            shot(v, name, full_page=name != "v06-chat")
+
+        desk = browser.new_context(
+            viewport={"width": 1280, "height": 860}, base_url=url
+        )
+        o = desk.new_page()
+        o.goto("/org/login")
+        shot(o, "o01-login", full_page=False)
+        staff_sign_in(o, demo.COORDINATOR[0], "/org")
+        shot(o, "o02-dashboard")
+        for name, path in (
+            ("o03-inbox", "/org/inbox"),
+            ("o04-new-opening", "/org/openings/new"),
+            ("o05-shifts", "/org/shifts"),
+            ("o06-chat", f"/org/chat/{info['match_id']}"),
+            ("o07-privacy", "/privacy"),
+        ):
+            o.goto(path)
+            shot(o, name, full_page=name != "o06-chat")
+
+        admin = browser.new_context(
+            viewport={"width": 1280, "height": 860}, base_url=url
+        )
+        ad = admin.new_page()
+        staff_sign_in(ad, demo.ADMIN[0], "/admin")
+        shot(ad, "a01-admin")
+        ad.goto("/admin/orgs")
+        shot(ad, "a02-admin-orgs")
+        browser.close()
+    server.should_exit = True
+    print(f"{len(shots)} screenshots in {a.out}")
+
+
+if __name__ == "__main__":
+    main()

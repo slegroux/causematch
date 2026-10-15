@@ -2,61 +2,81 @@ import logging
 import re
 
 import httpx
-from fasthtml.common import A, APIRouter, Form, Input, P, Redirect
-from monsterui.all import AT, Button, ButtonT, TextPresets
+from fasthtml.common import A, APIRouter, Div, Form, P, Redirect
+from monsterui.all import AT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
 from app.forms import bad_request, str_form
-from app.ui import Page
+from app.ui import BigButton, CauseChip, Field, SignInPage, TextInput, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 log = logging.getLogger("causematch")
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 
 
 def PhoneForm(phone="", error=None):
-    return Page(
+    return SignInPage(
         "Sign in",
         Form(
-            Input(
-                name="phone",
-                value=phone,
-                type="tel",
-                inputmode="tel",
-                autocomplete="tel",
-                placeholder="(310) 555-0123",
-                aria_label="Mobile number",
-                required=True,
+            Field(
+                "Mobile number",
+                TextInput(
+                    name="phone",
+                    value=phone,
+                    type="tel",
+                    inputmode="tel",
+                    autocomplete="tel",
+                    placeholder="(310) 555-0123",
+                    aria_label="Mobile number",
+                    required=True,
+                ),
             ),
-            Button("Text me a code", cls=ButtonT.primary + " w-full"),
+            BigButton("Text me a code"),
             P("We text you a 6-digit code. No password.", cls=TextPresets.muted_sm),
             action="/login/send",
             method="post",
+            cls="space-y-4",
         ),
         error=error,
         intro=INTRO,
+        aside=Div(
+            Div(
+                *[CauseChip(c.slug, c.label) for c in data.active_causes()],
+                cls="flex flex-wrap justify-center gap-2",
+            ),
+            P(
+                "Signing in for a nonprofit? ",
+                A("Nonprofit sign in", href="/org/login", cls="text-brand font-bold"),
+                cls="text-ink-muted",
+            ),
+            cls="mt-8 space-y-6 text-center",
+        ),
     )
 
 
 def CodeForm(phone, error=None):
-    return Page(
+    return SignInPage(
         "Enter your code",
         Form(
-            Input(
-                name="code",
-                inputmode="numeric",
-                autocomplete="one-time-code",
-                maxlength="6",
-                placeholder="6-digit code",
-                aria_label="Code",
-                required=True,
+            Field(
+                "Code",
+                TextInput(
+                    name="code",
+                    inputmode="numeric",
+                    autocomplete="one-time-code",
+                    maxlength="6",
+                    aria_label="Code",
+                    required=True,
+                    cls="h-14 text-center text-2xl font-bold tracking-[0.4em]",
+                ),
             ),
-            Button("Sign in", cls=ButtonT.primary + " w-full"),
+            BigButton("Sign in"),
             action="/login/verify",
             method="post",
+            cls="space-y-4",
         ),
         P("Wrong number? ", A("Start over", href="/login", cls=AT.muted)),
         error=error,

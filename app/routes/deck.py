@@ -16,9 +16,9 @@ from monsterui.all import (
 )
 
 from app import data
-from app.ui import VolunteerNav
+from app.ui import VolunteerNav, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 
 def when(starts_at):

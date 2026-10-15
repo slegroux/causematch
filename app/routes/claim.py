@@ -1,15 +1,15 @@
 import re
 
-from fasthtml.common import APIRouter, Input, P
+from fasthtml.common import APIRouter, P
 from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
 from app.forms import bad_request, str_form
-from app.ui import Field, Page
+from app.ui import Field, Page, TextInput, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 # The same words for every EIN: known, unknown or already claimed.
 RECEIVED = (
@@ -26,7 +26,7 @@ def ClaimForm(values=None, error=None):
         Form(
             Field(
                 "Organization's EIN",
-                Input(
+                TextInput(
                     name="ein",
                     value=v.get("ein", ""),
                     placeholder="53-0196605",
@@ -36,7 +36,7 @@ def ClaimForm(values=None, error=None):
             ),
             Field(
                 "Organization name",
-                Input(
+                TextInput(
                     name="org_name",
                     value=v.get("org_name", ""),
                     maxlength=str(data.CLAIM_LIMITS["org_name"]),
@@ -45,7 +45,7 @@ def ClaimForm(values=None, error=None):
             ),
             Field(
                 "Your name",
-                Input(
+                TextInput(
                     name="name",
                     value=v.get("name", ""),
                     maxlength=str(data.CLAIM_LIMITS["name"]),
@@ -55,7 +55,7 @@ def ClaimForm(values=None, error=None):
             ),
             Field(
                 "Your email",
-                Input(
+                TextInput(
                     name="email",
                     value=v.get("email", ""),
                     type="email",
@@ -67,7 +67,7 @@ def ClaimForm(values=None, error=None):
             ),
             Field(
                 "Phone (optional)",
-                Input(
+                TextInput(
                     name="phone",
                     value=v.get("phone", ""),
                     type="tel",

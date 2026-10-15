@@ -21,9 +21,9 @@ from app import data
 from app.choices import SHARED_WITH_NONPROFIT
 from app.config import contact_email
 from app.forms import bad_request, str_form
-from app.ui import Choice, Field, Page, VolunteerNav
+from app.ui import Choice, Field, Page, VolunteerNav, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 BAD_REPORT = "Choose a reason. Details can be up to 1000 characters."
 

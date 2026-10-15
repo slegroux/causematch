@@ -1,16 +1,16 @@
 import logging
 import re
 
-from fasthtml.common import APIRouter, Form, HttpHeader, Input, P, Redirect, Response
-from monsterui.all import Button, ButtonT, TextPresets
+from fasthtml.common import A, APIRouter, Form, HttpHeader, P, Redirect, Response
+from monsterui.all import TextPresets
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.forms import query
-from app.ui import Page
+from app.ui import BigButton, Field, SignInPage, TextInput, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 log = logging.getLogger("causematch")
 
 SENT = "If that address belongs to a coordinator, a sign-in link is on its way."
@@ -19,26 +19,35 @@ BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one
 
 
 def EmailForm(email="", error=None, notice=None):
-    return Page(
+    return SignInPage(
         "Nonprofit sign in",
         Form(
-            Input(
-                name="email",
-                value=email,
-                type="email",
-                inputmode="email",
-                autocomplete="email",
-                placeholder="you@nonprofit.org",
-                aria_label="Email",
-                required=True,
+            Field(
+                "Email",
+                TextInput(
+                    name="email",
+                    value=email,
+                    type="email",
+                    inputmode="email",
+                    autocomplete="email",
+                    placeholder="you@nonprofit.org",
+                    aria_label="Email",
+                    required=True,
+                ),
             ),
-            Button("Email me a link", cls=ButtonT.primary + " w-full"),
+            BigButton("Email me a link"),
             P("We email you a sign-in link. No password.", cls=TextPresets.muted_sm),
             action="/org/login/send",
             method="post",
+            cls="space-y-4",
         ),
         error=error,
         intro=notice or "Sign in to post volunteer openings.",
+        aside=P(
+            "Volunteering? ",
+            A("Sign in with your phone", href="/login", cls="text-brand font-bold"),
+            cls="mt-8 text-center text-ink-muted",
+        ),
     )
 
 
@@ -101,13 +110,9 @@ def org_login_confirm(req, sess):
     if token:
         sess["login_token"] = token[:200]
         return Redirect("/org/login/verify")
-    return HttpHeader("Referrer-Policy", "same-origin"), Page(
+    return HttpHeader("Referrer-Policy", "same-origin"), SignInPage(
         "Sign in to Causematch",
-        Form(
-            Button("Sign in", cls=ButtonT.primary + " w-full"),
-            action="/org/login/verify",
-            method="post",
-        ),
+        Form(BigButton("Sign in"), action="/org/login/verify", method="post"),
         intro="Press the button to finish signing in.",
     )
 

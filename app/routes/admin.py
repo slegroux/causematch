@@ -44,8 +44,9 @@ from app.metrics import (
     pilot_metrics,
 )
 from app.org_import import import_ein
+from app.ui import TextInput, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 log = logging.getLogger("causematch")
 NO_STORE = {"Cache-Control": "no-store"}
 NO_STORE_HEADER = HttpHeader("Cache-Control", "no-store")
@@ -315,13 +316,12 @@ def OrgRow(o, found=None, error=None):
         P(f"EIN {o['ein']}" if o["ein"] else "No EIN yet", cls=TextPresets.muted_sm),
         Alert(error, cls=AlertT.error) if error else None,
         Form(
-            Input(
+            TextInput(
                 name="ein",
                 value=o["ein"],
                 placeholder="53-0196605",
                 aria_label="EIN",
                 required=True,
-                cls="uk-input",
             ),
             PlainButton("Look up", type="submit", cls="uk-btn uk-btn-default"),
             action=f"/admin/orgs/{o['id']}/lookup",

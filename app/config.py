@@ -120,3 +120,14 @@ def sms_ceilings(env=os.environ):
             raise RuntimeError(f"{name} must be a positive whole number")
         out.append(int(raw))
     return tuple(out)
+
+
+def demo_banner(env=os.environ):
+    """CAUSEMATCH_DEMO_BANNER=1 (scripts/demo.py --seed-file, which loads real nonprofits
+    with sample openings): every page says they are samples. Local demos only: production
+    refuses it, so a real deploy never shows sample openings as a demo."""
+    if env.get("CAUSEMATCH_DEMO_BANNER") != "1":
+        return False
+    if is_production(env):
+        raise RuntimeError("CAUSEMATCH_DEMO_BANNER is for local demos, not production")
+    return True

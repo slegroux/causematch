@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import A, APIRouter, Div, Input, P, Redirect, Response
+from fasthtml.common import A, APIRouter, Div, P, Redirect, Response
 from monsterui.all import AT, Button, ButtonT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
@@ -13,9 +13,9 @@ from app.choices import (
     SKILLS,
 )
 from app.geo import zip_latlon
-from app.ui import Checks, Choice, Field, Page
+from app.ui import Checks, Choice, Field, Page, TextInput, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 ADULTS_ONLY = "Causematch is for adults 18+"
 LA_ONLY = "Causematch is only in Los Angeles for now"
@@ -58,7 +58,7 @@ def OnboardingForm(f=None, error=None):
         Form(
             Field(
                 "First name",
-                Input(
+                TextInput(
                     name="first_name",
                     value=f.get("first_name", ""),
                     autocomplete="given-name",
@@ -70,7 +70,7 @@ def OnboardingForm(f=None, error=None):
             ),
             Field(
                 "Email (optional)",
-                Input(
+                TextInput(
                     name="email",
                     type="email",
                     value=f.get("email", ""),
@@ -79,7 +79,7 @@ def OnboardingForm(f=None, error=None):
             ),
             Field(
                 "Your ZIP code",
-                Input(
+                TextInput(
                     name="zip",
                     value=f.get("zip", ""),
                     inputmode="numeric",
@@ -90,7 +90,7 @@ def OnboardingForm(f=None, error=None):
             ),
             Field(
                 "Neighborhood (e.g. Silver Lake, Mar Vista, Koreatown)",
-                Input(name="neighborhood", value=f.get("neighborhood", "")),
+                TextInput(name="neighborhood", value=f.get("neighborhood", "")),
             ),
             Field(
                 "How far would you travel for a shift?",
@@ -110,7 +110,7 @@ def OnboardingForm(f=None, error=None):
             ),
             Field(
                 "Any other cause you'd like to see here? (optional)",
-                Input(name="other_causes", value=f.get("other_causes", "")),
+                TextInput(name="other_causes", value=f.get("other_causes", "")),
             ),
             Field(
                 "When are you usually free?",

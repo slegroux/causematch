@@ -1,4 +1,4 @@
-from fasthtml.common import H1, H2, A, APIRouter, Div, Input, P, Redirect, Response
+from fasthtml.common import H1, H2, A, APIRouter, Div, P, Redirect, Response
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     AT,
@@ -18,9 +18,9 @@ from starlette.concurrency import run_in_threadpool
 from app import data
 from app.forms import bad_request, query, str_form
 from app.routes.deck import when
-from app.ui import Field, Page, VolunteerNav
+from app.ui import Field, Page, TextInput, VolunteerNav, body_wrap
 
-ar = APIRouter()
+ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
 
 SHIFT_STATUS = {
     "scheduled": "Not marked yet",
@@ -185,7 +185,7 @@ def ShiftForm(match_id, head, error=None, value=""):
         Form(
             Field(
                 "Date and time (Los Angeles time)",
-                Input(
+                TextInput(
                     name="starts_at",
                     type="datetime-local",
                     value=value,
