@@ -103,6 +103,7 @@ def pages(anon, user, coord):
         (coord, "/org/shifts"),
         (coord, "/org/organization"),
         (coord, f"/org/openings/{opening.id}/media"),
+        (coord, f"/org/openings/{opening.id}/urgent"),
         (coord, f"/org/chat/{m.id}"),
         (coord, f"/org/matches/{m.id}/shifts/new"),
         (coord, f"/org/matches/{m.id}/report"),

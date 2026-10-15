@@ -176,6 +176,9 @@ class Match:
     decided_by: int
     withdrawn_at: str
     org_blind: bool  # liked after the org blocked this volunteer: the org never sees it
+    urgent_call_id: (
+        int  # a like on an open UrgentCall's card: it counts toward that call
+    )
 
 
 class Message:
@@ -333,6 +336,31 @@ class Photo:
 
 
 photos = db.create(Photo, pk="key", transform=True)
+
+
+class UrgentCall:
+    """A nonprofit short of people for a shift in the next 48 hours: "need 2 more for
+    tomorrow 9 am" on one of its openings (app/data.py post_urgent_call). Likes made while
+    it is open carry its id (Match.urgent_call_id); it fills at `needed` accepted ones."""
+
+    id: int
+    opening_id: int
+    org_id: int
+    starts_at: (
+        str  # the shift, LA wall clock, naive ISO minutes (like Opening.starts_at)
+    )
+    needed: int  # how many more people
+    auto_accept: bool  # the first `needed` likes are accepted without a decision
+    status: (
+        str  # open|filled|closed (closed by the org, expired, or its opening closed)
+    )
+    created_by: int  # the coordinator
+    created_at: str  # UTC
+    ended_at: str  # UTC, when it stopped being open
+
+
+urgent_calls = db.create(UrgentCall, pk="id", transform=True)
+urgent_calls.create_index(["org_id", "created_at"], if_not_exists=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

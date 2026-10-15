@@ -125,6 +125,14 @@ def OpeningCard(c):
     return Div(
         CardImage(c),
         Div(
+            # an urgent call: "Urgent · today 9 am · needs 2"
+            P(
+                c["urgent"],
+                cls="inline-flex rounded-full bg-red-700 px-3 py-1 text-xs "
+                "font-extrabold text-white",
+            )
+            if c.get("urgent")
+            else None,
             Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
             H2(
                 c["title"],

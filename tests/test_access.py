@@ -34,6 +34,7 @@ from app.db import (
     reports,
     shifts,
     swipes,
+    urgent_calls,
 )
 from main import app
 
@@ -88,6 +89,9 @@ ROUTES = {
     ("GET", "/org/openings/new"): ("coordinator", "own-org"),
     ("POST", "/org/openings/new"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
+    ("GET", "/org/openings/{opening_id}/urgent"): ("coordinator", "own-org"),
+    ("POST", "/org/openings/{opening_id}/urgent"): ("coordinator", "own-org"),
+    ("POST", "/org/openings/{opening_id}/urgent/close"): ("coordinator", "own-org"),
     ("GET", "/org/inbox"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
     ("GET", "/org/shifts"): ("coordinator", "own-org"),
@@ -414,6 +418,32 @@ def close_other(w, oid):
 
 
 LA = ZoneInfo("America/Los_Angeles")
+
+
+def urgent_check(method, suffix):
+    """org 1's coordinator, on org 0's opening: refused; no call posted, and org 0's own
+    call (posted first) stays open."""
+
+    def check(w):
+        soon = (datetime.now(LA) + timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M")
+        body = {"starts_at": soon, "needed": "2", "auto_accept": "1"}
+        r = w.org0.post(
+            f"/org/openings/{w.opening.id}/urgent", data=body, follow_redirects=False
+        )
+        assert r.status_code == 303  # control: the owner may post one
+        (call,) = urgent_calls()
+
+        def call_as_org1(oid):
+            path = f"/org/openings/{oid}/urgent{suffix}"
+            if method == "GET":
+                return w.org1.get(path, follow_redirects=False)
+            return w.org1.post(path, data=body, follow_redirects=False)
+
+        for oid in (w.opening.id, *GONE):
+            assert_refused(call_as_org1(oid))
+        assert [(c.id, c.status) for c in urgent_calls()] == [(call.id, "open")]
+
+    return check
 
 
 def opening_form(org_id, **over):
@@ -805,6 +835,9 @@ OWNERSHIP = {
         lambda w: w.opening.id,
         lambda w: openings[w.opening.id].status == w.opening.status,
     ),
+    ("GET", "/org/openings/{opening_id}/urgent"): urgent_check("GET", ""),
+    ("POST", "/org/openings/{opening_id}/urgent"): urgent_check("POST", ""),
+    ("POST", "/org/openings/{opening_id}/urgent/close"): urgent_check("POST", "/close"),
     ("POST", "/org/openings/new"): check_create_opening,
     ("POST", "/swipe"): check_swipe,
     ("GET", "/org/matches/{match_id}/shifts/new"): shift_match_check("page"),

@@ -1,3 +1,4 @@
+import copy
 import functools
 import hashlib
 import hmac
@@ -125,7 +126,8 @@ def _deck_openings(uid, today=False, p=None):
     from the deck (closed, past, inactive cause, a cause that is "not for me", past the
     volunteer's horizon, a dealbreaker: out of reach of every place, ...) also stops a like
     sent by id. today: only shifts starting in the next TODAY_HOURS, whatever the
-    volunteer's times. The place is the one quickest to reach the opening from; it and km
+    volunteer's times. An opening with an open urgent call comes as a copy starting at
+    the call's time, so every check and the card use that time. The place is the one quickest to reach the opening from; it and km
     are None for a remote opening or when the volunteer has no place. p: _deck_prefs(),
     read here when not given.
     """
@@ -152,12 +154,17 @@ def _deck_openings(uid, today=False, p=None):
             [uid],
         )
     }
+    calls = _open_calls()
     out = []
     for o in _db.openings(
-        where="status = ? AND starts_at >= ?",
+        where="status = ? AND (starts_at >= ? OR id IN "
+        "(SELECT opening_id FROM urgent_call WHERE status = 'open'))",
         where_args=["open", _local_now()],
         order_by="starts_at",
     ):
+        if o.id in calls:
+            o = copy.copy(o)
+            o.starts_at = calls[o.id].starts_at
         if o.org_id not in shown or (until and o.starts_at > until):
             continue
         slugs = json.loads(o.causes or "[]")
@@ -436,7 +443,9 @@ def deck_and_count(uid, limit=20, today=False, view=None):
     org_media = {o.id: (o.photo_key, o.logo_key) for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
-    for o, cause_labels, km, near in _deck_openings(uid, today, p):
+    drawn = _deck_openings(uid, today, p)
+    calls = {c.opening_id: c for c in _db.urgent_calls(where="status = 'open'")}
+    for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
         when = _match.availability_overlap(
             p["availability"], o.starts_at, o.recurrence, p["free_dates"]
@@ -456,19 +465,25 @@ def deck_and_count(uid, limit=20, today=False, view=None):
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
             key = (-round(fit, 6), o.starts_at, o.id)
-        ranked.append((*key, o, cause_labels, slugs, near))
-    ranked.sort(key=lambda r: r[:3])
-    pool = [r[3:] for r in ranked]
+        # urgent calls first
+        ranked.append((o.id not in calls, *key, o, cause_labels, slugs, near))
+    ranked.sort(key=lambda r: r[:4])
+    pool = [r[4:] for r in ranked]
     seen = _db.swipes.count_where("volunteer_id = ?", [uid])
     surprise = bool(me.surprise) and bool(loved) and not today
     cards = []
     while pool and len(cards) < limit:
         pick, odd = 0, False
-        if surprise and (seen + len(cards)) % SURPRISE_EVERY == SURPRISE_EVERY - 1:
+        if (
+            surprise
+            and pool[0][0].id not in calls
+            and (seen + len(cards)) % SURPRISE_EVERY == SURPRISE_EVERY - 1
+        ):
             outside = [i for i, r in enumerate(pool) if not loved & set(r[2])]
             if outside:
                 pick, odd = outside[0], True
         o, cause_labels, slugs, near = pool.pop(pick)
+        call = calls.get(o.id)
         cards.append(
             {
                 "id": o.id,
@@ -492,6 +507,8 @@ def deck_and_count(uid, limit=20, today=False, view=None):
                 "photo": o.photo_key or org_media.get(o.org_id, (None, None))[0],
                 "logo": org_media.get(o.org_id, (None, None))[1],
                 "event_url": o.event_url,
+                "urgent": call
+                and urgent_label(call.starts_at, call.needed - _urgent_found(call.id)),
             }
         )
     return cards, len(ranked)
@@ -607,6 +624,9 @@ def _swipe(uid, opening_id, liked, today=False, view=None):
         )
         if not liked:
             return None, False
+        call = _db.urgent_calls(
+            where="opening_id = ? AND status = 'open'", where_args=[opening_id]
+        )
         return _db.matches.insert(
             _db.Match(
                 opening_id=opening_id,
@@ -615,6 +635,7 @@ def _swipe(uid, opening_id, liked, today=False, view=None):
                 created_at=_now(),
                 # a blocked volunteer's like looks normal to them and never reaches the org
                 org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id),
+                urgent_call_id=call[0].id if call else None,
             )
         ), True
 
@@ -670,12 +691,19 @@ def decide(coordinator_uid, match_id, accept):
             )
         if accept:
             _sync_fill(o.id)
+            _sync_urgent(m.urgent_call_id)
+            # a like on an urgent call is for the call's shift
+            starts_at = (
+                _db.urgent_calls[m.urgent_call_id].starts_at
+                if m.urgent_call_id
+                else o.starts_at
+            )
             # An opening that already started gets no shift: the coordinator schedules one.
-            if o.starts_at > _local_now():
+            if starts_at > _local_now():
                 _db.shifts.insert(
                     _db.Shift(
                         match_id=match_id,
-                        starts_at=o.starts_at,
+                        starts_at=starts_at,
                         status="scheduled",
                         kind="accept",
                         created_by=coordinator_uid,
@@ -1734,12 +1762,141 @@ def close_opening(coordinator_uid, opening_id):
         raise PermissionError("not a member of this org")
     with _db.db.conn:
         _db.openings.update(id=opening_id, status="closed")
+        _end_urgent(opening_id, "closed")
         _db.db.execute(
             "UPDATE shift SET status = 'cancelled', cancelled_at = ?, cancelled_by = ? "
             "WHERE status = 'scheduled' AND starts_at > ? AND match_id IN "
             "(SELECT id FROM match WHERE opening_id = ?)",
             [_now(), coordinator_uid, _local_now(), opening_id],
         )
+
+
+URGENT_HOURS = 48  # an urgent call is for a shift starting this soon
+URGENT_PER_DAY = 3  # urgent calls an org may post in any 24 hours
+
+
+def _urgent_sweep():
+    """Close the open calls whose time came or whose opening is no longer open; a filled
+    opening fills its call."""
+    _db.db.execute(
+        "UPDATE urgent_call SET status = CASE WHEN "
+        "(SELECT status FROM opening WHERE id = opening_id) = 'filled' "
+        "THEN 'filled' ELSE 'closed' END, ended_at = ? "
+        "WHERE status = 'open' AND (starts_at <= ? OR "
+        "(SELECT status FROM opening WHERE id = opening_id) != 'open')",
+        [_now(), _local_now()],
+    )
+
+
+def _open_calls():
+    """{opening id: its open UrgentCall}, after closing the stale ones."""
+    _urgent_sweep()
+    return {c.opening_id: c for c in _db.urgent_calls(where="status = 'open'")}
+
+
+def _urgent_found(call_id):
+    """How many likes on the call were accepted."""
+    return _db.matches.count_where(
+        "urgent_call_id = ? AND status = 'accepted'", [call_id]
+    )
+
+
+def _sync_urgent(call_id):
+    """open -> filled once `needed` likes on it were accepted (or its opening filled)."""
+    if call_id is None:
+        return
+    call = _db.urgent_calls[call_id]
+    if call.status == "open" and _urgent_found(call_id) >= call.needed:
+        _db.urgent_calls.update(id=call_id, status="filled", ended_at=_now())
+    _urgent_sweep()
+
+
+def _end_urgent(opening_id, status):
+    _db.db.execute(
+        "UPDATE urgent_call SET status = ?, ended_at = ? "
+        "WHERE opening_id = ? AND status = 'open'",
+        [status, _now(), opening_id],
+    )
+
+
+def open_spots(coordinator_uid, opening_id):
+    """How many more people the opening can take (slots - accepted), for the call form."""
+    o = coordinator_opening(coordinator_uid, opening_id)
+    return max(0, o.slots - _accepted(o.id))
+
+
+def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept):
+    """Post "need `needed` more for `starts_at`" on an open opening; the call's id.
+
+    starts_at: LA wall clock "YYYY-MM-DDTHH:MM", after now and within URGENT_HOURS.
+    ValueError, its message one of: "not open" (the opening is filled or closed),
+    "already" (it has an open call), "time", "needed" (1 to its open spots), "limit"
+    (URGENT_PER_DAY calls in the last 24 hours by the org).
+    """
+    o = coordinator_opening(coordinator_uid, opening_id)
+    if _db.orgs[o.org_id].deactivated_at:
+        raise PermissionError("no such opening")
+    calls = _open_calls()
+    if o.status != "open":
+        raise ValueError("not open")
+    if o.id in calls:
+        raise ValueError("already")
+    now = datetime.now(LA)
+    latest = (now + timedelta(hours=URGENT_HOURS)).strftime("%Y-%m-%dT%H:%M")
+    if not now.strftime("%Y-%m-%dT%H:%M") < starts_at <= latest:
+        raise ValueError("time")
+    if not 1 <= needed <= o.slots - _accepted(o.id):
+        raise ValueError("needed")
+    since = (datetime.now(UTC) - timedelta(days=1)).isoformat(timespec="seconds")
+    with _db.db.conn:
+        if (
+            _db.urgent_calls.count_where(
+                "org_id = ? AND created_at > ?", [o.org_id, since]
+            )
+            >= URGENT_PER_DAY
+        ):
+            raise ValueError("limit")
+        return _db.urgent_calls.insert(
+            _db.UrgentCall(
+                opening_id=o.id,
+                org_id=o.org_id,
+                starts_at=starts_at,
+                needed=needed,
+                auto_accept=bool(auto_accept),
+                status="open",
+                created_by=coordinator_uid,
+                created_at=_now(),
+            )
+        ).id
+
+
+def close_urgent_call(coordinator_uid, opening_id):
+    """Stop the opening's open call, if it has one."""
+    o = coordinator_opening(coordinator_uid, opening_id)
+    with _db.db.conn:
+        _end_urgent(o.id, "closed")
+
+
+def org_urgent_calls(coordinator_uid):
+    """{opening id: {"call": its open UrgentCall, "found": accepted likes on it}} for
+    the coordinator's own orgs only."""
+    mine = coordinator_org_ids(coordinator_uid)
+    return {
+        oid: {"call": c, "found": _urgent_found(c.id)}
+        for oid, c in _open_calls().items()
+        if c.org_id in mine
+    }
+
+
+def urgent_label(starts_at, left):
+    """ "Urgent · today 9 am · needs 2": the deck's badge and the org's pill."""
+    start = datetime.fromisoformat(starts_at)
+    today = datetime.now(LA).date()
+    day = {0: "today", 1: "tomorrow"}.get(
+        (start.date() - today).days, start.strftime("%a")
+    )
+    clock = start.strftime("%-I:%M %p" if start.minute else "%-I %p").lower()
+    return f"Urgent · {day} {clock} · needs {left}"
 
 
 def notification_claim(kind, key, recipient_id, at, cutoff=None, max_attempts=5):
