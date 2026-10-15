@@ -52,6 +52,16 @@ LANGUAGES = [
     ("other", "Another language"),
 ]
 
+# What filters instead of only ranking ("Only show" vs "Prefer"). "Not for me" causes
+# always filter. Distance filters unless the volunteer turns it off, as the radius did.
+DEALBREAKERS = [
+    ("causes", "Causes I love or am open to"),
+    ("distance", "Within my travel time"),
+    ("when", "When I'm free"),
+    ("work", "The kind of work I picked"),
+]
+DEFAULT_DEALBREAKERS = ["distance"]
+
 SKILLS = [
     ("physical", "Physical work / lifting"),
     ("car", "A car, happy to drive"),

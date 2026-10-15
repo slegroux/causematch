@@ -207,6 +207,15 @@ def work_fit(mine, theirs):
     return sum(terms) / len(terms)
 
 
+def work_allowed(mine, theirs):
+    """The "work" dealbreaker: False when the opening says a setting, effort or group size
+    other than the one the volunteer asked for. Saying nothing never hides an opening."""
+    return not any(
+        mine.get(k) not in NO_PREFERENCE and theirs.get(k) and theirs[k] != mine[k]
+        for k in WORK_KEYS
+    )
+
+
 def work_matches(mine, theirs):
     """The kinds of work where the opening says what the volunteer asked for."""
     return [

@@ -7,7 +7,7 @@ the answers it already had, so its deck stays as it was until the volunteer edit
 import json
 from datetime import date
 
-from app.choices import MAX_FREE_DATES, MAX_MINUTES, MODES
+from app.choices import DEFAULT_DEALBREAKERS, MAX_FREE_DATES, MAX_MINUTES, MODES
 from app.geo import neighborhood_latlon, round_point, zip_latlon
 
 UNRECOGNIZED = "Something in that form wasn't recognized. Please try again."
@@ -55,6 +55,13 @@ def horizon_days(profile):
 
 def commitment(profile):
     return profile.commitment or "either"
+
+
+def dealbreakers(profile):
+    """The preferences that filter the deck (choices.DEALBREAKERS); the rest only rank."""
+    if profile.dealbreakers is None:
+        return list(DEFAULT_DEALBREAKERS)
+    return json.loads(profile.dealbreakers)
 
 
 def work(profile):

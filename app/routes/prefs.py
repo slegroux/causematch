@@ -29,6 +29,7 @@ from app import data, prefs
 from app.choices import (
     COMMITMENT,
     DAYS,
+    DEALBREAKERS,
     EFFORT,
     FREQUENCY,
     GROUP,
@@ -462,6 +463,28 @@ def PrefsPage(f, error=None, saved=False):
                 ),
             ),
             Section(
+                "Only show, or prefer?",
+                "Prefer ranks what fits first and still shows the rest. Only show hides "
+                "what doesn't fit. Causes that are not for you are always hidden.",
+                *[
+                    Group(
+                        label,
+                        "grid grid-cols-2 gap-2",
+                        f"only_{key}",
+                        [("prefer", "Prefer"), ("only", "Only show")],
+                        "only" if key in f["dealbreakers"] else "prefer",
+                    )
+                    for key, label in DEALBREAKERS
+                ],
+                Chip(
+                    "checkbox",
+                    "surprise",
+                    "1",
+                    "Surprise me: now and then, a cause beyond the ones I love",
+                    f["surprise"],
+                ),
+            ),
+            Section(
                 "How often",
                 None,
                 Div(
@@ -534,6 +557,10 @@ def _sync_save(req, form):
         "first_timer": form.get("first_timer") == "1",
         "orientation_ok": form.get("orientation_ok") == "1",
         "languages": form.getlist("languages"),
+        "dealbreakers": [
+            key for key, _ in DEALBREAKERS if form.get(f"only_{key}") == "only"
+        ],
+        "surprise": form.get("surprise") == "1",
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
         "place_forms": [
@@ -556,6 +583,10 @@ def _sync_save(req, form):
         or f["effort"] not in {v for v, _ in EFFORTS}
         or f["group_size"] not in {v for v, _ in GROUPS}
         or not set(f["languages"]) <= {v for v, _ in LANGUAGES}
+        or any(
+            form.get(f"only_{key}", "prefer") not in ("prefer", "only")
+            for key, _ in DEALBREAKERS
+        )
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):

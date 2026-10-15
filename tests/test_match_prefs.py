@@ -18,6 +18,7 @@ BASE = {
     "cause_food-insecurity": "love",
     "availability": ["sat_morning"],
     "frequency": "weekly",
+    "only_distance": "only",  # the default: a place's travel time is a limit
 }
 
 
@@ -94,7 +95,7 @@ def test_place_near_work_but_far_from_home_is_shown_from_work(bare):
     assert got["by the office"]["travel"].endswith("by car from Work")
     assert got["by home"]["travel"].endswith("by car from Home")
     top = data.deck(uid_of(bare), 1)[0]["travel"]
-    assert f"About {top}" in bare.get("/deck").text  # the card says it
+    assert f">{top}</span>" in bare.get("/deck").text  # a why-chip on the card says it
 
 
 def test_place_the_quickest_place_labels_the_card(bare):
@@ -588,3 +589,166 @@ def test_work_answers_are_stored_and_shown(bare):
     assert 'name="setting" value="indoor" checked' in page
     assert 'name="languages" value="tl" checked' in page
     assert 'name="orientation_ok" value="1" checked' in page
+
+
+# --- dealbreakers, surprise, why -------------------------------------------------------------
+
+FOOD, ANIMALS, PARKS = "food-insecurity", "animal-shelters", "environment-parks"
+
+
+def prefer_all(**over):
+    """The form with every dealbreaker set to Prefer (distance included)."""
+    return {**work_form(), "only_distance": "prefer", **over}
+
+
+def test_dealbreaker_distance_prefer_shows_what_is_out_of_reach_lower(bare):
+    save(bare, prefer_all(**place_fields(1, "Home", "Downtown", minutes="15")))
+    add("pasadena", PASADENA, starts_at="2099-01-03T08:00")
+    add("downtown", DOWNTOWN, starts_at="2099-01-03T09:00")
+    assert list(cards(bare)) == ["downtown", "pasadena"]
+    save(bare, work_form(**place_fields(1, "Home", "Downtown", minutes="15")))
+    assert list(cards(bare)) == ["downtown"]
+
+
+def test_dealbreaker_distance_is_on_for_a_profile_from_before(bare):
+    assert data.preferences(uid_of(bare))["dealbreakers"] == ["distance"]
+    page = bare.get("/me/preferences").text
+    assert 'name="only_distance" value="only" checked' in page
+    assert 'name="only_causes" value="prefer" checked' in page
+
+
+def test_dealbreaker_causes_only_shows_loved_and_open(bare):
+    form = {"cause_food-insecurity": "love", "cause_environment-parks": "open"}
+    save(bare, work_form(**form))
+    add("animals", DOWNTOWN, causes=json.dumps([ANIMALS]))
+    add("parks", DOWNTOWN, causes=json.dumps([PARKS]))
+    add("food", DOWNTOWN)
+    assert list(cards(bare)) == ["food", "parks", "animals"]  # prefer: unrated last
+    save(bare, work_form(only_causes="only", **form))
+    assert list(cards(bare)) == ["food", "parks"]
+
+
+def test_dealbreaker_when_only_shows_free_times_and_flexible(bare):
+    save(bare, work_form(only_when="only", availability=["sat_morning"]))
+    add("saturday morning", DOWNTOWN, starts_at=next_weekday(5, "09:00"))
+    add("monday evening", DOWNTOWN, starts_at=next_weekday(0, "19:00"))
+    add("flexible monday", DOWNTOWN, starts_at=next_weekday(0, "19:00"),
+        recurrence="flexible")  # fmt: skip
+    assert set(cards(bare)) == {"saturday morning", "flexible monday"}
+
+
+def test_dealbreaker_when_is_ignored_by_free_today(bare):
+    save(bare, work_form(only_when="only", availability=[]))
+    add("in 3 hours", DOWNTOWN, starts_at=ahead(hours=3))
+    assert cards(bare) == {}
+    assert [c["title"] for c in data.deck(uid_of(bare), 5, today=True)] == [
+        "in 3 hours"
+    ]
+
+
+def test_dealbreaker_work_hides_a_contradiction_but_not_silence(bare):
+    save(bare, work_form(only_work="only", setting="outdoor"))
+    add("indoors", DOWNTOWN, setting="indoor")
+    add("outdoors", DOWNTOWN, setting="outdoor")
+    add("says nothing", DOWNTOWN)
+    assert set(cards(bare)) == {"outdoors", "says nothing"}
+    assert match.work_allowed({"setting": "either"}, {"setting": "indoor"})
+
+
+def test_dealbreaker_hidden_cannot_be_liked_by_id(bare):
+    save(bare, work_form(only_work="only", setting="outdoor"))
+    oid = add("indoors", DOWNTOWN, setting="indoor")
+    with pytest.raises(LookupError):
+        data.swipe(uid_of(bare), oid, True)
+
+
+def food_world(n=9):
+    """n loved-cause openings, then one animal-shelter one that ranks below them all."""
+    for i in range(n):
+        add(f"food {i}", DOWNTOWN, starts_at=f"2099-01-{i + 1:02d}T09:00")
+    add("animals", DOWNTOWN, causes=json.dumps([ANIMALS]),
+        starts_at="2099-01-01T08:00")  # fmt: skip
+
+
+def test_surprise_puts_a_card_from_outside_love_every_eighth(bare):
+    save(bare, work_form(surprise="1"))
+    food_world()
+    got = data.deck(uid_of(bare), 10)
+    assert [c["title"] for c in got].index("animals") == 7
+    assert [c["surprise"] for c in got] == [i == 7 for i in range(10)]
+    assert {"text": "Surprise pick", "slug": None} in got[7]["why"]
+
+
+def test_surprise_counts_the_cards_already_swiped(bare):
+    save(bare, work_form(surprise="1"))
+    food_world(n=12)
+    uid = uid_of(bare)
+    for c in data.deck(uid, 7):
+        assert c["title"] != "animals"
+        data.swipe(uid, c["id"], False)
+    (top,) = data.deck(uid, 1)  # the 8th card met
+    assert top["title"] == "animals" and top["surprise"]
+    assert "Surprise pick" in bare.get("/deck").text
+
+
+def test_surprise_off_leaves_the_ranking_alone(bare):
+    save(bare, work_form())
+    food_world()
+    assert [c["title"] for c in data.deck(uid_of(bare), 10)][-1] == "animals"
+    assert not any(c["surprise"] for c in data.deck(uid_of(bare), 10))
+
+
+def test_why_chips_say_cause_travel_time_and_first_timer(bare):
+    save(bare, work_form(availability=["sat_morning"]))
+    add("pantry", DOWNTOWN, starts_at=next_weekday(5, "09:00"), first_timer_ok=True)
+    (c,) = data.deck(uid_of(bare), 5)
+    assert [w["text"] for w in c["why"]] == [
+        "♥ Food insecurity",
+        c["travel"],
+        "You're free Sat mornings",
+        "First-timer friendly",
+    ]
+    assert c["why"][0]["slug"] == FOOD
+
+
+def test_why_chips_name_a_free_date_a_work_match_and_a_language(bare):
+    day = next_weekday(3, "10:00")
+    save(
+        bare,
+        work_form(free_dates=[day[:10]], setting="outdoor", languages=["es"],
+                  **{"cause_food-insecurity": "open"}),
+    )  # fmt: skip
+    add("trail", DOWNTOWN, starts_at=day, setting="outdoor", languages='["es"]')
+    (c,) = data.deck(uid_of(bare), 5)
+    texts = [w["text"] for w in c["why"]]
+    assert texts[0] == "Food insecurity"  # open, so no heart
+    assert texts[2:] == ["You're free that day", "Outdoors"]  # 4 at most
+    profiles.update(id=uid_of(bare), free_dates="[]")
+    (c,) = data.deck(uid_of(bare), 5)
+    assert [w["text"] for w in c["why"]][2:] == ["Outdoors", "Spanish helps"]
+
+
+def test_why_every_card_has_one_to_four_chips(user):
+    """The seeded world, as onboarding leaves a volunteer: every card says why."""
+    got = data.deck(uid_of(user), 50)
+    assert got
+    for c in got:
+        assert 1 <= len(c["why"]) <= 4, c
+        assert c["why"][0]["slug"] in c["slugs"]
+    assert got[0]["why"][0]["text"] in user.get("/deck").text
+
+
+@pytest.mark.parametrize("over", [{"only_causes": "maybe"}, {"only_when": "yes"}])
+def test_dealbreaker_an_unknown_answer_saves_nothing(bare, over):
+    r = save(bare, work_form(**over))
+    assert r.status_code == 200 and "wasn't recognized" in r.text
+
+
+def test_dealbreaker_and_surprise_answers_are_stored(bare):
+    save(bare, work_form(only_causes="only", only_work="only", surprise="1"))
+    p = profiles[uid_of(bare)]
+    assert json.loads(p.dealbreakers) == ["causes", "distance", "work"]
+    assert p.surprise
+    page = bare.get("/me/preferences").text
+    assert 'name="only_work" value="only" checked' in page
+    assert 'name="surprise" value="1" checked' in page

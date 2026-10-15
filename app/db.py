@@ -110,6 +110,10 @@ class Profile:
     first_timer: bool  # prefers first-timer friendly openings
     orientation_ok: bool  # False hides openings with a separate orientation; NULL: True
     languages: str  # JSON list of choices.LANGUAGES keys
+    dealbreakers: (
+        str  # JSON subset of choices.DEALBREAKERS: these filter; NULL: distance
+    )
+    surprise: bool  # about 1 card in 8 from outside the loved causes
 
 
 class OrgMember:

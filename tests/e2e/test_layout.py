@@ -97,3 +97,50 @@ def test_the_save_bar_covers_nothing_at_the_bottom_of_preferences(se_page):
     # the last section's last control is above the save button, not under it
     last = se_page.locator("label:has(input[name=skills])").last.bounding_box()
     assert last["y"] + last["height"] <= save["y"], (last, save)
+
+
+def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(se_page):
+    """The tallest card in practice: a two-line title and place, and four why-chips."""
+    from datetime import datetime, timedelta
+
+    from app.db import Opening, now, profiles
+
+    p = sign_in_page(se_page, "(310) 555-0164")
+    for o in openings():
+        openings.update(id=o.id, status="closed")
+    saturday = datetime.now(data.LA) + timedelta(weeks=1)
+    saturday += timedelta(days=(5 - saturday.weekday()) % 7)
+    openings.insert(
+        Opening(
+            org_id=orgs()[0].id,
+            title="Sample: Support special events and community outreach",
+            about="",
+            causes='["environment-parks"]',
+            skills="[]",
+            lat=34.05,
+            lon=-118.25,
+            neighborhood="Sepulveda Basin (Encino / Van Nuys)",
+            remote=False,
+            starts_at=saturday.strftime("%Y-%m-%dT09:00"),
+            recurrence="one_time",
+            slots=6,
+            status="open",
+            created_at=now(),
+            first_timer_ok=True,
+        )
+    )
+    profiles.update(
+        id=p.id,
+        lat=34.06,
+        lon=-118.24,
+        radius_km=60,
+        cause_prefs='{"environment-parks": "love"}',
+        availability='["sat_morning"]',
+    )
+    (card,) = data.deck(p.id, 5)
+    assert len(card["why"]) == 4
+    se_page.goto("/deck")
+    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+    for name in ("Pass", "Like"):
+        box = se_page.get_by_role("button", name=name).bounding_box()
+        assert box["y"] + box["height"] <= bar["y"], (name, box, bar)

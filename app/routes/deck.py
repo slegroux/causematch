@@ -33,8 +33,6 @@ from app.ui import (
 
 ar = Router()
 
-ROUTE = ("M3 11 22 2l-9 19-2-8-8-2Z",)  # a navigation arrow: the travel estimate
-
 
 def when(starts_at):
     return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
@@ -64,7 +62,24 @@ def CauseArt(slug):
         src=f"/static/img/causes/{slug}.svg",
         alt="",
         draggable="false",  # a mouse drag moves the card, not a ghost of the image
-        cls="pointer-events-none block h-36 w-full object-cover",
+        # shorter on a short phone, so the buttons stay above the tab bar
+        cls="pointer-events-none block h-36 w-full object-cover "
+        "[@media(max-height:740px)]:h-24",
+    )
+
+
+def WhyChip(w):
+    """One reason the card is shown: a cause in its color (♥ when loved), else a sand chip."""
+    if w["slug"]:
+        return CauseChip(w["slug"], w["text"])
+    tone = (
+        "bg-brand-soft text-brand-ink"
+        if w["text"] == "Surprise pick"
+        else "bg-sand text-ink"
+    )
+    return Span(
+        w["text"],
+        cls=f"inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold {tone}",
     )
 
 
@@ -73,10 +88,7 @@ def OpeningCard(c):
     return Div(
         CauseArt(c["slugs"][0]) if c["slugs"] else None,
         Div(
-            Div(
-                *[CauseChip(s, label) for s, label in zip(c["slugs"], c["causes"])],
-                cls="flex flex-wrap gap-1.5",
-            ),
+            Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
             H2(
                 c["title"],
                 cls="font-display text-xl font-extrabold leading-tight text-ink",
@@ -85,7 +97,6 @@ def OpeningCard(c):
             Div(
                 Meta(CALENDAR, starts.strftime("%a %b %-d · %-I:%M %p")),
                 Meta(PIN, place_line(c)),
-                Meta(ROUTE, f"About {c['travel']}") if c.get("travel") else None,
                 Meta(PEOPLE, f"{c['slots']} spots"),
                 cls="space-y-1 pt-1",
             ),
