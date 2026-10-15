@@ -5,6 +5,7 @@ from fasthtml.common import (
     Button,
     Div,
     Form,
+    Img,
     Input,
     Nav,
     Option,
@@ -25,6 +26,7 @@ from monsterui.all import (
 )
 
 from app.config import demo_banner
+from app.forms import domain
 
 # Each cause's chip: its soft tint with its ink (static/theme.css). Literal class strings,
 # so Tailwind's scan of app/ finds them.
@@ -338,6 +340,7 @@ ORG_TABS = (
     ("openings", "Openings", "/org"),
     ("inbox", "Inbox", "/org/inbox"),
     ("shifts", "Shifts", "/org/shifts"),
+    ("organization", "Organization", "/org/organization"),
 )
 
 
@@ -434,4 +437,75 @@ def Refusal(status):
         400,
         "Something was missing",
         "That request was incomplete. Go back to the page and try again.",
+    )
+
+
+# Avatar sizes; literal class strings, so Tailwind's scan of app/ finds them
+AVATAR = {
+    "sm": "h-9 w-9 text-base",
+    "md": "h-14 w-14 text-2xl",
+    "lg": "h-28 w-28 text-5xl",
+}
+
+
+def Avatar(name, photo_key=None, size="md", **kwargs):
+    """A volunteer's round photo (its 160 px square), or the first letter of their name.
+    Decorative: the name is always written next to it. Pass a photo_key only to someone
+    data.photo_for serves it to (the org's lists blank it under a block)."""
+    cls = "shrink-0 rounded-full " + AVATAR[size]
+    if photo_key:
+        return Img(
+            src=f"/photos/thumb/{photo_key}.jpg",
+            alt="",
+            cls=cls + " object-cover ring-2 ring-white shadow-warm",
+            **kwargs,
+        )
+    return Span(
+        ((name or "").strip()[:1] or "?").upper(),
+        aria_hidden="true",
+        cls=cls + " grid place-items-center bg-brand font-display font-extrabold "
+        "text-white",
+        **kwargs,
+    )
+
+
+def EventLink(url, cls=""):
+    """The opening as the nonprofit advertises it, in a new tab: "See it on example.org ↗".
+    `url` was checked as https when it was saved (forms.https_url)."""
+    if not url:
+        return None
+    return A(
+        f"See it on {domain(url)}",
+        Span(" ↗", aria_hidden="true"),
+        Span(" (opens in a new tab)", cls="sr-only"),
+        href=url,
+        target="_blank",
+        rel="noopener noreferrer",
+        draggable="false",  # a mouse drag on a swipe card moves the card
+        cls="inline-flex min-h-11 items-center text-sm font-bold text-brand-ink "
+        "underline underline-offset-4 " + cls,
+    )
+
+
+def LogoBadge(key, cls):
+    """An org's logo as a round badge: photos.process drew it centred on its own square
+    background, small enough that the circle keeps all of it."""
+    return Img(
+        src=f"/photos/{key}.jpg",
+        alt="",
+        draggable="false",
+        cls="pointer-events-none rounded-full object-cover ring-4 ring-white "
+        "shadow-warm " + cls,
+    )
+
+
+def VolunteerHeader(name, photo_key=None, pronouns=None, size="sm"):
+    """A volunteer as a nonprofit sees them: photo or initial, name, pronouns."""
+    return Div(
+        Avatar(name, photo_key, size),
+        Span(
+            Span(name, cls="font-semibold text-ink"),
+            Span(f" ({pronouns})", cls="text-sm text-ink-muted") if pronouns else None,
+        ),
+        cls="flex items-center gap-3",
     )

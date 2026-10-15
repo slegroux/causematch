@@ -33,7 +33,9 @@ from app.ui import (
     PEOPLE,
     PIN,
     CauseChip,
+    EventLink,
     Icon,
+    LogoBadge,
     Router,
     VolunteerNav,
 )
@@ -90,10 +92,37 @@ def WhyChip(w):
     )
 
 
+def CardImage(c):
+    """The opening's photo, else the org's, with the org's logo as a round badge on it;
+    with no photo the logo alone on the cause's tint; with neither, the cause art."""
+    slug = c["slugs"][0] if c["slugs"] else None
+    if c.get("photo"):
+        return Div(
+            Img(
+                src=f"/photos/{c['photo']}.jpg",
+                alt="",
+                draggable="false",
+                # short enough that Pass and Like stay above the tab bar on a small phone
+                cls="pointer-events-none block h-40 max-h-[22vh] w-full object-cover",
+            ),
+            LogoBadge(c["logo"], "absolute bottom-3 left-3 h-16 w-16")
+            if c.get("logo")
+            else None,
+            cls="relative",
+        )
+    if c.get("logo"):
+        return Div(
+            LogoBadge(c["logo"], "h-24 w-24"),
+            cls="grid h-36 place-items-center "
+            + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
+        )
+    return CauseArt(slug) if slug else None
+
+
 def OpeningCard(c):
     starts = datetime.fromisoformat(c["starts_at"])
     return Div(
-        CauseArt(c["slugs"][0]) if c["slugs"] else None,
+        CardImage(c),
         Div(
             Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
             H2(
@@ -104,7 +133,12 @@ def OpeningCard(c):
             Div(
                 Meta(CALENDAR, starts.strftime("%a %b %-d · %-I:%M %p")),
                 Meta(PIN, place_line(c)),
-                Meta(PEOPLE, f"{c['slots']} spots"),
+                Div(
+                    Meta(PEOPLE, f"{c['slots']} spots"),
+                    # a 44 px target that takes no more height than the line beside it
+                    EventLink(c.get("event_url"), "-my-3"),
+                    cls="flex flex-wrap items-center justify-between gap-x-4",
+                ),
                 cls="space-y-1 pt-1",
             ),
             cls="space-y-1.5 px-5 pt-4 pb-5",
@@ -372,14 +406,48 @@ def index():
     return Redirect("/deck")
 
 
+def PhotoNudge():
+    """Below the deck, until the volunteer adds a photo or says "Not now"."""
+    return Div(
+        P(
+            "Add a photo so nonprofits know who's coming. They see it only after "
+            "you like one of their openings.",
+            cls="text-sm font-semibold text-ink",
+        ),
+        Div(
+            A("Add a photo", href="/me/profile", cls="uk-btn uk-btn-primary px-5"),
+            PlainForm(
+                Button(
+                    "Not now",
+                    type="submit",
+                    cls="inline-flex min-h-11 items-center px-2 text-sm font-semibold "
+                    "text-ink-muted underline underline-offset-4 hover:text-ink",
+                ),
+                action="/deck/photo-nudge/dismiss",
+                method="post",
+            ),
+            cls="flex items-center gap-4",
+        ),
+        cls="mt-6 space-y-3 rounded-3xl border border-line bg-white p-4 shadow-warm",
+    )
+
+
+@ar("/deck/photo-nudge/dismiss", methods=["POST"])
+def dismiss_photo_nudge(req):
+    data.dismiss_photo_nudge(req.scope["uid"])
+    return Redirect("/deck")
+
+
 @ar("/deck")
 def deck(req):
     today = query(req, "today") == "1"
+    me = data.get_profile(req.scope["uid"])
     return Container(
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         TodaySwitch(today),
         DeckArea(req.scope["uid"], today, deck_view(req)),
+        None if me.photo_key or me.photo_nudge_dismissed_at else PhotoNudge(),
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",
     )

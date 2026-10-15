@@ -13,9 +13,17 @@ from apswutils.db import NotFoundError
 
 from app import db as _db
 from app import match as _match
+from app import photos as _photos
 from app import prefs as _prefs
-from app.choices import ANY_DISTANCE_KM, DEFAULT_DEALBREAKERS, LANGUAGES, MAX_MINUTES
+from app.choices import (
+    ANY_DISTANCE_KM,
+    DEFAULT_DEALBREAKERS,
+    INTERESTS,
+    LANGUAGES,
+    MAX_MINUTES,
+)
 from app.config import phone_hash_key
+from app.forms import BIDI
 from app.metrics_rows import fetch_rows
 
 
@@ -425,6 +433,7 @@ def deck_and_count(uid, limit=20, today=False, view=None):
     skills = json.loads(me.skills or "[]")
     spoken = _prefs.languages(me)
     org_names = {o.id: o.name for o in _db.orgs()}
+    org_media = {o.id: (o.photo_key, o.logo_key) for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
     for o, cause_labels, km, near in _deck_openings(uid, today, p):
@@ -478,6 +487,11 @@ def deck_and_count(uid, limit=20, today=False, view=None):
                 f"from {near[0]['label']}",
                 "surprise": odd,
                 "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd),
+                # the card's picture: the opening's photo, else the org's; its logo
+                # as a badge
+                "photo": o.photo_key or org_media.get(o.org_id, (None, None))[0],
+                "logo": org_media.get(o.org_id, (None, None))[1],
+                "event_url": o.event_url,
             }
         )
     return cards, len(ranked)
@@ -727,6 +741,7 @@ def my_matches(uid):
                 "org": org_names.get(o.org_id, ""),
                 "starts_at": o.starts_at,
                 "neighborhood": o.neighborhood,
+                "event_url": o.event_url,
             }
         )
     return out
@@ -738,14 +753,19 @@ def org_inbox(coordinator_uid):
     past: matches that were accepted and then withdrawn or closed; they keep a Report link.
 
     Each row carries what the volunteer agreed to share (see choices.SHARED_WITH_NONPROFIT):
-    first name, causes, availability, neighborhood, frequency. One query selects only
-    those columns, so phone, email, location and surname never leave SQLite.
+    their photo (none while a block stands), name ("Sam L.", "Sam Lee" once accepted),
+    pronouns, bio, interests, causes, availability (as general buckets), the languages
+    they speak, neighborhood, frequency. One query
+    selects only those columns, so phone, email and location never leave SQLite.
     """
     labels = {c.slug: c.label for c in _db.causes()}
+    interests = dict(INTERESTS)
     rows = _db.db.query(
         "SELECT m.id, m.status, o.title, o.recurrence, p.display_name, p.causes, "
         "p.availability, "
-        "p.neighborhood, p.frequency, "
+        "p.neighborhood, p.frequency, p.languages, p.last_name, p.pronouns, p.bio, "
+        "p.interests, "
+        "p.photo_key, " + _BLOCKED + " AS blocked, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
         "AND a.status = 'accepted') >= o.slots AS full "
         "FROM match m JOIN opening o ON o.id = m.opening_id "
@@ -764,7 +784,11 @@ def org_inbox(coordinator_uid):
     )
     out = {"pending": [], "decided": [], "past": []}
     for r in rows:
-        name = (r["display_name"] or "").split(maxsplit=1)
+        # After a block either way the row shows the first name and nothing else of the
+        # volunteer: every other field is read live and the volunteer may still edit it.
+        # (The first name is live too, but checked like every name: no hidden characters,
+        # 80 at most.)
+        blocked = bool(r["blocked"])
         out[
             {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
         ].append(
@@ -772,13 +796,37 @@ def org_inbox(coordinator_uid):
                 "id": r["id"],
                 "status": r["status"],
                 "opening": r["title"],
-                "first_name": name[0] if name else "A volunteer",
-                "causes": [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
-                "availability": _match.general_buckets(
-                    json.loads(r["availability"] or "[]")
+                "name": BLOCKED_NAME
+                if blocked
+                else volunteer_name(
+                    r["display_name"], r["last_name"], r["status"] == "accepted"
                 ),
-                "neighborhood": r["neighborhood"],
-                "frequency": r["frequency"],
+                "photo_key": None if blocked else r["photo_key"],
+                "pronouns": None if blocked else r["pronouns"],
+                "bio": None if blocked else r["bio"],
+                "interests": []
+                if blocked
+                else [
+                    interests[i]
+                    for i in json.loads(r["interests"] or "[]")
+                    if i in interests
+                ],
+                "causes": []
+                if blocked
+                else [labels.get(s, s) for s in json.loads(r["causes"] or "[]")],
+                # a general summary (weekday/weekend parts of the day), never the days
+                "availability": []
+                if blocked
+                else _match.general_buckets(json.loads(r["availability"] or "[]")),
+                "languages": []
+                if blocked
+                else [
+                    LANGUAGE_NAMES[k]
+                    for k in json.loads(r["languages"] or "[]")
+                    if k in LANGUAGE_NAMES
+                ],
+                "neighborhood": None if blocked else r["neighborhood"],
+                "frequency": None if blocked else r["frequency"],
                 "full": bool(r["full"]),
                 "weekly": r["recurrence"] == "weekly",
             }
@@ -959,9 +1007,15 @@ def complete_shift(coordinator_uid, shift_id, attended):
         return _db.shifts[shift_id]
 
 
+# 1 when the volunteer p and the org of opening o blocked each other, either way
+_BLOCKED = (
+    "EXISTS (SELECT 1 FROM block b WHERE b.blocked_org_id = o.org_id AND "
+    "(b.blocked_user_id = p.id OR (b.blocker_id = p.id AND b.blocked_user_id IS NULL)))"
+)
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "o.title, o.recurrence, g.name AS org, p.display_name "
+    "o.title, o.recurrence, g.name AS org, p.display_name, p.last_name, p.photo_key, "
+    "m.status AS match_status, " + _BLOCKED + " AS blocked "
     "FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "JOIN profile p ON p.id = m.volunteer_id "
@@ -1013,6 +1067,14 @@ def org_shifts(coordinator_uid):
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
         row["first_name"] = _first_name(r["display_name"])
+        row["name"] = (
+            BLOCKED_NAME
+            if r["blocked"]
+            else volunteer_name(
+                r["display_name"], r["last_name"], r["match_status"] == "accepted"
+            )
+        )
+        row["photo_key"] = None if r["blocked"] else r["photo_key"]
         row["weekly"] = r["recurrence"] == "weekly"
         if r["status"] == "scheduled":
             out["upcoming" if r["starts_at"] > now else "to_mark"].append(row)
@@ -1066,6 +1128,21 @@ def _first_name(name):
     return parts[0] if parts else "Volunteer"
 
 
+# What an org sees for a volunteer after a block either way: no live field at all, so the
+# volunteer can't keep changing what that org reads (their first name included)
+BLOCKED_NAME = "Volunteer"
+
+
+def volunteer_name(first, last, full=False):
+    """What a nonprofit calls a volunteer: "Sam L." until it accepts them, "Sam Lee" once
+    it has (full); just "Sam" when they gave no last name."""
+    first, last = _first_name(first), (last or "").strip()
+    initial = next((c for c in last if c.isalpha()), None)
+    if not initial:
+        return first
+    return f"{first} {last}" if full else f"{first} {initial.upper()}."
+
+
 def _message_row(msg, volunteer_id, names):
     return {
         "id": msg.id,
@@ -1085,7 +1162,8 @@ def _names(ids):
 def send_message(uid, match_id, body):
     """Save a message from a participant of an accepted match and return it.
 
-    ValueError for a non-string, an empty message, or one over 2000 characters;
+    ValueError for a non-string, an empty message, one over 2000 characters, or one
+    holding a bidi control;
     PermissionError when this user may not write in this chat.
     """
     if not isinstance(body, str):
@@ -1093,6 +1171,8 @@ def send_message(uid, match_id, body):
     body = body.strip()
     if not body or len(body) > MAX_MESSAGE:
         raise ValueError(f"message must be 1 to {MAX_MESSAGE} characters")
+    if BIDI.search(body):  # a bidi control can make a message read as something else
+        raise ValueError("message holds a character we can't show")
     chat_access(uid, match_id, write=True)
     msg = _db.messages.insert(
         match_id=match_id, sender_id=uid, body=body, created_at=_now()
@@ -1119,24 +1199,47 @@ def chat_header(uid, match_id):
     """What the chat page shows about the other side.
 
     The volunteer sees the org name and the contact name of the coordinator who accepted
-    them; the coordinator sees the volunteer's first name only. Also whether the caller
-    may still write.
+    them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
+    photo when data.photo_for would serve it. Also whether the caller may still write.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
     o = _db.openings[m.opening_id]
     org = _db.orgs[o.org_id].name
+    photo = None
     if role == "volunteer":
         decider = get_profile(m.decided_by) if m.decided_by else None
         other = decider.display_name if decider and decider.display_name else org
     else:
         volunteer = get_profile(m.volunteer_id)
-        other = _first_name(volunteer.display_name if volunteer else "")
+        # what photo_for hides hides the last name too, and so does a block with the
+        # org of this match (photo_for looks at all of the coordinator's orgs)
+        blocked = bool(volunteer) and (
+            _org_blocked_volunteer(volunteer.id, o.org_id)
+            or _volunteer_blocked_org(volunteer.id, o.org_id)
+        )
+        seen = (
+            bool(volunteer)
+            and not blocked
+            and _sees_volunteer(get_profile(uid), volunteer.id)
+        )
+        other = (
+            BLOCKED_NAME
+            if blocked
+            else volunteer_name(
+                volunteer.display_name if volunteer else "",
+                volunteer.last_name if seen else "",
+                m.status == "accepted",
+            )
+        )
+        if seen:
+            photo = volunteer.photo_key
     return {
         "role": role,
         "title": o.title,
         "org": org,
         "other": other,
+        "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
     }
 
@@ -1216,6 +1319,7 @@ def save_onboarding(
     heard_from,
     cause_prefs=None,
     place=None,
+    last_name="",
 ):
     """cause_prefs: {slug: love|open|no} (default: causes, all loved). place: the Home
     place (label, lat, lon, area, mode, max_minutes), saved as the volunteer's first place;
@@ -1230,6 +1334,7 @@ def save_onboarding(
         _db.profiles.update(
             id=uid,
             display_name=display_name,
+            last_name=last_name or None,
             email=email,
             neighborhood=neighborhood,
             language_other=language_other,
@@ -1317,6 +1422,21 @@ def save_preferences(
             lat=places[0]["lat"],
             lon=places[0]["lon"],
         )
+
+
+def save_profile_details(uid, *, first_name, last_name, pronouns, bio, interests):
+    """A volunteer's own name, pronouns, bio and interests (checked by the caller)."""
+    p = get_profile(uid)
+    if p is None or p.role != "volunteer":
+        raise PermissionError("not a volunteer")
+    _db.profiles.update(
+        id=uid,
+        display_name=first_name,
+        last_name=last_name or None,
+        pronouns=pronouns or None,
+        bio=bio or None,
+        interests=json.dumps(list(interests)),
+    )
 
 
 TOKEN_MINUTES = 15
@@ -1746,6 +1866,7 @@ REASONS = [
     ("harassment", "Harassment"),
     ("no_show_pattern", "A pattern of no-shows"),
     ("unsafe", "I felt unsafe"),
+    ("inappropriate_profile", "Inappropriate photo or profile"),
     ("spam", "Spam"),
     ("other", "Something else"),
 ]
@@ -1803,6 +1924,8 @@ def _checked_report_text(reason, details):
         raise ValueError("choose a reason")
     if not isinstance(details, str) or len(details.strip()) > MAX_DETAILS:
         raise ValueError(f"details can be up to {MAX_DETAILS} characters")
+    if BIDI.search(details):  # reordering characters can make a report read wrong
+        raise ValueError("details hold a character we can't show")
     return details.strip()
 
 
@@ -1839,10 +1962,17 @@ def _add_report(reporter_id, match_id, reason, details, *, user_id=None, org_id=
 
 
 def org_match_volunteer(coordinator_uid, match_id):
-    """First name of the volunteer on a match of the coordinator's org; PermissionError otherwise."""
+    """The name the org sees of the volunteer on a match of the coordinator's org ("Sam
+    L.", "Sam Lee" once accepted); PermissionError otherwise."""
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
-    return _first_name(_db.profiles[m.volunteer_id].display_name)
+    p = _db.profiles[m.volunteer_id]
+    blocked = _org_blocked_volunteer(p.id, o.org_id) or _volunteer_blocked_org(
+        p.id, o.org_id
+    )
+    if blocked:
+        return BLOCKED_NAME
+    return volunteer_name(p.display_name, p.last_name, m.status == "accepted")
 
 
 def report_org(uid, match_id, reason, details=""):
@@ -1953,6 +2083,7 @@ def admin_reports(admin_uid):
         "(SELECT display_name FROM profile WHERE id = r.reporter_id) AS reporter, "
         "(SELECT display_name FROM profile WHERE id = m.volunteer_id) AS volunteer, "
         "(SELECT suspended_at FROM profile WHERE id = r.target_user_id) AS suspended, "
+        "(SELECT photo_key FROM profile WHERE id = r.target_user_id) AS photo_key, "
         "g.deactivated_at "
         "FROM report r JOIN match m ON m.id = r.match_id "
         "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
@@ -1975,6 +2106,7 @@ def admin_reports(admin_uid):
                 "target_org_id": r["target_org_id"],
                 "suspended": bool(r["suspended"]),
                 "deactivated": bool(r["deactivated_at"]),
+                "photo_key": r["photo_key"],  # the reported volunteer's, for review
             }
         )
     return out
@@ -2029,6 +2161,18 @@ def suspend_target(admin_uid, report_id):
             _end_match(m, admin_uid, "withdrawn")
         _resolve(admin_uid, "target_user_id = ?", [uid], "actioned")
         _refresh_retained(uid, suspended=True)  # a deleted account cannot come back
+
+
+def remove_reported_photo(admin_uid, report_id):
+    """Delete the reported volunteer's photo (they may add another); this report is
+    actioned. ValueError for a report on an org."""
+    with _db.db.conn:
+        r = _open_report(admin_uid, report_id)
+        if r.target_user_id is None:
+            raise ValueError("this report names an org, not a user")
+        _drop_photo(_db.profiles[r.target_user_id].photo_key)
+        _db.profiles.update(id=r.target_user_id, photo_key=None)
+        _resolve(admin_uid, "id = ?", [report_id], "actioned")
 
 
 def deactivate_target_org(admin_uid, report_id):
@@ -2373,7 +2517,8 @@ def delete_account(uid):
     """A volunteer deletes their own account.
 
     Soft-deleted, with every personal column scrubbed (kept: the answers the metrics group
-    by). Pending and accepted matches are withdrawn and future shifts cancelled, their
+    by), and their photos deleted. Pending and accepted matches are withdrawn and future
+    shifts cancelled, their
     message bodies are replaced, texts still queued for them are cancelled, and every
     session ends. They can sign up again later as a new profile.
     """
@@ -2404,10 +2549,15 @@ def delete_account(uid):
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         _db.db.execute(
+            "DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", [uid]
+        )
+        _db.db.execute(
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
             "free_dates = NULL, "
+            "last_name = NULL, pronouns = NULL, bio = NULL, interests = NULL, "
+            "photo_key = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
             [_now(), uid],
         )
@@ -2437,6 +2587,164 @@ def remove_coordinator(email):
             [_now(), uid],
         )
     return uid
+
+
+# --- photos ------------------------------------------------------------------------------
+
+
+def store_photo(owner_kind, owner_id, processed):
+    """Insert a re-encoded picture (photos.Processed) under a new random key; the key.
+    Callers point a row at it (scripts/demo.py too, for the orgs it seeds)."""
+    key = _photos.new_key()
+    _db.photos.insert(
+        _db.Photo(
+            key=key,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            full=processed.full,
+            thumb=processed.thumb,
+            sha256=hashlib.sha256(processed.full).hexdigest(),
+            created_at=_now(),
+        )
+    )
+    return key
+
+
+def _drop_photo(key):
+    if key:
+        _db.db.execute("DELETE FROM photo WHERE key = ?", [key])
+
+
+def set_volunteer_photo(uid, processed):
+    """The volunteer's photo becomes this one, under a new key; the old one is deleted."""
+    with _db.db.conn:
+        p = get_profile(uid)
+        if p is None or p.role != "volunteer":
+            raise PermissionError("not a volunteer")
+        key = store_photo("volunteer", uid, processed)
+        _db.profiles.update(id=uid, photo_key=key)
+        _drop_photo(p.photo_key)
+    return key
+
+
+def remove_volunteer_photo(uid):
+    with _db.db.conn:
+        p = get_profile(uid)
+        if p is None or p.role != "volunteer":
+            raise PermissionError("not a volunteer")
+        _drop_photo(p.photo_key)
+        _db.profiles.update(id=uid, photo_key=None)
+
+
+def _coordinated_org(coordinator_uid, org_id):
+    if not _is_id(org_id):
+        raise PermissionError("no such org")
+    _member_of(coordinator_uid, org_id)
+    return _db.orgs[org_id]
+
+
+def coordinator_org(coordinator_uid, org_id):
+    """An org this coordinator belongs to; PermissionError for any other id."""
+    return _coordinated_org(coordinator_uid, org_id)
+
+
+def set_org_picture(coordinator_uid, org_id, which, processed):
+    """The org's logo or photo (which: logo | photo) becomes this one; the old one goes."""
+    column = {"logo": "logo_key", "photo": "photo_key"}[which]
+    with _db.db.conn:
+        org = _coordinated_org(coordinator_uid, org_id)
+        key = store_photo(f"org_{which}", org_id, processed)
+        _db.orgs.update(id=org_id, **{column: key})
+        _drop_photo(getattr(org, column))
+    return key
+
+
+def set_org_details(coordinator_uid, org_id, about, website):
+    """About text and website (https, or None) of an org this coordinator belongs to."""
+    with _db.db.conn:
+        _coordinated_org(coordinator_uid, org_id)
+        _db.orgs.update(id=org_id, about=about, website=website)
+
+
+def coordinator_opening(coordinator_uid, opening_id):
+    """An opening of one of the coordinator's orgs; PermissionError for any other id."""
+    if not _is_id(opening_id):
+        raise PermissionError("no such opening")
+    try:
+        o = _db.openings[opening_id]
+    except NotFoundError:
+        raise PermissionError("no such opening") from None
+    _member_of(coordinator_uid, o.org_id)
+    return o
+
+
+def set_opening_photo(coordinator_uid, opening_id, processed):
+    with _db.db.conn:
+        o = coordinator_opening(coordinator_uid, opening_id)
+        key = store_photo("opening", opening_id, processed)
+        _db.openings.update(id=opening_id, photo_key=key)
+        _drop_photo(o.photo_key)
+    return key
+
+
+def set_opening_link(coordinator_uid, opening_id, url):
+    """The event's page as the org advertises it (https, checked by the caller), or None."""
+    with _db.db.conn:
+        coordinator_opening(coordinator_uid, opening_id)
+        _db.openings.update(id=opening_id, event_url=url)
+
+
+def dismiss_photo_nudge(uid):
+    _db.profiles.update(id=uid, photo_nudge_dismissed_at=_now())
+
+
+def _sees_volunteer(viewer, volunteer_id):
+    """A volunteer's photo is theirs, an admin's, and a coordinator's whose org can see one
+    of their matches in its inbox (pending, accepted, declined, or withdrawn after the org
+    decided), not org_blind, and with no block between them either way."""
+    if viewer.id == volunteer_id or viewer.role == "admin":
+        return True
+    if viewer.role != "coordinator":
+        return False
+    return bool(
+        _db.db.execute(
+            "SELECT 1 FROM match m JOIN opening o ON o.id = m.opening_id "
+            "JOIN org_member om ON om.org_id = o.org_id AND om.user_id = ? "
+            "WHERE m.volunteer_id = ? AND coalesce(m.org_blind, 0) = 0 "
+            "AND (m.status IN ('pending', 'accepted', 'declined') "
+            "OR (m.status = 'withdrawn' AND m.decided_at IS NOT NULL)) "
+            "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = ? "
+            "AND b.blocked_org_id = o.org_id) "
+            "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = ? "
+            "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id) LIMIT 1",
+            [viewer.id, volunteer_id, volunteer_id, volunteer_id],
+        ).fetchone()
+    )
+
+
+def photo_for(viewer_uid, key, thumb=False):
+    """(JPEG bytes, ETag, a volunteer's?) of the photo `key` when this signed-in viewer
+    may see it, else None: a photo they may not see and one that doesn't exist look the
+    same."""
+    viewer = get_profile(viewer_uid) if _is_id(viewer_uid) else None
+    if viewer is None or not _photos.is_key(key):
+        return None
+    row = _db.db.execute(
+        f"SELECT owner_kind, owner_id, {'thumb' if thumb else 'full'}, sha256 "
+        "FROM photo WHERE key = ?",
+        [key],
+    ).fetchone()
+    if row is None:
+        return None
+    kind, owner_id, jpeg, sha = row
+    # An org's logo and photo and an opening's photo are public to anyone signed in.
+    if kind == "volunteer":
+        owner = get_profile(owner_id)  # None once deleted or suspended
+        if (owner is None and viewer.role != "admin") or not _sees_volunteer(
+            viewer, owner_id
+        ):
+            return None
+    return jpeg, f'"{sha}{"-t" if thumb else ""}"', kind == "volunteer"
 
 
 RATE_KEEP_SECONDS = 24 * 3600  # the longest window in app/security.py

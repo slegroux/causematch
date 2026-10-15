@@ -38,7 +38,7 @@ from app.choices import (
     SETTING,
     SKILLS,
 )
-from app.forms import query, str_form
+from app.forms import hidden_chars, query, str_form
 from app.geo import zip_latlon
 from app.routes.shifts import RepeatForm
 from app.ui import (
@@ -57,6 +57,7 @@ from app.ui import (
     Refusal,
     Router,
     TextInput,
+    VolunteerHeader,
 )
 
 ar = Router()
@@ -176,6 +177,11 @@ def OpeningRow(o, counts):
         )
         if o.slots
         else None,
+        A(
+            "Photo and event link",
+            href=f"/org/openings/{o.id}/media",
+            cls=SMALL_LINK + " text-sm",
+        ),
         PlainForm(
             Button("Close opening", cls=ButtonT.default),
             action=f"/org/openings/{o.id}/close",
@@ -456,6 +462,10 @@ def _sync_save_details(req, form):
     name, phone = form.get("name", "").strip(), form.get("phone", "").strip()
     if not name or len(name) > 80:
         return org_home(req, "Enter your name and role (80 characters at most).")
+    if hidden_chars(name):
+        return org_home(
+            req, "Something in your name wasn't recognized. Please try again."
+        )
     e164 = normalize_phone(phone) if phone else ""
     if phone and not e164:
         return org_home(req, BAD_PHONE)
@@ -510,6 +520,8 @@ def _sync_new_opening_save(req, form):
         return fail("Please choose your organization.")
     if any(len(f[k]) > n for k, n in LIMITS.items()):
         return fail("One of your answers is too long. Please shorten it.")
+    if any(hidden_chars(f[k], multiline=k in ("about", "notes")) for k in LIMITS):
+        return fail("Something in that form wasn't recognized. Please try again.")
     if not f["title"] or not f["about"] or not f["neighborhood"]:
         return fail(
             "Please fill in the title, what volunteers will do, and the neighborhood."
@@ -639,27 +651,24 @@ def InboxRow(m):
     )
     return Div(
         Div(
-            Span(
-                m["first_name"][:1].upper(),
-                aria_hidden="true",
-                cls="grid h-11 w-11 shrink-0 place-items-center rounded-full "
-                "bg-brand-soft font-display text-lg font-extrabold text-brand-ink",
-            ),
             Div(
-                P(m["first_name"], cls="font-bold text-ink"),
-                P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm),
+                VolunteerHeader(m["name"], m["photo_key"], m["pronouns"]),
+                P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
                 cls="min-w-0 flex-1",
             ),
             Pill(INBOX_STATUS[m["status"]], INBOX_TONE[m["status"]]),
             cls="flex items-start gap-3",
         ),
+        P(m["bio"], cls="whitespace-pre-line text-sm text-ink") if m["bio"] else None,
         Div(
+            Fact("Interests", ", ".join(m["interests"])) if m["interests"] else None,
             Fact("Causes", ", ".join(m["causes"]) or "none given"),
             Fact(
                 "Available",
                 ", ".join(label_of(AVAILABILITY, a) for a in m["availability"])
                 or "any",
             ),
+            Fact("Speaks", ", ".join(m["languages"])) if m["languages"] else None,
             Fact("Neighborhood", m["neighborhood"] or "not given"),
             Fact("Wants to help", label_of(FREQUENCY, m["frequency"]) or "not given"),
             cls="space-y-1 rounded-2xl bg-cream p-3",

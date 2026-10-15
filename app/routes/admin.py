@@ -13,6 +13,7 @@ from fasthtml.common import (
     Dt,
     Form,
     HttpHeader,
+    Img,
     Input,
     P,
     Redirect,
@@ -237,6 +238,13 @@ def ReportRow(r):
             cls=TextPresets.muted_sm,
         ),
         P(r["details"] or "No details.", cls="whitespace-pre-wrap break-words"),
+        Img(
+            src=f"/photos/thumb/{r['photo_key']}.jpg",
+            alt=f"{r['target']}'s photo",
+            cls="h-20 w-20 rounded-lg object-cover",
+        )
+        if r["photo_key"]
+        else None,
         P("Already suspended.", cls="text-red-600") if r["suspended"] else None,
         P("Already deactivated.", cls="text-red-600") if r["deactivated"] else None,
         Div(
@@ -244,6 +252,9 @@ def ReportRow(r):
             _post(f"/admin/reports/{r['id']}/suspend", "Suspend user")
             if r["target_user_id"]
             else _post(f"/admin/reports/{r['id']}/deactivate", "Deactivate org"),
+            _post(f"/admin/reports/{r['id']}/remove-photo", "Remove photo")
+            if r["photo_key"]
+            else None,
             cls="flex gap-3 pt-2",
         ),
         cls=BOX,
@@ -292,6 +303,11 @@ def admin_suspend(req, report_id: int):
 @ar("/admin/reports/{report_id}/deactivate", methods=["POST"])
 def admin_deactivate(req, report_id: int):
     return _resolve_with(data.deactivate_target_org)(req, report_id)
+
+
+@ar("/admin/reports/{report_id}/remove-photo", methods=["POST"])
+def admin_remove_photo(req, report_id: int):
+    return _resolve_with(data.remove_reported_photo)(req, report_id)
 
 
 @ar("/admin/blocks", methods=["GET"])

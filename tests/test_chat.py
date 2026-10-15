@@ -608,3 +608,9 @@ def test_too_many_frames_close_the_socket_with_1013(chat):
                 wv.receive_text()
         assert e.value.code == 1013
     assert len(data.list_messages(chat.vol.uid, chat.id)) == 20
+
+
+def test_a_message_with_a_bidi_control_is_refused():
+    """A right-to-left override can make a message read as something else (review 4)."""
+    with pytest.raises(ValueError, match="can't show"):
+        data.send_message(1, 1, "pay at \u202emoc.live")

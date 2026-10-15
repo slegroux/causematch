@@ -9,9 +9,11 @@ new database in a temporary folder unless --db names a path that doesn't exist y
 Without --seed-file the orgs are the invented ones in app/db.py. --seed-file loads
 nonprofits from a JSON file kept outside this repo (the repo is public: real names never
 go in it): a list of {name, ein, ntee_code, cause, website, mission, neighborhood, zip,
-lat, lon, volunteer_url, logo_url, logo_file, openings: [{title, about, skills,
-typical_time, recurrence, orientation_required, source_url}]}. Their openings are samples:
-each is titled "Sample: ...", and every page carries a banner saying so.
+lat, lon, volunteer_url, logo_url, logo_file, photo_file, openings: [{title, about,
+skills, typical_time, recurrence, orientation_required, source_url, photo_file}]}. Their
+openings are samples: each is titled "Sample: ...", and every page carries a banner saying
+so. logo_file names a file in logos-raw/ and photo_file one in photos-raw/, both next to
+the seed file; each opening links to its source_url, else the org's volunteer_url.
 """
 
 import argparse
@@ -30,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 LA = ZoneInfo("America/Los_Angeles")
 ME_PHONE = "(310) 555-0199"  # the volunteer with a match, a chat and shifts
+NO_PHOTO_PHONE = "(310) 555-0102"  # Priya, who has no photo yet
 COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
 # the seed file's words -> the opening form's values (app/routes/org.py)
@@ -173,15 +176,42 @@ WORK_BY_CAUSE = {
     "environment-parks": ("outdoor", "active", "big"),
     "food-insecurity": ("indoor", "moderate", "small"),
     "animal-shelters": ("", "moderate", "small"),
+    "homelessness-services": ("indoor", "moderate", "big"),
 }
 
 
-def load_orgs(orgs):
-    """Insert the seed file's nonprofits as verified orgs with sample openings."""
+def picture(folder, name, kind):
+    """photos.process of folder/name (one of the seed's downloaded files), or None.
+
+    Those folders hold untrusted downloads: a file is only ever read as bytes and decoded
+    by Pillow, which re-encodes it. An SVG (Pillow can't read one) or anything else it
+    can't read is skipped, and the card falls back to the logo or the cause art."""
+    from app import photos
+
+    if not (folder and name):
+        return None
+    path = folder / Path(name).name
+    if not path.is_file() or path.is_symlink():
+        print(f"  skipped {path.name}: no such file", file=sys.stderr)
+        return None
+    try:
+        return photos.process(path.read_bytes(), kind)
+    except photos.BadPhoto:
+        print(f"  skipped {path.name}: not a picture Pillow reads", file=sys.stderr)
+        return None
+
+
+def load_orgs(orgs, media=None):
+    """Insert the seed file's nonprofits as verified orgs with sample openings, with
+    their logos and photos when `media` (the seed file's folder) holds them."""
+    from app import data
     from app.choices import SKILLS
     from app.db import Opening, Org, db, now, openings
     from app.db import orgs as org_table
+    from app.forms import https_url
 
+    logos = media / "logos-raw" if media else None
+    shots = media / "photos-raw" if media else None
     skills = {k for k, _ in SKILLS}
     i = 0
     with db.conn:
@@ -200,11 +230,20 @@ def load_orgs(orgs):
                     city="Los Angeles",
                     zip=o.get("zip") or "",
                     ntee_code=o.get("ntee_code") or "",
+                    website=https_url(o.get("website")),
                 )
             )
+            for column, owner, kind, folder, name in (
+                ("logo_key", "org_logo", "logo", logos, o.get("logo_file")),
+                ("photo_key", "org_photo", "card", shots, o.get("photo_file")),
+            ):
+                if p := picture(folder, name, kind):
+                    key = data.store_photo(owner, org.id, p)
+                    org_table.update(id=org.id, **{column: key})
             setting, effort, group = WORK_BY_CAUSE.get(o["cause"], ("", "", ""))
             for x in o.get("openings", []):
-                openings.insert(
+                p = picture(shots, x.get("photo_file"), "card")
+                opening = openings.insert(
                     Opening(
                         org_id=org.id,
                         title=f"Sample: {x['title']}",
@@ -229,8 +268,13 @@ def load_orgs(orgs):
                         group_size=group,
                         first_timer_ok=i % 2 == 0,
                         languages=json.dumps(["es"] if i % 3 == 0 else []),
+                        event_url=https_url(x.get("source_url"))
+                        or https_url(o.get("volunteer_url")),
                     )
                 )
+                if p:
+                    key = data.store_photo("opening", opening.id, p)
+                    openings.update(id=opening.id, photo_key=key)
                 i += 1
 
 
@@ -317,16 +361,34 @@ def _past_shift(match_id, coordinator, days_ago, status):
     )
 
 
+def drawn_photo(seed=0):
+    """A JPEG drawn here (a sun over hills), for demo profiles: never a real person."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    sky = [(255, 214, 170), (190, 225, 240), (250, 200, 210)][seed % 3]
+    im = Image.new("RGB", (900, 900), sky)
+    d = ImageDraw.Draw(im)
+    d.ellipse((520, 140, 760, 380), fill=(255, 170, 60))
+    d.ellipse((-200, 520, 700, 1300), fill=(90, 160, 100))
+    d.ellipse((300, 600, 1200, 1400), fill=(60, 130, 80))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
 def seed(seed_file=None):
     """Orgs and openings, then people: a coordinator and an admin, volunteers who liked
     the coordinator's opening, and ME_PHONE's volunteer with an accepted match (chat,
     upcoming and past shifts) and a pending like. Returns what a demo needs to sign in."""
-    from app import data
+    from app import data, photos
     from app.db import ensure_causes, matches, openings, orgs, seed_demo
 
     ensure_causes()
     if seed_file:
-        load_orgs(json.loads(Path(seed_file).read_text()))
+        path = Path(seed_file)
+        load_orgs(json.loads(path.read_text()), path.resolve().parent)
     else:
         seed_demo()
     org = orgs()[0]
@@ -346,10 +408,40 @@ def seed(seed_file=None):
             ]
         )
     ]
+    for n, (uid, last, pronouns, bio, interests) in enumerate(
+        zip(
+            others,
+            ("Okafor", "Reyes", ""),
+            ("she/her", "", "he/him"),
+            (
+                "Nurse on night shifts, free most mornings. I love a busy kitchen.",
+                "Retired teacher. Happy to drive and to garden.",
+                "",
+            ),
+            (["cooking", "kids"], ["gardening", "teaching"], ["animals"]),
+            strict=True,
+        )
+    ):
+        if n < 2:  # Priya stays without a photo: the initial shows instead
+            data.set_volunteer_photo(uid, photos.process(drawn_photo(n + 1)))
+        data.save_profile_details(
+            uid,
+            first_name=data.get_profile(uid).display_name,
+            last_name=last,
+            pronouns=pronouns,
+            bio=bio,
+            interests=interests,
+        )
     for uid in others:
         data.swipe(uid, first.id, True)
     data.decide(
         coord, matches(where="volunteer_id = ?", where_args=[others[0]])[0].id, True
+    )
+    data.report_volunteer(  # an open report with a photo, for the admin's queue
+        coord,
+        matches(where="volunteer_id = ?", where_args=[others[1]])[0].id,
+        "inappropriate_profile",
+        "Demo report: is this landscape really the volunteer?",
     )
 
     me = _volunteer(
@@ -364,6 +456,15 @@ def seed(seed_file=None):
         ],
         ["physical", "car"],
         "weekly",
+    )
+    data.set_volunteer_photo(me, photos.process(drawn_photo()))
+    data.save_profile_details(
+        me,
+        first_name="Sam",
+        last_name="Lee",
+        pronouns="they/them",
+        bio="Weekend hiker and home cook. Happy to lift boxes or walk dogs.",
+        interests=["cooking", "hiking", "animals"],
     )
     m = data.swipe(me, first.id, True)
     data.decide(coord, m.id, True)
@@ -385,7 +486,12 @@ def seed(seed_file=None):
     if pending:
         data.swipe(me, pending.id, True)
     _preferences(me)
-    return {"org": org.name, "match_id": m.id, "coordinator_id": coord}
+    return {
+        "org": org.name,
+        "match_id": m.id,
+        "coordinator_id": coord,
+        "opening_id": first.id,
+    }
 
 
 def sign_in_link(email):

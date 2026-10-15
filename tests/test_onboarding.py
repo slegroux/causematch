@@ -310,12 +310,15 @@ def test_privacy_page_says_exactly_what_is_shared_and_what_is_private(anon):
         ("causes", "causes you love or are open to"),
         ("availability", "general summary of when you're free"),
         ("how often", "how often you'd like to help"),
+        ("languages", "languages you speak"),
         ("neighborhood", "neighborhood you gave"),
+        ("photo", "your photo"),
+        ("pronouns", "pronouns, bio and interests"),
     ):
         assert item in SHARED_WITH_NONPROFIT
         assert words in shared + "you gave", item
         assert item not in private, item
-    for kept in ("places", "device", "rated", "specific dates", "skills", "languages"):
+    for kept in ("places", "device", "rated", "specific dates", "skills"):
         assert kept in private, kept
 
 

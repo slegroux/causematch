@@ -98,8 +98,38 @@ FREQUENCY = [
 # What a nonprofit sees of a volunteer after a like. The onboarding consent says exactly
 # this and org_inbox returns exactly these fields; tests/test_match.py keeps them equal.
 SHARED_WITH_NONPROFIT = (
-    "Causematch shares your first name, the causes you picked, your general "
-    "availability, how often you'd like to help and your neighborhood with a "
-    "nonprofit only after you like their opening. Never your phone, email or "
-    "exact location."
+    "Causematch shares your photo, your first name and last initial (your full last "
+    "name once they accept you), your pronouns, short bio and interests, the causes you "
+    "picked, your general availability, the languages you speak, how often you'd like "
+    "to help and your neighborhood with a nonprofit only after you like their opening. "
+    "Never your "
+    "phone, email or exact location."
 )
+
+# A volunteer's profile (/me/profile): what they like doing, up to MAX_INTERESTS of them
+INTERESTS = [
+    ("cooking", "Cooking"),
+    ("gardening", "Gardening"),
+    ("hiking", "Hiking & the outdoors"),
+    ("beach", "The beach & the ocean"),
+    ("animals", "Animals"),
+    ("kids", "Kids & families"),
+    ("seniors", "Older adults"),
+    ("teaching", "Teaching & tutoring"),
+    ("reading", "Reading & books"),
+    ("writing", "Writing"),
+    ("art", "Art & crafts"),
+    ("music", "Music"),
+    ("photography", "Photography"),
+    ("sports", "Sports & fitness"),
+    ("diy", "Building & fixing things"),
+    ("tech", "Tech & computers"),
+    ("languages", "Languages"),
+    ("events", "Organizing events"),
+    ("faith", "Faith communities"),
+    ("neighbors", "Meeting neighbors"),
+]
+MAX_INTERESTS = 6
+MAX_BIO = 280
+MAX_PRONOUNS = 30
+PRONOUNS = ["she/her", "he/him", "they/them", "she/they", "he/they"]  # suggestions only

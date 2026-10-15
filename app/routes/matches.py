@@ -22,6 +22,7 @@ from app.ui import (
     HEART,
     SMALL_LINK,
     TITLE,
+    EventLink,
     Icon,
     Pill,
     Router,
@@ -88,6 +89,7 @@ def MatchRow(m):
             Span(f"{when(m['starts_at'])} · {m['neighborhood']}"),
             cls="flex items-center gap-2 text-sm text-ink",
         ),
+        EventLink(m.get("event_url")),
         A(
             Icon(CHAT, size=18),
             "Chat",

@@ -521,3 +521,32 @@ def test_kind_of_work_form_offers_the_fields(coord):
     for name in ("setting", "effort", "group_size", "first_timer_ok", "languages"):
         assert f'name="{name}"' in html
     assert "Good for first-timers" in html and "Spanish" in html
+
+
+# --- what an opening and a coordinator's name may hold (security review pass 4) -------------
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"title": "Pantry\u200b sorting"},  # zero-width space
+        {"about": "Sort cans \u202ereversed"},  # right-to-left override
+        {"neighborhood": "Echo Park\u3164"},  # Hangul filler
+        {"notes": "Bring gloves\x07"},
+    ],
+)
+def test_an_opening_refuses_hidden_characters(coord, over):
+    before = openings.count
+    r = post(coord, **over)
+    assert "wasn't recognized" in r.text.replace("&#x27;", "'")
+    assert openings.count == before
+
+
+def test_an_opening_keeps_line_breaks_in_its_text(coord):
+    r = post(coord, about="Sort cans.\nStack boxes.", notes="Gloves.\nWater.")
+    assert r.status_code == 303
+
+
+def test_a_coordinator_name_refuses_hidden_characters(coord):
+    r = coord.post("/org/details", data={"name": "Maria\u202e, lead", "phone": ""})
+    assert "wasn't recognized" in r.text.replace("&#x27;", "'")

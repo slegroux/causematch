@@ -41,6 +41,9 @@ class Org:
     city: str  # ProPublica record, set by scripts/import_orgs.py
     zip: str  # five digits
     ntee_code: str
+    logo_key: str  # Photo (photos.process "logo"): a square badge on its own background
+    photo_key: str  # Photo ("card"): a picture of the org's work, the cards' fallback
+    website: str  # https only (forms.https_url)
 
 
 class Opening:
@@ -71,6 +74,8 @@ class Opening:
     group_size: str  # solo|small|big
     first_timer_ok: bool
     languages: str  # JSON list of choices.LANGUAGES keys that help
+    photo_key: str  # Photo ("card"), shown on the swipe card before the org's
+    event_url: str  # https only (forms.https_url): the event as the org advertises it
 
 
 class Profile:
@@ -116,6 +121,14 @@ class Profile:
         str  # JSON subset of choices.DEALBREAKERS: these filter; NULL: distance
     )
     surprise: bool  # about 1 card in 8 from outside the loved causes
+    photo_key: str  # volunteers: their Photo, shown as app/routes/photos.py allows
+    last_name: (
+        str  # volunteers, optional: nonprofits see its initial, all of it once accepted
+    )
+    pronouns: str  # optional, free text (choices.PRONOUNS are suggestions)
+    bio: str  # optional, up to choices.MAX_BIO characters
+    interests: str  # JSON list of choices.INTERESTS values
+    photo_nudge_dismissed_at: str  # UTC; "Not now" on the deck's "Add a photo"
 
 
 class OrgMember:
@@ -212,7 +225,7 @@ class Report:
     target_user_id: int  # set when a coordinator reported a volunteer
     target_org_id: int  # set when a volunteer reported an org
     match_id: int
-    reason: str  # harassment|no_show_pattern|unsafe|spam|other
+    reason: str  # harassment|no_show_pattern|unsafe|inappropriate_profile|spam|other
     details: str  # up to 1000 characters
     status: str  # open|dismissed|actioned
     created_at: str
@@ -304,6 +317,22 @@ class Place:
 
 places = db.create(Place, pk="id", transform=True)
 places.create_index(["user_id"], if_not_exists=True)
+
+
+class Photo:
+    """A picture app/photos.py re-encoded. Bytes live here, so Litestream's copy of the
+    database is their backup too (about 70 KB a volunteer)."""
+
+    key: str  # 22 random URL-safe characters (photos.new_key); its URL
+    owner_kind: str  # volunteer | org_logo | org_photo | opening
+    owner_id: int
+    full: bytes  # JPEG with no metadata, sized by its kind (photos.process)
+    thumb: bytes  # JPEG, 160 px square
+    sha256: str  # of full: the ETag
+    created_at: str
+
+
+photos = db.create(Photo, pk="key", transform=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

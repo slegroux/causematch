@@ -25,6 +25,7 @@ VOLUNTEERED = [("yes", "Yes"), ("no", "No")]
 # Longest accepted value per free-text field.
 LIMITS = {
     "first_name": 80,
+    "last_name": 80,
     "email": 254,
     "neighborhood": 80,
     "other_causes": 300,
@@ -72,6 +73,15 @@ def OnboardingForm(f=None, error=None):
                         value=f.get("first_name", ""),
                         autocomplete="given-name",
                         required=True,
+                    ),
+                ),
+                Field(
+                    "Last name (optional; a nonprofit sees only its first letter until "
+                    "it says yes)",
+                    TextInput(
+                        name="last_name",
+                        value=f.get("last_name", ""),
+                        autocomplete="family-name",
                     ),
                 ),
                 LabelCheckboxX(
@@ -182,7 +192,7 @@ def _shown_point(lat, lon):
 
 def _sync_onboarding_save(req, form):
     if data.get_profile(req.scope["uid"]).onboarded_at:
-        return Redirect("/deck")  # later changes go through /me/preferences
+        return Redirect("/deck")  # later edits go through /me/preferences, /me/profile
     text = lambda k: form.get(k, "").strip()
     active = [c.slug for c in data.active_causes()]
     posted = {k: form.get(f"place1_{k}", v) for k, v in HOME.items() if k != "label"}
@@ -238,6 +248,7 @@ def _sync_onboarding_save(req, form):
     data.save_onboarding(
         req.scope["uid"],
         display_name=f["first_name"],
+        last_name=f["last_name"],
         email=f["email"],
         neighborhood=f["neighborhood"],
         volunteered_last_year=f["volunteered_last_year"],

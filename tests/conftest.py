@@ -56,6 +56,7 @@ from app.db import (
     openings,
     org_members,
     orgs,
+    photos,
     places,
     profiles,
     rate_events,
@@ -92,6 +93,7 @@ def fresh_db():
         rate_events,
         places,
         deck_empties,
+        photos,
     ):
         table.delete_where()
     security.reset_buckets()

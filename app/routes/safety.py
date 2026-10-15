@@ -27,11 +27,13 @@ from app.ui import (
     CLOCK,
     HEART,
     NEXT,
+    PERSON,
     SHIELD,
     SIGN_OUT,
     SMALL_LINK,
     TITLE,
     TRASH,
+    Avatar,
     Choice,
     Field,
     Icon,
@@ -274,27 +276,20 @@ def HubRow(icon, label, href=None, danger=False):
 
 @ar("/profile", methods=["GET"])
 def profile_page(req):
-    name = (data.get_profile(req.scope["uid"]).display_name or "").strip()
+    me = data.get_profile(req.scope["uid"])
+    name = (me.display_name or "").strip()
     return Container(
         VolunteerNav("me"),
         H1("Me", cls=TITLE),
         Div(
-            Span(
-                (name[:1] or "?").upper(),
-                aria_hidden="true",
-                cls="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand "
-                "font-display text-2xl font-extrabold text-white",
-            ),
+            Avatar(name, me.photo_key),
             Div(
                 H2(name or "Your profile", cls="font-display text-lg font-extrabold"),
-                P(
-                    "Editing your profile here is coming soon; preferences are below.",
-                    cls=TextPresets.muted_sm,
-                ),
             ),
             cls="flex items-center gap-4 p-4 " + CARD,
         ),
         Div(
+            HubRow(PERSON, "Your profile", "/me/profile"),
             HubRow(HEART, "Preferences", "/me/preferences"),
             HubRow(CLOCK, "History", "/history"),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
@@ -376,10 +371,11 @@ def privacy():
         ),
         Section(
             "What we collect",
-            "Volunteers: your mobile number; your first name; an email if you give one; "
-            "the neighborhood you show nonprofits; the other causes you type and whether "
-            "you volunteered last year; how you heard of Causematch; and your "
-            "confirmation that you are 18 or over.",
+            "Volunteers: your mobile number; your first name and, if you give them, "
+            "your last name, pronouns, a short bio, your interests and a photo; an "
+            "email if you give one; the neighborhood you show nonprofits; the other "
+            "causes you type and whether you volunteered last year; how you heard of "
+            "Causematch; and your confirmation that you are 18 or over.",
             "Your match preferences: up to two places you help from (each a neighborhood "
             "or ZIP area, or your device's location rounded to about 1 km: never an "
             "address), how you get there and how far you'd go; how much you care about "
@@ -390,8 +386,10 @@ def privacy():
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
-            "Nonprofits: a coordinator's email, name and optional phone, and the openings "
-            "they post. Someone who asks to manage a nonprofit gives the same, plus the "
+            "Nonprofits: a coordinator's email, name and optional phone, the openings "
+            "they post, and the organization's logo, photos, about text, website and "
+            "event links, which anyone signed in can see. Someone who asks to manage a "
+            "nonprofit gives the same, plus the "
             "organization's EIN and name; we blank their name, email and phone 90 days "
             "after we approve or reject the request.",
             "Reports and blocks: if you report someone or block them, we keep what you "
@@ -410,14 +408,15 @@ def privacy():
             "What stays private, and what a nonprofit sees",
             "Only you see these: your places and your device's location, how you rated "
             "each cause, the days and times you ticked and your specific dates, how far "
-            "ahead you look, one-time or recurring, the kind of work, languages and "
-            "skills you picked, which preferences only show or only rank, and Surprise "
-            "me. They decide which openings you see and in what order.",
+            "ahead you look, one-time or recurring, the kind of work and skills you "
+            "picked, which preferences only show or only rank, and Surprise me. They "
+            "decide which openings you see and in what order.",
             "A nonprofit sees what the paragraph above lists, and only after you like one "
-            "of its openings: your first name, the causes you love or are open to, a "
-            "general summary of when you're free (weekday or weekend mornings, "
-            "afternoons, evenings), how often you'd like to help and the neighborhood "
-            "you gave.",
+            "of its openings: your photo, your first name and last initial (all of your "
+            "last name once it accepts you), pronouns, bio and interests, the causes you "
+            "love or are open to, a general summary of when you're free (weekday or "
+            "weekend mornings, afternoons, evenings), the languages you speak, how often "
+            "you'd like to help and the neighborhood you gave.",
         ),
         Section(
             "Who else handles your data",
@@ -437,8 +436,8 @@ def privacy():
             "How long we keep it, and what stays after you delete",
             "We keep your account until you delete it. Volunteers can delete theirs any "
             "time from Me; coordinators ask us to delete theirs. Deleting erases your "
-            "name, phone, email, places, specific free dates, neighborhood and the free "
-            "text you typed. Your "
+            "name, phone, email, places, specific free dates, neighborhood, photo and "
+            "the free text you typed. Your "
             "matches are withdrawn and your future shifts cancelled, and your chat messages "
             'are replaced with "[message removed]".',
             "What remains, without your name: your answers (causes and how you rated "
@@ -456,9 +455,10 @@ def privacy():
         ),
         Section(
             "Seeing or correcting your data",
-            "You can change your match preferences any time in Me, under Preferences. "
-            f"For anything else, write to {contact} and we'll send you what we hold or "
-            "fix it, or delete your account and sign up again.",
+            "You can change your photo, name, pronouns, bio and interests yourself under "
+            "Me, then Your profile, and your match preferences under Me, then "
+            f"Preferences. For anything else, write to {contact} and we'll send you what "
+            "we hold or fix it, or delete your account and sign up again.",
         ),
         Section(
             "Do Not Track",

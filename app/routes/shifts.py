@@ -25,6 +25,7 @@ from app.ui import (
     Refusal,
     Router,
     TextInput,
+    VolunteerHeader,
     VolunteerNav,
 )
 
@@ -51,8 +52,9 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
     return Div(
         Pill(status or SHIFT_STATUS[s["status"]], tone or SHIFT_TONE[s["status"]]),
         P(s["title"], cls="font-bold leading-snug text-ink"),
+        VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
         P(
-            f"{when(s['starts_at'])} - {s['first_name'] if for_org else s['org']}",
+            f"{when(s['starts_at'])}" + ("" if for_org else f" - {s['org']}"),
             cls=TextPresets.muted_sm,
         ),
         *actions,

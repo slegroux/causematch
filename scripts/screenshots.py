@@ -95,6 +95,11 @@ def main():
         shot(v, "v04a-home-screen-toast", full_page=False)
         v.get_by_role("button", name="Dismiss").click()
         shot(v, "v04-deck", full_page=False)
+        for n in range(1, 7):  # the next cards: photos, logos and links vary by org
+            v.wait_for_timeout(500)  # swipe.js ignores taps right after a swap
+            v.get_by_role("button", name="Pass").click()
+            v.wait_for_load_state("networkidle")
+            shot(v, f"v04-deck-{n}", full_page=False)
         for name, path in (
             ("v05-matches", "/matches"),
             ("v06-chat", f"/chat/{info['match_id']}"),
@@ -102,6 +107,7 @@ def main():
             ("v08-profile", "/profile"),
             ("v09-preferences", "/me/preferences"),
             ("v10-deck-free-today", "/deck?today=1"),
+            ("v12-my-profile", "/me/profile"),
         ):
             v.goto(path)
             shot(v, name, full_page=name != "v06-chat")
@@ -123,6 +129,8 @@ def main():
             ("o05-shifts", "/org/shifts"),
             ("o06-chat", f"/org/chat/{info['match_id']}"),
             ("o07-privacy", "/privacy"),
+            ("o08-organization", "/org/organization"),
+            ("o09-opening-media", f"/org/openings/{info['opening_id']}/media"),
         ):
             o.goto(path)
             shot(o, name, full_page=name != "o06-chat")
@@ -135,6 +143,16 @@ def main():
         shot(ad, "a01-admin")
         ad.goto("/admin/orgs")
         shot(ad, "a02-admin-orgs")
+        ad.goto("/admin/reports")
+        shot(ad, "a03-admin-reports")
+
+        # a volunteer with no photo: the deck's "Add a photo" nudge
+        bare = browser.new_context(**pw.devices["iPhone 13"], base_url=url)
+        n = bare.new_page()
+        volunteer_sign_in(n, demo.NO_PHOTO_PHONE)
+        n.wait_for_url("**/deck")
+        n.get_by_role("button", name="Dismiss").click()
+        shot(n, "v10-deck-photo-nudge")
         browser.close()
     server.should_exit = True
     print(f"{len(shots)} screenshots in {a.out}")

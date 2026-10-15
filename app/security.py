@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import HTMLResponse
 
-from app import data
+from app import data, photos
 from app.config import (
     is_production,
     phone_hash_key,
@@ -31,7 +31,13 @@ from app.config import (
 
 log = logging.getLogger("causematch")
 
-MAX_BODY = 64 * 1024  # bytes; every form here is far smaller, and nothing uploads files
+MAX_BODY = 64 * 1024  # bytes; every form here is far smaller, except the uploads below
+# POST paths that take a picture (app/photos.py): they alone may send photos.MAX_UPLOAD.
+UPLOADS = (
+    re.compile(r"/me/profile/photo"),
+    re.compile(r"/org/organization/[0-9]+/(logo|photo)"),
+    re.compile(r"/org/openings/[0-9]+/photo"),
+)
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
 # Cloud Scheduler calls these with a bearer token and sends no Origin. Exact paths: a
 # future /tasks/ route isn't exempt until it is listed (and checks the token).
@@ -89,7 +95,9 @@ def csp():
             "default-src 'self'",
             "script-src 'self'",
             "style-src 'self'",
-            "img-src 'self' data:",  # Franken UI and daisyUI draw some icons as data: SVGs
+            # Franken UI and daisyUI draw some icons as data: SVGs; blob: is the preview
+            # static/photo.js shows of a photo before it is uploaded
+            "img-src 'self' data: blob:",
             f"connect-src 'self' {ws}",
             "font-src 'self'",
             "frame-ancestors 'none'",
@@ -161,10 +169,19 @@ def _forbidden():
     )
 
 
-def _too_large():
+def _too_large(path=""):
+    if max_body(path) > MAX_BODY:
+        return page(413, "Photo too large", "Choose a photo under 6 MB and try again.")
     return page(
         413, "Too much text", "That was too long to send. Shorten it and try again."
     )
+
+
+def max_body(path):
+    """The most bytes a request to `path` may send."""
+    if any(rx.fullmatch(path) for rx in UPLOADS):
+        return photos.MAX_UPLOAD
+    return MAX_BODY
 
 
 def _server_error(rid):
@@ -221,10 +238,11 @@ class Guard:
             await send(message)
 
         early = None
+        limit = max_body(path)
         if method in UNSAFE and path not in ORIGIN_EXEMPT and not same_origin(headers):
             early = _forbidden()
-        elif int(headers.get("content-length") or 0) > MAX_BODY:
-            early = _too_large()
+        elif int(headers.get("content-length") or 0) > limit:
+            early = _too_large(path)
         if early is not None:
             return await early(scope, receive, send_with_headers)
 
@@ -235,7 +253,7 @@ class Guard:
             message = await receive()
             if message["type"] == "http.request":
                 size += len(message.get("body", b""))
-                if size > MAX_BODY:  # a chunked body with no Content-Length
+                if size > limit:  # a chunked body with no Content-Length
                     raise _BodyTooLarge
             return message
 
@@ -244,7 +262,7 @@ class Guard:
         except _BodyTooLarge:
             if started:
                 raise
-            await _too_large()(scope, receive, send_with_headers)
+            await _too_large(path)(scope, receive, send_with_headers)
         except Exception as e:
             # Frames only: an exception's message can hold a phone number or an email.
             frames = "".join(traceback.format_tb(e.__traceback__))
@@ -387,12 +405,14 @@ BUCKETS = {
     "swipe": (30, 30),  # a burst of 30 cards, then one a second
     "chat": (20, 10),  # chat POSTs and websocket frames together
     "safety": (10, 3600),  # report and block POSTs
+    "upload": (10, 600),  # pictures (UPLOADS): 10 in a row, then one a minute
 }
 # POST paths and their bucket
 THROTTLED = (
     (re.compile(r"/swipe"), "swipe"),
     (re.compile(r"/(org/)?chat/[^/]+/send"), "chat"),
     (re.compile(r"/(org/)?matches/[^/]+/(report|block)"), "safety"),
+    *((rx, "upload") for rx in UPLOADS),
 )
 _buckets = {}  # (name, user id) -> (tokens, last refill time)
 _buckets_lock = threading.Lock()

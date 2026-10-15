@@ -138,12 +138,12 @@ dependencies = [
     { name = "fastlite" },
     { name = "httpx" },
     { name = "monsterui" },
+    { name = "pillow" },
     { name = "python-fasthtml" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "pillow" },
     { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-playwright" },
@@ -156,12 +156,12 @@ requires-dist = [
     { name = "fastlite", specifier = ">=0.2.4" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "monsterui", specifier = ">=1.0.47" },
+    { name = "pillow", specifier = ">=12.3.0" },
     { name = "python-fasthtml", specifier = ">=0.14.13" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pillow", specifier = ">=12.3.0" },
     { name = "playwright", specifier = ">=1.64.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-playwright", specifier = ">=0.10.0" },
