@@ -262,3 +262,11 @@ form.cm-homeless .cm-adult-box {
 body:has(.cm-tabbar) .cm-savebar {
   bottom: calc(4rem + env(safe-area-inset-bottom));
 }
+/* The deck's Pass and Like (app/routes/deck.py SwipeButtons): sticky above the tab bar,
+   so a card taller than the screen scrolls under them instead of pushing them out of
+   reach. */
+.cm-swipe-buttons {
+  position: sticky;
+  bottom: calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
+  z-index: 10;
+}

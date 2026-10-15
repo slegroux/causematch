@@ -291,3 +291,25 @@ def test_onboarding_fills_and_submits_on_a_small_phone(se_page):
     assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
     start.click()
     se_page.wait_for_url("**/deck")
+
+
+def test_pass_and_like_stay_above_the_tab_bar_on_a_short_screen(browser, live_url):
+    """A card taller than the space left scrolls under the buttons, which stay sticky
+    above the tab bar (static/theme.css .cm-swipe-buttons)."""
+    ctx = guard(
+        browser.new_context(
+            viewport={"width": 375, "height": 440},
+            is_mobile=True,
+            has_touch=True,
+            base_url=live_url,
+        )
+    )
+    page = ctx.new_page()
+    sign_in_page(page, "(310) 555-0165")
+    page.goto("/deck")
+    page.evaluate("window.scrollTo(0, 0)")
+    bar = page.get_by_role("navigation", name="Main").bounding_box()
+    for name in ("Pass", "Like"):
+        box = page.get_by_role("button", name=name).bounding_box()
+        assert box["y"] + box["height"] <= bar["y"], (name, box, bar)
+    ctx.close()

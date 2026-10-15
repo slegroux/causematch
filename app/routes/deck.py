@@ -103,7 +103,8 @@ def CardImage(c):
                 alt="",
                 draggable="false",
                 # short enough that Pass and Like stay above the tab bar on a small phone
-                cls="pointer-events-none block h-40 max-h-[22vh] w-full object-cover",
+                cls="pointer-events-none block h-36 w-full object-cover "
+                "[@media(max-height:740px)]:h-28",
             ),
             LogoBadge(c["logo"], "absolute bottom-3 left-3 h-16 w-16")
             if c.get("logo")
@@ -113,7 +114,7 @@ def CardImage(c):
     if c.get("logo"):
         return Div(
             LogoBadge(c["logo"], "h-24 w-24"),
-            cls="grid h-36 place-items-center "
+            cls="grid h-36 place-items-center [@media(max-height:740px)]:h-24 "
             + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
         )
     return CauseArt(slug) if slug else None
@@ -141,7 +142,7 @@ def OpeningCard(c):
                 ),
                 cls="space-y-1 pt-1",
             ),
-            cls="space-y-1.5 px-5 pt-4 pb-5",
+            cls="space-y-1.5 px-5 pt-3 pb-4",
         ),
         # classes, not style attributes: the CSP forbids them (static/swipe.js sets styles
         # from script, which it allows)
@@ -158,7 +159,8 @@ def RoundButton(label, liked, icon, cls):
         type="submit",
         name="liked",
         value=liked,
-        cls="grid place-items-center rounded-full shadow-warm transition "
+        cls="pointer-events-auto grid place-items-center rounded-full shadow-warm "
+        "transition "
         "active:scale-95 disabled:opacity-60 focus-visible:outline "
         "focus-visible:outline-4 focus-visible:outline-offset-2 "
         "focus-visible:outline-brand/40 " + cls,
@@ -187,7 +189,10 @@ def SwipeButtons(opening_id, today=False):
         hx_target="#deck-area",
         hx_swap="outerHTML",
         hx_disabled_elt="find button",
-        cls="mt-4 flex items-center justify-center gap-12",
+        # cm-swipe-buttons (static/theme.css): a tall card scrolls under them, so Pass
+        # and Like stay in reach above the tab bar; the gap between them still drags
+        cls="cm-swipe-buttons pointer-events-none mt-4 flex items-center "
+        "justify-center gap-12",
     )
 
 
