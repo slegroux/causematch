@@ -35,7 +35,8 @@ def main():
         ]
     except sqlite3.Error as e:
         sys.exit(f"not a Causematch database: {e}")
-    overall = pilot_metrics(rows, datetime.now(UTC))["overall"]
+    metrics = pilot_metrics(rows, datetime.now(UTC))
+    overall = metrics["overall"]
     shifts = [s for s in rows["shifts"] if s["status"] == "completed"]
     print(f"open_openings: {open_openings}")
     print(f"completed_shifts: {len(shifts)}")
@@ -43,6 +44,9 @@ def main():
     for key in METRICS:
         v = overall[key]["value"]
         print(f"{key}: {'' if v is None else round(v, 4)}")
+    empty = metrics["empty_deck"]
+    print(f"empty_deck_views: {empty['views']}")
+    print(f"empty_deck_volunteers: {empty['volunteers']}")
 
 
 if __name__ == "__main__":

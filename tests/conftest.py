@@ -46,6 +46,7 @@ from app.db import (
     blocks,
     causes,
     claim_requests,
+    deck_empties,
     ensure_causes,
     login_tokens,
     matches,
@@ -88,6 +89,7 @@ def fresh_db():
         claim_requests,
         rate_events,
         places,
+        deck_empties,
     ):
         table.delete_where()
     security.reset_buckets()

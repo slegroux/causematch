@@ -274,6 +274,18 @@ rate_events = db.create(RateEvent, pk="id", transform=True)
 rate_events.create_index(["key", "at"], if_not_exists=True)
 
 
+class DeckEmpty:
+    """One view of an empty deck, for the pilot metrics (app/metrics_rows.py)."""
+
+    id: int
+    volunteer_id: int
+    today: bool  # with "I'm free today" on
+    at: str  # UTC
+
+
+deck_empties = db.create(DeckEmpty, pk="id", transform=True)
+
+
 class Place:
     """Where a volunteer helps from (up to 2), private: never shown to anyone else. A ZIP or
     neighborhood centroid, or a device location rounded to 2 decimals; never an address."""

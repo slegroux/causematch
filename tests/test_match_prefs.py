@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from app import data, geo, match
-from app.db import Opening, db, now, openings, orgs, places, profiles
+from app.db import Opening, db, deck_empties, now, openings, orgs, places, profiles
+from app.metrics import pilot_metrics
 
 day_slots_migration = importlib.import_module("app.migrations.0011_day_slots")
 
@@ -752,3 +753,139 @@ def test_dealbreaker_and_surprise_answers_are_stored(bare):
     page = bare.get("/me/preferences").text
     assert 'name="only_work" value="only" checked' in page
     assert 'name="surprise" value="1" checked' in page
+
+
+# --- the deck's filter sheet and the empty-deck suggestion -----------------------------------
+
+KOREATOWN = geo.neighborhood_latlon("Koreatown")[1]  # about 5 km from Downtown
+
+
+def downtown_15(client, **over):
+    """Home Downtown, 15 min by car (8 km): Koreatown in reach, Pasadena not."""
+    return save(client, work_form(**place_fields(1, "Home", "Downtown"), **over))
+
+
+def test_filter_sheet_shows_the_count_and_the_current_answers(bare):
+    downtown_15(bare)
+    add("downtown", DOWNTOWN)
+    add("pasadena", PASADENA)
+    page = bare.get("/deck").text
+    assert ">1 opening<" in page
+    assert 'name="max_minutes" value="15" checked' in page
+    assert 'name="causes" value="food-insecurity" checked' in page
+    assert "Travel from Home" in page
+
+
+def test_filter_sheet_saves_distance_causes_and_this_week(bare):
+    downtown_15(bare)
+    add("pasadena", PASADENA)
+    add("in 10 days", DOWNTOWN, starts_at=ahead(days=10, at="10:00"))
+    r = bare.post(
+        "/deck/filters",
+        data={"max_minutes": "45", "causes": [FOOD, PARKS]},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    (pl,) = places(where="user_id = ?", where_args=[uid_of(bare)])
+    assert pl.max_minutes == 45
+    assert json.loads(profiles[uid_of(bare)].cause_prefs)[ANIMALS] == "no"
+    assert set(cards(bare)) == {"pasadena", "in 10 days"}
+    r = bare.post(
+        "/deck/filters",
+        data={"max_minutes": "45", "causes": [FOOD], "this_week": "1", "today": "1"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/deck?today=1"
+    assert profiles[uid_of(bare)].horizon_days == 7
+    assert set(cards(bare)) == set()  # pasadena is past this week too (2099)
+
+
+def test_filter_sheet_ticking_a_ruled_out_cause_opens_it(bare):
+    downtown_15(bare, **{"cause_animal-shelters": "no"})
+    bare.post("/deck/filters", data={"max_minutes": "15", "causes": [FOOD, ANIMALS]})
+    rated = json.loads(profiles[uid_of(bare)].cause_prefs)
+    assert rated[FOOD] == "love" and rated[ANIMALS] == "open"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"max_minutes": "20"}, {"max_minutes": "x"}, {"causes": ["nonsense"]}],
+)
+def test_filter_sheet_unknown_values_are_refused(bare, bad):
+    downtown_15(bare)
+    r = bare.post("/deck/filters", data={"max_minutes": "15", **bad})
+    assert r.status_code == 400
+
+
+def test_filter_sheet_on_a_sign_up_profile_saves_its_home_first(bare):
+    """No saved place yet: the sign-up Home becomes a row, then gets the new time."""
+    profiles.update(id=uid_of(bare), radius_km=16)
+    bare.post("/deck/filters", data={"max_minutes": "60", "causes": [FOOD]})
+    (pl,) = places(where="user_id = ?", where_args=[uid_of(bare)])
+    assert (pl.label, pl.mode, pl.max_minutes, pl.area) == (
+        "Home",
+        "car",
+        60,
+        "Chinatown",
+    )
+
+
+def test_empty_deck_names_the_change_that_adds_most(bare):
+    downtown_15(bare)
+    add("pasadena", PASADENA)
+    add("pasadena too", PASADENA)
+    assert cards(bare) == {}
+    # 30 min (16 km) adds nothing; 45 min (24 km) is the shortest that does
+    assert data.relaxations(uid_of(bare)) == {
+        "key": "widen:0:45",
+        "label": "Widen to 45 min",
+        "more": 2,
+    }
+    assert "Widen to 45 min: 2 more" in bare.get("/deck").text
+    r = bare.post("/deck/relax", data={"key": "widen:0:45"}, follow_redirects=False)
+    assert r.headers["location"] == "/deck"
+    assert set(cards(bare)) == {"pasadena", "pasadena too"}
+
+
+def test_empty_deck_can_suggest_looking_further_ahead_or_a_dealbreaker(bare):
+    downtown_15(bare, horizon_days="7")
+    add("in 10 days", DOWNTOWN, starts_at=ahead(days=10, at="10:00"))
+    assert data.relaxations(uid_of(bare))["label"] == "Look further ahead"
+    bare.post("/deck/relax", data={"key": "horizon"})
+    assert set(cards(bare)) == {"in 10 days"}
+    downtown_15(bare, only_work="only", setting="outdoor")
+    add("indoors", DOWNTOWN, setting="indoor")
+    profiles.update(id=uid_of(bare), horizon_days=0)
+    swipe_all = [c["id"] for c in data.deck(uid_of(bare), 10)]
+    for oid in swipe_all:
+        data.swipe(uid_of(bare), oid, False)
+    assert data.relaxations(uid_of(bare))["label"] == "Show any kind of work"
+    bare.post("/deck/relax", data={"key": "only_work"})
+    assert set(cards(bare)) == {"indoors"}
+    assert "work" not in json.loads(profiles[uid_of(bare)].dealbreakers)
+
+
+def test_empty_deck_with_nothing_to_relax_suggests_nothing(bare):
+    save(bare, work_form(**place_fields(1, "Home", "Downtown", minutes="0")))
+    assert data.relaxations(uid_of(bare)) is None
+    page = bare.get("/deck").text
+    assert "more</button>" not in page and "You're all caught up" in page
+
+
+def test_empty_deck_relax_with_a_stale_key_changes_nothing(bare):
+    downtown_15(bare)
+    r = bare.post("/deck/relax", data={"key": "only_when"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert json.loads(profiles[uid_of(bare)].dealbreakers) == ["distance"]
+
+
+def test_empty_deck_views_are_counted_for_the_metrics(bare):
+    downtown_15(bare)
+    bare.get("/deck")
+    bare.get("/deck?today=1")
+    assert [(e.volunteer_id, bool(e.today)) for e in deck_empties()] == [
+        (uid_of(bare), False),
+        (uid_of(bare), True),
+    ]
+    m = pilot_metrics(data.metrics_rows())
+    assert m["empty_deck"] == {"views": 2, "volunteers": 1}

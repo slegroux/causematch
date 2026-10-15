@@ -105,6 +105,9 @@ def main():
         ):
             v.goto(path)
             shot(v, name, full_page=name != "v06-chat")
+        v.goto("/deck")
+        v.locator("summary").click()  # the deck's filter sheet, open over the card
+        shot(v, "v11-deck-filters", full_page=False)
 
         desk = browser.new_context(
             viewport={"width": 1280, "height": 860}, base_url=url

@@ -63,6 +63,8 @@ ROUTES = {
     ("POST", "/"): ("volunteer", None),
     ("GET", "/deck"): ("volunteer", "own-record"),
     ("POST", "/deck"): ("volunteer", "own-record"),
+    ("POST", "/deck/filters"): ("volunteer", "own-record"),
+    ("POST", "/deck/relax"): ("volunteer", "own-record"),
     ("POST", "/swipe"): ("volunteer", "own-record"),
     ("GET", "/matches"): ("volunteer", "own-record"),
     ("GET", "/matches/{match_id}/withdraw"): ("volunteer", "own-record"),

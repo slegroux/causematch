@@ -14,7 +14,7 @@ from apswutils.db import NotFoundError
 from app import db as _db
 from app import match as _match
 from app import prefs as _prefs
-from app.choices import ANY_DISTANCE_KM, DEFAULT_DEALBREAKERS, LANGUAGES
+from app.choices import ANY_DISTANCE_KM, DEFAULT_DEALBREAKERS, LANGUAGES, MAX_MINUTES
 from app.config import phone_hash_key
 from app.metrics_rows import fetch_rows
 
@@ -188,6 +188,165 @@ def _when_ok(p, o):
         p["availability"], o.starts_at, o.recurrence, p["free_dates"]
     )
     return free > 0 and _match.commitment_fits(p["commitment"], o.recurrence)
+
+
+def deck_count(uid, today=False):
+    """How many cards the deck holds now."""
+    return len(_deck_openings(uid, today))
+
+
+def record_empty_deck(uid, today=False):
+    _db.deck_empties.insert(_db.DeckEmpty(volunteer_id=uid, today=today, at=_now()))
+
+
+TIERS = [m for m, _ in MAX_MINUTES if m]  # 15, 30, 45, 60; then any distance
+
+
+def _wider(place):
+    """The travel times past this place's reach, shortest first, in minutes (0: any)."""
+    if place["reach_km"] is None:
+        return []
+    return [
+        m for m in TIERS if _match.reach_km(place["mode"], m) > place["reach_km"]
+    ] + [0]
+
+
+def _relaxed(p, key):
+    """A copy of _deck_prefs() with one preference loosened (keys: _relaxation_labels)."""
+    q = {**p, "dealbreakers": [d for d in p["dealbreakers"] if f"only_{d}" != key]}
+    if key == "horizon":
+        q["horizon_days"] = 0
+    elif key.startswith("widen:"):
+        i, to = map(int, key.split(":")[1:])
+        reach = _match.reach_km(p["places"][i]["mode"], to)
+        q["places"] = [
+            {
+                **pl,
+                "max_minutes": to,
+                "reach_km": reach,
+                "scale_km": reach or ANY_DISTANCE_KM,
+            }
+            if j == i
+            else pl
+            for j, pl in enumerate(p["places"])
+        ]
+    return q
+
+
+def _relaxation_labels(p):
+    """{key: label} of the changes that could add cards. widen:<place>:<minutes> for each
+    wider travel time of each place, then the horizon and the dealbreakers."""
+    out = {}
+    if "distance" in p["dealbreakers"]:
+        for i, pl in enumerate(p["places"]):
+            who = f" {pl['label']}" if len(p["places"]) > 1 else ""
+            for to in _wider(pl):
+                reach = f"{to} min" if to else "any distance"
+                out[f"widen:{i}:{to}"] = f"Widen{who} to {reach}"
+    if p["horizon_days"]:
+        out["horizon"] = "Look further ahead"
+    names = {
+        "causes": "Show every cause you haven't ruled out",
+        "when": "Show any time",
+        "work": "Show any kind of work",
+    }
+    for d, label in names.items():
+        if d in p["dealbreakers"]:
+            out[f"only_{d}"] = label
+    return out
+
+
+def relaxations(uid, today=False):
+    """{"key", "label", "more"}: the one change that adds the most cards, or None. For a
+    place, only its shortest wider travel time that adds any is offered."""
+    p = _deck_prefs(_db.profiles[uid])
+    base = len(_deck_openings(uid, today, p))
+    best, widened = None, set()
+    for key, label in _relaxation_labels(p).items():
+        place = key.split(":")[1] if key.startswith("widen:") else None
+        if place in widened:
+            continue
+        more = len(_deck_openings(uid, today, _relaxed(p, key))) - base
+        if more > 0 and place is not None:
+            widened.add(place)
+        if more > 0 and (best is None or more > best["more"]):
+            best = {"key": key, "label": label, "more": more}
+    return best
+
+
+def _saved_places(uid):
+    """The volunteer's places as rows, saving the sign-up Home first when there are none."""
+    me = _db.profiles[uid]
+    places = _places(me)
+    if places and places[0]["id"] is None:
+        home = places[0]
+        _db.places.insert(
+            _db.Place(
+                user_id=uid,
+                label=home["label"],
+                lat=home["lat"],
+                lon=home["lon"],
+                area=home["area"],
+                mode=home["mode"],
+                # the sign-up travel time, or the shortest that reaches as far
+                max_minutes=home["max_minutes"]
+                or next(
+                    (
+                        m
+                        for m in TIERS
+                        if home["reach_km"] is not None
+                        and _match.reach_km(home["mode"], m) >= home["reach_km"]
+                    ),
+                    0,
+                ),
+            )
+        )
+    return _db.places(where="user_id = ?", where_args=[uid], order_by="id")
+
+
+def apply_relaxation(uid, key):
+    """Loosen one preference, as relaxations() offered it. ValueError for an unknown key."""
+    me = _db.profiles[uid]
+    p = _deck_prefs(me)
+    if key not in _relaxation_labels(p):
+        raise ValueError("not a relaxation on offer")
+    with _db.db.conn:
+        if key.startswith("widen:"):
+            i, to = map(int, key.split(":")[1:])
+            _db.places.update(id=_saved_places(uid)[i].id, max_minutes=to)
+        elif key == "horizon":
+            _db.profiles.update(id=uid, horizon_days=0)
+        else:
+            _db.profiles.update(
+                id=uid, dealbreakers=json.dumps(_relaxed(p, key)["dealbreakers"])
+            )
+
+
+def save_quick_filters(uid, *, max_minutes, shown, this_week):
+    """The deck's filter sheet: the main place's travel time (None: unchanged), which
+    causes show (unticked: not for me; ticked: as rated, a "not for me" becoming open), and
+    this week only."""
+    me = _db.profiles[uid]
+    causes = _prefs.cause_prefs(me)
+    if shown:  # nothing ticked changes nothing: an empty deck helps no one
+        for c in active_causes():
+            if c.slug not in shown:
+                causes[c.slug] = _prefs.NO
+            elif causes.get(c.slug) == _prefs.NO:
+                causes[c.slug] = _prefs.OPEN
+    horizon = (
+        7 if this_week else (0 if _prefs.horizon_days(me) == 7 else me.horizon_days)
+    )
+    with _db.db.conn:
+        rows = _saved_places(uid) if max_minutes is not None else []
+        if rows:
+            _db.places.update(id=rows[0].id, max_minutes=max_minutes)
+        _db.profiles.update(
+            id=uid,
+            cause_prefs=json.dumps(causes),
+            causes=json.dumps(_prefs.picked(causes)),
+            horizon_days=horizon,
+        )
 
 
 def _org_reply_rates():
