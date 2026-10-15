@@ -379,8 +379,10 @@ def privacy():
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
-            "Nonprofits: a coordinator's email, name and optional phone, and the openings "
-            "they post. Someone who asks to manage a nonprofit gives the same, plus the "
+            "Nonprofits: a coordinator's email, name and optional phone, the openings "
+            "they post, and the organization's logo, photos, about text, website and "
+            "event links, which anyone signed in can see. Someone who asks to manage a "
+            "nonprofit gives the same, plus the "
             "organization's EIN and name; we blank their name, email and phone 90 days "
             "after we approve or reject the request.",
             "Reports and blocks: if you report someone or block them, we keep what you "
@@ -430,7 +432,8 @@ def privacy():
         ),
         Section(
             "Seeing or correcting your data",
-            f"You can't edit your answers in the app yet. Write to {contact} and we'll "
+            "You can change your photo, name, pronouns, bio and interests yourself, under "
+            f"Me, then Your profile. For anything else, write to {contact} and we'll "
             "send you what we hold or fix it, or delete your account and sign up again.",
         ),
         Section(
