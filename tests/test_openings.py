@@ -5,6 +5,7 @@ import pytest
 from conftest import coordinator_for, deck_titles, org_sign_in
 from starlette.testclient import TestClient
 
+from app import geo
 from app.db import causes, openings, orgs
 from main import app
 
@@ -82,9 +83,9 @@ def test_stored_opening_fields(coord):
         {"cause": "homelessness-services"},  # inactive
         {"cause": "nonsense"},
         {"zip": "10001"},
-        {"zip": "92101"},
-        {"zip": "90704"},  # Avalon: LA County, not the City of Los Angeles
-        {"zip": "91101"},  # Pasadena
+        {"zip": "92101"},  # San Diego
+        {"zip": "94103"},  # San Francisco
+        {"zip": "00000"},
         {"starts_at": future(400)},
         {"starts_at": "2027-03-14T02:30"},  # skipped by the spring-forward clock change
         {"reply_channel": "text"},  # the coordinator has no phone
@@ -247,17 +248,34 @@ def test_create_opening_requires_membership():
         data.close_opening(uid, foreign.id)
 
 
-def test_city_zip_accepted_for_opening_and_county_zip_still_ok_for_volunteers(
-    coord, new_user
-):
-    from conftest import FORM
+@pytest.mark.parametrize(
+    "zip_code,place",
+    [
+        ("90012", "Downtown Los Angeles"),
+        ("90401", "Santa Monica"),
+        ("90232", "Culver City"),
+        ("91101", "Pasadena"),
+        ("90704", "Avalon"),
+    ],
+)
+def test_any_los_angeles_county_zip_is_accepted_for_an_opening(coord, zip_code, place):
+    assert post(coord, zip=zip_code, title=place).status_code == 303
+    (o,) = openings(where="title = ?", where_args=[place])
+    assert (o.lat, o.lon) == geo.zip_latlon(zip_code)
 
-    assert post(coord, zip="90012").status_code == 303
-    assert post(coord, zip="90704", title="Avalon").status_code == 200
-    r = new_user.post(
-        "/onboarding", data={**FORM, "zip": "90704"}, follow_redirects=False
-    )
-    assert r.headers["location"] == "/deck"
+
+@pytest.mark.parametrize("zip_code", ["94103", "00000"])
+def test_a_zip_outside_the_county_is_refused_and_says_so(coord, zip_code):
+    r = post(coord, zip=zip_code)
+    assert r.status_code == 200 and "Los Angeles County" in r.text
+    assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+
+
+def test_volunteers_and_openings_share_one_area():
+    """The onboarding ZIP check and the opening ZIP check read the same list."""
+    for zip_code in ("90401", "90232", "91101", "90704", "90012"):
+        assert geo.zip_latlon(zip_code)
+    assert geo.zip_latlon("94103") is None and geo.zip_latlon("00000") is None
 
 
 class _Frozen(datetime):

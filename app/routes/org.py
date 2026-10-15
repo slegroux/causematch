@@ -30,7 +30,7 @@ from app import data, notify
 from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import query, str_form
-from app.geo import city_zip_latlon
+from app.geo import zip_latlon
 from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
@@ -454,10 +454,10 @@ def _sync_new_opening_save(req, form):
         )
     if f["cause"] not in {c.slug for c in data.active_causes()}:
         return fail("Please pick a cause from the list.")
-    latlon = city_zip_latlon(f["zip"])
+    latlon = zip_latlon(f["zip"])
     if not latlon:
         return fail(
-            "Openings must be in the City of Los Angeles for now. Check the ZIP code."
+            "Openings must be in Los Angeles County for now. Check the ZIP code."
         )
     try:
         start = datetime.strptime(f["starts_at"], "%Y-%m-%dT%H:%M")

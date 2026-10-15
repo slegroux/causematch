@@ -535,7 +535,7 @@ def test_a_claim_for_an_org_not_yet_here_can_import_it_then_be_approved(
     [
         (lambda r: httpx.Response(404, json={}), "no nonprofit with that EIN"),
         (lambda r: httpx.Response(500), "did not answer"),
-        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90704", "ntee_code": "K31"}}), "not a City of Los Angeles ZIP"),
+        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "94103", "ntee_code": "K31"}}), "not a Los Angeles County ZIP"),
         (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90019", "ntee_code": "K03"}}), "maps to no cause"),
     ],
 )  # fmt: skip

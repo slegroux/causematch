@@ -203,7 +203,7 @@ def test_import_creates_unverified_unclaimed_cold_orgs(capsys):
         "K31",
     )
     assert json.loads(org.causes) == ["food-insecurity"]
-    assert (org.lat, org.lon) == geo.city_zip_latlon("90019")
+    assert (org.lat, org.lon) == geo.zip_latlon("90019")
     assert not org.verified_at and org.intro == "cold" and not org.deactivated_at
     assert not org_members(where="org_id = ?", where_args=[org.id])
 
@@ -248,13 +248,11 @@ def test_a_search_hit_seen_under_every_query_is_one_org(capsys):
     )
 
 
-def test_only_a_city_zip_is_kept(capsys):
+def test_only_a_county_zip_is_kept(capsys):
     hits = [
         *SEARCH["organizations"],
-        hit(
-            "111111111", "County Pantry"
-        ),  # Los Angeles in search, ZIP outside the city
-        hit("222222222", "Moved Pantry"),  # the lookup says Pasadena, ZIP 91101
+        hit("111111111", "County Pantry"),  # Los Angeles in search, ZIP in Avalon
+        hit("222222222", "Moved Pantry"),  # the lookup says San Francisco, ZIP 94103
         hit("333333333", "Texas Pantry", city="Houston"),
         hit("444444444", "No Code Pantry", ntee=""),
         hit("555555555", "Wrong Group Pantry", ntee="P20"),
@@ -265,12 +263,14 @@ def test_only_a_city_zip_is_kept(capsys):
         **DETAILS,
         "111111111": detail("111111111", "County Pantry", zipcode="90704"),
         "222222222": detail(
-            "222222222", "Moved Pantry", city="Pasadena", zipcode="91101"
+            "222222222", "Moved Pantry", city="San Francisco", zipcode="94103"
         ),
     }
     api = Api(hits, details)
     _, lines, _ = run(api, *FOOD, "--dry-run", capsys=capsys)
-    assert lines[-1] == "2 orgs"
+    assert (
+        lines[-1] == "3 orgs"
+    )  # the county's Avalon pantry is in, San Francisco is out
     # Woodland, Houston, no code, P20, L41 and K40 never cost a lookup
     assert sorted(set(api.lookups)) == [
         "111111111",
@@ -282,32 +282,37 @@ def test_only_a_city_zip_is_kept(capsys):
     ]
 
 
-def test_city_neighbourhoods_are_in_when_their_zip_is_a_city_zip(capsys):
-    """Van Nuys and San Pedro are in the City of Los Angeles; the ZIP list is the boundary."""
+def test_county_places_are_in_when_their_zip_is_a_county_zip(capsys):
+    """Van Nuys (a City of LA neighbourhood) and Santa Monica and Pasadena (cities of
+    their own) are all in the county; a place outside it never costs a lookup."""
     hits = [
         hit("111111111", "Valley Pantry", city="Van Nuys", ntee="K31"),
-        hit("222222222", "Harbor Pantry", city="San Pedro", ntee="K30"),
+        hit("222222222", "Westside Pantry", city="Santa Monica", ntee="K30"),
         hit("333333333", "Pasadena Pantry", city="Pasadena", ntee="K31"),
+        hit("444444444", "Fresno Pantry", city="Fresno", ntee="K31"),
     ]
     details = {
         "111111111": detail(
             "111111111", "Valley Pantry", city="Van Nuys", zipcode="91401"
         ),
         "222222222": detail(
-            "222222222", "Harbor Pantry", city="San Pedro", zipcode="90731"
+            "222222222", "Westside Pantry", city="Santa Monica", zipcode="90401"
+        ),
+        "333333333": detail(
+            "333333333", "Pasadena Pantry", city="Pasadena", zipcode="91101"
         ),
     }
     api = Api(hits, details)
     _, lines, _ = run(api, *FOOD, capsys=capsys)
-    assert lines[-1] == "2 orgs" and "333333333" not in api.lookups
-    assert {o.city for o in orgs() if o.ein} == {"Van Nuys", "San Pedro"}
+    assert lines[-1] == "3 orgs" and "444444444" not in api.lookups
+    assert {o.city for o in orgs() if o.ein} == {"Van Nuys", "Santa Monica", "Pasadena"}
 
 
-def test_a_city_name_alone_is_not_enough(capsys):
-    """Los Angeles in the search result, but the record's ZIP is in the county."""
+def test_a_place_name_alone_is_not_enough(capsys):
+    """Los Angeles in the search result, but the record's ZIP is outside the county."""
     api = Api(
-        [hit("111111111", "County Pantry")],
-        {"111111111": detail("111111111", "County Pantry", zipcode="90704")},
+        [hit("111111111", "Elsewhere Pantry")],
+        {"111111111": detail("111111111", "Elsewhere Pantry", zipcode="94103")},
     )
     _, lines, _ = run(api, *FOOD, "--dry-run", capsys=capsys)
     assert lines[-1] == "0 orgs"
@@ -429,7 +434,7 @@ def test_a_failing_search_is_reported_and_the_exit_code_says_so(capsys):
 
 def test_other_cities_and_unknown_causes_are_refused():
     with pytest.raises(SystemExit):
-        import_orgs.main(["--city", "Pasadena", "--state", "CA"])
+        import_orgs.main(["--city", "San Francisco", "--state", "CA"])
     with pytest.raises(SystemExit):
         import_orgs.main([*ARGS, "--cause", "nope"])
 
@@ -484,8 +489,8 @@ def test_ein_dry_run_writes_nothing(capsys):
         (detail("123456780", "Society", ntee="K03"), "maps to no cause"),
         (detail("123456780", "No Code", ntee=""), "maps to no cause"),
         (
-            detail("123456780", "County", zipcode="90704"),
-            "not a City of Los Angeles ZIP",
+            detail("123456780", "Elsewhere", zipcode="94103"),
+            "not a Los Angeles County ZIP",
         ),
     ],
 )
@@ -505,9 +510,9 @@ def test_ein_cause_overrides_the_ntee_mapping_but_not_the_zip(capsys):
         capsys=capsys,
     )  # fmt: skip
     assert lines[-1] == "1 orgs"
-    county = detail("123456781", "County", zipcode="90704")
+    elsewhere = detail("123456781", "Elsewhere", zipcode="94103")
     _, lines, _ = run_ein(
-        Api(details={"123456781": county}),
+        Api(details={"123456781": elsewhere}),
         "--ein", "123456781", "--cause", "food-insecurity",
         capsys=capsys,
     )  # fmt: skip

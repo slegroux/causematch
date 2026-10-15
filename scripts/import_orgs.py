@@ -1,14 +1,16 @@
 """Import nonprofits from ProPublica's Nonprofit Explorer into the orgs table.
 
 uv run python scripts/import_orgs.py --city "Los Angeles" --state CA [--dry-run] [--limit N] [--cause SLUG]
+uv run python scripts/import_orgs.py --city "Santa Monica" --state CA ...
 uv run python scripts/import_orgs.py --ein 86-1620575 [--dry-run] [--cause SLUG]
 
 The API cannot filter by city and its search matches names only, so for each cause the
-script searches the state's 501(c)(3)s in that cause's NTEE major group for the city's name
-and a few cause words, keeps the hits whose postal city is a City of Los Angeles one
-(app/org_import.py CITY_NAMES, a cost prefilter), then looks each up for its ZIP. A
-nonprofit is imported when its ZIP is a City of Los Angeles ZIP in app/la_zips.csv, which
-is the boundary (so Van Nuys and San Pedro count) and gives its lat/lon (the ZIP's centre),
+script searches the state's 501(c)(3)s in that cause's NTEE major group for the place's
+name and a few cause words, keeps the hits whose postal place is in Los Angeles County
+(app/org_import.py PLACE_NAMES, a cost prefilter), then looks each up for its ZIP. A
+nonprofit is imported when its ZIP is a Los Angeles County ZIP in app/la_zips.csv, which
+is the boundary (so Van Nuys, Pasadena and Santa Monica count) and gives its lat/lon (the
+ZIP's centre),
 and its NTEE code maps to a cause (below). Everything else is skipped, including
 nonprofits with no NTEE code and ones named without any of the search words, so a run
 finds a sample, not all of them. --ein imports one nonprofit by EIN under the same rules
@@ -42,9 +44,9 @@ from app import propublica
 from app.org_import import (
     CAUSE_LETTER,
     CAUSE_TERMS,
-    CITY_NAMES,
     NTEE_CAUSES,
     NTEE_GROUP_IDS,
+    PLACE_NAMES,
     NotImportable,
     import_ein,
     ntee_cause,
@@ -72,7 +74,7 @@ def search_page(client, q, state, letter, page, stats):
 
 
 def candidates(client, city, state, cause, max_pages, delay, sleep, seen, stats):
-    """Search hits mailing from a City of Los Angeles place whose NTEE code maps to this
+    """Search hits mailing from a Los Angeles County place whose NTEE code maps to this
     cause, EINs not yet seen."""
     letter = CAUSE_LETTER[cause]
     for q in (f'"{city}"', *CAUSE_TERMS[cause]):
@@ -83,7 +85,7 @@ def candidates(client, city, state, cause, max_pages, delay, sleep, seen, stats)
                 break
             hits, pages = found
             for h in hits:
-                if h["ein"] in seen or h["city"].lower() not in CITY_NAMES:
+                if h["ein"] in seen or h["city"].lower() not in PLACE_NAMES:
                     continue
                 if ntee_cause(h["ntee"]) != cause:
                     continue
@@ -102,7 +104,9 @@ def report(result):
 
 def main(argv=None, client=None, sleep=time.sleep):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--city", help="Los Angeles, the only city with a ZIP list")
+    p.add_argument(
+        "--city", help="a place in Los Angeles County, the area with a ZIP list"
+    )
     p.add_argument("--state", help="two letters, like CA")
     p.add_argument("--ein", help="import this one nonprofit instead of searching")
     p.add_argument("--dry-run", action="store_true", help="write nothing")
@@ -123,8 +127,8 @@ def main(argv=None, client=None, sleep=time.sleep):
         p.error("--max-pages must be 1 to 20")
     if a.delay < 0:
         p.error("--delay can't be negative")
-    if a.city and a.city.lower() != "los angeles":
-        p.error("only Los Angeles has a ZIP list (app/la_zips.csv)")
+    if a.city and a.city.lower() not in PLACE_NAMES:
+        p.error("only Los Angeles County has a ZIP list (app/la_zips.csv)")
 
     own = client is None
     client = client or propublica.make_client()

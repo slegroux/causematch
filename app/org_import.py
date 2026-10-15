@@ -1,7 +1,8 @@
 """What the ProPublica import keeps, shared by scripts/import_orgs.py and the admin claims page.
 
-The boundary is the City of Los Angeles ZIP list (app/la_zips.csv), not the postal city
-name: Van Nuys, San Pedro and Granada Hills are in the city. The NTEE code picks the cause.
+The boundary is the Los Angeles County ZIP list (app/la_zips.csv), not the postal place
+name: a nonprofit mailing from "Los Angeles" with a ZIP outside the county is out, and one
+in Pasadena or Santa Monica is in. The NTEE code picks the cause.
 """
 
 import re
@@ -25,17 +26,43 @@ CAUSE_TERMS = {
 }
 # Inclusive number ranges within a letter; None keeps the whole letter.
 NTEE_RANGES = {"K": (30, 36), "C": (20, 99), "D": (20, 23), "L": None}
-# Postal city names of the City of Los Angeles, to avoid a lookup for every hit in the state
-# (the search results carry no ZIP). Only a prefilter: the ZIP list decides.
-CITY_NAMES = {
+# Postal place names in Los Angeles County: its 88 cities, the City of Los Angeles'
+# neighbourhoods and the unincorporated places mail goes to. They avoid a lookup for every
+# hit in the state (the search results carry no ZIP). Only a prefilter: the ZIP list decides.
+PLACE_NAMES = {
     name.lower()
     for name in (
-        "Los Angeles", "Arleta", "Canoga Park", "Chatsworth", "Encino", "Granada Hills",
-        "Harbor City", "Hollywood", "Lake View Terrace", "Mission Hills", "North Hills",
+        # the 88 cities
+        "Agoura Hills", "Alhambra", "Arcadia", "Artesia", "Avalon", "Azusa",
+        "Baldwin Park", "Bell", "Bell Gardens", "Bellflower", "Beverly Hills", "Bradbury",
+        "Burbank", "Calabasas", "Carson", "Cerritos", "Claremont", "Commerce", "Compton",
+        "Covina", "Cudahy", "Culver City", "Diamond Bar", "Downey", "Duarte", "El Monte",
+        "El Segundo", "Gardena", "Glendale", "Glendora", "Hawaiian Gardens", "Hawthorne",
+        "Hermosa Beach", "Hidden Hills", "Huntington Park", "Industry", "City of Industry",
+        "Inglewood", "Irwindale", "La Canada Flintridge", "La Habra Heights", "La Mirada",
+        "La Puente", "La Verne", "Lakewood", "Lancaster", "Lawndale", "Lomita",
+        "Long Beach", "Los Angeles", "Lynwood", "Malibu", "Manhattan Beach", "Maywood",
+        "Monrovia", "Montebello", "Monterey Park", "Norwalk", "Palmdale",
+        "Palos Verdes Estates", "Paramount", "Pasadena", "Pico Rivera", "Pomona",
+        "Rancho Palos Verdes", "Redondo Beach", "Rolling Hills", "Rolling Hills Estates",
+        "Rosemead", "San Dimas", "San Fernando", "San Gabriel", "San Marino",
+        "Santa Clarita", "Santa Fe Springs", "Santa Monica", "Sierra Madre", "Signal Hill",
+        "South El Monte", "South Gate", "South Pasadena", "Temple City", "Torrance",
+        "Vernon", "Walnut", "West Covina", "West Hollywood", "Westlake Village", "Whittier",
+        # City of Los Angeles neighbourhoods with their own postal name
+        "Arleta", "Canoga Park", "Chatsworth", "Encino", "Granada Hills", "Harbor City",
+        "Hollywood", "Lake View Terrace", "Mission Hills", "North Hills",
         "North Hollywood", "Northridge", "Pacific Palisades", "Pacoima", "Panorama City",
-        "Playa Del Rey", "Reseda", "San Pedro", "Sherman Oaks", "Studio City",
-        "Sun Valley", "Sunland", "Sylmar", "Tarzana", "Tujunga", "Van Nuys",
-        "Venice", "West Hills", "Wilmington", "Winnetka", "Woodland Hills",
+        "Playa Del Rey", "Playa Vista", "Reseda", "San Pedro", "Sherman Oaks",
+        "Studio City", "Sun Valley", "Sunland", "Sylmar", "Tarzana", "Toluca Lake",
+        "Tujunga", "Valley Village", "Van Nuys", "Venice", "West Hills", "Wilmington",
+        "Winnetka", "Woodland Hills",
+        # unincorporated places and other postal names
+        "Acton", "Agua Dulce", "Altadena", "Canyon Country", "Castaic", "Hacienda Heights",
+        "La Canada", "La Crescenta", "Lake Hughes", "Littlerock", "Llano",
+        "Marina Del Rey", "Montrose", "Newhall", "Pearblossom", "Rancho Dominguez",
+        "Rowland Heights", "Saugus", "Stevenson Ranch", "Topanga", "Universal City",
+        "Valencia", "Valyermo",
     )
 }  # fmt: skip
 
@@ -65,10 +92,10 @@ def ntee_cause(code):
 def classify(org, cause=None):
     """(cause, lat, lon) for a propublica.lookup() record, else NotImportable. `cause`
     overrides the NTEE mapping (an admin's choice); the ZIP check always applies."""
-    place = geo.city_zip_latlon(org["zip"])
+    place = geo.zip_latlon(org["zip"])
     if place is None:
         raise NotImportable(
-            f"ZIP {org['zip'] or '(none)'} is not a City of Los Angeles ZIP"
+            f"ZIP {org['zip'] or '(none)'} is not a Los Angeles County ZIP"
         )
     cause = cause or ntee_cause(org["ntee"])
     if cause is None:
