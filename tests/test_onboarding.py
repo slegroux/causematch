@@ -263,6 +263,8 @@ def test_onboarding_once_done_cannot_be_posted_again(user):
         ("neighborhood", "Echo\u202ePark"),  # right-to-left override
         ("other_causes", "owls\u0007"),  # a control character
         ("place1_where", "Mar\u2028Vista"),  # line separator
+        ("first_name", "Sam\u0301\u0301\u0301\u0301"),  # 4 combining marks in a row
+        ("first_name", "Sa\u200dm"),  # a zero-width joiner, in a one-line answer
     ],
 )
 def test_hidden_characters_are_refused(new_user, field, value):
@@ -281,3 +283,12 @@ def test_accented_and_non_latin_names_are_fine(new_user):
     )
     assert r.status_code == 303
     assert profile_of(new_user).display_name == "José 李"
+
+
+@pytest.mark.parametrize("name", ["Nguy\u1ec5n", "Nguye\u0302\u0303n"])  # composed, not
+def test_vietnamese_names_are_fine_composed_or_not(new_user, name):
+    r = new_user.post(
+        "/onboarding", data={**FORM, "first_name": name}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert profile_of(new_user).display_name == name

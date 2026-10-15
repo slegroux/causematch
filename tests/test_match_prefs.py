@@ -1120,3 +1120,10 @@ def test_hidden_chars_categories():
     for bad in ("a\u200bb", "\u2800", "\uffa0", "a\x00", "\ue000", "a\u2029b"):
         assert hidden_chars(bad), repr(bad)
     assert hidden_chars("line\nbreak") and not hidden_chars("line\nbreak", True)
+    # a zero-width joiner: only in multi-line text, and only between two characters
+    assert hidden_chars("a\u200db") and not hidden_chars("a\u200db", True)
+    assert hidden_chars("\u200dab", True) and hidden_chars("ab\u200d", True)
+    # combining marks: up to 3 in a row
+    assert not hidden_chars("e\u0301\u0301\u0301")
+    assert hidden_chars("e\u0301\u0301\u0301\u0301")
+    assert hidden_chars("tab\there") and not hidden_chars("tab\there", True)
