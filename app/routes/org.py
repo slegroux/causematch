@@ -18,6 +18,7 @@ from monsterui.all import (
 
 from app import data
 from app.geo import zip_latlon
+from app.routes.onboarding import AVAILABILITY, FREQUENCY
 from app.ui import Choice, Field, Page
 
 ar = APIRouter()
@@ -93,7 +94,12 @@ def org_home(req):
                 cls=ButtonT.primary,
                 onclick="location='/org/openings/new'",
             ),
-            cls="pb-8",
+            Button(
+                "Volunteer inbox",
+                cls=ButtonT.default,
+                onclick="location='/org/inbox'",
+            ),
+            cls="pb-8 flex gap-3",
         ),
         cls="max-w-3xl",
     )
@@ -294,3 +300,63 @@ def close(req, opening_id: int):
     except PermissionError:
         return Response("Forbidden", status_code=403)
     return Redirect("/org")
+
+
+def label_of(options, value):
+    return dict(options).get(value, "")
+
+
+def InboxRow(m):
+    return Card(
+        DivFullySpaced(P(m["first_name"], cls="font-semibold"), Label(m["status"])),
+        P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm),
+        P("Causes: " + (", ".join(m["causes"]) or "none given")),
+        P(
+            "Available: "
+            + (", ".join(label_of(AVAILABILITY, a) for a in m["availability"]) or "any")
+        ),
+        P(f"Neighborhood: {m['neighborhood'] or 'not given'}"),
+        P(f"Wants to help: {label_of(FREQUENCY, m['frequency']) or 'not given'}"),
+        PlainForm(
+            Button("Accept", name="decision", value="accept", cls=ButtonT.primary),
+            Button("Decline", name="decision", value="decline", cls=ButtonT.default),
+            action=f"/org/matches/{m['id']}/decide",
+            method="post",
+            cls="flex gap-3",
+        )
+        if m["status"] == "pending"
+        else None,
+        cls="w-full",
+    )
+
+
+@ar("/org/inbox", methods=["GET"])
+def inbox(req):
+    box = data.org_inbox(req.scope["uid"])
+    return Container(
+        P("Volunteer inbox", cls="text-2xl font-bold my-4"),
+        H2("Waiting for you", cls="text-xl font-semibold"),
+        Div(
+            *([InboxRow(m) for m in box["pending"]] or [P("No one is waiting.")]),
+            cls="flex flex-col gap-3 pb-6",
+        ),
+        H2("Decided", cls="text-xl font-semibold"),
+        Div(
+            *([InboxRow(m) for m in box["decided"]] or [P("Nothing yet.")]),
+            cls="flex flex-col gap-3 pb-8",
+        ),
+        cls="max-w-3xl",
+    )
+
+
+@ar("/org/matches/{match_id}/decide", methods=["POST"])
+def decide(req, match_id: int, decision: str):
+    if decision not in ("accept", "decline"):
+        return Response("Bad request", status_code=400)
+    try:
+        data.decide(req.scope["uid"], match_id, decision == "accept")
+    except PermissionError:
+        return Response("Forbidden", status_code=403)
+    except ValueError as e:
+        return Response(str(e).capitalize(), status_code=409)
+    return Redirect("/org/inbox")

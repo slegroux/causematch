@@ -1,5 +1,6 @@
-from fasthtml.common import H1, Div, Option, P, Select
+from fasthtml.common import H1, A, Div, Form, Option, P, Select
 from monsterui.all import (
+    AT,
     Alert,
     AlertT,
     Container,
@@ -42,4 +43,22 @@ def Choice(name, options, selected="", placeholder=None):
         ],
         name=name,
         cls="uk-select h-10",
+    )
+
+
+def VolunteerNav():
+    return Div(
+        A("Openings", href="/deck", cls=AT.muted),
+        A("Matches", href="/matches", cls=AT.muted),
+        Form(
+            A(
+                "Sign out",
+                href="#",
+                cls=AT.muted,
+                onclick="this.closest('form').submit()",
+            ),
+            action="/logout",
+            method="post",
+        ),
+        cls="flex gap-4 py-3 text-sm",
     )

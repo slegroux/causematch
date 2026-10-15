@@ -11,6 +11,7 @@ from app.config import is_production, public_base_url, require_env
 from app.db import ensure_causes, seed_demo
 from app.routes.auth import ar as auth_router
 from app.routes.deck import ar as deck_router
+from app.routes.matches import ar as matches_router
 from app.routes.onboarding import ar as onboarding_router
 from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
@@ -38,6 +39,7 @@ for router in (
     org_auth_router,
     onboarding_router,
     deck_router,
+    matches_router,
     org_router,
 ):
     router.to_app(app)

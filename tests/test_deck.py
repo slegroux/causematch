@@ -48,7 +48,11 @@ def test_closed_opening_hidden(user):
 
 
 def test_mixed_cause_opening_shows_only_active_label(user):
-    add_opening("Mixed cause shift", ["food-insecurity", "homelessness-services"])
+    add_opening(
+        "Mixed cause shift",
+        ["food-insecurity", "homelessness-services"],
+        starts_at="2026-01-01T09:00",
+    )
     r = user.get("/deck")
     assert "Mixed cause shift" in r.text
     assert "Food insecurity" in r.text
@@ -64,7 +68,7 @@ def test_deck_is_soonest_first_and_limited():
         starts_at="2025-12-31T09:00",
         status="closed",
     )
-    titles = [c["title"] for c in data.deck(limit=2)]
+    titles = [c["title"] for c in data.deck(0, limit=2)]
     assert titles == ["Earliest shift", "Second shift"]
 
 

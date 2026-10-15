@@ -95,6 +95,23 @@ class LoginToken:
     used_at: str
 
 
+class Swipe:
+    volunteer_id: int
+    opening_id: int
+    liked: bool
+    created_at: str
+
+
+class Match:
+    id: int
+    opening_id: int
+    volunteer_id: int
+    status: str  # pending|accepted|declined|withdrawn
+    created_at: str
+    decided_at: str
+    decided_by: int
+
+
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
@@ -103,6 +120,9 @@ profiles = db.create(Profile, pk="id", transform=True)
 org_members = db.create(OrgMember, pk="id", transform=True)
 org_members.create_index(["org_id", "user_id"], unique=True, if_not_exists=True)
 login_tokens = db.create(LoginToken, pk="token_hash", transform=True)
+swipes = db.create(Swipe, pk=["volunteer_id", "opening_id"], transform=True)
+matches = db.create(Match, pk="id", transform=True)
+matches.create_index(["opening_id", "volunteer_id"], unique=True, if_not_exists=True)
 # One live profile per phone; a soft-deleted profile frees its number.
 db.execute("DROP INDEX IF EXISTS idx_profile_phone")
 db.execute(

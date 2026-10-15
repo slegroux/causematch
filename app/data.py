@@ -8,39 +8,193 @@ from apswutils.db import NotFoundError
 
 from app.db import (
     LoginToken,
+    Match,
     Opening,
     Profile,
+    Swipe,
     causes,
     db,
     login_tokens,
+    matches,
     openings,
     org_members,
     orgs,
     profiles,
+    swipes,
 )
 
 
-def deck(uid=None, limit=20):
-    """Open openings with at least one active cause, soonest first."""
+def _deck_openings(uid):
+    """[(opening, active cause labels)] this volunteer could still swipe on, soonest first."""
     labels = {c.slug: c.label for c in causes() if c.active}
-    org_names = {o.id: o.name for o in orgs()}
-    cards = []
+    seen = {s.opening_id for s in swipes(where="volunteer_id = ?", where_args=[uid])}
+    out = []
     for o in openings(where="status = ?", where_args=["open"], order_by="starts_at"):
         cause_labels = [labels[s] for s in json.loads(o.causes or "[]") if s in labels]
-        if not cause_labels:
-            continue
-        cards.append(
+        if cause_labels and o.id not in seen:
+            out.append((o, cause_labels))
+    return out
+
+
+def deck(uid, limit=20):
+    """Cards for open openings with an active cause that this volunteer has not swiped."""
+    org_names = {o.id: o.name for o in orgs()}
+    return [
+        {
+            "id": o.id,
+            "title": o.title,
+            "org": org_names.get(o.org_id, ""),
+            "causes": cause_labels,
+            "starts_at": o.starts_at,
+            "neighborhood": o.neighborhood,
+            "slots": o.slots,
+        }
+        for o, cause_labels in _deck_openings(uid)[:limit]
+    ]
+
+
+def _accepted(opening_id):
+    return matches.count_where("opening_id = ? AND status = 'accepted'", [opening_id])
+
+
+def _match_for(uid, opening_id):
+    found = matches(
+        where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
+    )
+    return found[0] if found else None
+
+
+def swipe(uid, opening_id, liked):
+    """Record a swipe; a like makes a pending match. The match, or None for a pass.
+
+    Repeating a swipe changes nothing. LookupError when the volunteer could not see
+    the opening in their deck (closed, inactive cause, unknown id).
+    """
+    with db.conn:
+        if swipes(
+            where="volunteer_id = ? AND opening_id = ?", where_args=[uid, opening_id]
+        ):
+            return _match_for(uid, opening_id)
+        if opening_id not in {o.id for o, _ in _deck_openings(uid)}:
+            raise LookupError("no such opening")
+        swipes.insert(
+            Swipe(
+                volunteer_id=uid,
+                opening_id=opening_id,
+                liked=bool(liked),
+                created_at=_now(),
+            )
+        )
+        if not liked:
+            return None
+        return matches.insert(
+            Match(
+                opening_id=opening_id,
+                volunteer_id=uid,
+                status="pending",
+                created_at=_now(),
+            )
+        )
+
+
+def decide(coordinator_uid, match_id, accept):
+    """Accept or decline a pending match. PermissionError unless a member of the org.
+
+    ValueError when the match is not pending or no slot is left to accept into.
+    """
+    try:
+        m = matches[match_id]
+        o = openings[m.opening_id]
+    except NotFoundError:
+        raise PermissionError("no such match") from None
+    if o.org_id not in coordinator_org_ids(coordinator_uid):
+        raise PermissionError("not a member of this org")
+    status = "accepted" if accept else "declined"
+    with db.conn:
+        # One statement, so two coordinators can't both take the last slot.
+        db.execute(
+            "UPDATE match SET status = ?, decided_at = ?, decided_by = ? "
+            "WHERE id = ? AND status = 'pending' AND (? = 0 OR "
+            "(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted') "
+            "< (SELECT slots FROM opening WHERE id = ?))",
+            [status, _now(), coordinator_uid, match_id, int(bool(accept)),
+             o.id, o.id],
+        )  # fmt: skip
+        if db.conn.changes() != 1:
+            now_status = matches[match_id].status
+            raise ValueError(
+                "already decided" if now_status != "pending" else "no slots left"
+            )
+        if accept and _accepted(o.id) >= (o.slots or 0):
+            openings.update(id=o.id, status="filled")
+
+
+def withdraw(uid, match_id):
+    """The volunteer's own pending or accepted match becomes withdrawn."""
+    with db.conn:
+        try:
+            m = matches[match_id]
+        except NotFoundError:
+            raise PermissionError("no such match") from None
+        if m.volunteer_id != uid:
+            raise PermissionError("not your match")
+        if m.status not in ("pending", "accepted"):
+            raise ValueError("already " + m.status)
+        matches.update(id=match_id, status="withdrawn", decided_at=_now())
+        o = openings[m.opening_id]
+        if o.status == "filled" and _accepted(o.id) < (o.slots or 0):
+            openings.update(id=o.id, status="open")
+
+
+def my_matches(uid):
+    """This volunteer's matches, newest first, with the opening's public details."""
+    org_names = {o.id: o.name for o in orgs()}
+    out = []
+    for m in matches(where="volunteer_id = ?", where_args=[uid], order_by="id DESC"):
+        o = openings[m.opening_id]
+        out.append(
             {
-                "id": o.id,
+                "id": m.id,
+                "status": m.status,
                 "title": o.title,
                 "org": org_names.get(o.org_id, ""),
-                "causes": cause_labels,
                 "starts_at": o.starts_at,
                 "neighborhood": o.neighborhood,
-                "slots": o.slots,
             }
         )
-    return cards[:limit]
+    return out
+
+
+def org_inbox(coordinator_uid):
+    """{"pending": [...], "decided": [...]} for this coordinator's orgs only.
+
+    Each row carries what the volunteer agreed to share: first name, causes,
+    availability, neighborhood, frequency. Never phone, email, location or surname.
+    """
+    mine = set(coordinator_org_ids(coordinator_uid))
+    labels = {c.slug: c.label for c in causes()}
+    out = {"pending": [], "decided": []}
+    for m in matches(
+        where="status IN ('pending', 'accepted', 'declined')", order_by="id DESC"
+    ):
+        o = openings[m.opening_id]
+        v = get_profile(m.volunteer_id)
+        if o.org_id not in mine or v is None:
+            continue
+        row = {
+            "id": m.id,
+            "status": m.status,
+            "opening": o.title,
+            "first_name": (v.display_name or "").split(maxsplit=1)[0]
+            if (v.display_name or "").strip()
+            else "A volunteer",
+            "causes": [labels.get(s, s) for s in json.loads(v.causes or "[]")],
+            "availability": json.loads(v.availability or "[]"),
+            "neighborhood": v.neighborhood,
+            "frequency": v.frequency,
+        }
+        out["pending" if m.status == "pending" else "decided"].append(row)
+    return out
 
 
 def active_causes():

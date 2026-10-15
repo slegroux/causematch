@@ -25,11 +25,13 @@ from app.db import (
     causes,
     ensure_causes,
     login_tokens,
+    matches,
     openings,
     org_members,
     orgs,
     profiles,
     seed_demo,
+    swipes,
 )
 from main import app
 
@@ -37,7 +39,16 @@ from main import app
 @pytest.fixture(autouse=True)
 def fresh_db():
     """Every test starts from the same seeded rows, whatever ran before it."""
-    for table in (profiles, openings, orgs, causes, org_members, login_tokens):
+    for table in (
+        profiles,
+        openings,
+        orgs,
+        causes,
+        org_members,
+        login_tokens,
+        swipes,
+        matches,
+    ):
         table.delete_where()
     ensure_causes()
     seed_demo()

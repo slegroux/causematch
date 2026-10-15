@@ -1,7 +1,11 @@
 from datetime import datetime
 
-from fasthtml.common import H1, APIRouter, Div, P, Redirect
+from fasthtml.common import H1, A, APIRouter, Div, Hidden, P, Redirect, Script
+from fasthtml.common import Form as PlainForm
 from monsterui.all import (
+    AT,
+    Button,
+    ButtonT,
     Card,
     CardTitle,
     Container,
@@ -12,6 +16,7 @@ from monsterui.all import (
 )
 
 from app import data
+from app.ui import VolunteerNav
 
 ar = APIRouter()
 
@@ -27,8 +32,35 @@ def OpeningCard(c):
         DivFullySpaced(P(when(c["starts_at"])), P(c["neighborhood"])),
         P(f"{c['slots']} spots", cls=TextPresets.muted_sm),
         header=CardTitle(c["title"]),
-        cls="w-full",
+        cls="w-full select-none",
+        data_swipe_card="1",
+        style="touch-action: pan-y;",
     )
+
+
+def SwipeButtons(opening_id):
+    return PlainForm(
+        Hidden(name="opening_id", value=str(opening_id)),
+        Button("Pass", name="liked", value="0", cls=ButtonT.default + " flex-1"),
+        Button("Like", name="liked", value="1", cls=ButtonT.primary + " flex-1"),
+        hx_post="/swipe",
+        hx_target="#deck-area",
+        hx_swap="outerHTML",
+        cls="flex gap-3 mt-4",
+    )
+
+
+def DeckArea(uid):
+    """The top card with its buttons, or the empty state; the unit /swipe swaps."""
+    cards = data.deck(uid, limit=1)
+    if not cards:
+        return Div(
+            P("You have seen every opening for now. Check back soon.", cls="my-8"),
+            A("See your matches", href="/matches", cls=AT.muted),
+            id="deck-area",
+        )
+    c = cards[0]
+    return Div(OpeningCard(c), SwipeButtons(c["id"]), id="deck-area")
 
 
 @ar("/")
@@ -37,9 +69,11 @@ def index():
 
 
 @ar("/deck")
-def deck():
+def deck(req):
     return Container(
+        VolunteerNav(),
         H1("Openings near you", cls="text-2xl font-bold my-4"),
-        Div(*[OpeningCard(c) for c in data.deck()], cls="flex flex-col gap-4 pb-8"),
-        cls="max-w-md",
+        DeckArea(req.scope["uid"]),
+        Script(src="/static/swipe.js", defer=True),
+        cls="max-w-md pb-8",
     )
