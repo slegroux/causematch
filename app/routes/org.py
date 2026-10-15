@@ -31,10 +31,12 @@ from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import query, str_form
 from app.geo import city_zip_latlon
-from app.routes.shifts import RepeatForm, waiting
+from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
     CARD,
+    ORG_SECTION,
+    ORG_TITLE,
     PIN,
     SMALL_LINK,
     Checks,
@@ -120,9 +122,6 @@ OPENING_STATUS = {
     "filled": ("Filled", "info"),
     "closed": ("Closed", "off"),
 }
-# a page's H1 and a section's H2 on the nonprofit's pages
-ORG_TITLE = "font-display text-2xl font-extrabold text-ink"
-ORG_SECTION = "font-display text-lg font-extrabold text-ink"
 
 
 def Meta(icon, text):
@@ -207,7 +206,9 @@ def org_home(req, error=""):
     named = bool(profile.display_name)
     return OrgShell(
         "openings",
-        waiting(uid),
+        sum(
+            c["pending"] for c in counts.values()
+        ),  # data.org_waiting, without a re-read
         Div(
             H1("Your openings", cls=ORG_TITLE),
             A(
@@ -371,7 +372,7 @@ def OpeningForm(uid, f=None, error=None):
     )
     return OrgShell(
         "openings",
-        waiting(uid),
+        data.org_waiting(uid),
         Div(
             H1("Post an opening", cls=ORG_TITLE),
             P(
@@ -633,7 +634,7 @@ def inbox(req):
     box = data.org_inbox(uid)
     return OrgShell(
         "inbox",
-        len(box["pending"]),
+        data.org_waiting(uid),
         H1("Volunteer inbox", cls=ORG_TITLE + " pb-4"),
         Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in INBOX_NOTICE

@@ -1098,6 +1098,12 @@ def opening_counts(coordinator_uid):
     return {r["id"]: {"pending": r["pending"], "accepted": r["accepted"]} for r in rows}
 
 
+def org_waiting(coordinator_uid):
+    """How many likes wait for the coordinator's answer (the nav's Inbox badge): the
+    same counts as the dashboard's cards, so the two never disagree."""
+    return sum(c["pending"] for c in opening_counts(coordinator_uid).values())
+
+
 def close_opening(coordinator_uid, opening_id):
     if not _is_id(opening_id):
         raise PermissionError("no such opening")

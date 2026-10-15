@@ -11,6 +11,7 @@ from fasthtml.common import (
     P,
     Select,
     Span,
+    Title,
 )
 from fasthtml.svg import Path, Rect, Svg
 from monsterui.all import (
@@ -329,6 +330,9 @@ def VolunteerNav(active=None):
     )
 
 
+# a page's H1 and a section's H2 on the staff pages (nonprofit, admin)
+ORG_TITLE = "font-display text-2xl font-extrabold text-ink"
+ORG_SECTION = "font-display text-lg font-extrabold text-ink"
 # (key, label, href) of each section of the nonprofit's top nav
 ORG_TABS = (
     ("openings", "Openings", "/org"),
@@ -394,7 +398,7 @@ def TopNav(tabs, active, label, home, badges=None):
 
 def OrgNav(active, waiting=0):
     """The nonprofit's header; the Inbox tab counts the volunteers waiting for an answer."""
-    return TopNav(ORG_TABS, active, "Organization", "/org", {"inbox": waiting})
+    return TopNav(ORG_TABS, active, "Nonprofit", "/org", {"inbox": waiting})
 
 
 def OrgShell(active, waiting, *content):
@@ -404,8 +408,8 @@ def OrgShell(active, waiting, *content):
 
 def SimplePage(title, *content):
     """A page outside any signed-in shell (privacy, not found): the wordmark home, then
-    one warm card."""
-    return Div(
+    one warm card. The tab says which page it is."""
+    return Title(f"{title} - Causematch"), Div(
         A(Wordmark(small=True), href="/", cls="inline-flex pt-6 pb-4"),
         Div(
             H1(title, cls="font-display text-2xl font-extrabold text-ink"),

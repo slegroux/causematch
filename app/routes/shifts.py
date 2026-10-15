@@ -17,10 +17,10 @@ from app.forms import query, str_form
 from app.routes.deck import when
 from app.ui import (
     CARD,
+    ORG_TITLE,
     TITLE,
     Field,
     OrgShell,
-    Page,
     Pill,
     Refusal,
     Router,
@@ -43,11 +43,6 @@ NOTICE = {
     ),
     "repeat": "Couldn't add next week's shift (it needs a weekly opening, and a date still ahead).",
 }
-
-
-def waiting(uid):
-    """How many volunteers wait for this coordinator's answer (the nav's Inbox badge)."""
-    return len(data.org_inbox(uid)["pending"])
 
 
 def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
@@ -116,8 +111,8 @@ def org_shifts_page(req):
     box = data.org_shifts(uid)
     return OrgShell(
         "shifts",
-        waiting(uid),
-        H1("Shifts", cls="font-display text-2xl font-extrabold text-ink pb-4"),
+        data.org_waiting(uid),
+        H1("Shifts", cls=ORG_TITLE + " pb-4"),
         Alert(NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in NOTICE
         else None,
@@ -210,13 +205,14 @@ def repeat(req, match_id: int):
 def ShiftForm(uid, match_id, head, error=None, value=""):
     return OrgShell(
         "inbox",
-        waiting(uid),
-        Page(
-            "Schedule another shift",
+        data.org_waiting(uid),
+        Div(
+            H1("Schedule another shift", cls=ORG_TITLE),
             P(
                 f"{head['title']} with {head['other']}",
-                cls=TextPresets.muted_sm + " mb-4",
+                cls=TextPresets.muted_sm + " mt-1 mb-4",
             ),
+            Alert(error, cls=AlertT.error + " mb-4") if error else None,
             Form(
                 Field(
                     "Date and time (Los Angeles time)",
@@ -227,13 +223,16 @@ def ShiftForm(uid, match_id, head, error=None, value=""):
                         required=True,
                     ),
                 ),
-                Button("Schedule", cls=ButtonT.primary),
-                A("Cancel", href="/org/inbox", cls=AT.muted + " ml-4"),
+                Div(
+                    Button("Schedule", cls=ButtonT.primary),
+                    A("Cancel", href="/org/inbox", cls=AT.muted),
+                    cls="flex items-center gap-4",
+                ),
                 action=f"/org/matches/{match_id}/shifts/new",
                 method="post",
-                cls="space-y-3",
+                cls="space-y-3 p-5 " + CARD,
             ),
-            error=error,
+            cls="max-w-md",
         ),
     )
 

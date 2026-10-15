@@ -35,7 +35,6 @@ from app.ui import (
     Field,
     Icon,
     Page,
-    Pill,
     Router,
     SimplePage,
     VolunteerNav,
@@ -369,7 +368,7 @@ def privacy():
     return SimplePage(
         "Privacy",
         Div(
-            Pill("Draft, pending legal review.", "wait"),
+            P("Draft, pending legal review.", cls="font-bold text-red-700"),
             P(f"Effective {EFFECTIVE}.", cls=TextPresets.muted_sm),
             cls="flex flex-wrap items-center gap-3 pt-2",
         ),
@@ -459,7 +458,10 @@ def privacy():
 
 
 def not_found(req, exc):
-    """main.py's 404 handler: the shared look, and a way back."""
+    """main.py's 404 handler: the shared look, and a way back. A missing static file
+    stays a plain-text 404: no page for a script or a stylesheet to fetch."""
+    if req.url.path.startswith("/static/"):
+        return Response("Not Found", status_code=404)
     return SimplePage(
         "Page not found",
         P("That page doesn't exist, or it moved.", cls="mt-2 text-ink"),

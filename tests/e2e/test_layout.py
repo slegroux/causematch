@@ -154,15 +154,32 @@ def test_an_os_dark_mode_keeps_native_controls_light(browser, live_url):
 
 
 def test_nonprofit_pages_fit_a_small_phone(browser, live_url):
+    """Populated, so the widest rows are laid out: an inbox card with Accept/Decline and
+    four links, a weekly shift's three buttons, the nav badge and the fill bar."""
     from helpers import coordinator_page
 
     page = coordinator_page(browser, live_url)
     page.set_viewport_size(SE)
-    for path in ("/org", "/org/inbox", "/org/shifts", "/org/openings/new"):
+    org_id = orgs()[0].id
+    opening = openings(where="org_id = ? AND status = 'open'", where_args=[org_id])[0]
+    openings.update(id=opening.id, recurrence="weekly")
+    accepted = data.swipe(
+        data.get_or_create_volunteer("+13105550171"), opening.id, True
+    )
+    data.decide(data.coordinator_by_email(coordinator_for(0)[1]), accepted.id, True)
+    data.swipe(data.get_or_create_volunteer("+13105550172"), opening.id, True)
+    for path, sees in (
+        ("/org", "1 waiting for you"),
+        ("/org/inbox", "Decline"),
+        ("/org/shifts", "Same time next week"),
+        ("/org/openings/new", "Post opening"),
+        (f"/org/matches/{accepted.id}/shifts/new", "Schedule"),
+    ):
         page.goto(path)
+        assert sees in page.content(), path
         width = page.evaluate(
             "[document.scrollingElement.scrollWidth, window.innerWidth]"
         )
         assert width[0] <= width[1], (path, width)
-        assert page.get_by_role("navigation", name="Organization").is_visible(), path
+        assert page.get_by_role("navigation", name="Nonprofit").is_visible(), path
     page.context.close()

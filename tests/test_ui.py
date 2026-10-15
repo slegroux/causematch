@@ -18,7 +18,7 @@ from test_claim import admin_client
 
 from app import data
 from app.config import demo_banner
-from app.db import blocks, openings, orgs
+from app.db import blocks, now, openings, org_members, orgs, profiles
 from app.ui import DEMO_NOTICE
 from main import app
 
@@ -355,7 +355,7 @@ def test_real_org_data_stays_out_of_every_checkout_of_this_repo(tmp_path):
 
 class Joined(HTMLParser):
     """Links that render as one word: an <a> straight after an </a>, nothing between,
-    neither one with a side margin, inside a parent that is not a flex or grid box
+    neither one with a side margin, inside a parent with no gap between its children
     (any of which would set them apart)."""
 
     VOID = frozenset({"input", "img", "br", "hr", "meta", "link", "source", "wbr"})
@@ -370,7 +370,7 @@ class Joined(HTMLParser):
         if tag == "a" and self.last == "/a":
             parent = self.stack[-1] if self.stack else ""
             apart = (
-                re.search(r"\b(flex|grid)\b", parent)
+                re.search(r"(^|\s)(gap|gap-x|space-x)-", parent)
                 or re.search(r"\bm[rx]-[1-9]", self.link)
                 or re.search(r"\bm[lx]-[1-9]", cls)
             )
@@ -411,7 +411,7 @@ def test_org_pages_share_the_top_nav(pages, coord):
     }
     for path, tab in where.items():
         html = coord.get(path).text
-        assert 'aria-label="Organization"' in html, path
+        assert 'aria-label="Nonprofit"' in html, path
         current = re.search(r'<a [^>]*aria-current="page"[^>]*>\s*([A-Za-z]+)', html)
         assert current and current[1] == tab, path
 
@@ -424,19 +424,12 @@ def test_dashboard_counts_waiting_likes_and_fills_the_bar(user, coord):
     assert data.opening_counts(coord_uid)[a.id] == {"pending": 1, "accepted": 0}
     page = coord.get("/org").text
     assert "1 waiting for you" in page
-    assert re.search(r'<nav[^>]*aria-label="Organization".*?>1<', page, re.DOTALL)
+    assert re.search(r'<nav[^>]*aria-label="Nonprofit".*?>1<', page, re.DOTALL)
     data.decide(coord_uid, m.id, True)
     assert data.opening_counts(coord_uid)[a.id] == {"pending": 0, "accepted": 1}
     page = coord.get("/org").text
     assert f"1 of {a.slots} spots filled" in page
     assert f'<progress value="1" max="{a.slots}"' in page
-    # a volunteer the org blocked: their later likes are dropped unseen, and not counted
-    data.block_volunteer(coord_uid, m.id)
-    for o in openings(where="org_id = ? AND status = 'open'", where_args=[a.org_id]):
-        if o.id != a.id:
-            data.swipe(uid, o.id, True)
-    pending = sum(c["pending"] for c in data.opening_counts(coord_uid).values())
-    assert pending == len(data.org_inbox(coord_uid)["pending"]) == 0
 
 
 def test_upcoming_shifts_say_upcoming_not_unmarked(pages, coord):
@@ -469,6 +462,11 @@ def test_not_found_and_refusal_pages_wear_the_shared_look(anon):
     r = anon.get("/no-such-page")
     assert r.status_code == 404
     assert "Page not found" in r.text and 'href="/"' in r.text
+    assert "<title>Page not found - Causematch</title>" in r.text
+    assert "content-security-policy" in r.headers
+    assert r.headers["cache-control"] == "no-store"
+    r = anon.get("/static/no-such-file.css")  # a fetch for a file, not a page
+    assert r.status_code == 404 and "<html" not in r.text
     assert "uk-theme-warm" in anon.get("/static/theme.js").text  # the page's theme
     from app import security
 
@@ -477,42 +475,84 @@ def test_not_found_and_refusal_pages_wear_the_shared_look(anon):
     assert "Too many tries" in page and "Back to Causematch" in page
 
 
-def test_opening_counts_match_the_inbox_page_with_blind_and_blocked_likes(coord):
-    """Waiting likes counted on /org equal the cards /org/inbox shows: an org-blind like
-    (from a volunteer the org blocked) and a like from a volunteer who blocked the org
-    are in neither."""
+def second_opening(first, title="Second opening"):
+    return openings.insert(
+        {**{k: v for k, v in first.__dict__.items() if k != "id"}, "title": title}
+    )
+
+
+def badge(html):
+    """The Inbox badge's number in the nonprofit nav, 0 when there is none."""
+    nav = re.search(r'<nav[^>]*aria-label="Nonprofit".*?</nav>', html, re.DOTALL)[0]
+    found = re.search(r">(\d+)<span[^>]*>\s*waiting", nav)
+    return int(found[1]) if found else 0
+
+
+def test_opening_counts_hide_exactly_what_the_inbox_hides(coord):
+    """One waiting like hidden by each of the inbox's rules, plus two it shows: the
+    dashboard's cards, its badge, the inbox page and org_inbox all count the same two."""
     coord_uid = data.coordinator_by_email(coordinator_for(0)[1])
     first = openings(where="org_id = ? AND status = 'open'", where_args=[coord.org_id])[
         0
     ]
-    second = openings.insert(
-        {
-            **{k: v for k, v in first.__dict__.items() if k != "id"},
-            "title": "Second opening",
-        }
-    )
-    shown = data.get_or_create_volunteer("+13105550181")
-    data.swipe(shown, first.id, True)
-    # blocked by the org, then liking again: org_blind, never in the inbox, even after
-    # an admin lifts the block
-    blind = data.get_or_create_volunteer("+13105550182")
-    data.block_volunteer(coord_uid, data.swipe(blind, first.id, True).id)
+    second = second_opening(first)
+    vol = iter(range(191, 199))
+
+    def like(opening):
+        uid = data.get_or_create_volunteer(f"+13105550{next(vol)}")
+        data.swipe(uid, opening.id, True)
+        return uid
+
+    like(first), like(second)  # shown
+    # org_blind: liked while the org blocked them; hidden even once an admin lifts it
+    blind = like(first)
+    data.block_volunteer(coord_uid, data.my_matches(blind)[0]["id"])
     data.swipe(blind, second.id, True)
     admin_uid = data.add_admin("boss@example.org", "Boss Person")
     for b in blocks(where="blocked_user_id = ?", where_args=[blind]):
         data.unblock(admin_uid, b.id)
-    # blocked the org themselves: their waiting like is withdrawn
-    blocker = data.get_or_create_volunteer("+13105550183")
-    data.block_org(blocker, data.swipe(blocker, second.id, True).id)
+    # a block row each way, with the like still waiting
+    blocks.insert(
+        blocker_id=coord_uid,
+        blocked_user_id=like(second),
+        blocked_org_id=coord.org_id,
+        created_at=now(),
+    )
+    blocks.insert(
+        blocker_id=like(second),
+        blocked_user_id=None,
+        blocked_org_id=coord.org_id,
+        created_at=now(),
+    )
+    profiles.update(id=like(second), deleted_at=now())  # a deleted volunteer
+    profiles.update(id=like(second), suspended_at=now())  # a suspended one
 
     counts = data.opening_counts(coord_uid)
-    on_page = coord.get("/org/inbox").text.count("/decide")
-    inbox = data.org_inbox(coord_uid)["pending"]
-    assert sum(c["pending"] for c in counts.values()) == on_page == len(inbox) == 1
-    assert counts[first.id]["pending"] == 1 and counts[second.id]["pending"] == 0
-    # another coordinator's org: none of its openings are counted for this one
-    other = {o.id for o in openings() if o.org_id != coord.org_id}
-    assert not other & set(counts)
+    assert counts[first.id]["pending"] == counts[second.id]["pending"] == 1
+    dashboard, inbox = coord.get("/org").text, coord.get("/org/inbox").text
+    assert dashboard.count("1 waiting for you") == 2
+    assert badge(dashboard) == badge(inbox) == data.org_waiting(coord_uid) == 2
+    assert inbox.count("/decide") == len(data.org_inbox(coord_uid)["pending"]) == 2
+
+
+def test_each_coordinator_counts_only_their_own_orgs(coord):
+    c0 = data.coordinator_by_email(coordinator_for(0)[1])
+    c1 = data.coordinator_by_email(coordinator_for(1)[1])
+    both = data.coordinator_by_email(coordinator_for(0, "both@example.org")[1])
+    org_members.insert(org_id=orgs()[1].id, user_id=both, role="coordinator")
+    mine = {
+        org.id: {o.id for o in openings(where="org_id = ?", where_args=[org.id])}
+        for org in orgs()[:2]
+    }
+    for org_id in mine:
+        o = openings(where="org_id = ? AND status = 'open'", where_args=[org_id])[0]
+        data.swipe(data.get_or_create_volunteer(f"+1310555017{org_id}"), o.id, True)
+    o0, o1 = orgs()[0].id, orgs()[1].id
+    assert set(data.opening_counts(c0)) == mine[o0] and data.org_waiting(c0) == 1
+    assert set(data.opening_counts(c1)) == mine[o1] and data.org_waiting(c1) == 1
+    assert set(data.opening_counts(both)) == mine[o0] | mine[o1]
+    assert data.org_waiting(both) == 2
+    assert badge(coord.get("/org").text) == 1  # org 1's like never reaches org 0
 
 
 def test_org_and_admin_refusals_wear_the_shared_look(coord):
