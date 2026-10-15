@@ -6,8 +6,10 @@ whatever a browser is later given is a JPEG Pillow wrote, not the uploader's byt
 """
 
 import io
+import logging
 import math
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -39,6 +41,7 @@ Image.MAX_IMAGE_PIXELS = MAX_PIXELS_JPEG
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 # JPEG includes MPO, an iPhone's multi-picture JPEG
 FORMATS = ("JPEG", "PNG", "WEBP", "GIF")
+PARENT_FORMATS = ("JPEG", "PNG", "GIF")  # _check never opens a WebP with Pillow
 Image.init()  # register every plugin, so open(formats=FORMATS) knows WEBP
 FULL = 800  # px, the longest side of a volunteer photo
 CARD = (960, 640)  # px, an org's or opening's photo: cut to the swipe card's 3:2
@@ -56,6 +59,7 @@ QUALITY = 82
 INK = (45, 30, 23)
 
 Processed = namedtuple("Processed", "full thumb")
+log = logging.getLogger("causematch")
 
 
 class BadPhoto(ValueError):
@@ -150,12 +154,47 @@ def _entropy_end(raw, i):
     raise BadPhoto("a JPEG cut short")
 
 
+def webp_size(raw):
+    """(width, height) of a WebP from its RIFF header, read here in Python, so the app
+    process never runs libwebp on an upload (the decode runs it, in the child); BadPhoto
+    for a header this can't read, or an animated WebP."""
+    if len(raw) < 30 or raw[:4] != b"RIFF" or raw[8:12] != b"WEBP":
+        raise BadPhoto("not a WebP")
+    kind, data = raw[12:16], raw[20:30]
+    if kind == b"VP8 ":  # lossy: a 3-byte frame tag, the start code, then 14-bit sizes
+        if data[3:6] != b"\x9d\x01\x2a":
+            raise BadPhoto("not a WebP")
+        w = int.from_bytes(data[6:8], "little") & 0x3FFF
+        h = int.from_bytes(data[8:10], "little") & 0x3FFF
+    elif kind == b"VP8L":  # lossless: a signature, then 14-bit sizes minus one
+        if data[0] != 0x2F:
+            raise BadPhoto("not a WebP")
+        bits = int.from_bytes(data[1:5], "little")
+        w, h = (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    elif kind == b"VP8X":  # extended: flags, then 24-bit canvas sizes minus one
+        if data[0] & 0x02:
+            raise BadPhoto("an animated WebP")
+        w = int.from_bytes(data[4:7], "little") + 1
+        h = int.from_bytes(data[7:10], "little") + 1
+    else:
+        raise BadPhoto("not a WebP")
+    if not (w and h):
+        raise BadPhoto("not a WebP")
+    return w, h
+
+
 def _check(raw):
     """(width, height, a JPEG?) from the header alone, or BadPhoto for a picture with
     more pixels, components or scans than may be decoded safely. Nothing is decoded, so
-    this runs before taking a decode slot."""
+    this runs before taking a decode slot. A WebP's size is read by webp_size; JPEG, PNG
+    and GIF headers by Pillow, whose readers for them are plain Python."""
+    if raw[:4] == b"RIFF":
+        w, h = webp_size(raw)
+        if w * h > MAX_PIXELS["WEBP"]:
+            raise BadPhoto("too many pixels")
+        return w, h, False
     try:
-        with Image.open(io.BytesIO(raw), formats=FORMATS) as probe:
+        with Image.open(io.BytesIO(raw), formats=PARENT_FORMATS) as probe:
             w, h = probe.size
             jpeg = probe.format in ("JPEG", "MPO")
             if w * h > MAX_PIXELS.get(probe.format, MAX_PIXELS_OTHER):
@@ -313,26 +352,109 @@ def process_here(raw, kind="volunteer"):
 # _check's limits can't take the app down with it: it is killed after WORKER_TIMEOUT
 # seconds on every platform, and on Linux (Cloud Run) it also can't map more than
 # WORKER_MEMORY or use more than WORKER_CPU seconds. macOS doesn't enforce RLIMIT_AS, so
-# development gets the CPU limit and the timeout only.
+# development gets the CPU limit and the timeout only. The child limits resources; it
+# doesn't drop privilege (same user), so it gets no secrets: WORKER_ENV is all it sees.
 WORKER_TIMEOUT = 10  # seconds of wall clock, then the child is killed
 WORKER_MEMORY = 512 * 2**20  # bytes of address space: a decode peaks under 200 MB RSS
 WORKER_CPU = 8  # seconds
+WORKER_OUT = 4 * 2**20  # bytes the child may answer (two JPEGs: about 200 KB)
+WORKER_ERR = 64 * 2**10  # bytes of stderr kept for the log
+WORKER_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
 ROOT = Path(__file__).resolve().parent.parent
+WORKER = ROOT / "app" / "photo_worker.py"
 
 
 def worker_command(kind):
-    """The child that decodes one picture: -E and -s, so no PYTHON* variable or user
-    site-packages changes what it imports; the repo root is its working directory."""
+    """The child that decodes one picture: -I (no PYTHON* variables, no user
+    site-packages, nothing added to sys.path) and the worker's own path."""
     return [
         sys.executable,
-        "-E",
-        "-s",
-        "-m",
-        "app.photo_worker",
+        "-I",
+        str(WORKER),
         kind,
         str(WORKER_MEMORY),
         str(WORKER_CPU),
     ]
+
+
+def _run_worker(kind, raw):
+    """(return code, stdout, stderr) of one child fed `raw`. It is killed past
+    WORKER_TIMEOUT (raises subprocess.TimeoutExpired once it is reaped) or as soon as it
+    writes more than WORKER_OUT to stdout or WORKER_ERR to stderr."""
+    child = subprocess.Popen(
+        worker_command(kind),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=ROOT,
+        env=WORKER_ENV,
+    )
+    out, err = bytearray(), bytearray()
+
+    def feed():
+        try:
+            child.stdin.write(raw)
+            child.stdin.close()
+        except OSError:  # the child exited early: its exit code says why
+            pass
+
+    def drain(stream, buf, cap):
+        while chunk := stream.read1(65536):
+            buf += chunk
+            if len(buf) > cap:
+                child.kill()
+                return
+
+    threads = [
+        threading.Thread(target=feed, daemon=True),
+        threading.Thread(
+            target=drain, args=(child.stdout, out, WORKER_OUT), daemon=True
+        ),
+        threading.Thread(
+            target=drain, args=(child.stderr, err, WORKER_ERR), daemon=True
+        ),
+    ]
+    timed_out = threading.Event()
+
+    def time_out():
+        timed_out.set()
+        child.kill()
+
+    # a timer, not wait(timeout=): Popen.wait polls with sleeps when given a timeout
+    timer = threading.Timer(WORKER_TIMEOUT, time_out)
+    timer.daemon = True
+    for t in (*threads, timer):
+        t.start()
+    try:
+        child.wait()
+    finally:
+        timer.cancel()
+        for t in threads:
+            t.join(timeout=5)
+        for stream in (child.stdout, child.stderr):
+            stream.close()
+    if timed_out.is_set():
+        raise subprocess.TimeoutExpired(child.args, WORKER_TIMEOUT)
+    return child.returncode, bytes(out), bytes(err)
+
+
+def _log_failure(kind, why, code=None, err=b""):
+    """One warning line: never the picture, only the exit and stderr's last line."""
+    signal_name = ""
+    if code is not None and code < 0:
+        try:
+            signal_name = signal.Signals(-code).name
+        except ValueError:
+            signal_name = f"signal {-code}"
+    tail = err.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+    log.warning(
+        "photo worker (%s) %s: rc=%s %s %s",
+        kind,
+        why,
+        code,
+        signal_name,
+        ascii(tail[0][-300:]),
+    )
 
 
 def _is_jpeg(b):
@@ -352,22 +474,24 @@ def process(raw, kind="volunteer"):
     if not _decoding.acquire(timeout=WAIT):
         raise Busy("both decode slots are taken")
     try:
-        done = subprocess.run(
-            worker_command(kind),
-            input=raw,
-            capture_output=True,
-            timeout=WORKER_TIMEOUT,
-            cwd=ROOT,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as e:  # run() has killed and reaped the child
+        code, out, err = _run_worker(kind, raw)
+    except subprocess.TimeoutExpired as e:  # killed and reaped
+        _log_failure(kind, "timed out")
         raise BadPhoto("the picture took too long to decode") from e
+    except OSError as e:  # couldn't start a child (no memory, too many processes)
+        log.warning("photo worker (%s) didn't start: %s", kind, type(e).__name__)
+        raise Busy("no decoder could start") from e
     finally:
         _decoding.release()
-    out = done.stdout
-    if done.returncode != 0 or len(out) < 8:
+    if code == 2:
+        raise BadPhoto("the picture couldn't be decoded")  # refused by its checks
+    if code != 0 or not 8 <= len(out) <= WORKER_OUT:
+        _log_failure(kind, "failed", code, err)
         raise BadPhoto("the picture couldn't be decoded")
     size = int.from_bytes(out[:8], "big")
+    if 8 + size > len(out):
+        _log_failure(kind, "answered a short file", code, err)
+        raise BadPhoto("the decoder answered something else")
     full, thumb = out[8 : 8 + size], out[8 + size :]
     if not (_is_jpeg(full) and _is_jpeg(thumb)):
         raise BadPhoto("the decoder answered something else")

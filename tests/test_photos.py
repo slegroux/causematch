@@ -1,8 +1,10 @@
 """Photos: upload, re-encoding (no metadata survives), the size and bomb limits, and who
 may see a volunteer's photo. Every picture here is generated; none is of a real person."""
 
+import ast
 import io
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -906,6 +908,140 @@ def test_a_picture_at_the_caps_fits_the_childs_limits(crafted):
     "this runs",
 )
 def test_the_childs_memory_is_capped(monkeypatch, crafted):
-    monkeypatch.setattr(photos, "WORKER_MEMORY", 64 * 2**20)
+    """192 MB: enough for the interpreter and Pillow to load (the child says "ready"),
+    not for decoding a 12 MP picture, so it is the decode that is stopped."""
+    monkeypatch.setattr(photos, "WORKER_MEMORY", 192 * 2**20)
+    raw = (crafted / "12mp-rgba.png").read_bytes()
+    code, out, err = photos._run_worker("logo", raw)
+    assert b"ready" in err and code not in (0, 2) and out == b""
     with pytest.raises(photos.BadPhoto):
-        photos.process((crafted / "12mp-rgba.png").read_bytes(), "logo")
+        photos.process(raw, "logo")
+
+
+# --- review pass 5: what the child sees, how much it may say, and the parent's logs -------
+
+
+def _child(monkeypatch, script):
+    monkeypatch.setattr(
+        photos, "worker_command", lambda kind: [sys.executable, "-I", "-c", script]
+    )
+
+
+def test_the_child_gets_no_secrets(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "s3cret-value")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "t0ken")
+    _child(monkeypatch, "import os, sys; sys.stdout.write(repr(dict(os.environ)))")
+    _, out, _ = photos._run_worker("volunteer", b"")
+    seen = ast.literal_eval(out.decode())  # the child's repr of a dict of strings
+    assert b"s3cret" not in out and b"t0ken" not in out
+    assert {"PATH", "LANG"} <= set(seen) and set(seen) <= {
+        "PATH",
+        "LANG",
+        "__CF_USER_TEXT_ENCODING",  # macOS adds this one to every process
+        "LC_CTYPE",
+    }
+
+
+def test_the_real_worker_says_ready_and_answers_two_jpegs():
+    code, out, err = photos._run_worker("volunteer", jpeg((640, 480)))
+    assert code == 0 and err.startswith(b"ready")
+    size = int.from_bytes(out[:8], "big")
+    assert out[8:10] == b"\xff\xd8" and out[8 + size : 8 + size + 2] == b"\xff\xd8"
+
+
+def test_a_child_that_says_too_much_is_killed(monkeypatch):
+    _child(
+        monkeypatch,
+        "import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)",
+    )
+    started = time.monotonic()
+    code, out, _ = photos._run_worker("volunteer", b"")
+    assert code == -signal.SIGKILL and len(out) <= photos.WORKER_OUT + 65536
+    assert time.monotonic() - started < photos.WORKER_TIMEOUT
+    with pytest.raises(photos.BadPhoto):
+        photos.process(jpeg())
+
+
+def test_a_child_whose_length_runs_past_its_answer_is_refused(monkeypatch):
+    _child(
+        monkeypatch,
+        "import sys; sys.stdout.buffer.write((10**6).to_bytes(8, 'big') + b'\\xff\\xd8')",
+    )
+    with pytest.raises(photos.BadPhoto, match="something else"):
+        photos.process(jpeg())
+
+
+def test_a_child_that_cant_start_means_busy(monkeypatch, user):
+    monkeypatch.setattr(photos, "worker_command", lambda kind: ["/nonexistent/python"])
+    with pytest.raises(photos.Busy):
+        photos.process(jpeg())
+    r = upload(user, jpeg())
+    assert r.status_code == 503 and r.headers["retry-after"] == "30"
+
+
+def test_a_failed_child_is_logged_without_the_picture(monkeypatch, caplog):
+    _child(
+        monkeypatch,
+        "import os, signal, sys; sys.stderr.write('boom\\n'); sys.stderr.flush(); "
+        "os.kill(os.getpid(), signal.SIGKILL)",
+    )
+    raw = jpeg((300, 200))
+    with (
+        caplog.at_level("WARNING", logger="causematch"),
+        pytest.raises(photos.BadPhoto),
+    ):
+        photos.process(raw)
+    (line,) = [
+        r.getMessage() for r in caplog.records if "photo worker" in r.getMessage()
+    ]
+    assert "rc=-9" in line and "SIGKILL" in line and "boom" in line
+    assert raw[:64].hex() not in line and len(line) < 500
+
+
+# --- WebP sizes come from the header, in Python: the app never runs libwebp ------------------
+
+
+def webp(size, **kw):
+    buf = io.BytesIO()
+    mode = "RGBA" if kw.pop("alpha", False) else "RGB"
+    Image.new(mode, size).save(buf, "WEBP", **kw)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("kw", "chunk"),
+    [
+        ({"quality": 80}, b"VP8 "),
+        ({"lossless": True}, b"VP8L"),
+        ({"quality": 80, "alpha": True}, b"VP8X"),
+    ],
+)
+def test_webp_sizes_are_read_from_the_header(kw, chunk):
+    raw = webp((1234, 567), **kw)
+    assert raw[12:16] == chunk and photos.webp_size(raw) == (1234, 567)
+
+
+def test_the_app_process_never_opens_a_webp_with_pillow(monkeypatch):
+    raw = webp((800, 600), quality=80)
+
+    def refuse(*a, **kw):
+        raise AssertionError("Pillow opened a WebP in the app process")
+
+    monkeypatch.setattr(photos.Image, "open", refuse)
+    assert photos._check(raw) == (800, 600, False)
+
+
+def test_an_oversized_or_strange_webp_header_is_refused():
+    huge = bytearray(webp((100, 100), lossless=True))
+    bits = (6999) | (6999 << 14)  # 7000 x 7000, minus one each
+    huge[21:25] = (
+        bits | (int.from_bytes(huge[21:25], "little") & ~0xFFFFFFF)
+    ).to_bytes(4, "little")
+    assert photos.webp_size(bytes(huge)) == (7000, 7000)
+    with pytest.raises(photos.BadPhoto, match="too many pixels"):
+        photos._check(bytes(huge))
+    animated = bytearray(webp((64, 64), quality=80, alpha=True))
+    animated[20] |= 0x02
+    for raw in (bytes(animated), b"RIFF\x00\x00\x00\x00WEBPVP8Z" + bytes(20), b"RIFF"):
+        with pytest.raises(photos.BadPhoto):
+            photos.webp_size(raw)
