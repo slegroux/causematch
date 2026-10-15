@@ -15,7 +15,16 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import data
 from app.auth import PUBLIC, is_org_path, session_secret, ws_session_user
-from app.db import matches, messages, openings, org_members, orgs, profiles, swipes
+from app.db import (
+    matches,
+    messages,
+    openings,
+    org_members,
+    orgs,
+    profiles,
+    shifts,
+    swipes,
+)
 from main import app
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +62,11 @@ ROUTES = {
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("GET", "/org/inbox"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
+    ("GET", "/org/shifts"): ("coordinator", "own-org"),
+    ("POST", "/org/shifts/{shift_id}/mark"): ("coordinator", "own-org"),
+    ("GET", "/org/matches/{match_id}/shifts/new"): ("coordinator", "own-org"),
+    ("POST", "/org/matches/{match_id}/shifts/new"): ("coordinator", "own-org"),
+    ("GET", "/history"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
     ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
     ("WS", "/chat/{match_id}/ws"): ("volunteer", "own-record"),
@@ -92,7 +106,7 @@ def app_routes(routes, prefix=""):
 
 
 def concrete(path, match_id, opening_id):
-    return path.format(match_id=match_id, opening_id=opening_id)
+    return path.format(match_id=match_id, opening_id=opening_id, shift_id=match_id)
 
 
 def is_public_path(path):
@@ -431,6 +445,55 @@ def chat_id_check(stranger, owner, base, kind):
     return check
 
 
+def shift_match_check(kind):
+    """org1 is a stranger to org 0's accepted match: it can't see or add a shift to it."""
+
+    def check(w):
+        mid = accepted_match(w)
+        path = "/org/matches/{}/shifts/new"
+        when = (datetime.now(LA) + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+        for i in (mid, *GONE):
+            if kind == "page":
+                r = w.org1.get(path.format(i), follow_redirects=False)
+            else:
+                r = w.org1.post(
+                    path.format(i), data={"starts_at": when}, follow_redirects=False
+                )
+            assert_refused(r)
+        assert shifts.count == 1  # only the one made on accept
+        # control: the owner's org is let in
+        o = w.org0
+        if kind == "page":
+            assert o.get(path.format(mid)).status_code == 200
+        else:
+            r = o.post(
+                path.format(mid), data={"starts_at": when}, follow_redirects=False
+            )
+            assert r.status_code == 303 and shifts.count == 2
+
+    return check
+
+
+def check_mark_shift(w):
+    """org1 can't mark org 0's shift, whatever the id; org 0 can."""
+    mid = accepted_match(w)
+    sid = shifts(where="match_id = ?", where_args=[mid])[0].id
+    shifts.update(id=sid, starts_at="2020-01-01T09:00")  # long past: markable
+    for i in (sid, *GONE):
+        assert_refused(
+            w.org1.post(
+                f"/org/shifts/{i}/mark",
+                data={"result": "attended"},
+                follow_redirects=False,
+            )
+        )
+    assert shifts[sid].status == "scheduled"
+    r = w.org0.post(
+        f"/org/shifts/{sid}/mark", data={"result": "attended"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and shifts[sid].status == "completed"
+
+
 # route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
     ("GET", "/matches/{match_id}/withdraw"): path_id_check(
@@ -455,6 +518,9 @@ OWNERSHIP = {
     ),
     ("POST", "/org/openings/new"): check_create_opening,
     ("POST", "/swipe"): check_swipe,
+    ("GET", "/org/matches/{match_id}/shifts/new"): shift_match_check("page"),
+    ("POST", "/org/matches/{match_id}/shifts/new"): shift_match_check("save"),
+    ("POST", "/org/shifts/{shift_id}/mark"): check_mark_shift,
     ("GET", "/chat/{match_id}"): chat_id_check("b", "a", "/chat", "page"),
     ("POST", "/chat/{match_id}/send"): chat_id_check("b", "a", "/chat", "send"),
     ("WS", "/chat/{match_id}/ws"): chat_id_check("b", "a", "/chat", "ws"),

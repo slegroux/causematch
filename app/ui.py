@@ -66,6 +66,7 @@ def VolunteerNav():
         Div(
             A("Openings", href="/deck", cls=AT.muted),
             A("Matches", href="/matches", cls=AT.muted),
+            A("History", href="/history", cls=AT.muted),
             Form(
                 Button("Sign out", type="submit", cls=AT.muted + " bg-transparent p-0"),
                 action="/logout",

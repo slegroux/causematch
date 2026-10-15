@@ -67,6 +67,7 @@ def matches_page(req):
     return Container(
         VolunteerNav(),
         H1("Your matches", cls="text-2xl font-bold my-4"),
+        A("Your shifts", href="/history", cls=AT.muted + " block pb-4"),
         Div(
             *(
                 [MatchRow(m) for m in rows]

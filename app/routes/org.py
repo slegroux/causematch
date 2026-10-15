@@ -158,6 +158,7 @@ def org_home(req, error=""):
                 cls="uk-btn " + ButtonT.primary,
             ),
             A("Volunteer inbox", href="/org/inbox", cls="uk-btn " + ButtonT.default),
+            A("Shifts", href="/org/shifts", cls="uk-btn " + ButtonT.default),
             cls="pb-8 flex gap-3",
         ),
         H2("Your details", cls="text-xl font-semibold")
@@ -440,7 +441,14 @@ def InboxRow(m):
         ),
         P(f"Neighborhood: {m['neighborhood'] or 'not given'}"),
         P(f"Wants to help: {label_of(FREQUENCY, m['frequency']) or 'not given'}"),
-        A("Chat", href=f"/org/chat/{m['id']}", cls=AT.muted)
+        A("Chat", href=f"/org/chat/{m['id']}", cls=AT.muted + " mr-4")
+        if m["status"] == "accepted"
+        else None,
+        A(
+            "Schedule another shift",
+            href=f"/org/matches/{m['id']}/shifts/new",
+            cls=AT.muted,
+        )
         if m["status"] == "accepted"
         else None,
         PlainForm(

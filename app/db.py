@@ -125,6 +125,17 @@ class Message:
     created_at: str
 
 
+class Shift:
+    id: int
+    match_id: int
+    starts_at: str  # America/Los_Angeles wall clock, like Opening.starts_at
+    status: str  # scheduled|completed|no_show|cancelled
+    marked_at: str  # UTC; when a coordinator first marked it
+    marked_by: int
+    corrected_at: str  # UTC; the one correction allowed within 7 days of marked_at
+    created_at: str
+
+
 causes = db.create(Cause, pk="slug", transform=True)
 orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
@@ -138,6 +149,13 @@ matches = db.create(Match, pk="id", transform=True)
 matches.create_index(["opening_id", "volunteer_id"], unique=True, if_not_exists=True)
 messages = db.create(Message, pk="id", transform=True)
 messages.create_index(["match_id", "created_at"], if_not_exists=True)
+shifts = db.create(Shift, pk="id", transform=True)
+shifts.create_index(["match_id", "starts_at"], unique=True, if_not_exists=True)
+# A shift never outlives its match (and a reused match id never inherits old shifts).
+db.execute(
+    "CREATE TRIGGER IF NOT EXISTS shift_with_match AFTER DELETE ON match "
+    "BEGIN DELETE FROM shift WHERE match_id = OLD.id; END"
+)
 # One live profile per phone; a soft-deleted profile frees its number.
 db.execute("DROP INDEX IF EXISTS idx_profile_phone")
 db.execute(

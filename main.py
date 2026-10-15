@@ -16,6 +16,7 @@ from app.routes.onboarding import ar as onboarding_router
 from app.routes.org import ar as org_router
 from app.routes.org_auth import ar as org_auth_router
 from app.routes.pwa import ar as pwa_router
+from app.routes.shifts import ar as shifts_router
 
 require_env()  # an undeclared environment never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
@@ -60,6 +61,7 @@ for router in (
     matches_router,
     chat_router,
     org_router,
+    shifts_router,
     pwa_router,
 ):
     router.to_app(app)

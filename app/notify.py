@@ -149,3 +149,7 @@ def send_login_link(email, token):
 
 def on_new_message(match_id, sender_id):
     """Called after a chat message is saved. Item 7 texts the other side if they are offline."""
+
+
+def on_shift_scheduled(shift_id):
+    """Called after a shift is scheduled. Item 7 texts the volunteer 24 hours before it."""
