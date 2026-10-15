@@ -33,6 +33,7 @@ from monsterui.all import (
 from app import data
 from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY
+from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
 from app.ui import Choice, Field, Page
 
@@ -119,7 +120,11 @@ def OpeningRow(o):
 
 
 @ar("/org", methods=["GET"])
-def org_home(req, error: str = ""):
+def org_page(req):
+    return org_home(req)
+
+
+def org_home(req, error=""):
     uid = req.scope["uid"]
     profile = data.get_profile(uid)
     by_org = data.org_openings(uid)
@@ -441,7 +446,8 @@ def InboxRow(m):
 
 
 @ar("/org/inbox", methods=["GET"])
-def inbox(req, notice: str = ""):
+def inbox(req):
+    notice = query(req, "notice")
     box = data.org_inbox(req.scope["uid"])
     return Container(
         H1("Volunteer inbox", cls="text-2xl font-bold my-4"),
@@ -463,9 +469,11 @@ def inbox(req, notice: str = ""):
 
 
 @ar("/org/matches/{match_id}/decide", methods=["POST"])
-def decide(req, match_id: int, decision: str):
+async def decide(req, match_id: int):
+    form = await str_form(req)
+    decision = form.get("decision") if form else None
     if decision not in ("accept", "decline"):
-        return Response("Bad request", status_code=400)
+        return bad_request()
     try:
         data.decide(req.scope["uid"], match_id, decision == "accept")
     except PermissionError:

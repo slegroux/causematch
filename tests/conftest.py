@@ -38,6 +38,7 @@ from app.db import (
     seed_demo,
     swipes,
 )
+from app.routes import chat as chat_routes
 from main import app
 
 
@@ -56,6 +57,7 @@ def fresh_db():
         messages,
     ):
         table.delete_where()
+    chat_routes._sockets.clear()  # no socket outlives its test
     ensure_causes()
     seed_demo()
     notify.get_verifier().sent.clear()

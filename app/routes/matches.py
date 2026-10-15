@@ -1,3 +1,5 @@
+import re
+
 from fasthtml.common import H1, A, APIRouter, Div, P, Redirect, Response
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
@@ -12,6 +14,7 @@ from monsterui.all import (
 )
 
 from app import data
+from app.forms import bad_request, str_form
 from app.routes.deck import DeckArea, when
 from app.ui import VolunteerNav
 
@@ -26,12 +29,16 @@ STATUS = {
 
 
 @ar("/swipe", methods=["POST"])
-def swipe(req, opening_id: int, liked: str):
+async def swipe(req):
     uid = req.scope["uid"]
-    if liked not in ("0", "1"):
-        return Response("Bad request", status_code=400)
+    form = await str_form(req)
+    if form is None or form.get("liked") not in ("0", "1"):
+        return bad_request()
+    raw = form.get("opening_id", "")
     try:
-        data.swipe(uid, opening_id, liked == "1")
+        if not re.fullmatch(r"[0-9]{1,19}", raw):
+            raise LookupError("not an opening id")
+        data.swipe(uid, int(raw), form["liked"] == "1")
     except LookupError:
         pass  # closed or gone since the card was drawn: just show the next one
     if req.headers.get("HX-Request"):

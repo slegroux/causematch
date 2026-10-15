@@ -418,8 +418,10 @@ def chat_id_check(stranger, owner, base, kind):
         # control: the owner is let in, so the refusals were about ownership
         o = getattr(w, owner)
         if kind == "ws":
-            with o.websocket_connect(f"{base}/{mid}/ws"):
-                pass
+            with o.websocket_connect(f"{base}/{mid}/ws") as ws:
+                ws.send_text('{"msg": "hi"}')
+                assert "hi" in ws.receive_text()  # the owner's socket really answers
+            assert messages.count == 1
         elif kind == "page":
             assert o.get(f"{base}/{mid}").status_code == 200
         else:

@@ -6,6 +6,7 @@ from monsterui.all import Button, ButtonT, TextPresets
 from starlette.background import BackgroundTask
 
 from app import data, notify
+from app.forms import query
 from app.ui import Page
 
 ar = APIRouter()
@@ -75,8 +76,9 @@ async def org_login_send(req):
 
 
 @ar("/org/login/verify", methods=["GET"])
-def org_login_confirm(token: str = ""):
+def org_login_confirm(req):
     """Changes nothing, so a mail scanner that fetches the link can't use it up."""
+    token = query(req, "token")
     return Page(
         "Sign in to Causematch",
         Form(

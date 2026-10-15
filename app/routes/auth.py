@@ -7,6 +7,7 @@ from monsterui.all import AT, Button, ButtonT, TextPresets
 
 from app import data, notify
 from app.auth import BAD_PHONE, normalize_phone
+from app.forms import bad_request, str_form
 from app.ui import Page
 
 ar = APIRouter()
@@ -68,7 +69,11 @@ def login_page():
 
 
 @ar("/login/send", methods=["POST"])
-def send(sess, phone: str = ""):
+async def send(req, sess):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    phone = form.get("phone", "")
     e164 = normalize_phone(phone)
     if not e164:
         return PhoneForm(phone, BAD_PHONE)
@@ -85,11 +90,14 @@ def send(sess, phone: str = ""):
 
 
 @ar("/login/verify", methods=["POST"])
-def verify(sess, code: str = ""):
+async def verify(req, sess):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
     e164 = sess.get("pending_phone")  # only the number a code was sent to
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")
-    code = code.strip()
+    code = form.get("code", "").strip()
     if not re.fullmatch(r"[0-9]{6}", code):
         return CodeForm(e164, "Enter the 6-digit code from the text.")
     try:
@@ -110,6 +118,8 @@ def verify(sess, code: str = ""):
 @ar("/logout", methods=["POST"])
 def logout(sess):
     profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
+    if profile:
+        data.sign_out_everywhere(profile.id)  # open chat sockets and other tabs end too
     sess.clear()
     return Redirect(
         "/org/login" if profile and profile.role == "coordinator" else "/login"
