@@ -9,9 +9,11 @@ new database in a temporary folder unless --db names a path that doesn't exist y
 Without --seed-file the orgs are the invented ones in app/db.py. --seed-file loads
 nonprofits from a JSON file kept outside this repo (the repo is public: real names never
 go in it): a list of {name, ein, ntee_code, cause, website, mission, neighborhood, zip,
-lat, lon, volunteer_url, logo_url, logo_file, openings: [{title, about, skills,
-typical_time, recurrence, orientation_required, source_url}]}. Their openings are samples:
-each is titled "Sample: ...", and every page carries a banner saying so.
+lat, lon, volunteer_url, logo_url, logo_file, photo_file, openings: [{title, about,
+skills, typical_time, recurrence, orientation_required, source_url, photo_file}]}. Their
+openings are samples: each is titled "Sample: ...", and every page carries a banner saying
+so. logo_file names a file in logos-raw/ and photo_file one in photos-raw/, both next to
+the seed file; each opening links to its source_url, else the org's volunteer_url.
 """
 
 import argparse
@@ -146,12 +148,38 @@ def first_start(typical_time, i=0, today=None):
     return f"{date}T{hour:02d}:{minute:02d}"
 
 
-def load_orgs(orgs):
-    """Insert the seed file's nonprofits as verified orgs with sample openings."""
+def picture(folder, name, kind):
+    """photos.process of folder/name (one of the seed's downloaded files), or None.
+
+    Those folders hold untrusted downloads: a file is only ever read as bytes and decoded
+    by Pillow, which re-encodes it. An SVG (Pillow can't read one) or anything else it
+    can't read is skipped, and the card falls back to the logo or the cause art."""
+    from app import photos
+
+    if not (folder and name):
+        return None
+    path = folder / Path(name).name
+    if not path.is_file() or path.is_symlink():
+        print(f"  skipped {path.name}: no such file", file=sys.stderr)
+        return None
+    try:
+        return photos.process(path.read_bytes(), kind)
+    except photos.BadPhoto:
+        print(f"  skipped {path.name}: not a picture Pillow reads", file=sys.stderr)
+        return None
+
+
+def load_orgs(orgs, media=None):
+    """Insert the seed file's nonprofits as verified orgs with sample openings, with
+    their logos and photos when `media` (the seed file's folder) holds them."""
+    from app import data
     from app.choices import SKILLS
     from app.db import Opening, Org, db, now, openings
     from app.db import orgs as org_table
+    from app.forms import https_url
 
+    logos = media / "logos-raw" if media else None
+    shots = media / "photos-raw" if media else None
     skills = {k for k, _ in SKILLS}
     i = 0
     with db.conn:
@@ -170,10 +198,19 @@ def load_orgs(orgs):
                     city="Los Angeles",
                     zip=o.get("zip") or "",
                     ntee_code=o.get("ntee_code") or "",
+                    website=https_url(o.get("website")),
                 )
             )
+            for column, owner, kind, folder, name in (
+                ("logo_key", "org_logo", "logo", logos, o.get("logo_file")),
+                ("photo_key", "org_photo", "card", shots, o.get("photo_file")),
+            ):
+                if p := picture(folder, name, kind):
+                    key = data.store_photo(owner, org.id, p)
+                    org_table.update(id=org.id, **{column: key})
             for x in o.get("openings", []):
-                openings.insert(
+                p = picture(shots, x.get("photo_file"), "card")
+                opening = openings.insert(
                     Opening(
                         org_id=org.id,
                         title=f"Sample: {x['title']}",
@@ -193,8 +230,13 @@ def load_orgs(orgs):
                         reply_channel="email",
                         adult_confirmed=True,
                         created_at=now(),
+                        event_url=https_url(x.get("source_url"))
+                        or https_url(o.get("volunteer_url")),
                     )
                 )
+                if p:
+                    key = data.store_photo("opening", opening.id, p)
+                    openings.update(id=opening.id, photo_key=key)
                 i += 1
 
 
@@ -266,7 +308,8 @@ def seed(seed_file=None):
 
     ensure_causes()
     if seed_file:
-        load_orgs(json.loads(Path(seed_file).read_text()))
+        path = Path(seed_file)
+        load_orgs(json.loads(path.read_text()), path.resolve().parent)
     else:
         seed_demo()
     org = orgs()[0]
@@ -320,7 +363,12 @@ def seed(seed_file=None):
     )
     if pending:
         data.swipe(me, pending.id, True)
-    return {"org": org.name, "match_id": m.id, "coordinator_id": coord}
+    return {
+        "org": org.name,
+        "match_id": m.id,
+        "coordinator_id": coord,
+        "opening_id": first.id,
+    }
 
 
 def sign_in_link(email):

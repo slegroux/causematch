@@ -108,6 +108,11 @@ def OpeningRow(o):
             f"{when(o.starts_at)} - {o.neighborhood} - {o.slots} spots",
             cls=TextPresets.muted_sm,
         ),
+        A(
+            "Photo and event link",
+            href=f"/org/openings/{o.id}/media",
+            cls=AT.muted + " inline-block py-2",
+        ),
         PlainForm(
             Button("Close opening", cls=ButtonT.default),
             action=f"/org/openings/{o.id}/close",
@@ -159,6 +164,11 @@ def org_home(req, error=""):
             ),
             A("Volunteer inbox", href="/org/inbox", cls="uk-btn " + ButtonT.default),
             A("Shifts", href="/org/shifts", cls="uk-btn " + ButtonT.default),
+            A(
+                "Organization",
+                href="/org/organization",
+                cls="uk-btn " + ButtonT.default,
+            ),
             cls="pb-8 flex gap-3",
         ),
         H2("Your details", cls="text-xl font-semibold")

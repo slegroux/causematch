@@ -25,7 +25,9 @@ from app.ui import (
     PEOPLE,
     PIN,
     CauseChip,
+    EventLink,
     Icon,
+    LogoBadge,
     Router,
     VolunteerNav,
 )
@@ -65,10 +67,37 @@ def CauseArt(slug):
     )
 
 
+def CardImage(c):
+    """The opening's photo, else the org's, with the org's logo as a round badge on it;
+    with no photo the logo alone on the cause's tint; with neither, the cause art."""
+    slug = c["slugs"][0] if c["slugs"] else None
+    if c.get("photo"):
+        return Div(
+            Img(
+                src=f"/photos/{c['photo']}.jpg",
+                alt="",
+                draggable="false",
+                # short enough that Pass and Like stay above the tab bar on a small phone
+                cls="pointer-events-none block h-40 max-h-[22vh] w-full object-cover",
+            ),
+            LogoBadge(c["logo"], "absolute bottom-3 left-3 h-16 w-16")
+            if c.get("logo")
+            else None,
+            cls="relative",
+        )
+    if c.get("logo"):
+        return Div(
+            LogoBadge(c["logo"], "h-24 w-24"),
+            cls="grid h-36 place-items-center "
+            + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
+        )
+    return CauseArt(slug) if slug else None
+
+
 def OpeningCard(c):
     starts = datetime.fromisoformat(c["starts_at"])
     return Div(
-        CauseArt(c["slugs"][0]) if c["slugs"] else None,
+        CardImage(c),
         Div(
             Div(
                 *[CauseChip(s, label) for s, label in zip(c["slugs"], c["causes"])],
@@ -82,7 +111,12 @@ def OpeningCard(c):
             Div(
                 Meta(CALENDAR, starts.strftime("%a %b %-d · %-I:%M %p")),
                 Meta(PIN, place_line(c)),
-                Meta(PEOPLE, f"{c['slots']} spots"),
+                Div(
+                    Meta(PEOPLE, f"{c['slots']} spots"),
+                    # a 44 px target that takes no more height than the line beside it
+                    EventLink(c.get("event_url"), "-my-3"),
+                    cls="flex flex-wrap items-center justify-between gap-x-4",
+                ),
                 cls="space-y-1 pt-1",
             ),
             cls="space-y-1.5 px-5 pt-4 pb-5",

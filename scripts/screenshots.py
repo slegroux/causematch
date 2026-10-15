@@ -95,6 +95,11 @@ def main():
         shot(v, "v04a-home-screen-toast", full_page=False)
         v.get_by_role("button", name="Dismiss").click()
         shot(v, "v04-deck", full_page=False)
+        for n in range(1, 7):  # the next cards: photos, logos and links vary by org
+            v.wait_for_timeout(500)  # swipe.js ignores taps right after a swap
+            v.get_by_role("button", name="Pass").click()
+            v.wait_for_load_state("networkidle")
+            shot(v, f"v04-deck-{n}", full_page=False)
         for name, path in (
             ("v05-matches", "/matches"),
             ("v06-chat", f"/chat/{info['match_id']}"),
@@ -119,6 +124,8 @@ def main():
             ("o05-shifts", "/org/shifts"),
             ("o06-chat", f"/org/chat/{info['match_id']}"),
             ("o07-privacy", "/privacy"),
+            ("o08-organization", "/org/organization"),
+            ("o09-opening-media", f"/org/openings/{info['opening_id']}/media"),
         ):
             o.goto(path)
             shot(o, name, full_page=name != "o06-chat")

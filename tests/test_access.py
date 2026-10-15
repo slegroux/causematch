@@ -127,6 +127,13 @@ ROUTES = {
     # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's
     ("GET", "/photos/{key}.jpg"): ("signed-in", "own-record"),
     ("GET", "/photos/thumb/{key}.jpg"): ("signed-in", "own-record"),
+    ("GET", "/org/organization"): ("coordinator", "own-org"),
+    ("POST", "/org/organization/{org_id}"): ("coordinator", "own-org"),
+    ("POST", "/org/organization/{org_id}/logo"): ("coordinator", "own-org"),
+    ("POST", "/org/organization/{org_id}/photo"): ("coordinator", "own-org"),
+    ("GET", "/org/openings/{opening_id}/media"): ("coordinator", "own-org"),
+    ("POST", "/org/openings/{opening_id}/photo"): ("coordinator", "own-org"),
+    ("POST", "/org/openings/{opening_id}/link"): ("coordinator", "own-org"),
 }
 # Ids that arrive in a form body rather than the path: each needs an OWNERSHIP check too.
 BODY_IDS = {
@@ -712,8 +719,63 @@ def check_photo(template):
     return check
 
 
+def org_media_check(method, template, record):
+    """org 1's coordinator, with org 0's id (record "org") or its opening's: refused, and
+    org 0's logo, photo, about, website, opening photo and link unchanged."""
+
+    def snapshot(w):
+        o, org = openings[w.opening.id], orgs[w.opening.org_id]
+        return (
+            org.logo_key,
+            org.photo_key,
+            org.about,
+            org.website,
+            o.photo_key,
+            o.event_url,
+        )
+
+    def call(w, i):
+        path = template.format(org_id=i, opening_id=i)
+        if method == "GET":
+            return w.org1.get(path, follow_redirects=False)
+        from test_photos import jpeg
+
+        if path.endswith(("/logo", "/photo")):
+            files = {"photo": ("p.jpg", jpeg(), "image/jpeg")}
+            return w.org1.post(path, files=files, follow_redirects=False)
+        body = {
+            "about": "Hijacked",
+            "website": "https://evil.example",
+            "event_url": "https://evil.example",
+        }
+        return w.org1.post(path, data=body, follow_redirects=False)
+
+    def check(w):
+        before = snapshot(w)
+        mine = w.opening.org_id if record == "org" else w.opening.id
+        assert_refused(call(w, mine))
+        for gone in GONE:
+            assert_refused(call(w, gone))
+        assert snapshot(w) == before
+
+    return check
+
+
 # route -> check(world), for every route that takes an id from the path or the body
 OWNERSHIP = {
+    **{
+        (method, path): org_media_check(
+            method, path, "org" if "{org_id}" in path else "opening"
+        )
+        for method, path in (
+            ("POST", "/org/organization/{org_id}"),
+            ("POST", "/org/organization/{org_id}/logo"),
+            ("POST", "/org/organization/{org_id}/photo"),
+            ("GET", "/org/openings/{opening_id}/media"),
+            ("POST", "/org/openings/{opening_id}/photo"),
+            ("POST", "/org/openings/{opening_id}/link"),
+        )
+    },
     ("GET", "/photos/{key}.jpg"): check_photo("/photos/{key}.jpg"),
     ("GET", "/photos/thumb/{key}.jpg"): check_photo("/photos/thumb/{key}.jpg"),
     ("GET", "/matches/{match_id}/withdraw"): path_id_check(

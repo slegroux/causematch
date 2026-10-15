@@ -572,6 +572,7 @@ def test_no_page_has_inline_script_style_or_external_asset(user, coord, anon):
         (coord, "/org"),
         (coord, "/org/inbox"),
         (coord, "/org/openings/new"),
+        (coord, "/org/organization"),
     ]
     for client, path in pages:
         html = client.get(path).text

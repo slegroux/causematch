@@ -41,6 +41,9 @@ class Org:
     city: str  # ProPublica record, set by scripts/import_orgs.py
     zip: str  # five digits
     ntee_code: str
+    logo_key: str  # Photo (photos.process "logo"): a square badge on its own background
+    photo_key: str  # Photo ("card"): a picture of the org's work, the cards' fallback
+    website: str  # https only (forms.https_url)
 
 
 class Opening:
@@ -65,6 +68,8 @@ class Opening:
     reply_channel: str  # email|text|either
     adult_confirmed: bool  # 18+ and no one-to-one contact with vulnerable people
     created_at: str
+    photo_key: str  # Photo ("card"), shown on the swipe card before the org's
+    event_url: str  # https only (forms.https_url): the event as the org advertises it
 
 
 class Profile:
@@ -259,9 +264,9 @@ class Photo:
     database is their backup too (about 70 KB a volunteer)."""
 
     key: str  # 22 random URL-safe characters (photos.new_key); its URL
-    owner_kind: str  # volunteer
+    owner_kind: str  # volunteer | org_logo | org_photo | opening
     owner_id: int
-    full: bytes  # JPEG, longest side 800 px, no metadata
+    full: bytes  # JPEG with no metadata, sized by its kind (photos.process)
     thumb: bytes  # JPEG, 160 px square
     sha256: str  # of full: the ETag
     created_at: str

@@ -127,6 +127,7 @@ def deck(uid, limit=20):
     mine = set(json.loads(me.causes or "[]")) & active, json.loads(me.skills or "[]")
     free = json.loads(me.availability or "[]")
     org_names = {o.id: o.name for o in _db.orgs()}
+    org_media = {o.id: (o.photo_key, o.logo_key) for o in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
     for o, cause_labels, km in _deck_openings(uid):
@@ -152,6 +153,10 @@ def deck(uid, limit=20):
             "slots": o.slots,
             "remote": bool(o.remote),
             "distance": _distance_label(km),
+            # the card's picture: the opening's photo, else the org's; its logo as a badge
+            "photo": o.photo_key or org_media.get(o.org_id, (None, None))[0],
+            "logo": org_media.get(o.org_id, (None, None))[1],
+            "event_url": o.event_url,
         }
         for *_, o, cause_labels, km in ranked[:limit]
     ]
@@ -340,6 +345,7 @@ def my_matches(uid):
                 "org": org_names.get(o.org_id, ""),
                 "starts_at": o.starts_at,
                 "neighborhood": o.neighborhood,
+                "event_url": o.event_url,
             }
         )
     return out
@@ -1926,8 +1932,9 @@ def remove_coordinator(email):
 # --- photos ------------------------------------------------------------------------------
 
 
-def _store_photo(owner_kind, owner_id, processed):
-    """Insert a re-encoded picture (photos.Processed) under a new random key; the key."""
+def store_photo(owner_kind, owner_id, processed):
+    """Insert a re-encoded picture (photos.Processed) under a new random key; the key.
+    Callers point a row at it (scripts/demo.py too, for the orgs it seeds)."""
     key = _photos.new_key()
     _db.photos.insert(
         _db.Photo(
@@ -1954,7 +1961,7 @@ def set_volunteer_photo(uid, processed):
         p = get_profile(uid)
         if p is None or p.role != "volunteer":
             raise PermissionError("not a volunteer")
-        key = _store_photo("volunteer", uid, processed)
+        key = store_photo("volunteer", uid, processed)
         _db.profiles.update(id=uid, photo_key=key)
         _drop_photo(p.photo_key)
     return key
@@ -1967,6 +1974,59 @@ def remove_volunteer_photo(uid):
             raise PermissionError("not a volunteer")
         _drop_photo(p.photo_key)
         _db.profiles.update(id=uid, photo_key=None)
+
+
+def _coordinated_org(coordinator_uid, org_id):
+    if not _is_id(org_id):
+        raise PermissionError("no such org")
+    _member_of(coordinator_uid, org_id)
+    return _db.orgs[org_id]
+
+
+def set_org_picture(coordinator_uid, org_id, which, processed):
+    """The org's logo or photo (which: logo | photo) becomes this one; the old one goes."""
+    column = {"logo": "logo_key", "photo": "photo_key"}[which]
+    with _db.db.conn:
+        org = _coordinated_org(coordinator_uid, org_id)
+        key = store_photo(f"org_{which}", org_id, processed)
+        _db.orgs.update(id=org_id, **{column: key})
+        _drop_photo(getattr(org, column))
+    return key
+
+
+def set_org_details(coordinator_uid, org_id, about, website):
+    """About text and website (https, or None) of an org this coordinator belongs to."""
+    with _db.db.conn:
+        _coordinated_org(coordinator_uid, org_id)
+        _db.orgs.update(id=org_id, about=about, website=website)
+
+
+def coordinator_opening(coordinator_uid, opening_id):
+    """An opening of one of the coordinator's orgs; PermissionError for any other id."""
+    if not _is_id(opening_id):
+        raise PermissionError("no such opening")
+    try:
+        o = _db.openings[opening_id]
+    except NotFoundError:
+        raise PermissionError("no such opening") from None
+    _member_of(coordinator_uid, o.org_id)
+    return o
+
+
+def set_opening_photo(coordinator_uid, opening_id, processed):
+    with _db.db.conn:
+        o = coordinator_opening(coordinator_uid, opening_id)
+        key = store_photo("opening", opening_id, processed)
+        _db.openings.update(id=opening_id, photo_key=key)
+        _drop_photo(o.photo_key)
+    return key
+
+
+def set_opening_link(coordinator_uid, opening_id, url):
+    """The event's page as the org advertises it (https, checked by the caller), or None."""
+    with _db.db.conn:
+        coordinator_opening(coordinator_uid, opening_id)
+        _db.openings.update(id=opening_id, event_url=url)
 
 
 def _sees_volunteer(viewer, volunteer_id):
@@ -2004,6 +2064,7 @@ def photo_for(viewer_uid, key, thumb=False):
     if row is None:
         return None
     kind, owner_id, jpeg, sha = row
+    # An org's logo and photo and an opening's photo are public to anyone signed in.
     if kind == "volunteer":
         owner = get_profile(owner_id)  # None once deleted or suspended
         if (owner is None and viewer.role != "admin") or not _sees_volunteer(

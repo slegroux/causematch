@@ -33,7 +33,11 @@ log = logging.getLogger("causematch")
 
 MAX_BODY = 64 * 1024  # bytes; every form here is far smaller, except the uploads below
 # POST paths that take a picture (app/photos.py): they alone may send photos.MAX_UPLOAD.
-UPLOADS = (re.compile(r"/me/profile/photo"),)
+UPLOADS = (
+    re.compile(r"/me/profile/photo"),
+    re.compile(r"/org/organization/[0-9]+/(logo|photo)"),
+    re.compile(r"/org/openings/[0-9]+/photo"),
+)
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
 # Cloud Scheduler calls these with a bearer token and sends no Origin. Exact paths: a
 # future /tasks/ route isn't exempt until it is listed (and checks the token).

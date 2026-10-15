@@ -24,6 +24,7 @@ from monsterui.all import (
 )
 
 from app.config import demo_banner
+from app.forms import domain
 
 # Each cause's chip: its soft tint with its ink (static/theme.css). Literal class strings,
 # so Tailwind's scan of app/ finds them.
@@ -329,4 +330,34 @@ def Avatar(name, photo_key=None, size="md", **kwargs):
         cls=cls + " grid place-items-center bg-brand font-display font-extrabold "
         "text-white",
         **kwargs,
+    )
+
+
+def EventLink(url, cls=""):
+    """The opening as the nonprofit advertises it, in a new tab: "See it on example.org ↗".
+    `url` was checked as https when it was saved (forms.https_url)."""
+    if not url:
+        return None
+    return A(
+        f"See it on {domain(url)}",
+        Span(" ↗", aria_hidden="true"),
+        Span(" (opens in a new tab)", cls="sr-only"),
+        href=url,
+        target="_blank",
+        rel="noopener noreferrer",
+        draggable="false",  # a mouse drag on a swipe card moves the card
+        cls="inline-flex min-h-11 items-center text-sm font-bold text-brand-ink "
+        "underline underline-offset-4 " + cls,
+    )
+
+
+def LogoBadge(key, cls):
+    """An org's logo as a round badge: photos.process drew it centred on its own square
+    background, small enough that the circle keeps all of it."""
+    return Img(
+        src=f"/photos/{key}.jpg",
+        alt="",
+        draggable="false",
+        cls="pointer-events-none rounded-full object-cover ring-4 ring-white "
+        "shadow-warm " + cls,
     )
