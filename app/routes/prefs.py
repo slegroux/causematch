@@ -386,9 +386,10 @@ def PrefsPage(f, error=None, saved=False):
             Icon(SHIELD, size=16, cls="mt-0.5 text-ink-muted"),
             Span(
                 "These decide which openings you see, and in what order. Your places, "
-                "cause ratings, dates, kind of work, skills and Only-show choices stay "
-                "private; a nonprofit sees only what's marked shared, and only after you "
-                "like one of its openings (",
+                "cause ratings, dates, skills, Only-show choices and the kind of work "
+                "you want stay private. What's marked shared (your causes, a summary of "
+                "when you're free, the languages you speak and how often) a nonprofit "
+                "sees only after you like one of its openings (",
                 A("Privacy", href="/privacy", cls="underline"),
                 ").",
             ),

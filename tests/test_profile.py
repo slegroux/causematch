@@ -268,3 +268,30 @@ def test_a_bio_keeps_emoji_sequences_and_keycaps(user, bio):
 def test_a_bio_refuses_joiners_outside_emoji(user, bio):
     r = save(user, bio=bio)
     assert r.status_code == 400 and "hidden or special characters" in r.text
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("last_name", "\u0936\u094d\u200d\u0930\u0940"),  # Devanagari, a ZWJ conjunct
+        ("last_name", "\u0915\u094d\u200c\u0937"),  # Devanagari, ZWNJ: no conjunct
+        ("first_name", "\u0dc1\u0dca\u200d\u0dbb\u0dd3"),  # Sinhala "Shri"
+        ("bio", "\u0d9a\u0dca\u200d\u0dc2 \u0dc0\u0dd2\u0dc1\u0dca\u0dc0"),  # Sinhala
+    ],
+)
+def test_names_keep_the_joiners_of_indic_conjuncts(user, field, value):
+    assert save(user, **{field: value}).status_code == 303
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Ca\u200cll me",  # a non-joiner between Latin letters
+        "\u0915\u094d\u200d\u200d\u0937",  # two joiners in a row
+        "\u0915\u094d\u200dA",  # a Devanagari virama, then a Latin letter
+        "\u0915\u200d\u0dbb",  # Devanagari before, Sinhala after
+    ],
+)
+def test_joiners_outside_one_indic_word_are_refused(user, value):
+    r = save(user, last_name=value)
+    assert r.status_code == 400 and "hidden or special characters" in r.text

@@ -27,7 +27,14 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data, photos
-from app.forms import bad_request, hidden_chars, https_url, query, str_form
+from app.forms import (
+    HIDDEN_CHARS_MESSAGE,
+    bad_request,
+    hidden_chars,
+    https_url,
+    query,
+    str_form,
+)
 from app.routes.profile import BAD_PHOTO, BUSY, PhotoForm, read_photo
 from app.ui import (
     CARD,
@@ -184,7 +191,7 @@ def _sync_save_details(uid, org_id, form):
     if len(f["about"]) > MAX_ABOUT:
         error = f"Keep the about text to {MAX_ABOUT} characters."
     elif hidden_chars(f["about"], multiline=True):
-        error = "Something in the about text wasn't recognized. Please try again."
+        error = HIDDEN_CHARS_MESSAGE
     elif f["website"] and not website:
         error = BAD_LINK
     try:

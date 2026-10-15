@@ -640,3 +640,23 @@ def test_the_data_layer_refuses_a_caller_who_is_not_an_admin():
                 fn(uid, *args)
     assert the_claim().status == "pending" and org_members.count == members
     assert len(notify.get_emailer().sent) == sent
+
+
+@pytest.mark.parametrize(
+    "name,kept",
+    [
+        ("Test Claimant", True),
+        ("n" * 81, False),  # over the 80 a coordinator's name may hold
+        ("Test\u202e Claimant", False),  # a bidi control
+    ],
+)
+def test_an_older_claims_unfit_name_is_not_given_to_the_coordinator(admin, name, kept):
+    """Claims from before names were checked: approve_claim creates the coordinator with
+    no name when the stored one is unfit (the dashboard then asks for theirs)."""
+    imported()
+    claim()
+    c = the_claim()
+    claim_requests.update(id=c.id, name=name)  # as an older, unchecked claim held it
+    assert approve(admin, c.id).status_code == 303
+    p = data.get_profile(data.coordinator_by_email(c.email))
+    assert (p.display_name or "") == (name if kept else "")

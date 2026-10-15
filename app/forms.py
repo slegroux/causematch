@@ -41,6 +41,10 @@ FILLERS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
 # paragraph separators: none belongs in a name or a bio
 HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cn", "Cs", "Zl", "Zp"})
 ZWJ = "\u200d"
+ZWNJ = "\u200c"
+# Scripts that shape conjuncts with a joiner or non-joiner (Devanagari to Sinhala,
+# U+0900-U+0DFF, one 128-code-point block each): "क्‍ष", "ශ්‍රී"
+INDIC = range(0x0900, 0x0E00)
 EMOJI = ("So", "Sk")  # a symbol, or a skin-tone modifier, which a joiner may follow
 KEYCAPS = frozenset("0123456789#*")
 KEYCAP = "\u20e3"  # combining enclosing keycap: 1️⃣ is "1", U+FE0F, U+20E3
@@ -54,6 +58,21 @@ MAX_MARKS = 3  # combining marks on one character; more is "Zalgo" text
 HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 
 
+def _indic_join(text, i):
+    """True when the joiner at text[i] sits inside one Indic word: after a letter or a
+    mark (a virama) of a joining script, and before a letter of the same block."""
+    if not 0 < i < len(text) - 1:
+        return False
+    before, after = ord(text[i - 1]), ord(text[i + 1])
+    return (
+        before in INDIC
+        and after in INDIC
+        and before // 0x80 == after // 0x80  # the same script
+        and unicodedata.category(text[i - 1])[0] in "LM"
+        and unicodedata.category(text[i + 1])[0] == "L"
+    )
+
+
 def hidden_chars(text, multiline=False):
     """True when `text` holds a character that would hide, reorder or break what is
     shown: a format or control character (bidi controls, zero-width spaces, tags), a
@@ -62,7 +81,8 @@ def hidden_chars(text, multiline=False):
     than MAX_MARKS combining marks on one character. Multiline text may hold line breaks
     and tabs, and a zero-width joiner inside an emoji sequence: after an emoji, a skin
     tone or U+FE0F, and before an emoji (the rainbow flag, a family, a person at a
-    laptop), never between letters. The emoji variation selector U+FE0F is allowed only
+    laptop), never between Latin letters. Any field may hold a joiner or non-joiner
+    inside an Indic conjunct (_indic_join). The emoji variation selector U+FE0F is allowed only
     right after an emoji (category So) or in a keycap (1, #, * then U+FE0F U+20E3)."""
     marks = 0
     for i, c in enumerate(text):
@@ -70,6 +90,8 @@ def hidden_chars(text, multiline=False):
         if c in "\n\r\t":
             if not multiline:
                 return True
+        elif c in (ZWJ, ZWNJ) and _indic_join(text, i):
+            continue  # a conjunct's joiner, in any field: a name may need one
         elif c == ZWJ:
             before = text[i - 1] if i else ""
             after = text[i + 1] if i + 1 < len(text) else ""
