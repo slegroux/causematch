@@ -1,6 +1,7 @@
 from fasthtml.common import (
     H1,
     A,
+    APIRouter,
     Button,
     Div,
     Input,
@@ -133,6 +134,12 @@ def body_wrap(content):
     return (DemoBanner(), content) if demo_banner() else content
 
 
+def Router():
+    """Every page router: FastHTML's APIRouter ignores the app's own body_wrap, so each
+    router passes it again (the demo banner, when it is on)."""
+    return APIRouter(body_wrap=body_wrap)
+
+
 def Checks(name, options, checked=()):
     return Div(
         *[
@@ -151,7 +158,7 @@ def Choice(name, options, selected="", placeholder=None):
             for value, label in options
         ],
         name=name,
-        cls="uk-select h-10",
+        cls="uk-select",
     )
 
 

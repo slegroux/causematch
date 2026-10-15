@@ -76,3 +76,12 @@ def test_the_chat_composer_is_in_view_above_the_tab_bar(se_page):
         box = field.bounding_box()
         assert box["y"] + box["height"] <= bar["y"], (box, bar)
         assert box["height"] >= 44, box
+
+
+def test_an_os_dark_mode_keeps_native_controls_light(browser, live_url):
+    ctx = guard(browser.new_context(color_scheme="dark", base_url=live_url))
+    page = ctx.new_page()
+    page.goto("/login")
+    scheme = page.evaluate("getComputedStyle(document.documentElement).colorScheme")
+    assert scheme == "light"
+    ctx.close()

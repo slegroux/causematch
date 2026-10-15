@@ -1,15 +1,15 @@
 import re
 
-from fasthtml.common import APIRouter, P
+from fasthtml.common import P
 from monsterui.all import Button, ButtonT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
 from app.forms import bad_request, str_form
-from app.ui import Field, Page, TextInput, body_wrap
+from app.ui import Field, Page, Router, TextInput
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 # The same words for every EIN: known, unknown or already claimed.
 RECEIVED = (

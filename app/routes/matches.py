@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import H1, H2, A, APIRouter, Div, P, Redirect, Response, Span
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Response, Span
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     AT,
@@ -24,11 +24,11 @@ from app.ui import (
     TITLE,
     Icon,
     Pill,
+    Router,
     VolunteerNav,
-    body_wrap,
 )
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 STATUS = {
     "pending": "Waiting for the nonprofit",

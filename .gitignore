@@ -5,6 +5,9 @@ data/
 .env
 .env.*
 !.env.example
+# scripts/screenshots.py's output can show real nonprofits (--seed-file)
+screens*/
+screenshots/
 
 # Python
 __pycache__/

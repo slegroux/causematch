@@ -4,7 +4,6 @@ from fasthtml.common import (
     H1,
     H2,
     A,
-    APIRouter,
     Div,
     Li,
     P,
@@ -35,11 +34,11 @@ from app.ui import (
     Field,
     Icon,
     Page,
+    Router,
     VolunteerNav,
-    body_wrap,
 )
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 BAD_REPORT = "Choose a reason. Details can be up to 1000 characters."
 

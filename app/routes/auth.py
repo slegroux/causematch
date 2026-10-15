@@ -2,16 +2,16 @@ import logging
 import re
 
 import httpx
-from fasthtml.common import A, APIRouter, Div, Form, P, Redirect
+from fasthtml.common import A, Div, Form, P, Redirect
 from monsterui.all import AT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
 from app.forms import bad_request, str_form
-from app.ui import BigButton, CauseChip, Field, SignInPage, TextInput, body_wrap
+from app.ui import BigButton, CauseChip, Field, Router, SignInPage, TextInput
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 log = logging.getLogger("causematch")
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."

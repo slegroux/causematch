@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from fasthtml.common import (
     H2,
     A,
-    APIRouter,
     Dd,
     Div,
     Dl,
@@ -44,9 +43,9 @@ from app.metrics import (
     pilot_metrics,
 )
 from app.org_import import import_ein
-from app.ui import TextInput, body_wrap
+from app.ui import Router, TextInput
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 log = logging.getLogger("causematch")
 NO_STORE = {"Cache-Control": "no-store"}
 NO_STORE_HEADER = HttpHeader("Cache-Control", "no-store")

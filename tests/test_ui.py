@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import date
@@ -104,14 +105,17 @@ def pages(anon, user, coord):
 
 def test_pages_cover_every_get_route(pages):
     """A new page joins the list above, so its fields are checked too."""
-    match_id = next(p.split("/")[2] for _, p in pages if p.startswith("/chat/"))
-    covered = {p.replace(f"/{match_id}", "/{match_id}") for _, p in pages}
     gets = {
         r.path
         for r in app.routes
         if isinstance(r, Route) and "GET" in (r.methods or ())
     }
-    assert gets - covered - NOT_PAGES == set()
+    uncovered = {
+        g
+        for g in gets - NOT_PAGES
+        if not any(re.fullmatch(re.sub(r"\{\w+\}", "[^/]+", g), p) for _, p in pages)
+    }
+    assert uncovered == set()
 
 
 def test_every_field_has_its_franken_class(pages):
@@ -139,7 +143,20 @@ def test_sign_in_pages_keep_their_labels_and_buttons(anon):
 
 
 def test_demo_banner_shows_on_every_page_only_when_on(pages, monkeypatch):
-    for client, path in pages[:3] + pages[6:8] + pages[15:17] + pages[-2:]:
+    sample = {
+        "/login",
+        "/org/login",
+        "/org/login/verify",
+        "/deck",
+        "/matches",
+        "/org",
+        "/org/inbox",
+        "/admin/claims",
+        "/admin/orgs",
+    }
+    off = [(client, path) for client, path in pages if path in sample]
+    assert len(off) == len(sample)
+    for client, path in off:
         assert DEMO_NOTICE not in client.get(path).text, path
     monkeypatch.setenv("CAUSEMATCH_DEMO_BANNER", "1")
     for client, path in pages:
@@ -204,6 +221,27 @@ def test_demo_first_start_reads_free_text_times():
     assert first_start("", 2, today=today) == "2026-10-24T09:00"
 
 
+@pytest.mark.parametrize(
+    "text, starts",
+    [
+        # a decimal duration is not a time; the am/pm time later on is
+        (
+            "Mon/Tue/Thu/Fri, 1.5-2 hour slots between 9:30am and 3pm",
+            "2026-10-19T09:30",
+        ),
+        ("Thursdays 7-9pm", "2026-10-22T19:00"),  # the start takes the end's pm
+        ("Tues 11-1pm", "2026-10-20T11:00"),  # ... unless that runs past the end
+        ("Sundays 10-12pm", "2026-10-18T10:00"),
+        ("Thurs 10am", "2026-10-22T10:00"),  # short day names
+        ("Weds 9-noon", "2026-10-21T09:00"),
+        ("2-3 hours, Saturdays", "2026-10-17T09:00"),  # a duration: no time given
+        ("monthly", "2026-10-17T09:00"),  # not a Monday
+    ],
+)
+def test_demo_first_start_reads_am_pm_ranges_and_skips_durations(text, starts):
+    assert _demo().first_start(text, today=date(2026, 10, 15)) == starts
+
+
 def test_demo_seed_file_orgs_are_verified_samples():
     before = {o.id for o in orgs()}
     _demo().load_orgs(
@@ -239,6 +277,36 @@ def test_demo_seed_file_orgs_are_verified_samples():
     assert 4 <= o.slots <= 8 and o.status == "open"
 
 
-def test_demo_refuses_a_seed_file_inside_the_repo(tmp_path):
+def test_demo_refuses_a_seed_file_inside_the_repo(tmp_path, monkeypatch):
+    # a copy, so a regressed guard can't leave the demo's environment behind
+    monkeypatch.setattr(os, "environ", dict(os.environ))
     with pytest.raises(SystemExit):
         _demo().configure(5999, tmp_path / "x.db", ROOT / "README.md")
+
+
+def test_screenshots_of_real_orgs_stay_out_of_the_repo(tmp_path):
+    out = ROOT / "screens-refused-by-test"
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "screenshots.py"),
+            "--out",
+            str(out),
+            "--seed-file",
+            str(tmp_path / "orgs.json"),
+        ],
+        env={k: v for k, v in os.environ.items() if k != "K_SERVICE"},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.returncode != 0 and "outside the repo" in r.stderr
+    assert not out.exists()
+    # and screenshots written into the repo anyway are never committable
+    for png in ("screens-x/v01.png", "docs/screenshots/a.png", "screens/o1.png"):
+        ignored = subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "-q", "--no-index", png],
+            check=False,
+        )
+        assert ignored.returncode == 0, png

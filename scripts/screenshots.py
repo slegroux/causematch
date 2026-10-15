@@ -8,6 +8,7 @@ chromium (uv run playwright install chromium).
 """
 
 import argparse
+import sys
 import threading
 import time
 from pathlib import Path
@@ -53,6 +54,11 @@ def main():
     p.add_argument("--port", type=int, default=5078)
     a = p.parse_args()
     demo.refuse_production()
+    if a.seed_file and a.out.resolve().is_relative_to(demo.ROOT):
+        sys.exit(
+            "--out must be outside the repo with --seed-file: real org data never "
+            "enters git"
+        )
     a.out.mkdir(parents=True, exist_ok=True)
     demo.configure(a.port, seed_file=a.seed_file)
     info = demo.seed(a.seed_file)

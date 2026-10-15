@@ -4,7 +4,6 @@ from fasthtml.common import (
     H1,
     H2,
     A,
-    APIRouter,
     Button,
     Div,
     Hidden,
@@ -27,11 +26,11 @@ from app.ui import (
     PIN,
     CauseChip,
     Icon,
+    Router,
     VolunteerNav,
-    body_wrap,
 )
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 
 def when(starts_at):

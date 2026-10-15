@@ -43,7 +43,9 @@ DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 def refuse_production(env=os.environ):
-    if env.get("CAUSEMATCH_ENV") == "production" or "K_SERVICE" in env:
+    from app.config import is_production  # no side effects at import, unlike app.db
+
+    if is_production(env):
         sys.exit(
             "demo.py is for local demos only: refusing to run with "
             "CAUSEMATCH_ENV=production or on Cloud Run (K_SERVICE)"
@@ -79,21 +81,43 @@ def configure(port, db=None, seed_file=None):
     return db
 
 
+# A time, maybe the start of a range: "9:30am", "5-7pm", "10am-noon", "12-2pm". The hour
+# is not part of a decimal ("1.5-2 hour slots"), and a range followed by a unit is a
+# duration ("2-3 hours"), not a time.
+TIME = re.compile(
+    r"(?<![\d.:])(\d{1,2})(?::(\d{2}))?(?![\d.])\s*(am|pm)?"
+    r"(?:\s*[-–]\s*(?:(\d{1,2})(?::\d{2})?\s*(am|pm)?|(noon)))?"
+    r"(?!\s*(?:hours?|hrs?|minutes?|mins?)\b)(?!-?\s*hour)"
+)
+
+
 def _clock(text):
-    """(hour, minute) a free-text time starts at ("9:30am-noon" -> (9, 30)), or None."""
-    m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|(?=\s*[-–]\s*\d))", text)
-    if not m:
-        return None
-    hour, minute = int(m[1]), int(m[2] or 0)
-    if m[3] == "pm" and hour < 12:
-        hour += 12
-    elif m[3] == "am" and hour == 12:
-        hour = 0
-    elif (
-        not m[3] and 1 <= hour <= 6
-    ):  # "5-7pm": a volunteer shift at 5 is in the evening
-        hour += 12
-    return (hour, minute) if hour < 24 and minute < 60 else None
+    """(hour, minute) a free-text time starts at ("9:30am-noon" -> (9, 30)), or None.
+
+    A start without am/pm takes the range end's: "7-9pm" -> 19:00, "11-1pm" -> 11:00. A
+    bare range with neither ("5-7") reads 1 to 6 as afternoon: volunteer shifts at 5 are
+    in the evening. A lone number with neither am/pm nor minutes is not a time."""
+    for m in TIME.finditer(text):
+        hour, minute, own, end, end_m, noon = (
+            int(m[1]),
+            int(m[2] or 0),
+            m[3],
+            m[4],
+            m[5],
+            m[6],
+        )
+        if not (own or m[2] or end or noon):
+            continue
+        if own:
+            hour = hour % 12 + (12 if own == "pm" else 0)
+        elif noon or end_m == "pm":
+            end_hour = 12 if noon else int(end) % 12 + 12
+            if hour < 12 and hour + 12 <= end_hour:
+                hour += 12
+        elif not end_m and 1 <= hour <= 6:
+            hour += 12
+        return (hour, minute) if hour < 24 and minute < 60 else None
+    return None
 
 
 def first_start(typical_time, i=0, today=None):
@@ -102,10 +126,12 @@ def first_start(typical_time, i=0, today=None):
     and no time. i spreads the openings that fall back to that over the next weekends."""
     text = (typical_time or "").lower()
     today = today or datetime.now(LA).date()
-    day = re.search(rf"\b({'|'.join(DAYS)})(?:[a-z]*day)?s?\b", text)
+    day = re.search(
+        r"\b(mon|tues?|weds?|thu|thurs?|fri|sat|sun)(?:[a-z]*day)?s?\b", text
+    )
     clock = _clock(text)
     if day:
-        weekday = DAYS.index(day[1])
+        weekday = DAYS.index(day[1][:3])
         ahead = (weekday - today.weekday()) % 7 or 7
         date = today + timedelta(days=ahead + (7 if ahead < 2 else 0))
     elif "daily" in text:

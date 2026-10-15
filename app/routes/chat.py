@@ -3,7 +3,6 @@ import logging
 from fasthtml.common import (
     H1,
     A,
-    APIRouter,
     Button,
     Div,
     P,
@@ -21,9 +20,9 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
-from app.ui import BACK, SEND, Icon, TextInput, VolunteerNav, body_wrap
+from app.ui import BACK, SEND, Icon, Router, TextInput, VolunteerNav
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 log = logging.getLogger("causematch")
 
 NOTICES = {

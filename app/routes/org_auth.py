@@ -1,16 +1,16 @@
 import logging
 import re
 
-from fasthtml.common import A, APIRouter, Form, HttpHeader, P, Redirect, Response
+from fasthtml.common import A, Form, HttpHeader, P, Redirect, Response
 from monsterui.all import TextPresets
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.forms import query
-from app.ui import BigButton, Field, SignInPage, TextInput, body_wrap
+from app.ui import BigButton, Field, Router, SignInPage, TextInput
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 log = logging.getLogger("causematch")
 
 SENT = "If that address belongs to a coordinator, a sign-in link is on its way."

@@ -102,6 +102,9 @@
   --cm-homeless-soft: 210 63.2% 92.5%; /* #E0ECF8 */
   --cm-homeless-ink: 212.3 62.7% 32.5%; /* #1F4F87 */
   --cm-font: "Nunito", ui-rounded, ui-sans-serif, system-ui, sans-serif;
+  /* light only: daisyUI sets color-scheme: dark under an OS dark mode, which would paint
+     native date pickers, select popups and scrollbars dark on these light pages */
+  color-scheme: light;
 }
 
 /* Franken UI's theme variables (static/theme.js puts uk-theme-warm on <html>); daisyUI

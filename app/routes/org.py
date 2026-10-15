@@ -6,7 +6,6 @@ from fasthtml.common import (
     H1,
     H2,
     A,
-    APIRouter,
     Div,
     P,
     Redirect,
@@ -36,9 +35,9 @@ from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
 from app.routes.shifts import RepeatForm
-from app.ui import Checks, Choice, Field, Page, TextInput, body_wrap
+from app.ui import Checks, Choice, Field, Page, Router, TextInput
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 LA = ZoneInfo("America/Los_Angeles")
 RECURRENCE = [

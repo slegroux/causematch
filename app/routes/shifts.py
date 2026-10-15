@@ -1,4 +1,4 @@
-from fasthtml.common import H1, H2, A, APIRouter, Div, P, Redirect, Response
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Response
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     AT,
@@ -15,9 +15,9 @@ from starlette.concurrency import run_in_threadpool
 from app import data
 from app.forms import bad_request, query, str_form
 from app.routes.deck import when
-from app.ui import CARD, TITLE, Field, Page, Pill, TextInput, VolunteerNav, body_wrap
+from app.ui import CARD, TITLE, Field, Page, Pill, Router, TextInput, VolunteerNav
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 SHIFT_STATUS = {
     "scheduled": "Not marked yet",

@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import A, APIRouter, Div, P, Redirect, Response
+from fasthtml.common import A, Div, P, Redirect, Response
 from monsterui.all import AT, Button, ButtonT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
@@ -13,9 +13,9 @@ from app.choices import (
     SKILLS,
 )
 from app.geo import zip_latlon
-from app.ui import Checks, Choice, Field, Page, TextInput, body_wrap
+from app.ui import Checks, Choice, Field, Page, Router, TextInput
 
-ar = APIRouter(body_wrap=body_wrap)  # the demo banner, when it is on
+ar = Router()
 
 ADULTS_ONLY = "Causematch is for adults 18+"
 LA_ONLY = "Causematch is only in Los Angeles for now"
