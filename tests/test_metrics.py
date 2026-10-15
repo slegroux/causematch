@@ -201,13 +201,18 @@ def test_same_org_repeat_groups_by_org_not_opening():
     def done(org, day):
         return {"org_id": org, "starts_at": f"2026-10-{day}T09:00"}
 
-    two_orgs = made([{"status": "accepted"}], [done(1, "05"), done(2, "06")])["overall"]
+    two_matches = [{"status": "accepted", "volunteer_id": 1}] * 2
+    two_orgs = made(two_matches, [done(1, "05"), {**done(2, "06"), "match_id": 2}])[
+        "overall"
+    ]
     assert (two_orgs["shift2_rate"]["n"], two_orgs["shift2_rate"]["d"]) == (1, 1)
     assert (
         two_orgs["shift2_same_org_rate"]["n"],
         two_orgs["shift2_same_org_rate"]["d"],
     ) == (0, 1)
-    one_org = made([{"status": "accepted"}], [done(1, "05"), done(1, "06")])["overall"]
+    one_org = made(two_matches, [done(1, "05"), {**done(1, "06"), "match_id": 2}])[
+        "overall"
+    ]
     assert (
         one_org["shift2_same_org_rate"]["n"],
         one_org["shift2_same_org_rate"]["d"],
@@ -276,6 +281,16 @@ def test_an_unmarked_first_shift_is_in_neither_count_but_is_reported():
     assert o["unmarked_past_shifts"]["value"] == 1
 
 
+def test_accepted_matches_with_no_shift_are_counted_apart():
+    o = made(
+        [{"status": "accepted"}, {"status": "withdrawn", "decided_at": T0}, {"status": "accepted"}],
+        [{"match_id": 3}],
+    )["overall"]  # fmt: skip
+    assert o["accepted_no_shift"]["value"] == 2  # matches 1 and 2
+    assert o["withdrew_before_first_shift"]["value"] == 1  # match 2 only
+    assert (o["shift1_rate"]["n"], o["shift1_rate"]["d"]) == (1, 2)
+
+
 def test_the_first_shift_is_the_earliest_not_cancelled_one():
     o = made(
         [{"status": "accepted"}],
@@ -314,19 +329,56 @@ def test_a_withdrawn_pending_match_is_not_an_accept():
 def test_small_denominators_read_too_few(pilot):
     cell = pilot["intro"]["warm"]["accept_rate"]
     assert fmt("accept_rate", cell) == "too few (n<10)"
-    assert fmt("median_reply_h", pilot["intro"]["warm"]["median_reply_h"]) == "5.0"
+    assert (
+        fmt("median_reply_h", pilot["intro"]["warm"]["median_reply_h"])
+        == "too few (n<10)"
+    )
 
 
-def test_a_row_of_few_volunteers_is_merged_and_a_tiny_merge_is_dropped(monkeypatch):
+def test_a_row_of_few_volunteers_is_merged_and_the_remainder_is_folded_in():
     build_pilot()
     m = pilot_metrics(data.metrics_rows(), NOW)
-    assert "warm" in m["intro"]  # five volunteers
-    assert (
-        "cold" not in m["intro"] and OTHER not in m["intro"]
-    )  # four: too few even merged
+    # cold has 4 volunteers; merged alone it is still under 5, so warm folds in as well
+    assert "cold" not in m["intro"] and "warm" not in m["intro"]
+    assert m["intro"][OTHER]["volunteers"]["n"] == 5
     assert "personal" not in m["heard_from"] and "public" not in m["heard_from"]
     assert m["heard_from"][OTHER]["volunteers"]["n"] == 5
     assert m["overall"]["volunteers"]["n"] == 5  # overall is never suppressed
+
+
+@pytest.mark.parametrize("kind", ["intro", "heard_from"])
+def test_overall_minus_the_shown_rows_does_not_rebuild_a_hidden_group(kind):
+    build_pilot()
+    m = pilot_metrics(data.metrics_rows(), NOW)
+    cold_like, warm_like = (3, 4), (4, 5)
+    for metric in ("like_rate", "accept_rate", "no_show_rate"):
+        left = m["overall"][metric]["n"] - sum(g[metric]["n"] for g in m[kind].values())
+        # the residual is zero: the shown rows already cover everything
+        assert left == 0, (kind, metric, left)
+    shown = [(g["like_rate"]["n"], g["like_rate"]["d"]) for g in m[kind].values()]
+    assert cold_like not in shown and warm_like not in shown
+
+
+def test_a_hidden_rate_cannot_be_subtracted_from_its_shown_neighbour(monkeypatch):
+    """warm has 20 swipes, cold only 6: cold reads "too few", so warm is withheld too."""
+    monkeypatch.setattr(metrics, "MIN_GROUP_VOLUNTEERS", 1)
+    tags = {"causes": [], "heard_from": "personal"}
+    swipes_ = [
+        {**tags, "intro": "warm", "volunteer_id": i % 10, "liked": i % 2 == 0}
+        for i in range(20)
+    ] + [
+        {**tags, "intro": "cold", "volunteer_id": 20 + i % 5, "liked": i < 2}
+        for i in range(6)
+    ]
+    m = pilot_metrics(
+        {"causes": [], "swipes": swipes_, "matches": [], "shifts": []}, NOW
+    )
+    cells = {k: m["intro"][k]["like_rate"] for k in ("warm", "cold")}
+    assert fmt("like_rate", cells["cold"]) == "too few (n<10)"
+    assert fmt("like_rate", cells["warm"]) == "withheld"
+    assert fmt("like_rate", m["overall"]["like_rate"]) == "46%"  # 12 of 26, still shown
+    cols = {r[1]: r for r in csv_rows(m) if r[0] == "intro" and r[2] == "like_rate"}
+    assert cols["warm"][3:] == (20, "", 20, "") and cols["cold"][4] == ""
 
 
 def test_csv_cells_are_not_formulas(pilot):
@@ -416,7 +468,7 @@ def test_the_csv_hides_small_rates_and_keeps_the_sample_size(pilot):
     assert rows[0][0].startswith("# volunteers:")
     warm = {r[2]: r for r in rows[head + 1 :] if r[:2] == ["intro", "warm"]}
     assert warm["accept_rate"][3:] == ["4", "", "4", ""]  # n kept, figure withheld
-    assert warm["median_reply_h"][3] == "4"
+    assert warm["median_reply_h"][3] == "4" and warm["median_reply_h"][6] == ""
 
 
 def test_the_csv_matches_the_page_numbers(pilot, big_n):

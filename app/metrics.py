@@ -26,6 +26,7 @@ METRICS = {
     "pending_over_48h": "Pending > 48h",
     "shift1_rate": "First shift done",
     "unmarked_first_shifts": "First shift unmarked",
+    "accepted_no_shift": "Accepted, no shift",
     "withdrew_before_first_shift": "Withdrew before 1st shift",
     "unmarked_past_shifts": "Unmarked past shifts",
     "shift2_rate": "Repeat (2+ shifts)",
@@ -61,6 +62,11 @@ DEFINITIONS = {
         "any shift. A first shift not yet marked is in neither count."
     ),
     "unmarked_first_shifts": "First shifts that have started and are still unmarked.",
+    "accepted_no_shift": (
+        "Accepted (or accepted then withdrawn) matches with no non-cancelled shift at all, "
+        "such as an accept after the opening started. In neither first-shift count; "
+        "withdrawn ones are also in withdrew_before_first_shift."
+    ),
     "withdrew_before_first_shift": (
         "Accepted matches withdrawn with no shift left: counted as not showing up in the "
         "first-shift rate."
@@ -177,10 +183,11 @@ def _group(swipes, matches, shifts, vols, now):
     for s in sorted(shifts, key=lambda s: s["starts_at"]):
         if s["status"] != "cancelled":
             first.setdefault(s["match_id"], s)
-    done = no_show = unmarked_first = withdrew = 0
+    done = no_show = unmarked_first = withdrew = no_shift = 0
     for m in accepted:
         s = first.get(m["id"])
         if s is None:
+            no_shift += 1
             withdrew += m["status"] == "withdrawn"
         elif s["status"] == "completed":
             done += 1
@@ -213,6 +220,7 @@ def _group(swipes, matches, shifts, vols, now):
         "pending_over_48h": _count(pending),
         "shift1_rate": _rate(done, done + no_show + withdrew),
         "unmarked_first_shifts": _count(unmarked_first),
+        "accepted_no_shift": _count(no_shift),
         "withdrew_before_first_shift": _count(withdrew),
         "unmarked_past_shifts": _count(unmarked),
         "shift2_rate": _rate(
@@ -233,8 +241,10 @@ def pilot_metrics(rows, now=None):
     what happened. The by-cause table lists active causes only; a row belongs to each cause
     of its opening, so cause rows add up to more than overall. Every other row places a
     volunteer's repeat by their first completed shift. A row with fewer than
-    MIN_GROUP_VOLUNTEERS volunteers (but some) is merged into OTHER, and OTHER is dropped
-    when it is still that small, so no row describes a handful of people.
+    MIN_GROUP_VOLUNTEERS volunteers (but some) is merged into OTHER; while OTHER is still that
+    small the smallest shown row is folded in too, and OTHER is dropped when nothing is left
+    to fold. Overall minus the shown rows then never rebuilds a small group. A rate hidden
+    as "too few" next to shown rows has its smallest neighbour withheld for the same reason.
     """
     now = (now or datetime.now(UTC)).astimezone(UTC)
     swipes, matches, shifts = rows["swipes"], rows["matches"], rows["shifts"]
@@ -270,19 +280,44 @@ def pilot_metrics(rows, now=None):
         groups = {
             k: slice_(lambda r, k=k, kind=kind: k in group_of(kind, r)) for k in ks
         }
-        small = {
-            k
-            for k, g in groups.items()
-            if 0 < g["volunteers"]["n"] < MIN_GROUP_VOLUNTEERS
-        }
-        out[kind] = {k: g for k, g in groups.items() if k not in small}
-        if small:
+
+        nvols = {k: g["volunteers"]["n"] for k, g in groups.items()}
+        vols_of = nvols.__getitem__
+
+        small = [k for k in ks if 0 < vols_of(k) < MIN_GROUP_VOLUNTEERS]
+        shown = [k for k in ks if k not in small]
+        merged = None
+        while small:
             merged = slice_(
-                lambda r, kind=kind, small=small: bool(small & set(group_of(kind, r)))
+                lambda r, kind=kind, small=small: bool(
+                    set(small) & set(group_of(kind, r))
+                )
             )
-            if merged["volunteers"]["n"] >= MIN_GROUP_VOLUNTEERS:
-                out[kind][OTHER] = merged
+            candidates = [k for k in shown if vols_of(k) > 0]
+            if merged["volunteers"]["n"] >= MIN_GROUP_VOLUNTEERS or not candidates:
+                break
+            # Overall minus the shown rows would rebuild the merged one: fold in the
+            # smallest shown row until the remainder is no longer a handful of people.
+            smallest = min(candidates, key=vols_of)
+            small.append(smallest)
+            shown.remove(smallest)
+        out[kind] = {k: groups[k] for k in ks if k in shown}
+        if merged and merged["volunteers"]["n"] >= MIN_GROUP_VOLUNTEERS:
+            out[kind][OTHER] = merged
+        if kind != "cause":
+            _withhold_complements(out[kind], out["overall"])
     return out
+
+
+def _withhold_complements(rows, overall):
+    """The rows of a partition add up to overall, so one hidden rate beside shown rows and
+    a shown overall could be subtracted back. Hide the smallest shown row of that metric too."""
+    for metric in RATES:
+        cells = [g[metric] for g in rows.values() if g[metric]["d"]]
+        hidden = [c for c in cells if too_few(metric, c)]
+        shown = [c for c in cells if not too_few(metric, c)]
+        if len(hidden) == 1 and shown and not too_few(metric, overall[metric]):
+            min(shown, key=lambda c: c["d"])["suppressed"] = True
 
 
 def label(metrics, kind, key):
@@ -290,8 +325,15 @@ def label(metrics, kind, key):
 
 
 def too_few(metric, cell):
-    """A rate over fewer than MIN_DENOM: shown as "too few", never as a percentage."""
+    """A rate over fewer than MIN_DENOM, or a median over fewer than MIN_DENOM matches."""
+    if metric == "median_reply_h":
+        return 0 < cell["n"] < MIN_DENOM
     return metric in RATES and bool(cell["d"]) and cell["d"] < MIN_DENOM
+
+
+def withheld(metric, cell):
+    """too_few, or hidden so that a hidden neighbour can't be subtracted back."""
+    return too_few(metric, cell) or bool(cell.get("suppressed"))
 
 
 def fmt(metric, cell):
@@ -299,6 +341,8 @@ def fmt(metric, cell):
     v = cell["value"]
     if too_few(metric, cell):
         return f"too few (n<{MIN_DENOM})"
+    if withheld(metric, cell):
+        return "withheld"
     if v is None:
         return "—"
     if metric == "median_reply_h":
@@ -315,7 +359,9 @@ def counts(metric, cell):
     if metric in RATES:
         if not cell["d"]:
             return ""
-        return f"n={cell['d']}" if too_few(metric, cell) else f"{cell['n']}/{cell['d']}"
+        return (
+            f"n={cell['d']}" if withheld(metric, cell) else f"{cell['n']}/{cell['d']}"
+        )
     return "" if cell["d"] is None else f"of {cell['d']}"
 
 
@@ -328,7 +374,7 @@ def csv_rows(metrics):
     """Definition comments, then (breakdown, group, metric, n, numerator, denominator, value).
 
     n is the sample size: a rate's denominator, the median's matches, a count's count.
-    numerator and value are empty where a rate has fewer than MIN_DENOM observations.
+    numerator and value are empty where a rate or median is too few or withheld.
     """
     for metric, text in DEFINITIONS.items():
         yield (f"# {metric}: {text}",)
@@ -338,7 +384,7 @@ def csv_rows(metrics):
         for key, cells in groups.items():
             for metric in METRICS:
                 c = cells[metric]
-                hide = too_few(metric, c)
+                hide = withheld(metric, c)
                 is_rate = metric in RATES
                 yield (
                     kind,
