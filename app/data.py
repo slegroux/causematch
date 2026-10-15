@@ -230,14 +230,18 @@ def decide(coordinator_uid, match_id, accept):
             )
         if accept:
             _sync_fill(o.id)
-            _db.shifts.insert(
-                _db.Shift(
-                    match_id=match_id,
-                    starts_at=o.starts_at,
-                    status="scheduled",
-                    created_at=_now(),
+            # An opening that already started gets no shift: the coordinator schedules one.
+            if o.starts_at > _local_now():
+                _db.shifts.insert(
+                    _db.Shift(
+                        match_id=match_id,
+                        starts_at=o.starts_at,
+                        status="scheduled",
+                        kind="accept",
+                        created_by=coordinator_uid,
+                        created_at=_now(),
+                    )
                 )
-            )
 
 
 def _own_match(uid, match_id):
@@ -308,7 +312,8 @@ def org_inbox(coordinator_uid):
     """
     labels = {c.slug: c.label for c in _db.causes()}
     rows = _db.db.query(
-        "SELECT m.id, m.status, o.title, p.display_name, p.causes, p.availability, "
+        "SELECT m.id, m.status, o.title, o.recurrence, p.display_name, p.causes, "
+        "p.availability, "
         "p.neighborhood, p.frequency, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
         "AND a.status = 'accepted') >= o.slots AS full "
@@ -333,6 +338,7 @@ def org_inbox(coordinator_uid):
                 "neighborhood": r["neighborhood"],
                 "frequency": r["frequency"],
                 "full": bool(r["full"]),
+                "weekly": r["recurrence"] == "weekly",
             }
         )
     return out
@@ -349,16 +355,25 @@ def _member_of(coordinator_uid, org_id):
 
 
 def _parse_local(starts_at):
-    """A naive LA wall-clock datetime from "YYYY-MM-DDTHH:MM"; ValueError if malformed
-    or if that time does not exist (clocks skip it)."""
+    """A naive LA wall-clock datetime from "YYYY-MM-DDTHH:MM" (":00" seconds allowed).
+
+    ValueError, worded for the coordinator, if malformed or if that time does not exist
+    (clocks skip it). A time in the fall-back hour is accepted as written.
+    """
     if not isinstance(starts_at, str):
-        raise ValueError("not a date and time")  # noqa: TRY004
-    start = datetime.strptime(starts_at, _LOCAL_FORMAT)
+        raise ValueError("pick a date and a time")  # noqa: TRY004
+    text = starts_at.strip()
+    if len(text) == 19 and text.endswith(":00"):
+        text = text[:-3]
+    try:
+        start = datetime.strptime(text, _LOCAL_FORMAT)
+    except ValueError:
+        raise ValueError("pick a date and a time") from None
     if (
         start.replace(tzinfo=LA).astimezone(UTC).astimezone(LA).replace(tzinfo=None)
         != start
     ):
-        raise ValueError("that time does not exist")
+        raise ValueError("that time doesn't exist (clocks skip it), pick another")
     return start
 
 
@@ -394,21 +409,70 @@ def add_shift(coordinator_uid, match_id, starts_at):
     start = _parse_local(starts_at)
     now = datetime.strptime(_local_now(), _LOCAL_FORMAT)
     if start <= now:
-        raise ValueError("a shift has to be in the future")
+        raise ValueError("the shift has to be in the future")
     if start > now + MAX_SHIFT_AHEAD:
-        raise ValueError("a shift must be within the next 12 months")
+        raise ValueError("the shift must be within the next 12 months")
     try:
         shift = _db.shifts.insert(
             _db.Shift(
                 match_id=match_id,
                 starts_at=start.strftime(_LOCAL_FORMAT),
                 status="scheduled",
+                kind="added",
+                created_by=coordinator_uid,
                 created_at=_now(),
             )
         )
     except apsw.ConstraintError:
         raise ValueError("that shift is already scheduled") from None
     return shift
+
+
+def repeat_shift(coordinator_uid, match_id):
+    """ "Same time next week": add a shift 7 days after the match's latest live shift.
+
+    Only for a weekly opening. Same errors as add_shift, plus ValueError when the
+    opening is not weekly or the match has no shift to repeat.
+    """
+    if not _is_id(match_id):
+        raise PermissionError("no such match")
+    try:
+        o = _db.openings[_db.matches[match_id].opening_id]
+    except NotFoundError:
+        raise PermissionError("no such match") from None
+    _member_of(coordinator_uid, o.org_id)
+    if o.recurrence != "weekly":
+        raise ValueError("this opening does not repeat weekly")
+    latest = _db.shifts(
+        where="match_id = ? AND status != 'cancelled'",
+        where_args=[match_id],
+        order_by="starts_at DESC",
+        limit=1,
+    )
+    if not latest:
+        raise ValueError("there is no shift to repeat")
+    nxt = datetime.strptime(latest[0].starts_at, _LOCAL_FORMAT) + timedelta(days=7)
+    return add_shift(coordinator_uid, match_id, nxt.strftime(_LOCAL_FORMAT))
+
+
+def cancel_shift(coordinator_uid, shift_id):
+    """Cancel a future scheduled shift of the coordinator's org; the Shift.
+
+    PermissionError unless a member of the org. ValueError unless it is scheduled and
+    has not started.
+    """
+    with _db.db.conn:
+        sh, org_id = _shift_org(shift_id)
+        _member_of(coordinator_uid, org_id)
+        if sh.status != "scheduled" or sh.starts_at <= _local_now():
+            raise ValueError("only a shift that has not started can be cancelled")
+        _db.shifts.update(
+            id=shift_id,
+            status="cancelled",
+            cancelled_at=_now(),
+            cancelled_by=coordinator_uid,
+        )
+        return _db.shifts[shift_id]
 
 
 def complete_shift(coordinator_uid, shift_id, attended):
@@ -436,7 +500,12 @@ def complete_shift(coordinator_uid, shift_id, attended):
                 > CORRECTION_WINDOW
             ):
                 raise ValueError("it is more than 7 days since it was marked")
-            _db.shifts.update(id=shift_id, status=status, corrected_at=_now())
+            _db.shifts.update(
+                id=shift_id,
+                status=status,
+                corrected_at=_now(),
+                corrected_by=coordinator_uid,
+            )
         else:
             _db.shifts.update(
                 id=shift_id, status=status, marked_at=_now(), marked_by=coordinator_uid
@@ -446,7 +515,7 @@ def complete_shift(coordinator_uid, shift_id, attended):
 
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "o.title, g.name AS org, p.display_name "
+    "o.title, o.recurrence, g.name AS org, p.display_name "
     "FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "JOIN profile p ON p.id = m.volunteer_id "
@@ -479,11 +548,14 @@ def org_shifts(coordinator_uid):
     """{"upcoming", "to_mark", "marked"} for this coordinator's orgs only.
 
     to_mark: started and not yet marked. marked: marked within 7 days and still open to
-    their one correction. Rows carry the volunteer's first name only.
+    their one correction. Rows carry the volunteer's first name only, whether the opening
+    repeats weekly, and "latest" when the row is its match's latest live shift (set only
+    on rows in these lists; an old corrected shift can be the latest but is not listed).
     """
     now = _local_now()
     out = {"upcoming": [], "to_mark": [], "marked": []}
     cutoff = datetime.fromisoformat(_now()) - CORRECTION_WINDOW
+    latest = {}
     for r in _db.db.query(
         _SHIFT_SELECT + "WHERE o.org_id IN "
         "(SELECT org_id FROM org_member WHERE user_id = ?) "
@@ -495,10 +567,15 @@ def org_shifts(coordinator_uid):
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
         row["first_name"] = _first_name(r["display_name"])
+        row["weekly"] = r["recurrence"] == "weekly"
         if r["status"] == "scheduled":
             out["upcoming" if r["starts_at"] > now else "to_mark"].append(row)
         elif not r["corrected_at"] and datetime.fromisoformat(r["marked_at"]) >= cutoff:
             out["marked"].append(row)
+        # ordered by start, so the last live row of a match is its latest shift
+        latest[r["match_id"]] = row
+    for row in latest.values():
+        row["latest"] = True
     return out
 
 
@@ -922,7 +999,14 @@ def close_opening(coordinator_uid, opening_id):
         raise PermissionError("no such opening") from None
     if o.org_id not in coordinator_org_ids(coordinator_uid):
         raise PermissionError("not a member of this org")
-    _db.openings.update(id=opening_id, status="closed")
+    with _db.db.conn:
+        _db.openings.update(id=opening_id, status="closed")
+        _db.db.execute(
+            "UPDATE shift SET status = 'cancelled', cancelled_at = ?, cancelled_by = ? "
+            "WHERE status = 'scheduled' AND starts_at > ? AND match_id IN "
+            "(SELECT id FROM match WHERE opening_id = ?)",
+            [_now(), coordinator_uid, _local_now(), opening_id],
+        )
 
 
 def notification_claim(kind, key, recipient_id):

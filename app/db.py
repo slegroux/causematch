@@ -12,6 +12,9 @@ DB_PATH = Path(
 ).resolve()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 db = database(DB_PATH)
+# An early build installed this trigger. It names the shift table, so any later transform
+# of that table fails half-way and strands its rows. Must run before the first create.
+db.execute("DROP TRIGGER IF EXISTS shift_with_match")
 
 
 class Cause:
@@ -129,11 +132,21 @@ class Message:
 class Shift:
     id: int
     match_id: int
-    starts_at: str  # America/Los_Angeles wall clock, like Opening.starts_at
+    # America/Los_Angeles wall clock, like Opening.starts_at. In the fall-back hour the
+    # strings are ambiguous and not monotonic; a 01:30 shift may read "not started" for 15
+    # minutes after it first did.
+    starts_at: str
     status: str  # scheduled|completed|no_show|cancelled
+    kind: str  # accept (made when the match was accepted) | added (by a coordinator)
+    created_by: int  # the coordinator who accepted or added it
     marked_at: str  # UTC; when a coordinator first marked it
     marked_by: int
     corrected_at: str  # UTC; the one correction allowed within 7 days of marked_at
+    corrected_by: int
+    cancelled_at: (
+        str  # UTC; set when a coordinator cancels it (a withdraw leaves it null)
+    )
+    cancelled_by: int
     created_at: str
 
 
@@ -162,11 +175,11 @@ messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id", transform=True)
 notifications = db.create(Notification, pk="id", transform=True)
 notifications.create_index(["key"], unique=True, if_not_exists=True)
-shifts.create_index(["match_id", "starts_at"], unique=True, if_not_exists=True)
-# A shift never outlives its match (and a reused match id never inherits old shifts).
+# One live shift per match and start; a cancelled one frees its time.
+db.execute("DROP INDEX IF EXISTS idx_shift_match_id_starts_at")
 db.execute(
-    "CREATE TRIGGER IF NOT EXISTS shift_with_match AFTER DELETE ON match "
-    "BEGIN DELETE FROM shift WHERE match_id = OLD.id; END"
+    "CREATE UNIQUE INDEX IF NOT EXISTS shift_match_start_live "
+    "ON shift(match_id, starts_at) WHERE status != 'cancelled'"
 )
 # One live profile per phone; a soft-deleted profile frees its number.
 db.execute("DROP INDEX IF EXISTS idx_profile_phone")

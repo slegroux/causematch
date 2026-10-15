@@ -36,6 +36,7 @@ from app.auth import normalize_phone
 from app.choices import AVAILABILITY, FREQUENCY, MAX_OPENING_SKILLS, SKILLS
 from app.forms import bad_request, query, str_form
 from app.geo import city_zip_latlon
+from app.routes.shifts import RepeatForm
 from app.ui import Checks, Choice, Field, Page
 
 ar = APIRouter()
@@ -452,6 +453,7 @@ def InboxRow(m):
         )
         if m["status"] == "accepted"
         else None,
+        RepeatForm(m["id"]) if m["status"] == "accepted" and m["weekly"] else None,
         PlainForm(
             accept,
             Button("Decline", name="decision", value="decline", cls=ButtonT.default),

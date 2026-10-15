@@ -31,11 +31,13 @@ from app.db import (
     login_tokens,
     matches,
     messages,
+    notifications,
     openings,
     org_members,
     orgs,
     profiles,
     seed_demo,
+    shifts,
     swipes,
 )
 from app.routes import chat as chat_routes
@@ -55,6 +57,8 @@ def fresh_db():
         swipes,
         matches,
         messages,
+        shifts,
+        notifications,
     ):
         table.delete_where()
     chat_routes._sockets.clear()  # no socket outlives its test

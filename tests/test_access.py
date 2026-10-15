@@ -70,6 +70,8 @@ ROUTES = {
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
     ("GET", "/org/shifts"): ("coordinator", "own-org"),
     ("POST", "/org/shifts/{shift_id}/mark"): ("coordinator", "own-org"),
+    ("POST", "/org/shifts/{shift_id}/cancel"): ("coordinator", "own-org"),
+    ("POST", "/org/matches/{match_id}/shifts/repeat"): ("coordinator", "own-org"),
     ("GET", "/org/matches/{match_id}/shifts/new"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/shifts/new"): ("coordinator", "own-org"),
     ("GET", "/admin"): ("admin", None),
@@ -490,6 +492,29 @@ def shift_match_check(kind):
     return check
 
 
+def check_repeat_shift(w):
+    """org1 can't add a weekly repeat to org 0's match, whatever the id; org 0 can."""
+    openings.update(id=w.opening.id, recurrence="weekly")
+    mid = accepted_match(w)
+    for i in (mid, *GONE):
+        assert_refused(
+            w.org1.post(f"/org/matches/{i}/shifts/repeat", follow_redirects=False)
+        )
+    assert shifts.count == 1
+    r = w.org0.post(f"/org/matches/{mid}/shifts/repeat", follow_redirects=False)
+    assert r.status_code == 303 and shifts.count == 2
+
+
+def check_cancel_shift(w):
+    """org1 can't cancel org 0's shift, whatever the id; org 0 can."""
+    sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
+    for i in (sid, *GONE):
+        assert_refused(w.org1.post(f"/org/shifts/{i}/cancel", follow_redirects=False))
+    assert shifts[sid].status == "scheduled"
+    r = w.org0.post(f"/org/shifts/{sid}/cancel", follow_redirects=False)
+    assert r.status_code == 303 and shifts[sid].status == "cancelled"
+
+
 def check_mark_shift(w):
     """org1 can't mark org 0's shift, whatever the id; org 0 can."""
     mid = accepted_match(w)
@@ -537,6 +562,8 @@ OWNERSHIP = {
     ("GET", "/org/matches/{match_id}/shifts/new"): shift_match_check("page"),
     ("POST", "/org/matches/{match_id}/shifts/new"): shift_match_check("save"),
     ("POST", "/org/shifts/{shift_id}/mark"): check_mark_shift,
+    ("POST", "/org/shifts/{shift_id}/cancel"): check_cancel_shift,
+    ("POST", "/org/matches/{match_id}/shifts/repeat"): check_repeat_shift,
     ("GET", "/chat/{match_id}"): chat_id_check("b", "a", "/chat", "page"),
     ("POST", "/chat/{match_id}/send"): chat_id_check("b", "a", "/chat", "send"),
     ("WS", "/chat/{match_id}/ws"): chat_id_check("b", "a", "/chat", "ws"),
@@ -607,6 +634,30 @@ def test_another_orgs_coordinator_sees_none_of_this_orgs_data(world, path):
     no_secrets(r)
 
 
+def past_shift_world(w):
+    """A's match accepted and its shift moved into the past, so every shift list shows it."""
+    sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
+    shifts.update(id=sid, starts_at="2020-01-01T09:00")
+
+
+def test_another_orgs_coordinator_sees_none_of_this_orgs_shifts(world):
+    past_shift_world(world)
+    mine = world.org0.get("/org/shifts")
+    assert NAME in mine.text and TITLE in mine.text  # the data really is there
+    r = world.org1.get("/org/shifts")
+    assert r.status_code == 200
+    no_secrets(r)
+
+
+def test_a_volunteer_sees_none_of_another_volunteers_shifts(world):
+    past_shift_world(world)
+    mine = world.a.get("/history")
+    assert TITLE in mine.text  # the data really is there
+    r = world.b.get("/history")
+    assert r.status_code == 200
+    no_secrets(r)
+
+
 def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
     assert TITLE in world.a.get("/matches").text
     r = world.b.get("/matches")
@@ -621,7 +672,7 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 
 TABLES = {
     "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
-    "messages", "orgs", "profiles", "swipes",
+    "messages", "orgs", "profiles", "swipes", "shifts", "notifications",
 }  # fmt: skip
 
 

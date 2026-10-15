@@ -325,7 +325,7 @@ def test_inbox_never_shows_contact_or_location(user, coord):
         assert secret not in html, secret
     assert set(data.org_inbox(coordinator_for(0)[0])["decided"][0]) == {
         "id", "status", "opening", "first_name", "causes",
-        "availability", "neighborhood", "frequency", "full",
+        "availability", "neighborhood", "frequency", "full", "weekly",
     }  # fmt: skip
 
 
@@ -516,7 +516,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
     (row,) = data.org_inbox(coordinator_for(0)[0])["pending"]
     assert set(row) == {
         "id", "status", "opening", "first_name", "causes",
-        "availability", "neighborhood", "frequency", "full",
+        "availability", "neighborhood", "frequency", "full", "weekly",
     }  # fmt: skip
 
 

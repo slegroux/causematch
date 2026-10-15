@@ -27,22 +27,26 @@ SHIFT_STATUS = {
     "no_show": "No-show",
 }
 NOTICE = {
-    "unavailable": "That shift can't be marked right now (it hasn't started, or it was already corrected).",
+    "unavailable": (
+        "That didn't go through. A shift can be marked once it has started, corrected "
+        "once within 7 days, and cancelled only before it starts."
+    ),
+    "repeat": "Couldn't add next week's shift (it needs a weekly opening, and a date still ahead).",
 }
 
 
-def ShiftCard(s, actions=None, volunteer=True):
-    """volunteer=True: a coordinator's card, naming the volunteer; else the org's name."""
-    status = SHIFT_STATUS[s["status"]]
-    if not volunteer and s["status"] == "scheduled":
-        status = "Waiting for the nonprofit to confirm"
+def ShiftCard(s, *actions, for_org=True, status=None):
+    """for_org=True: a coordinator's card, naming the volunteer; else the org's name."""
     return Card(
-        DivFullySpaced(P(s["title"], cls="font-semibold"), Label(status)),
+        DivFullySpaced(
+            P(s["title"], cls="font-semibold"),
+            Label(status or SHIFT_STATUS[s["status"]]),
+        ),
         P(
-            f"{when(s['starts_at'])} - {s['first_name'] if volunteer else s['org']}",
+            f"{when(s['starts_at'])} - {s['first_name'] if for_org else s['org']}",
             cls=TextPresets.muted_sm,
         ),
-        actions,
+        *actions,
         cls="w-full",
     )
 
@@ -60,6 +64,27 @@ def MarkForm(s, corrected=False):
         method="post",
         cls="flex gap-3",
     )
+
+
+def RepeatForm(match_id):
+    return PlainForm(
+        Button("Same time next week", cls=ButtonT.default),
+        action=f"/org/matches/{match_id}/shifts/repeat",
+        method="post",
+    )
+
+
+def CancelForm(shift_id):
+    return PlainForm(
+        Button("Cancel this shift", cls=ButtonT.default),
+        action=f"/org/shifts/{shift_id}/cancel",
+        method="post",
+    )
+
+
+def repeat_of(s):
+    """The next-week button, on a weekly opening's latest shift only."""
+    return RepeatForm(s["match_id"]) if s["weekly"] and s.get("latest") else None
 
 
 def Section(title, rows, empty):
@@ -81,7 +106,7 @@ def org_shifts_page(req):
         else None,
         Section(
             "Did they come?",
-            [ShiftCard(s, MarkForm(s)) for s in box["to_mark"]],
+            [ShiftCard(s, MarkForm(s), repeat_of(s)) for s in box["to_mark"]],
             "Nothing to mark.",
         ),
         Section(
@@ -90,6 +115,8 @@ def org_shifts_page(req):
                 ShiftCard(
                     s,
                     A("Chat", href=f"/org/chat/{s['match_id']}", cls=AT.muted),
+                    repeat_of(s),
+                    CancelForm(s["id"]),
                 )
                 for s in box["upcoming"]
             ],
@@ -97,7 +124,10 @@ def org_shifts_page(req):
         ),
         Section(
             "Marked this week (one correction allowed)",
-            [ShiftCard(s, MarkForm(s, corrected=True)) for s in box["marked"]],
+            [
+                ShiftCard(s, MarkForm(s, corrected=True), repeat_of(s))
+                for s in box["marked"]
+            ],
             "Nothing marked this week.",
         ),
         A("Back to your openings", href="/org", cls=AT.muted + " pb-8 block"),
@@ -117,6 +147,28 @@ async def mark(req, shift_id: int):
         return Response("Forbidden", status_code=403)
     except ValueError:
         return Redirect("/org/shifts?notice=unavailable")
+    return Redirect("/org/shifts")
+
+
+@ar("/org/shifts/{shift_id}/cancel", methods=["POST"])
+def cancel(req, shift_id: int):
+    try:
+        data.cancel_shift(req.scope["uid"], shift_id)
+    except PermissionError:
+        return Response("Forbidden", status_code=403)
+    except ValueError:
+        return Redirect("/org/shifts?notice=unavailable")
+    return Redirect("/org/shifts")
+
+
+@ar("/org/matches/{match_id}/shifts/repeat", methods=["POST"])
+def repeat(req, match_id: int):
+    try:
+        data.repeat_shift(req.scope["uid"], match_id)
+    except PermissionError:
+        return Response("Forbidden", status_code=403)
+    except ValueError:
+        return Redirect("/org/shifts?notice=repeat")
     return Redirect("/org/shifts")
 
 
@@ -183,15 +235,24 @@ def history(req):
     mine = data.my_shifts(req.scope["uid"])
     return Container(
         VolunteerNav(),
-        H1("Your shifts", cls="text-2xl font-bold my-4"),
+        H1("Your history", cls="text-2xl font-bold my-4"),
         Section(
             "Upcoming",
-            [ShiftCard(s, volunteer=False) for s in mine["upcoming"]],
+            [ShiftCard(s, for_org=False, status="Scheduled") for s in mine["upcoming"]],
             "No upcoming shifts. Like an opening to get one.",
         ),
         Section(
             "Past",
-            [ShiftCard(s, volunteer=False) for s in mine["past"]],
+            [
+                ShiftCard(
+                    s,
+                    for_org=False,
+                    status="Waiting for the nonprofit to confirm"
+                    if s["status"] == "scheduled"
+                    else None,
+                )
+                for s in mine["past"]
+            ],
             "Nothing yet.",
         ),
         cls="max-w-md pb-8",
