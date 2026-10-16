@@ -37,6 +37,11 @@
     return !busy && Date.now() >= quietUntil;
   }
 
+  function openSheet(c) {
+    var s = c.parentNode.querySelector("dialog.cm-sheet");
+    if (s && !s.open) s.showModal();
+  }
+
   document.addEventListener("pointerdown", function (e) {
     var c = card(e.target);
     if (!c || !ready() || (e.pointerType === "mouse" && e.button !== 0)) return;
@@ -59,6 +64,13 @@
     if (!drag || e.pointerId !== drag.id) return;
     var d = drag;
     drag = null;
+    // a tap, not a drag, on the card itself (not a link or button in it): the details
+    if (!d.live && Math.abs(d.dx) < 8 && Math.abs(e.clientY - d.y) < 8 &&
+        !(e.target.closest && e.target.closest("a, button")) && ready()) {
+      reset(d.c);
+      openSheet(d.c);
+      return;
+    }
     var far = d.live && Math.abs(d.dx) > d.c.offsetWidth * THRESHOLD;
     var b = far && ready() && button(d.c, d.dx > 0 ? "1" : "0");
     if (b) b.click(); // a real click, so htmx sees which button submitted
@@ -73,10 +85,30 @@
   });
 
   // The filter sheet's close button: shut its <details> (Show openings also closes it).
+  // The details sheet's: its <dialog>.
   document.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest("[data-close-sheet]");
-    var d = b && b.closest("details");
-    if (d) d.open = false;
+    var t = e.target;
+    var b = t.closest && t.closest("[data-close-sheet]");
+    var d = b && b.closest("details, dialog");
+    if (d && d.tagName === "DIALOG") d.close();
+    else if (d) d.open = false;
+    // the keyboard's way to the card's details
+    var o = t.closest && t.closest("[data-open-sheet]");
+    if (o) openSheet(card(o));
+    // a tap on the dim area outside the sheet closes it
+    if (t.tagName === "DIALOG") {
+      var r = t.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top ||
+          e.clientY > r.bottom) t.close();
+    }
+    // Pass or Like in the sheet: press the card's own button
+    var v = t.closest && t.closest("[data-sheet-vote]");
+    if (v && ready()) {
+      var sheet = v.closest("dialog");
+      var real = button(sheet, v.getAttribute("data-sheet-vote"));
+      sheet.close();
+      if (real) real.click();
+    }
   });
 
   // Ignore taps that land on a card just swapped in (the second tap of a double tap).

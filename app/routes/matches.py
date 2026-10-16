@@ -24,6 +24,7 @@ from app.ui import (
     TITLE,
     EventLink,
     Icon,
+    MatchesDot,
     Meta,
     Pill,
     Refusal,
@@ -97,8 +98,11 @@ def _sync_swipe(req, form):
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
             notify.on_new_like(m.id)
+            notice = f"Sent to {data.org_name_of(m.opening_id)}. We'll text you when they say yes."
     if req.headers.get("HX-Request"):
-        return DeckArea(uid, today, view, notice)
+        return DeckArea(uid, today, view, notice), MatchesDot(
+            data.has_pending_like(uid), oob=True
+        )
     return Redirect("/deck?today=1" if today else "/deck")
 
 

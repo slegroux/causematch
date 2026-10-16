@@ -2,7 +2,9 @@ import json
 import re
 import struct
 
-from conftest import ROOT
+from conftest import ROOT, uid_of
+
+from app import data
 
 
 def png_size(data):
@@ -56,6 +58,9 @@ def test_every_page_links_the_manifest_and_icons(anon, user, coord):
 
 def test_home_screen_hint_is_on_the_deck_only(anon, user, coord):
     """Elsewhere the toast would cover the chat composer or the end of a list."""
+    data.dismiss_photo_nudge(
+        uid_of(user)
+    )  # one nudge at a time: the photo prompt first
     tag = re.search(r'<div[^>]*id="a2hs"[^>]*>', user.get("/deck").text)
     assert tag and "hidden" in tag.group(0)
     for client, path in (

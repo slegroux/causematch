@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 
 from conftest import close_all_openings, deck_titles, make_opening, uid_of
@@ -102,3 +103,40 @@ def test_root_redirects_to_deck(user):
     r = user.get("/", follow_redirects=False)
     assert r.status_code in (301, 302, 303, 307)
     assert r.headers["location"] == "/deck"
+
+
+def test_card_clamps_about_and_its_sheet_holds_the_rest(user):
+    close_all_openings()
+    add_opening(
+        "Greet guests",
+        ["food-insecurity"],
+        about="We greet guests at the door and walk them to a table.",
+        notes="Bring closed shoes.",
+        orientation_required="same_day",
+    )
+    html = user.get("/deck").text
+    assert "line-clamp-2" in html and "We greet guests at the door" in html
+    assert "<dialog" in html and "Bring closed shoes." in html
+    assert "Orientation: done the same day" in html
+
+
+def test_a_like_says_where_it_went_and_lights_the_matches_dot(user):
+    close_all_openings()
+    oid = add_opening("Greet guests", ["food-insecurity"]).id
+    assert '<span hidden id="matches-dot"' in user.get("/deck").text
+    r = user.post(
+        "/swipe", data={"opening_id": str(oid), "liked": "1"},
+        headers={"HX-Request": "true"},
+    )  # fmt: skip
+    org = data.org_name_of(oid)
+    assert f"Sent to {org}." in r.text and "text you when they say yes." in r.text
+    dot = re.search(r'<span[^>]*id="matches-dot"[^>]*>', r.text).group(0)
+    assert "hidden" not in dot and 'hx-swap-oob="true"' in dot
+
+
+def test_one_nudge_at_a_time_photo_first_then_home_screen(user):
+    uid = uid_of(user)
+    assert 'id="a2hs"' not in user.get("/deck").text  # the photo prompt is up
+    data.dismiss_photo_nudge(uid)
+    html = user.get("/deck").text
+    assert 'id="a2hs"' in html and "Add a photo so nonprofits" not in html
