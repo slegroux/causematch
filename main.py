@@ -149,8 +149,8 @@ for router in (
     org_profile_router,
 ):
     router.to_app(app)
-# invented orgs and openings: never in production unless asked
-data.start(not is_production() or os.environ.get("CAUSEMATCH_SEED_DEMO") == "1")
+# invented orgs and openings: never in production
+data.start(not is_production())
 if is_preview():  # the demo's orgs and people, reseeded at each cold start
     demo_seed.seed_preview(os.environ.get("PREVIEW_SEED_DIR"))
 
