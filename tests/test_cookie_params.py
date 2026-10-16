@@ -93,11 +93,9 @@ def test_onboarding_field_beats_a_cookie(new_user, name):
     r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     (p,) = profiles(where="phone = ?", where_args=[new_user.phone])
-    assert (p.display_name, p.neighborhood, p.heard_from) == (
-        "Sam",
-        "Chinatown",
-        "public",
-    )
+    # the short onboarding saves the name and causes; neighborhood and heard-from
+    # moved to the profile and the after-first-like card
+    assert p.display_name == "Sam"
     assert json.loads(p.causes) == ["food-insecurity"]
 
 
