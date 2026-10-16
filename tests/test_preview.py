@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import pytest
@@ -38,15 +38,19 @@ from app.config import (
     tasks_token,
 )
 from app.db import (
+    Match,
+    Profile,
     matches,
     messages,
     openings,
     orgs,
     places,
     profiles,
-    shifts,
     swipes,
     urgent_calls,
+)
+from app.db import (
+    now as db_now,
 )
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
@@ -638,7 +642,7 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
 
 def test_seed_gives_the_free_today_switch_cards_in_several_causes(preview):
     """first_start() puts openings 2+ days out: the seed moves some to tomorrow, so the
-    demo volunteer's "I'm free today" deck isn't just the urgent call."""
+    demo volunteer's "Free in the next 48h" deck isn't just the urgent call."""
     from app import data
 
     _empty()
@@ -735,32 +739,31 @@ def test_each_visitor_of_the_demo_number_gets_their_own_sam(demo):
     assert data.deck(b.uid, 1)[0]["id"] == first["id"]  # b's urgent card is still up
 
 
-def test_a_demo_sam_has_matches_in_several_states_none_in_the_coordinators_inbox(demo):
+def test_a_new_demo_sam_starts_with_no_matches_and_a_full_deck(demo):
     uid = as_demo_volunteer().uid
-    mine = matches(where="volunteer_id = ?", where_args=[uid])
-    assert len(mine) >= 3 and len({m.status for m in mine}) >= 2
-    pat_org = data.coordinator_org_ids(
-        data.coordinator_by_email(demo_seed.COORDINATOR[0])
-    )
-    assert all(openings[m.opening_id].org_id not in pat_org for m in mine)
-    held = shifts(where=f"match_id IN ({','.join(str(m.id) for m in mine)})")
-    assert {"scheduled", "completed"} <= {s.status for s in held}
-    assert messages(where=f"match_id IN ({','.join(str(m.id) for m in mine)})")
-    # the seeded waiting like stays waiting: the demo's auto-accept leaves old likes
-    assert data.demo_accept_due(uid) == [] and "pending" in {m.status for m in mine}
+    assert matches.count_where("volunteer_id = ?", [uid]) == 0
+    assert not messages(where="match_id IN (SELECT id FROM match WHERE volunteer_id = ?)",
+                        where_args=[uid])  # fmt: skip
+    deck = data.deck(uid, 200)
+    # the invented seed holds 7 openings (the real seed dir holds more than 40)
+    assert len(deck) >= 7 and deck[0]["urgent"]
 
 
 def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
     monkeypatch.setattr(data, "DEMO_COPIES", 2)
     (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
-    a, b, c = (as_demo_volunteer().uid for _ in range(3))
+    a, b = (as_demo_volunteer().uid for _ in range(2))
+    for uid in (a, b):
+        data.swipe(uid, data.deck(uid, 2)[1]["id"], True)  # a match and a swipe each
+    c = as_demo_volunteer().uid
     phones = {p.id: p.phone for p in profiles() if p.id in (a, b, c)}
     assert set(phones) == {b, c} and phones[c] == f"{data.DEMO_PHONE_PREFIX}0000"
     for table, col in ((matches, "volunteer_id"), (swipes, "volunteer_id"),
                        (places, "user_id")):  # fmt: skip
         count = lambda uid, t=table, k=col: t.count_where(f"{k} = ?", [uid])
         assert count(a) == 0, table  # a's rows went with it
-        assert count(b) and count(seed_sam.id), table  # the others keep theirs
+        assert count(seed_sam.id), table  # the seed's Sam keeps his
+        assert count(b), table  # and so does the other copy
 
 
 def test_without_the_switch_the_demo_number_is_the_seeds_sam(preview):
@@ -891,6 +894,108 @@ def test_in_a_preview_an_ordinary_volunteers_like_waits(user, demo):
     m = _like_a_team_card(user, uid)
     assert "s a match!" not in user.get("/deck").text
     assert matches[m.id].status == "pending" and data.demo_accept_due(uid) == []
+
+
+def _demo_opening_of_a_team(slots):
+    o = next(
+        o for o in openings(where="status = 'open'", order_by="id")
+        if data.demo_team(o.org_id)
+    )  # fmt: skip
+    openings.update(id=o.id, slots=slots)
+    return o
+
+
+def test_five_likes_on_stand_in_openings_give_five_matches(demo):
+    sam = as_demo_volunteer()
+    liked = []
+    for _ in range(5):
+        card = next(
+            c for c in data.deck(sam.uid, 50)
+            if not c["call_id"] and data.demo_team(openings[c["id"]].org_id)
+        )  # fmt: skip
+        sam.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+        liked.append(card["id"])
+    early = (datetime.now(UTC) - data.DEMO_ACCEPT_AFTER).isoformat(timespec="seconds")
+    for m in matches(where="volunteer_id = ?", where_args=[sam.uid]):
+        assert m.status == "pending"
+        matches.update(id=m.id, created_at=early)
+    assert "s a match!" in sam.get("/deck").text.replace("&#x27;", "'")
+    mine = matches(where="volunteer_id = ?", where_args=[sam.uid])
+    assert len(mine) == 5 and {m.status for m in mine} == {"accepted"}
+
+
+def test_many_demo_copies_matching_one_opening_leave_it_open(demo):
+    o = _demo_opening_of_a_team(slots=1)
+    team = data.demo_team(o.org_id)
+    for _ in range(4):
+        uid = as_demo_volunteer().uid
+        m = data.swipe(uid, o.id, True)
+        data.decide(team, m.id, True)
+    assert matches.count_where("opening_id = ? AND status = 'accepted'", [o.id]) == 4
+    assert openings[o.id].status == "open"
+    assert o.id in {c["id"] for c in data.deck(as_demo_volunteer().uid, 200)}
+
+
+def test_outside_a_demo_every_accepted_match_fills_an_opening(user):
+    o = openings(where="status = 'open'", order_by="id")[0]
+    openings.update(id=o.id, slots=1)
+    uid = uid_of(user)
+    profiles.update(id=uid, phone=f"{data.DEMO_PHONE_PREFIX}9999")  # looks like a copy
+    m = data.swipe(uid, o.id, True)
+    matches.update(id=m.id, status="accepted")
+    data._sync_fill(o.id)
+    assert openings[o.id].status == "filled"
+
+
+def test_outside_a_demo_decide_counts_a_copy_like_phone(user):
+    """Outside a demo a copy-like phone's accepted match still takes the slot: the gate
+    in _filling() is what lets copies through, and only in a demo."""
+    o = openings(where="status = 'open'", order_by="id")[0]
+    openings.update(id=o.id, slots=1)
+    copy = profiles.insert(
+        Profile(
+            role="volunteer",
+            phone=f"{data.DEMO_PHONE_PREFIX}9999",
+            created_at=db_now(),
+        )
+    ).id
+    matches.insert(
+        Match(
+            opening_id=o.id, volunteer_id=copy, status="accepted", created_at=db_now()
+        )
+    )
+    pending = data.swipe(uid_of(user), o.id, True)
+    team = data.add_coordinator("boss@example.org", o.org_id, name="Boss")
+    with pytest.raises(ValueError, match="no slots left"):
+        data.decide(team, pending.id, True)
+
+
+def test_in_a_demo_copies_never_fill_pats_side_or_the_urgent_card(demo):
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    row = next(r for r in data.org_inbox(pat)["pending"])
+    o = openings[matches[row["id"]].opening_id]
+    accepted = data.opening_counts(pat)[o.id]["accepted"]
+    openings.update(id=o.id, slots=accepted + 1)  # one real spot left
+    for _ in range(3):  # copies accepted on Pat's opening
+        uid = as_demo_volunteer().uid
+        data.decide(pat, data.swipe(uid, o.id, True).id, True)
+    assert openings[o.id].status == "open"
+    assert data.opening_counts(pat)[o.id]["accepted"] == accepted
+    inbox = {r["id"]: r for r in data.org_inbox(pat)["pending"]}
+    assert not inbox[row["id"]]["full"]
+    assert data.open_spots(pat, o.id) == 1
+    starts = (datetime.now(data.LA) + timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M")
+    data.post_urgent_call(pat, o.id, starts, 1, False)  # still available
+    data.decide(pat, row["id"], True)  # the seeded waiting volunteer is accepted
+    assert openings[o.id].status == "filled"
+
+
+def test_the_urgent_card_stays_first_for_every_copy(demo):
+    for _ in range(4):
+        sam = as_demo_volunteer()
+        card = data.deck(sam.uid, 1)[0]
+        assert card["urgent"]
+        data.swipe(sam.uid, card["id"], True, call_id=card["call_id"])
 
 
 # --- the deploy ----------------------------------------------------------------------

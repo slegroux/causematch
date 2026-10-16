@@ -64,7 +64,7 @@ async def swipe(req):
 def _sync_swipe(req, form):
     uid = req.scope["uid"]
     raw = form.get("opening_id", "")
-    today = form.get("today") == "1"  # the deck's "I'm free today" switch
+    today = form.get("today") == "1"  # the deck's "Free in the next 48h" switch
     view = deck_view(req)
     notice = None
     try:
