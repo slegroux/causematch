@@ -3,19 +3,21 @@
 #
 #   scripts/deploy_preview.sh
 #
-# Settings come from the environment (defaults in brackets): PROJECT [causematch],
-# REGION [us-west1], SERVICE [causematch-preview], SEED_SRC [the real-orgs folder in
-# ~/.omc/reports: orgs.json, logos-raw/, photos-raw/], CONTACT_EMAIL [the privacy page's
-# address].
+# Settings come from the environment (defaults in brackets): PROJECT [causematch-la],
+# REGION [us-west1], SERVICE [causematch-preview], SERVICE_ACCOUNT [causematch-preview@
+# the project], SEED_SRC [the real-orgs folder in ~/.omc/reports: orgs.json, logos-raw/,
+# photos-raw/], CONTACT_EMAIL [the privacy page's address].
 #
 # The seed is copied into ./preview-seed for the build only: git ignores it, .gcloudignore
 # sends it, and it is removed when this script exits. The secrets PREVIEW_PASSWORD,
-# SESSION_SECRET, PHONE_HASH_KEY and TASKS_TOKEN must already be in Secret Manager.
+# SESSION_SECRET, PHONE_HASH_KEY and TASKS_TOKEN must already be in Secret Manager, readable
+# by the service account the service runs as.
 set -euo pipefail
 
-PROJECT="${PROJECT:-causematch}"
+PROJECT="${PROJECT:-causematch-la}"
 REGION="${REGION:-us-west1}"
 SERVICE="${SERVICE:-causematch-preview}"
+SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-causematch-preview@$PROJECT.iam.gserviceaccount.com}"
 SEED_SRC="${SEED_SRC:-$HOME/.omc/reports/2026-10-15-causematch-design/real-orgs}"
 CONTACT_EMAIL="${CONTACT_EMAIL:-hello@causematch.test}"
 
@@ -54,6 +56,7 @@ describe_url() {
 url="$(describe_url)"
 gcloud run deploy "$SERVICE" --source . \
 	--project "$PROJECT" --region "$REGION" \
+	--service-account "$SERVICE_ACCOUNT" \
 	--allow-unauthenticated \
 	--min-instances 0 --max-instances 1 \
 	--memory 1Gi --cpu 1 --concurrency 80 \
