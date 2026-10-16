@@ -33,6 +33,7 @@ from app.ui import (
     HEART,
     PEOPLE,
     PIN,
+    AddToHomeScreen,
     CauseChip,
     EventLink,
     Icon,
@@ -508,6 +509,7 @@ def deck(req):
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         TodaySwitch(today),
+        AddToHomeScreen(),  # the deck only: elsewhere it would push the page's content
         DeckArea(req.scope["uid"], today, deck_view(req), first=first),
         None if me.photo_key or me.photo_nudge_dismissed_at else PhotoNudge(),
         Script(src="/static/swipe.js", defer=True),

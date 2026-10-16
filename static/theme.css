@@ -199,9 +199,6 @@ h1, h2, h3, .font-display {
 body:has(.cm-tabbar) {
   padding-bottom: calc(5rem + env(safe-area-inset-bottom));
 }
-.cm-toast {
-  bottom: calc(4.75rem + env(safe-area-inset-bottom));
-}
 /* The chat composer (app/routes/chat.py) stays in reach while the history scrolls: at the
    bottom of the screen, or just above the volunteer's tab bar. */
 .cm-composer {
