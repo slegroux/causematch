@@ -12,22 +12,14 @@ import threading
 import time
 import warnings
 import zlib
-from pathlib import Path
 
 import pytest
-from conftest import FORM, TestClient, sign_in
+from conftest import FORM, ROOT, TestClient, admin_client, jpeg, sign_in, uid_of
 from PIL import ExifTags, Image
-from test_claim import admin_client
 
 from app import data, photos, security
 from app.db import matches, openings, profiles
 from main import app
-
-
-def jpeg(size=(1200, 900), exif=None, color=(200, 90, 60)):
-    buf = io.BytesIO()
-    Image.new("RGB", size, color).save(buf, "JPEG", exif=exif or Image.Exif())
-    return buf.getvalue()
 
 
 def with_gps():
@@ -76,10 +68,6 @@ def upload(client, raw, name="photo.jpg", kind="image/jpeg"):
         files={"photo": (name, raw, kind)},
         follow_redirects=False,
     )
-
-
-def uid_of(client):
-    return data.get_or_create_volunteer(client.phone)
 
 
 def key_of(client):
@@ -473,7 +461,6 @@ def test_the_nudge_can_be_dismissed(user):
 
 # --- decode memory, decode slots and upload throttling ------------------------------------
 
-ROOT = Path(__file__).resolve().parent.parent
 
 GENERATE = r"""
 import sys

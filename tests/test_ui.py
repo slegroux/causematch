@@ -8,13 +8,18 @@ import subprocess
 import sys
 from datetime import date
 from html.parser import HTMLParser
-from pathlib import Path
 
 import pytest
-from conftest import coordinator_for, sign_in
+from conftest import (
+    ROOT,
+    admin_client,
+    close_all_openings,
+    coordinator_for,
+    sign_in,
+    uid_of,
+)
 from starlette.routing import Route
 from starlette.testclient import TestClient
-from test_claim import admin_client
 
 from app import data, demo_seed
 from app.config import demo_banner
@@ -25,7 +30,6 @@ from main import app
 # every page check runs twice: with the Home place onboarding saves, and as a profile
 # from before places (conftest.pytest_generate_tests)
 HOME_PLACES = True
-ROOT = Path(__file__).resolve().parent.parent
 # Franken UI's class for each kind of field; an <input> with none of them draws no box
 FIELD_CLASSES = {"uk-input", "uk-checkbox", "uk-radio", "uk-range"}
 # GET routes that render no page of fields
@@ -70,7 +74,7 @@ def unstyled(html):
 @pytest.fixture
 def pages(anon, user, coord):
     """(client, path) for every page, with a match so its chat and safety pages exist."""
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     opening = next(
         o for o in openings() if o.org_id == coord.org_id and o.status == "open"
     )
@@ -432,7 +436,7 @@ def test_org_pages_share_the_top_nav(pages, coord):
 
 
 def test_dashboard_counts_waiting_likes_and_fills_the_bar(user, coord):
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     coord_uid = data.coordinator_by_email(coordinator_for(0)[1])
     a = next(o for o in openings() if o.org_id == coord.org_id and o.status == "open")
     m = data.swipe(uid, a.id, True)
@@ -583,8 +587,7 @@ def test_org_and_admin_refusals_wear_the_shared_look(coord):
 def test_admin_metrics_show_the_empty_deck_count(user):
     admin = admin_client()
     assert "Empty decks: 0 views by 0 volunteers" in admin.get("/admin/metrics").text
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     assert "seen every opening" in user.get("/deck").text
     assert "Empty decks: 1 views by 1 volunteers" in admin.get("/admin/metrics").text
 

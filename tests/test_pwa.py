@@ -1,9 +1,8 @@
 import json
 import re
 import struct
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from conftest import ROOT
 
 
 def png_size(data):

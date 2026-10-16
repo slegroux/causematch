@@ -1,21 +1,11 @@
 import pytest
 from conftest import coordinator_for
-from helpers import coordinator_page
-from test_swipe import guard, offline_under_csp, sign_in_page  # noqa: F401  (fixture)
 
 from app import data
 from app.db import messages, openings, orgs
+from e2e.helpers import coordinator_page, sign_in_page
 
 pytestmark = pytest.mark.e2e
-
-
-@pytest.fixture
-def phone_context(browser, playwright, live_url):
-    ctx = guard(
-        browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
-    )
-    yield ctx
-    ctx.close()
 
 
 def send(page, text):

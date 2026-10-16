@@ -3,11 +3,17 @@
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import httpx
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
+from conftest import (
+    FIXTURES,
+    admin_client,
+    coordinator_for,
+    org_sign_in,
+    sign_in,
+    uid_of,
+)
 from starlette.testclient import TestClient
 
 from app import data, notify, propublica
@@ -36,16 +42,6 @@ def imported(ein=EIN, name="Los Angeles Food Bank"):
 def claim(client=None, **over):
     client = client or TestClient(app)
     return client.post("/org/claim", data={**FORM, **over}, follow_redirects=False)
-
-
-def admin_client(email="boss@example.org"):
-    data.add_admin(email, "Boss Person")
-    c = TestClient(app)
-    c.post("/org/login/send", data={"email": email})
-    token = re.search(r"token=([\w-]+)", notify.get_emailer().sent[-1][2]).group(1)
-    r = c.post("/org/login/verify", data={"token": token}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/admin"
-    return c
 
 
 @pytest.fixture
@@ -299,9 +295,7 @@ def test_deciding_twice_does_nothing_the_second_time(admin):
 def outsiders():
     vol = TestClient(app)
     sign_in(vol)
-    profiles.update(
-        id=data.get_or_create_volunteer(vol.phone), onboarded_at="2026-01-01T00:00:00"
-    )
+    profiles.update(id=uid_of(vol), onboarded_at="2026-01-01T00:00:00")
     _, email = coordinator_for(0)
     coord = TestClient(app)
     org_sign_in(coord, email)
@@ -488,14 +482,7 @@ def serve_org(request):
     return httpx.Response(404, json={"error": "Organization not found"})
 
 
-ORG_FIXTURE = json.loads(
-    (
-        Path(__file__).parent
-        / "fixtures"
-        / "propublica"
-        / "organization_861620575.json"
-    ).read_text()
-)
+ORG_FIXTURE = json.loads((FIXTURES / "organization_861620575.json").read_text())
 
 
 def propublica_says(monkeypatch, handler):

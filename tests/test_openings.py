@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, deck_titles, org_sign_in
+from conftest import coordinator_for, deck_titles, org_sign_in, uid_of
 from starlette.testclient import TestClient
 
 from app import data, geo
@@ -52,7 +52,7 @@ def test_posted_opening_reaches_deck(coord, user):
     # Saturday and Sunday mornings less well, so it is not always the card shown
     (card,) = [
         c
-        for c in data.deck(data.get_or_create_volunteer(user.phone), 50)
+        for c in data.deck(uid_of(user), 50)
         if c["title"] == "Saturday fridge restock"
     ]
     assert card["org"] == "Westside Pantry Collective"

@@ -6,12 +6,15 @@ from types import SimpleNamespace
 
 import anyio.from_thread
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
+from conftest import (
+    coordinator,
+    volunteer,
+)
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app import data, notify, security
-from app.db import matches, messages, openings, orgs, profiles
+from app.db import matches, messages, openings, orgs
 from main import app
 
 XSS = ["<script>alert(1)</script>", '"><img src=x onerror=alert(1)>']
@@ -31,27 +34,11 @@ def one_loop(monkeypatch):
         yield
 
 
-def volunteer(name="Zelda Quinn"):
-    c = TestClient(app)
-    sign_in(c)
-    c.uid = data.get_or_create_volunteer(c.phone)
-    profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
-    return c
-
-
-def coordinator(org_index=0):
-    uid, email = coordinator_for(org_index)
-    c = TestClient(app)
-    org_sign_in(c, email)
-    c.uid = uid
-    return c
-
-
 class Chat:
     """A volunteer and org 0's coordinator, with an accepted match between them."""
 
     def __init__(self):
-        self.vol = volunteer()
+        self.vol = volunteer("Zelda Quinn")
         self.coord = coordinator(0)
         self.opening = openings(where="org_id = ?", where_args=[orgs()[0].id])[0]
         self.match = data.swipe(self.vol.uid, self.opening.id, True)
@@ -104,7 +91,7 @@ def registered(match_id, n=1):
 
 
 def test_pending_match_has_no_chat():
-    vol, coord = volunteer(), coordinator(0)
+    vol, coord = volunteer("Zelda Quinn"), coordinator(0)
     opening = openings(where="org_id = ?", where_args=[orgs()[0].id])[0]
     m = data.swipe(vol.uid, opening.id, True)
     assert m.status == "pending"
@@ -119,7 +106,7 @@ def test_pending_match_has_no_chat():
 
 
 def test_declined_match_has_no_chat():
-    vol, coord = volunteer(), coordinator(0)
+    vol, coord = volunteer("Zelda Quinn"), coordinator(0)
     opening = openings(where="org_id = ?", where_args=[orgs()[0].id])[0]
     m = data.swipe(vol.uid, opening.id, True)
     data.decide(coord.uid, m.id, False)
@@ -220,7 +207,7 @@ def test_withdrawn_match_is_read_only(chat):
 
 
 def test_withdrawn_before_acceptance_has_no_history_page():
-    vol, coord = volunteer(), coordinator(0)
+    vol, coord = volunteer("Zelda Quinn"), coordinator(0)
     opening = openings(where="org_id = ?", where_args=[orgs()[0].id])[0]
     m = data.swipe(vol.uid, opening.id, True)
     data.withdraw(vol.uid, m.id)

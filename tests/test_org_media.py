@@ -7,24 +7,14 @@ import json
 import re
 
 import pytest
+from conftest import jpeg, png, uid_of
 from fasthtml.common import to_xml
-from PIL import Image, ImageDraw
-from test_photos import jpeg, uid_of
+from PIL import Image
 
 from app import data, demo_seed, photos
 from app.db import openings, orgs
 from app.forms import domain, https_url
 from app.routes.deck import OpeningCard
-
-
-def png(size=(400, 120), fill=(20, 60, 140, 255), text_white=False):
-    """A transparent logo: a coloured bar, or a white wordmark-ish bar."""
-    im = Image.new("RGBA", size, (0, 0, 0, 0))
-    color = (255, 255, 255, 255) if text_white else fill
-    ImageDraw.Draw(im).rectangle((40, 40, size[0] - 40, size[1] - 40), fill=color)
-    buf = io.BytesIO()
-    im.save(buf, "PNG")
-    return buf.getvalue()
 
 
 def opened(raw):

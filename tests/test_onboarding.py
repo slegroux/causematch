@@ -1,10 +1,10 @@
 import json
 
 import pytest
+from conftest import FORM, close_all_openings, make_opening
 
 from app import data
 from app.db import causes, places, profiles
-from tests.conftest import FORM
 
 
 def profile_of(client):
@@ -325,19 +325,15 @@ def test_privacy_page_says_exactly_what_is_shared_and_what_is_private(anon):
 def test_a_new_volunteer_sees_what_their_home_reaches(new_user):
     """End to end, with nothing changed after onboarding: Home is 90012 by car within
     30 minutes (16 km), so a shift nearby shows and one across the county doesn't."""
-    from app.db import Opening, now, openings, orgs
     from app.geo import neighborhood_latlon
 
     new_user.post("/onboarding", data=FORM)
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     for title, area in (("near", "Chinatown"), ("far", "Santa Monica")):
         lat, lon = neighborhood_latlon(area)[1]
-        openings.insert(
-            Opening(org_id=orgs()[0].id, title=title, about="",
-                    causes='["food-insecurity"]', skills="[]", lat=lat, lon=lon,
-                    neighborhood=area, remote=False, starts_at="2099-01-03T09:00",
-                    recurrence="one_time", slots=3, status="open", created_at=now())
+        make_opening(
+            title, causes=["food-insecurity"], lat=lat, lon=lon, neighborhood=area,
+            starts_at="2099-01-03T09:00",
         )  # fmt: skip
     (card,) = data.deck(profile_of(new_user).id, 5)
     assert card["title"] == "near" and card["travel"].endswith("by car from Home")

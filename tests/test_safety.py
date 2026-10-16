@@ -3,11 +3,23 @@
 import json
 import subprocess
 import sys
-from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
-from conftest import FORM, coordinator_for, org_sign_in, sign_in
+from conftest import (
+    FIXTURES,
+    FORM,
+    PANTRY,
+    ROOT,
+    coordinator_for,
+    last_link_token,
+    org_sign_in,
+    pantry_opening,
+    sign_in,
+    uid_of,
+    volunteer,
+)
 from fasthtml.common import to_xml
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -29,43 +41,21 @@ from app.db import (
 from app.routes.matches import MatchRow
 from main import app
 
-ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = json.loads(
-    (
-        Path(__file__).parent
-        / "fixtures"
-        / "propublica"
-        / "organization_861620575.json"
-    ).read_text()
-)
-TITLE = "Sort and pack pantry boxes"  # org 0's opening
-
-
-def volunteer(name="Sam"):
-    c = TestClient(app)
-    sign_in(c)
-    c.uid = data.get_or_create_volunteer(c.phone)
-    profiles.update(
-        id=c.uid, display_name=f"{name} Quinn", onboarded_at="2026-01-01T00:00:00"
-    )
-    return c
+FIXTURE = json.loads((FIXTURES / "organization_861620575.json").read_text())
 
 
 @pytest.fixture
 def w():
-    class W:
-        pass
-
-    w = W()
-    w.vol = volunteer()
-    w.other = volunteer("Bea")
-    w.admin = volunteer("Root")
+    w = SimpleNamespace()
+    w.vol = volunteer("Sam Quinn")
+    w.other = volunteer("Bea Quinn")
+    w.admin = volunteer("Root Quinn")
     profiles.update(id=w.admin.uid, role="admin")
     w.coord_uid, email = coordinator_for(0)
     w.coord = TestClient(app)
     org_sign_in(w.coord, email)
     w.org = orgs()[0].id
-    w.opening = openings(where="title = ?", where_args=[TITLE])[0]
+    w.opening = pantry_opening()
     return w
 
 
@@ -341,7 +331,13 @@ def test_the_queue_is_admin_only_and_shows_first_names_only(w):
     data.report_volunteer(w.coord_uid, m.id, "no_show_pattern", "never came")
     page = w.admin.get("/admin/reports")
     assert page.status_code == 200
-    for text in ("Sam", TITLE, "too many texts", "never came", "A pattern of no-shows"):
+    for text in (
+        "Sam",
+        PANTRY,
+        "too many texts",
+        "never came",
+        "A pattern of no-shows",
+    ):
         assert text in page.text
     for secret in (w.vol.phone, "Quinn", "Pat Doe", "coord0@example.org"):
         assert secret not in page.text
@@ -411,9 +407,9 @@ def test_suspending_a_coordinator_ends_their_session(w):
     )
     fresh = TestClient(app)
     fresh.post("/org/login/send", data={"email": "coord0@example.org"})
-    _, _, body = notify.get_emailer().sent[-1]
-    token = body.split("token=")[1].split()[0]
-    r = fresh.post("/org/login/verify", data={"token": token}, follow_redirects=False)
+    r = fresh.post(
+        "/org/login/verify", data={"token": last_link_token()}, follow_redirects=False
+    )
     assert r.status_code == 200  # the form again, not a redirect home
 
 
@@ -726,7 +722,7 @@ def test_delete_account_scrubs_pii(w):
 
 def test_delete_account_through_onboarding_form_data(new_user):
     new_user.post("/onboarding", data={**FORM, "email": "a@b.co"})
-    uid = data.get_or_create_volunteer(new_user.phone)
+    uid = uid_of(new_user)
     assert profiles[uid].email == "a@b.co"
     data.delete_account(uid)
     p = profiles[uid]
@@ -1000,14 +996,7 @@ def test_a_made_up_ein_that_answers_200_with_nulls_is_unknown():
 
 
 def test_the_recorded_404_body_is_unknown():
-    body = json.loads(
-        (
-            Path(__file__).parent
-            / "fixtures"
-            / "propublica"
-            / "organization_not_found.json"
-        ).read_text()
-    )
+    body = json.loads((FIXTURES / "organization_not_found.json").read_text())
     c = httpx.Client(
         transport=httpx.MockTransport(lambda r: httpx.Response(404, json=body))
     )
@@ -1057,7 +1046,7 @@ def test_admin_functions_refuse_a_non_admin(w):
 
 
 def test_a_reporter_is_capped_at_ten_reports_a_day(w):
-    others = [volunteer(f"V{i}") for i in range(data.REPORTS_PER_DAY)]
+    others = [volunteer(f"V{i} Quinn") for i in range(data.REPORTS_PER_DAY)]
     ms = [like(w, v) for v in others]
     for m in ms[: data.REPORTS_PER_DAY - 1]:
         data.report_volunteer(w.coord_uid, m.id, "spam")

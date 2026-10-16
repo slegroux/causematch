@@ -9,12 +9,12 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import ROOT
 
 from app import data, geo, propublica
 from app import db as _db
 from app.db import causes, org_members, orgs
 
-ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).parent / "fixtures" / "propublica"
 
 spec = importlib.util.spec_from_file_location(

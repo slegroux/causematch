@@ -4,12 +4,11 @@ import re
 import subprocess
 import sys
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import apsw
 import pytest
-from conftest import FORM, ORIGIN, coordinator_for, sign_in
+from conftest import FORM, ORIGIN, ROOT, admin_client, coordinator_for, sign_in
 from starlette.testclient import TestClient
 from test_access import ROUTES
 
@@ -18,7 +17,6 @@ from app.db import db as app_db
 from app.db import orgs, profiles, rate_events
 from main import UVICORN, app
 
-ROOT = Path(__file__).resolve().parent.parent
 EVIL = "https://causematch.test.evil.example"
 
 TRAVERSAL = [
@@ -361,7 +359,6 @@ def test_propublica_lookups_and_imports_share_a_limit(monkeypatch):
     from test_safety import client_for, serve_fixture
 
     monkeypatch.setattr(security, "PROPUBLICA", (("propublica", 2, 3600),))
-    from test_claim import admin_client
 
     monkeypatch.setattr(propublica, "make_client", client_for(serve_fixture))
     admin = admin_client()
@@ -459,8 +456,6 @@ def test_cross_origin_post_is_403_and_does_nothing(anon):
 @pytest.mark.parametrize("who", ["user", "coord", "admin"])
 def test_cross_origin_is_refused_for_signed_in_users_too(who, request):
     if who == "admin":
-        from test_claim import admin_client
-
         client, path = admin_client(), "/admin/claims/1/approve"
     else:
         client = request.getfixturevalue(who)

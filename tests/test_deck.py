@@ -1,11 +1,10 @@
-import json
 from datetime import datetime, timedelta
 
-from conftest import deck_titles
+from conftest import close_all_openings, deck_titles, make_opening, uid_of
 
 from app import data
 from app.data import LA
-from app.db import Opening, now, openings, orgs
+from app.db import openings
 
 HOME_PLACES = (
     True  # each test runs with a saved Home place and as a profile from before
@@ -20,23 +19,17 @@ def soon(days):
 SEEN = "Sort and pack pantry boxes"  # positive control: an open, active-cause opening
 
 
-def add_opening(title, causes, starts_at=None, status="open", **kw):
-    starts_at = starts_at or soon(90)
-    return openings.insert(
-        Opening(
-            org_id=orgs()[0].id,
-            title=title,
-            about="",
-            causes=json.dumps(causes),
-            skills="[]",
-            neighborhood="Sawtelle",
-            remote=False,
-            starts_at=starts_at,
-            slots=3,
-            status=status,
-            created_at=now(),
-            **{"lat": 34.066, "lon": -118.239, **kw},
-        )
+def add_opening(title, causes, starts_at=None, **kw):
+    return make_opening(
+        title,
+        **{
+            "causes": causes,
+            "lat": 34.066,
+            "lon": -118.239,
+            "neighborhood": "Sawtelle",
+            "starts_at": starts_at or soon(90),
+            **kw,
+        },
     )
 
 
@@ -45,9 +38,7 @@ def test_deck_shows_seeded_opening(user):
     assert r.status_code == 200
     assert SEEN in deck_titles(user)
     assert deck_titles(user)[0] in r.text  # the page renders the top card
-    assert "Westside Pantry Collective" in str(
-        data.deck(data.get_or_create_volunteer(user.phone), 50)
-    )
+    assert "Westside Pantry Collective" in str(data.deck(uid_of(user), 50))
     assert 'name="viewport"' in r.text
     assert r.text.count('name="viewport"') == 1
     assert "<title>Causematch</title>" in r.text
@@ -73,15 +64,14 @@ def test_mixed_cause_opening_shows_only_active_label(homelessness_off, user):
         ["food-insecurity", "homelessness-services"],
         starts_at=soon(1),
     )
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     (card,) = [c for c in data.deck(uid, 50) if c["title"] == "Mixed cause shift"]
     assert card["causes"] == ["Food insecurity"]
 
 
 def test_equal_fit_is_soonest_first_and_limited(user):
-    uid = data.get_or_create_volunteer(user.phone)
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    uid = uid_of(user)
+    close_all_openings()
     sat = datetime.now(LA).replace(hour=9, minute=0) + timedelta(days=7)
     sat += timedelta(
         days=(5 - sat.weekday()) % 7

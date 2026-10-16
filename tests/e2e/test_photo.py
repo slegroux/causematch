@@ -1,21 +1,13 @@
 import io
 
 import pytest
+from conftest import jpeg, png
 from PIL import Image
-from test_swipe import guard, offline_under_csp, sign_in_page  # noqa: F401  (fixture)
 
 from app.db import profiles
+from e2e.helpers import SE, guard, sign_in_page
 
 pytestmark = pytest.mark.e2e
-
-
-@pytest.fixture
-def phone_context(browser, playwright, live_url):
-    ctx = guard(
-        browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
-    )
-    yield ctx
-    ctx.close()
 
 
 def big_photo():
@@ -57,9 +49,6 @@ def test_a_photo_is_previewed_then_uploaded_shrunk(phone_context):
 def test_a_card_with_photo_logo_and_link_keeps_its_buttons_in_view(browser, live_url):
     """375 x 667, the smallest common phone: the photo band, the badge and the event link
     still leave Pass and Like above the tab bar."""
-    from test_org_media import png
-    from test_photos import jpeg
-
     from app import data, photos
     from app.db import openings, orgs
 
@@ -71,7 +60,7 @@ def test_a_card_with_photo_logo_and_link_keeps_its_buttons_in_view(browser, live
         openings.update(id=o.id, event_url="https://www.example.org/volunteer")
     ctx = guard(
         browser.new_context(
-            viewport={"width": 375, "height": 667},
+            viewport=SE,
             is_mobile=True,
             has_touch=True,
             base_url=live_url,

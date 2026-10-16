@@ -3,25 +3,27 @@
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
-from starlette.testclient import TestClient
+from conftest import (
+    PANTRY,
+    coordinator,
+    pantry_opening,
+    volunteer,
+)
 
 from app import config, data, notify
 from app.db import (
     matches,
     notifications,
-    openings,
     orgs,
     profiles,
     rate_events,
     shifts,
 )
-from main import app
 
-TITLE = "Sort and pack pantry boxes"
 BASE = "https://causematch.test"
 T0 = datetime(2027, 3, 1, 18, 0, tzinfo=UTC)  # 10:00 in Los Angeles
 FMT = "%Y-%m-%dT%H:%M"
@@ -60,24 +62,8 @@ def emails():
     return [m for m in notify.get_emailer().sent if "volunteer interest" in m[1]]
 
 
-def volunteer(name="Zelda"):
-    c = TestClient(app)
-    sign_in(c)
-    c.uid = data.get_or_create_volunteer(c.phone)
-    profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
-    return c
-
-
-def coordinator(org_index=0):
-    uid, email = coordinator_for(org_index)
-    c = TestClient(app)
-    org_sign_in(c, email)
-    c.uid = uid
-    return c
-
-
 def opening():
-    return openings(where="title = ?", where_args=[TITLE])[0]
+    return pantry_opening()
 
 
 def like(vol, o=None):
@@ -97,11 +83,8 @@ def accept(coord, m):
 
 @pytest.fixture
 def world(clock):
-    class W:
-        pass
-
-    w = W()
-    w.vol, w.coord = volunteer(), coordinator()
+    w = SimpleNamespace()
+    w.vol, w.coord = volunteer("Zelda"), coordinator()
     w.match = like(w.vol)
     notify.get_emailer().sent.clear()
     return w
@@ -139,7 +122,7 @@ def test_accept_sends_one_text_with_the_expected_words(world):
     assert texts() == [
         (
             world.vol.phone,
-            f"{orgs()[0].name} said yes to {TITLE}! Chat and details: {BASE}/matches",
+            f"{orgs()[0].name} said yes to {PANTRY}! Chat and details: {BASE}/matches",
         )
     ]
 
@@ -221,14 +204,14 @@ def test_like_emails_are_throttled_per_org_and_count_the_waiting(clock):
 
 def test_a_pass_sends_no_email(clock):
     coordinator()
-    vol = volunteer()
+    vol = volunteer("Zelda")
     vol.post("/swipe", data={"opening_id": str(opening().id), "liked": "0"})
     assert emails() == []
 
 
 def test_a_repeat_like_sends_no_second_email(clock):
     coordinator()
-    vol = volunteer()
+    vol = volunteer("Zelda")
     like(vol)
     clock.advance(minutes=16)
     like(vol)
@@ -353,7 +336,7 @@ def test_failing_email_never_breaks_a_swipe(clock, monkeypatch):
     monkeypatch.setattr(
         notify.get_emailer(), "send", lambda *a: (_ for _ in ()).throw(OSError("down"))
     )
-    vol = volunteer()
+    vol = volunteer("Zelda")
     like(vol)
     assert [n.status for n in notifications()] == ["failed"]
 
@@ -418,7 +401,7 @@ def test_reminders_pick_exactly_the_shifts_in_the_window_and_only_once(
         assert r.status_code == 200
         assert len(texts()) == n
     assert all(
-        t.startswith(f"Reminder: {TITLE} with {orgs()[0].name} is on ")
+        t.startswith(f"Reminder: {PANTRY} with {orgs()[0].name} is on ")
         and f"{BASE}/matches" in t
         for _, t in texts()
     )

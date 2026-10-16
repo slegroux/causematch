@@ -7,10 +7,17 @@ query, and only then the body, so user input is read explicitly (app/forms.py).
 import ast
 import json
 import re
-from pathlib import Path
 
 import pytest
-from conftest import FORM, coordinator_for, org_sign_in, sign_in
+from conftest import (
+    FORM,
+    ROOT,
+    coordinator_for,
+    last_link_token,
+    org_sign_in,
+    sign_in,
+    uid_of,
+)
 from starlette.testclient import TestClient
 from test_access import opening_form
 
@@ -19,7 +26,6 @@ from app.db import matches, messages, openings, orgs, profiles
 from main import app
 
 HOSTILE = "hostile-cookie-value"
-ROOT = Path(__file__).resolve().parent.parent
 # What a handler parameter may be without coming from the request's data: the request, the
 # session, the socket, and FastHTML's other injected names.
 INJECTED = {"req", "request", "sess", "session", "ws", "scope", "auth", "app", "state"}
@@ -71,7 +77,7 @@ def test_org_token_in_the_link_beats_a_cookie():
     _, email = coordinator_for(0)
     c = with_cookie(TestClient(app), "token")
     c.post("/org/login/send", data={"email": email})
-    token = re.search(r"token=([\w-]+)", notify.get_emailer().sent[-1][2]).group(1)
+    token = last_link_token()
     html = c.get(f"/org/login/verify?token={token}").text  # kept in the session
     assert HOSTILE not in html
     r = c.post("/org/login/verify", data={}, follow_redirects=False)
@@ -108,7 +114,7 @@ def test_opening_field_beats_a_cookie(coord, name):
 
 
 def test_swipe_fields_beat_cookies(user):
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     ids = [c["id"] for c in data.deck(uid, 5)]
     mine, other = ids[0], ids[1]
     with_cookie(user, "opening_id", str(other))
@@ -120,7 +126,7 @@ def test_swipe_fields_beat_cookies(user):
 def test_decide_field_beats_a_cookie(coord):
     vol = TestClient(app)
     sign_in(vol)
-    uid = data.get_or_create_volunteer(vol.phone)
+    uid = uid_of(vol)
     profiles.update(id=uid, display_name="Sam", onboarded_at="2026-01-01T00:00:00")
     opening = openings(where="org_id = ?", where_args=[coord.org_id])[0]
     m = data.swipe(uid, opening.id, True)
@@ -145,7 +151,7 @@ def test_messages_come_from_the_server_not_a_cookie(coord, name):
 def accepted():
     vol, coord = TestClient(app), TestClient(app)
     sign_in(vol)
-    vol.uid = data.get_or_create_volunteer(vol.phone)
+    vol.uid = uid_of(vol)
     profiles.update(id=vol.uid, display_name="Sam", onboarded_at="2026-01-01T00:00:00")
     cuid, email = coordinator_for(0)
     org_sign_in(coord, email)

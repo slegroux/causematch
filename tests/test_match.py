@@ -2,7 +2,7 @@ import threading
 from datetime import datetime, timedelta
 
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
+from conftest import PANTRY, coordinator_for, org_sign_in, uid_of, volunteer
 from starlette.testclient import TestClient
 
 from app import data
@@ -10,20 +10,10 @@ from app.db import db, matches, openings, places, profiles, swipes
 from main import app
 
 FMT = "%Y-%m-%dT%H:%M"
-TITLE = "Sort and pack pantry boxes"  # org 0, status open, 6 slots
 
 
-def opening(title=TITLE):
+def opening(title=PANTRY):
     return openings(where="title = ?", where_args=[title])[0]
-
-
-def volunteer(name="Sam"):
-    c = TestClient(app)
-    sign_in(c)
-    uid = data.get_or_create_volunteer(c.phone)
-    profiles.update(id=uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
-    c.uid = uid
-    return c
 
 
 def one_slot_opening():
@@ -34,7 +24,7 @@ def one_slot_opening():
 
 def test_like_makes_pending_match_and_pass_does_not():
     v = volunteer()
-    o1, o2 = (opening(TITLE), opening("Serve a weekend lunch line"))
+    o1, o2 = (opening(PANTRY), opening("Serve a weekend lunch line"))
     m = data.swipe(v.uid, o1.id, True)
     assert m.status == "pending" and m.opening_id == o1.id
     assert data.swipe(v.uid, o2.id, False) is None
@@ -166,7 +156,7 @@ def test_deck_excludes_swiped_openings_per_volunteer():
 def test_my_matches_lists_only_own():
     v, other = volunteer(), volunteer()
     data.swipe(v.uid, opening().id, True)
-    assert [m["title"] for m in data.my_matches(v.uid)] == [TITLE]
+    assert [m["title"] for m in data.my_matches(v.uid)] == [PANTRY]
     assert data.my_matches(other.uid) == []
 
 
@@ -187,10 +177,10 @@ def test_swipe_over_htmx_returns_next_card_then_empty_state(user):
         data={"opening_id": o.id, "liked": "1"},
         headers={"HX-Request": "true"},
     )
-    assert r.status_code == 200 and TITLE not in r.text and "data-swipe-card" in r.text
+    assert r.status_code == 200 and PANTRY not in r.text and "data-swipe-card" in r.text
     assert len(matches()) == 1
     for _ in range(10):
-        left = data.deck(data.get_or_create_volunteer(user.phone), limit=1)
+        left = data.deck(uid_of(user), limit=1)
         if not left:
             break
         user.post(
@@ -214,7 +204,7 @@ def test_matches_page_and_withdraw(user):
     o = opening()
     user.post("/swipe", data={"opening_id": o.id, "liked": "1"})
     r = user.get("/matches")
-    assert TITLE in r.text and "Waiting for the nonprofit" in r.text
+    assert PANTRY in r.text and "Waiting for the nonprofit" in r.text
     mid = matches()[0].id
     r = user.post(f"/matches/{mid}/withdraw", follow_redirects=False)
     assert r.status_code == 303
@@ -226,7 +216,7 @@ def test_withdraw_asks_first_and_a_get_changes_nothing(user):
     mid = matches()[0].id
     assert f'href="/matches/{mid}/withdraw"' in user.get("/matches").text
     page = user.get(f"/matches/{mid}/withdraw")
-    assert f"Withdraw from {TITLE}?" in page.text
+    assert f"Withdraw from {PANTRY}?" in page.text
     assert "You won't be able to like this opening again." in page.text
     assert (
         f'action="/matches/{mid}/withdraw"' in page.text and "onclick" not in page.text
@@ -298,7 +288,7 @@ def test_volunteer_cannot_reach_inbox_or_decide(user):
 
 
 def test_inbox_never_shows_contact_or_location(user, coord):
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     profiles.update(
         id=uid,
         display_name="Sam Hidden",
@@ -499,7 +489,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
         assert promised in SHARED_WITH_NONPROFIT
     assert "Never your phone, email or exact location" in SHARED_WITH_NONPROFIT
     # ... and the inbox shows exactly those, nothing private
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     places.delete_where("user_id = ?", [uid])  # placed by its profile columns below
     profiles.update(
         id=uid,
@@ -676,7 +666,7 @@ def test_twenty_concurrent_swipes_over_http_with_sign_ins_in_flight(live_url):
 
 
 def test_the_org_sees_the_last_initial_until_it_accepts(user, coord):
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     profiles.update(id=uid, last_name="Lee", pronouns="they/them")
     user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
     mid = matches()[0].id
@@ -693,7 +683,7 @@ def test_the_org_sees_the_last_initial_until_it_accepts(user, coord):
 
 
 def test_a_declined_volunteer_keeps_the_initial(user, coord):
-    uid = data.get_or_create_volunteer(user.phone)
+    uid = uid_of(user)
     profiles.update(id=uid, last_name="Lee")
     user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
     coord.post(f"/org/matches/{matches()[0].id}/decide", data={"decision": "decline"})

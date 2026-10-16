@@ -5,16 +5,13 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
+from conftest import close_all_openings, make_opening, uid_of
 
 from app import data, geo, match
 from app.db import (
-    Opening,
     causes,
     db,
     deck_empties,
-    now,
-    openings,
-    orgs,
     places,
     profiles,
 )
@@ -39,30 +36,19 @@ BASE = {
 }
 
 
-def uid_of(client):
-    return data.get_or_create_volunteer(client.phone)
-
-
 def add(title, where, starts_at="2099-01-03T09:00", **kw):
     lat, lon = where
-    fields = {
-        "org_id": orgs()[0].id,
-        "title": title,
-        "about": "",
-        "causes": '["food-insecurity"]',
-        "skills": "[]",
-        "lat": lat,
-        "lon": lon,
-        "neighborhood": "Somewhere",
-        "remote": False,
-        "starts_at": starts_at,
-        "recurrence": "one_time",
-        "slots": 3,
-        "status": "open",
-        "created_at": now(),
-    }
-    fields.update(kw)
-    return openings.insert(Opening(**fields)).id
+    return make_opening(
+        title,
+        **{
+            "causes": ["food-insecurity"],
+            "lat": lat,
+            "lon": lon,
+            "neighborhood": "Somewhere",
+            "starts_at": starts_at,
+            **kw,
+        },
+    ).id
 
 
 def place_fields(n, label, where, mode="car", minutes="15", lat="", lon=""):
@@ -78,8 +64,7 @@ def place_fields(n, label, where, mode="car", minutes="15", lat="", lon=""):
 
 @pytest.fixture
 def bare(user):
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     return user
 
 

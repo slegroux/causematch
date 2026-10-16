@@ -4,20 +4,23 @@ import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
-from starlette.testclient import TestClient
+from conftest import (
+    PANTRY,
+    ROOT,
+    coordinator,
+    coordinator_for,
+    pantry_opening,
+    volunteer,
+)
 
 from app import data
-from app.db import matches, openings, orgs, profiles, shifts
-from main import app
+from app.db import matches, openings, orgs, shifts
 
-ROOT = Path(__file__).resolve().parent.parent
 LA = ZoneInfo("America/Los_Angeles")
-TITLE = "Sort and pack pantry boxes"
 FMT = "%Y-%m-%dT%H:%M"
 
 
@@ -50,33 +53,14 @@ def clock(monkeypatch):
     return Clock(monkeypatch)
 
 
-def volunteer(name="Zelda"):
-    c = TestClient(app)
-    sign_in(c)
-    c.uid = data.get_or_create_volunteer(c.phone)
-    profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
-    return c
-
-
-def coordinator(org_index):
-    uid, email = coordinator_for(org_index)
-    c = TestClient(app)
-    org_sign_in(c, email)
-    c.uid = uid
-    return c
-
-
 @pytest.fixture
 def world(clock):
     """Volunteer A with a pending match on org 0's opening; coordinators of org 0 and 1."""
 
-    class W:
-        pass
-
-    w = W()
+    w = SimpleNamespace()
     w.a, w.b = volunteer("Zelda"), volunteer("Bianca")
     w.org0, w.org1 = coordinator(0), coordinator(1)
-    w.opening = openings(where="title = ?", where_args=[TITLE])[0]
+    w.opening = pantry_opening()
     openings.update(id=w.opening.id, starts_at=OPENING_START)
     w.opening = openings[w.opening.id]
     assert w.opening.org_id == orgs()[0].id
@@ -231,7 +215,7 @@ def test_volunteer_history_shows_only_their_own(accepted, clock):
     data.decide(accepted.org0.uid, other.id, True)
     data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=3))
     mine = accepted.a.get("/history")
-    assert mine.status_code == 200 and TITLE in mine.text
+    assert mine.status_code == 200 and PANTRY in mine.text
     assert "Scheduled" in mine.text
     assert "Waiting for the nonprofit to confirm" not in mine.text
     assert len(data.my_shifts(accepted.a.uid)["upcoming"]) == 2

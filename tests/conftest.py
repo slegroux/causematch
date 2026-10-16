@@ -13,17 +13,24 @@ os.environ["PUBLIC_BASE_URL"] = "https://causematch.test"
 os.environ["CAUSEMATCH_ENV"] = "test"
 os.environ.pop("K_SERVICE", None)
 
+import io
 import itertools
+import json
 import re
 import socket
 import threading
 import time
+from pathlib import Path
 
 import pytest
 import starlette.testclient
 import uvicorn
+from PIL import Image, ImageDraw
 
 ORIGIN = os.environ["PUBLIC_BASE_URL"]
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURES = Path(__file__).parent / "fixtures" / "propublica"
+PANTRY = "Sort and pack pantry boxes"  # org 0's seeded opening, the soonest
 
 
 class SameOriginClient(starlette.testclient.TestClient):
@@ -44,6 +51,7 @@ from app import data, notify, security
 from app.auth import normalize_phone
 from app.choices import ANY_DISTANCE_KM
 from app.db import (
+    Opening,
     blocks,
     causes,
     claim_requests,
@@ -53,6 +61,7 @@ from app.db import (
     matches,
     messages,
     notifications,
+    now,
     openings,
     org_members,
     orgs,
@@ -104,6 +113,7 @@ def fresh_db():
     seed_demo()
     notify.get_verifier().sent.clear()
     notify.get_emailer().sent.clear()
+    notify.get_sms().sent.clear()
 
 
 @pytest.fixture
@@ -218,14 +228,94 @@ def coordinator_for(org_index=0, email=None, role="coordinator"):
     )
 
 
-def org_sign_in(client, email):
-    """Sign in through the emailed link, the way a coordinator does."""
-    client.post("/org/login/send", data={"email": email})
+def last_link_token():
+    """The token in the sign-in link of the last email sent."""
     _, _, body = notify.get_emailer().sent[-1]
-    token = re.search(r"token=([\w-]+)", body).group(1)
+    return re.search(r"token=([\w-]+)", body).group(1)
+
+
+def org_sign_in(client, email, lands="/org"):
+    """Sign in through the emailed link, the way a coordinator (or, lands="/admin", an
+    admin) does."""
+    client.post("/org/login/send", data={"email": email})
+    token = last_link_token()
     r = client.post("/org/login/verify", data={"token": token}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/org"
+    assert r.status_code == 303 and r.headers["location"] == lands
     return token
+
+
+def admin_client(email="boss@example.org"):
+    data.add_admin(email, "Boss Person")
+    c = TestClient(app)
+    org_sign_in(c, email, lands="/admin")
+    return c
+
+
+def volunteer(name="Sam"):
+    """A signed-in, onboarded volunteer; c.uid is the profile id."""
+    c = TestClient(app)
+    sign_in(c)
+    c.uid = data.get_or_create_volunteer(c.phone)
+    profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
+    return c
+
+
+def coordinator(org_index=0):
+    """A signed-in coordinator of the nth seeded org; c.uid is the profile id."""
+    uid, email = coordinator_for(org_index)
+    c = TestClient(app)
+    org_sign_in(c, email)
+    c.uid = uid
+    return c
+
+
+def uid_of(client):
+    return data.get_or_create_volunteer(client.phone)
+
+
+def pantry_opening():
+    return openings(where="title = ?", where_args=[PANTRY])[0]
+
+
+def close_all_openings():
+    for o in openings():
+        openings.update(id=o.id, status="closed")
+
+
+def make_opening(title, **fields):
+    """Insert an open opening of org 0 and return its row. Pass causes (a slug list or a
+    JSON string), lat, lon, neighborhood and starts_at; any field overrides its default."""
+    fields = {
+        "org_id": orgs()[0].id,
+        "title": title,
+        "about": "",
+        "skills": "[]",
+        "remote": False,
+        "recurrence": "one_time",
+        "slots": 3,
+        "status": "open",
+        "created_at": now(),
+        **fields,
+    }
+    if isinstance(fields["causes"], list):
+        fields["causes"] = json.dumps(fields["causes"])
+    return openings.insert(Opening(**fields))
+
+
+def jpeg(size=(1200, 900), exif=None, color=(200, 90, 60)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "JPEG", exif=exif or Image.Exif())
+    return buf.getvalue()
+
+
+def png(size=(400, 120), fill=(20, 60, 140, 255), text_white=False):
+    """A transparent logo: a coloured bar, or a white wordmark-ish bar."""
+    im = Image.new("RGBA", size, (0, 0, 0, 0))
+    color = (255, 255, 255, 255) if text_white else fill
+    ImageDraw.Draw(im).rectangle((40, 40, size[0] - 40, size[1] - 40), fill=color)
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
 
 
 @pytest.fixture

@@ -1,35 +1,15 @@
 import pytest
-from conftest import coordinator_for
-from test_swipe import guard, offline_under_csp, sign_in_page  # noqa: F401  (fixture)
+from conftest import close_all_openings, coordinator_for, make_opening
 
 from app import data
 from app.db import openings, orgs
+from e2e.helpers import SE, accepted_match, coordinator_page, guard, sign_in_page
 
 pytestmark = pytest.mark.e2e
 
-SE = {"width": 375, "height": 667}  # iPhone SE, the smallest phone in common use
 
-
-@pytest.fixture
-def se_page(browser, live_url):
-    ctx = guard(
-        browser.new_context(
-            viewport=SE, is_mobile=True, has_touch=True, base_url=live_url
-        )
-    )
-    yield ctx.new_page()
-    ctx.close()
-
-
-def accepted_match(uid):
-    opening = openings(where="org_id = ?", where_args=[orgs()[0].id])[0]
-    m = data.swipe(uid, opening.id, True)
-    data.decide(data.coordinator_by_email(coordinator_for(0)[1]), m.id, True)
-    return m.id
-
-
-def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(se_page):
-    p = sign_in_page(se_page, "(310) 555-0160")
+def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(phone):
+    p = sign_in_page(phone, "(310) 555-0160")
     match_id = accepted_match(p.id)
     for path, tab in (
         ("/deck", "Openings"),
@@ -44,12 +24,12 @@ def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(se_page):
         (f"/matches/{match_id}/report", "Matches"),
         (f"/matches/{match_id}/block", "Matches"),
     ):
-        se_page.goto(path)
-        width = se_page.evaluate(
+        phone.goto(path)
+        width = phone.evaluate(
             "[document.scrollingElement.scrollWidth, window.innerWidth]"
         )
         assert width[0] <= width[1], (path, width)
-        bar = se_page.get_by_role("navigation", name="Main")
+        bar = phone.get_by_role("navigation", name="Main")
         assert bar.is_visible(), path
         box = bar.bounding_box()
         assert box["y"] + box["height"] == pytest.approx(SE["height"], abs=1), path
@@ -57,11 +37,11 @@ def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(se_page):
         assert current.inner_text().strip() == tab, path
 
 
-def test_swipe_buttons_are_big_round_targets(se_page):
-    sign_in_page(se_page, "(310) 555-0161")
-    se_page.goto("/deck")
+def test_swipe_buttons_are_big_round_targets(phone):
+    sign_in_page(phone, "(310) 555-0161")
+    phone.goto("/deck")
     for name in ("Pass", "Like"):
-        box = se_page.get_by_role("button", name=name).bounding_box()
+        box = phone.get_by_role("button", name=name).bounding_box()
         assert box["width"] >= 56 and box["height"] >= 56, (name, box)
         # above the tab bar, so a thumb reaches them without scrolling
         assert box["y"] + box["height"] <= SE["height"] - 64, (name, box)
@@ -76,19 +56,19 @@ def long_chat(page, phone):
     return match_id
 
 
-def test_the_chat_composer_and_links_are_big_enough(se_page):
-    long_chat(se_page, "(310) 555-0162")
-    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+def test_the_chat_composer_and_links_are_big_enough(phone):
+    long_chat(phone, "(310) 555-0162")
+    bar = phone.get_by_role("navigation", name="Main").bounding_box()
     for field in (
-        se_page.get_by_label("Message"),
-        se_page.get_by_role("button", name="Send"),
-        se_page.get_by_role("link", name="Report"),
-        se_page.get_by_role("link", name="Block"),
-        se_page.get_by_role("link", name="causematch"),
+        phone.get_by_label("Message"),
+        phone.get_by_role("button", name="Send"),
+        phone.get_by_role("link", name="Report"),
+        phone.get_by_role("link", name="Block"),
+        phone.get_by_role("link", name="causematch"),
     ):
         box = field.bounding_box()
         assert box["height"] >= 44, box
-    form = se_page.locator("form.cm-composer").bounding_box()
+    form = phone.locator("form.cm-composer").bounding_box()
     assert form["y"] + form["height"] <= bar["y"] + 0.5, (form, bar)
 
 
@@ -139,10 +119,10 @@ def test_the_home_screen_toast_never_covers_the_chat(browser, playwright, live_u
     ctx.close()
 
 
-def test_the_current_tab_differs_by_more_than_color(se_page):
-    sign_in_page(se_page, "(310) 555-0164")
-    se_page.goto("/deck")
-    bar = se_page.get_by_role("navigation", name="Main")
+def test_the_current_tab_differs_by_more_than_color(phone):
+    sign_in_page(phone, "(310) 555-0164")
+    phone.goto("/deck")
+    bar = phone.get_by_role("navigation", name="Main")
     weight = "e => getComputedStyle(e).fontWeight"
     on = bar.locator("[aria-current=page]")
     off = bar.get_by_role("link", name="Matches")
@@ -162,8 +142,6 @@ def test_an_os_dark_mode_keeps_native_controls_light(browser, live_url):
 def test_nonprofit_pages_fit_a_small_phone(browser, live_url):
     """Populated, so the widest rows are laid out: an inbox card with Accept/Decline and
     four links, a weekly shift's three buttons, the nav badge and the fill bar."""
-    from helpers import coordinator_page
-
     page = coordinator_page(browser, live_url)
     page.set_viewport_size(SE)
     org_id = orgs()[0].id
@@ -194,8 +172,6 @@ def test_nonprofit_pages_fit_a_small_phone(browser, live_url):
 def test_the_homelessness_note_stands_out_only_for_that_cause(browser, live_url):
     """Always shown and read with the checkbox; bold in a highlighted box once the
     cause is homelessness services."""
-    from helpers import coordinator_page
-
     page = coordinator_page(browser, live_url)
     page.goto("/org/openings/new")
     note = page.get_by_text("Homelessness services: group shifts only")
@@ -213,48 +189,34 @@ def test_the_homelessness_note_stands_out_only_for_that_cause(browser, live_url)
     page.context.close()
 
 
-def test_the_save_bar_covers_nothing_at_the_bottom_of_preferences(se_page):
-    sign_in_page(se_page, "(310) 555-0163")
-    se_page.goto("/me/preferences")
-    se_page.evaluate("window.scrollTo(0, document.scrollingElement.scrollHeight)")
-    save = se_page.get_by_role("button", name="Save preferences").bounding_box()
-    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+def test_the_save_bar_covers_nothing_at_the_bottom_of_preferences(phone):
+    sign_in_page(phone, "(310) 555-0163")
+    phone.goto("/me/preferences")
+    phone.evaluate("window.scrollTo(0, document.scrollingElement.scrollHeight)")
+    save = phone.get_by_role("button", name="Save preferences").bounding_box()
+    bar = phone.get_by_role("navigation", name="Main").bounding_box()
     assert save["y"] + save["height"] <= bar["y"], (save, bar)
     # the last section's last control is above the save button, not under it
-    last = se_page.locator("label:has(input[name=skills])").last.bounding_box()
+    last = phone.locator("label:has(input[name=skills])").last.bounding_box()
     assert last["y"] + last["height"] <= save["y"], (last, save)
 
 
-def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(se_page):
+def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(phone):
     """The tallest card in practice: a two-line title and place, and four why-chips."""
     from datetime import datetime, timedelta
 
-    from app.db import Opening, now, profiles
+    from app.db import profiles
 
-    p = sign_in_page(se_page, "(310) 555-0164")
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    p = sign_in_page(phone, "(310) 555-0164")
+    close_all_openings()
     saturday = datetime.now(data.LA) + timedelta(weeks=1)
     saturday += timedelta(days=(5 - saturday.weekday()) % 7)
-    openings.insert(
-        Opening(
-            org_id=orgs()[0].id,
-            title="Sample: Support special events and community outreach",
-            about="",
-            causes='["environment-parks"]',
-            skills="[]",
-            lat=34.05,
-            lon=-118.25,
-            neighborhood="Sepulveda Basin (Encino / Van Nuys)",
-            remote=False,
-            starts_at=saturday.strftime("%Y-%m-%dT09:00"),
-            recurrence="one_time",
-            slots=6,
-            status="open",
-            created_at=now(),
-            first_timer_ok=True,
-        )
-    )
+    make_opening(
+        "Sample: Support special events and community outreach",
+        causes=["environment-parks"], lat=34.05, lon=-118.25,
+        neighborhood="Sepulveda Basin (Encino / Van Nuys)",
+        starts_at=saturday.strftime("%Y-%m-%dT09:00"), slots=6, first_timer_ok=True,
+    )  # fmt: skip
     profiles.update(
         id=p.id,
         lat=34.06,
@@ -265,38 +227,34 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(se_page):
     )
     (card,) = data.deck(p.id, 5)
     assert len(card["why"]) == 4
-    se_page.goto("/deck")
-    bar = se_page.get_by_role("navigation", name="Main").bounding_box()
+    phone.goto("/deck")
+    bar = phone.get_by_role("navigation", name="Main").bounding_box()
     for name in ("Pass", "Like"):
-        box = se_page.get_by_role("button", name=name).bounding_box()
+        box = phone.get_by_role("button", name=name).bounding_box()
         assert box["y"] + box["height"] <= bar["y"], (name, box, bar)
 
 
-def test_onboarding_fills_and_submits_on_a_small_phone(se_page):
-    se_page.goto("/login")
-    se_page.get_by_label("Mobile number").fill("(310) 555-0165")
-    se_page.get_by_role("button", name="Text me a code").click()
-    se_page.get_by_label("Code").fill("000000")
-    se_page.get_by_role("button", name="Sign in").click()
-    se_page.wait_for_url("**/onboarding")
-    width = se_page.evaluate(
-        "[document.scrollingElement.scrollWidth, window.innerWidth]"
-    )
+def test_onboarding_fills_and_submits_on_a_small_phone(phone):
+    phone.goto("/login")
+    phone.get_by_label("Mobile number").fill("(310) 555-0165")
+    phone.get_by_role("button", name="Text me a code").click()
+    phone.get_by_label("Code").fill("000000")
+    phone.get_by_role("button", name="Sign in").click()
+    phone.wait_for_url("**/onboarding")
+    width = phone.evaluate("[document.scrollingElement.scrollWidth, window.innerWidth]")
     assert width[0] <= width[1], width
-    se_page.locator("input[name=first_name]").fill("Sam")
-    se_page.get_by_text("I'm 18 or older").click()
-    se_page.get_by_label("Neighborhood or ZIP").fill("90012")
-    se_page.locator(
-        "label:has(input[name='cause_food-insecurity'][value=love])"
-    ).click()
-    se_page.locator("label:has(input[name=availability][value=sat_morning])").click()
-    se_page.locator("select[name=heard_from]").select_option("public")
-    se_page.get_by_text("I agree", exact=True).click()
-    start = se_page.get_by_role("button", name="Start swiping")
+    phone.locator("input[name=first_name]").fill("Sam")
+    phone.get_by_text("I'm 18 or older").click()
+    phone.get_by_label("Neighborhood or ZIP").fill("90012")
+    phone.locator("label:has(input[name='cause_food-insecurity'][value=love])").click()
+    phone.locator("label:has(input[name=availability][value=sat_morning])").click()
+    phone.locator("select[name=heard_from]").select_option("public")
+    phone.get_by_text("I agree", exact=True).click()
+    start = phone.get_by_role("button", name="Start swiping")
     box = start.bounding_box()
     assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
     start.click()
-    se_page.wait_for_url("**/deck")
+    phone.wait_for_url("**/deck")
 
 
 def test_pass_and_like_stay_above_the_tab_bar_on_a_short_screen(browser, live_url):
