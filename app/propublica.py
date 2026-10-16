@@ -4,6 +4,7 @@ Network only, no database. Callers run it off the event loop and never under the
 """
 
 import re
+from contextlib import contextmanager
 
 import httpx
 
@@ -43,6 +44,22 @@ def make_client():
     )
 
 
+@contextmanager
+def _asking(client):
+    """The client (a new one, closed after, when None); every failure is a LookupFailed."""
+    own = client is None
+    client = client or make_client()
+    try:
+        yield client
+    except httpx.HTTPError as e:
+        raise _failed(e) from e
+    except (ValueError, KeyError, TypeError) as e:
+        raise LookupFailed("ProPublica sent a response we could not read") from e
+    finally:
+        if own:
+            client.close()
+
+
 def lookup(ein, client=None):
     """{"ein", "name", "city", "state", "zip", "ntee"} for a registered nonprofit, None for an
     unknown EIN. zip is the five-digit ZIP ("" when absent), ntee the NTEE code ("" when absent).
@@ -53,10 +70,8 @@ def lookup(ein, client=None):
     ein = normalize_ein(ein)
     if ein is None:
         raise ValueError("an EIN is nine digits, like 53-0196605")
-    own = client is None
-    client = client or make_client()
-    try:
-        r = client.get(URL.format(ein=ein))
+    with _asking(client) as c:
+        r = c.get(URL.format(ein=ein))
         if r.status_code == 404:
             return None
         r.raise_for_status()
@@ -77,13 +92,6 @@ def lookup(ein, client=None):
             "zip": _text(org.get("zipcode"))[:5],
             "ntee": _text(org.get("ntee_code")),
         }
-    except httpx.HTTPError as e:
-        raise _failed(e) from e
-    except (ValueError, KeyError, TypeError) as e:
-        raise LookupFailed("ProPublica sent a response we could not read") from e
-    finally:
-        if own:
-            client.close()
 
 
 def search(q, state, ntee_id, page=0, client=None):
@@ -94,8 +102,6 @@ def search(q, state, ntee_id, page=0, client=None):
     skipped, not returned. LookupFailed on a timeout, an error status or a body that is not
     a search page. The search results carry no ZIP: lookup() it per hit.
     """
-    own = client is None
-    client = client or make_client()
     params = {
         "q": q,
         "state[id]": state,
@@ -103,20 +109,13 @@ def search(q, state, ntee_id, page=0, client=None):
         "c_code[id]": 3,
         "page": page,
     }
-    try:
-        r = client.get(SEARCH_URL, params=params)
+    with _asking(client) as c:
+        r = c.get(SEARCH_URL, params=params)
         r.raise_for_status()
         body = r.json()
         records, pages = body["organizations"], body["num_pages"]
         if not isinstance(records, list) or not isinstance(pages, int):
             raise TypeError("not a search page")
-    except httpx.HTTPError as e:
-        raise _failed(e) from e
-    except (ValueError, KeyError, TypeError) as e:
-        raise LookupFailed("ProPublica sent a response we could not read") from e
-    finally:
-        if own:
-            client.close()
     hits, skipped = [], 0
     for rec in records:
         try:

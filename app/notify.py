@@ -3,12 +3,12 @@ import os
 import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import httpx
 
 from app import data, security
 from app.config import contact_email, fakes_allowed, public_base_url
+from app.match import LA
 
 log = logging.getLogger("causematch")
 
@@ -19,7 +19,6 @@ MESSAGE_WINDOW = 30 * 60  # seconds: at most one new-message text per match per 
 LIKES_WINDOW = 15 * 60  # seconds: at most one new-likes email per org per window
 MAX_ATTEMPTS = 5  # tries for one send before it is left failed
 MAX_REMINDERS_PER_SWEEP = 100  # the rest wait for the next hourly sweep
-LA = ZoneInfo("America/Los_Angeles")
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
 FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days
@@ -70,12 +69,17 @@ class TwilioVerifier:
             raise httpx.DecodingError("Twilio returned a non-JSON body") from e
 
 
+def _fake(env, var):
+    """Whether the fake gate `var` is on; RuntimeError if it is on outside dev, test, preview."""
+    if env.get(var) != "1":
+        return False
+    if not fakes_allowed(env):
+        raise RuntimeError(f"{var}=1 needs CAUSEMATCH_ENV=development, test or preview")
+    return True
+
+
 def make_verifier(env=os.environ):
-    if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not fakes_allowed(env):
-            raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
-            )
+    if _fake(env, "CAUSEMATCH_FAKE_SMS"):
         return FakeVerifier()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
     if not all(env.get(k) for k in keys):
@@ -137,11 +141,7 @@ class ResendEmailer:
 
 
 def make_emailer(env=os.environ):
-    if env.get("CAUSEMATCH_FAKE_EMAIL") == "1":
-        if not fakes_allowed(env):
-            raise RuntimeError(
-                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development, test or preview"
-            )
+    if _fake(env, "CAUSEMATCH_FAKE_EMAIL"):
         return FakeEmailer()
     if not (env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM")):
         raise RuntimeError(
@@ -246,11 +246,7 @@ class TwilioSMS:
 
 
 def make_sms(env=os.environ):
-    if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not fakes_allowed(env):
-            raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
-            )
+    if _fake(env, "CAUSEMATCH_FAKE_SMS"):
         return FakeSMS()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")
     if not all(env.get(k) for k in keys):

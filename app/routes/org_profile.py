@@ -38,6 +38,7 @@ from app.forms import (
 from app.routes.profile import BAD_PHOTO, BUSY, PhotoForm, read_photo
 from app.ui import (
     CARD,
+    ORG_SECTION,
     ORG_TITLE,
     SMALL_LINK,
     EventLink,
@@ -86,7 +87,7 @@ def Preview(key, label, logo=False):
 
 def PictureCard(title, intro, key, action, ident, logo=False):
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink"),
+        H2(title, cls=ORG_SECTION),
         P(intro, cls=TextPresets.muted_sm),
         Preview(key, title, logo),
         PhotoForm(
@@ -105,7 +106,7 @@ def OrgSection(org, f=None, error=None):
     f = f or {"about": org.about or "", "website": org.website or ""}
     base = f"/org/organization/{org.id}"
     return Div(
-        H2(org.name, cls="font-display text-2xl font-extrabold text-ink"),
+        H2(org.name, cls=ORG_TITLE),
         Alert(error, cls=AlertT.error) if error else None,
         Div(
             PictureCard(
@@ -246,28 +247,26 @@ def _org_page_with(uid, org_id, error):
     return OrganizationPage(uid, errors={org_id: (None, error)})
 
 
-@ar("/org/organization/{org_id}/logo", methods=["POST"])
-async def save_logo(req, org_id: int):
+async def _org_picture(req, org_id, kind):
+    """An org's logo or photo (kind), uploaded from the organization page."""
     uid = req.scope["uid"]
     return await _upload(
         req,
         partial(data.coordinator_org, uid, org_id),
-        partial(data.set_org_picture, uid, org_id, "logo"),
+        partial(data.set_org_picture, uid, org_id, kind),
         partial(_org_page_with, uid, org_id),
         "/org/organization?notice=saved",
     )
+
+
+@ar("/org/organization/{org_id}/logo", methods=["POST"])
+async def save_logo(req, org_id: int):
+    return await _org_picture(req, org_id, "logo")
 
 
 @ar("/org/organization/{org_id}/photo", methods=["POST"])
 async def save_org_photo(req, org_id: int):
-    uid = req.scope["uid"]
-    return await _upload(
-        req,
-        partial(data.coordinator_org, uid, org_id),
-        partial(data.set_org_picture, uid, org_id, "photo"),
-        partial(_org_page_with, uid, org_id),
-        "/org/organization?notice=saved",
-    )
+    return await _org_picture(req, org_id, "photo")
 
 
 # --- an opening's photo and event link ---------------------------------------------------
@@ -293,7 +292,7 @@ def OpeningMediaPage(uid, opening_id, error=None, link=None, notice=""):
                 "opening-photo",
             ),
             PlainForm(
-                H2("Event link", cls="font-display text-lg font-extrabold text-ink"),
+                H2("Event link", cls=ORG_SECTION),
                 P(
                     "Your own page for this event or volunteer role. The card shows "
                     '"See it on" and its domain, and opens it in a new tab.',

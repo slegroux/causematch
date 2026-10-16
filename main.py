@@ -21,24 +21,26 @@ from app.config import (
     tasks_token,
     trusted_proxy_hops,
 )
-from app.routes.admin import ar as admin_router
-from app.routes.auth import ar as auth_router
-from app.routes.chat import ar as chat_router
-from app.routes.claim import ar as claim_router
-from app.routes.deck import ar as deck_router
-from app.routes.matches import ar as matches_router
-from app.routes.onboarding import ar as onboarding_router
-from app.routes.org import ar as org_router
-from app.routes.org_auth import ar as org_auth_router
-from app.routes.org_profile import ar as org_profile_router
-from app.routes.photos import ar as photos_router
-from app.routes.prefs import ar as prefs_router
-from app.routes.profile import ar as profile_router
-from app.routes.pwa import ar as pwa_router
-from app.routes.safety import ar as safety_router
+from app.routes import (
+    admin,
+    chat,
+    claim,
+    deck,
+    matches,
+    onboarding,
+    org,
+    org_auth,
+    org_profile,
+    photos,
+    prefs,
+    profile,
+    pwa,
+    safety,
+    shifts,
+    tasks,
+)
+from app.routes import auth as auth_routes
 from app.routes.safety import not_found
-from app.routes.shifts import ar as shifts_router
-from app.routes.tasks import ar as tasks_router
 
 require_env()  # an undeclared environment, or a preview without its password, never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
@@ -51,7 +53,7 @@ phone_hash_key()  # ... or deleted accounts' blocks can't be kept
 trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
 sms_ceilings()  # ... or the SMS ceiling is unreadable
 demo_banner()  # ... or production was asked to show the demo banner
-# uvicorn settings; the Procfile (item 14's entrypoint) runs the same ones.
+# uvicorn settings; the Procfile runs the same ones.
 UVICORN = {
     "ws_max_size": 65536,  # bytes per websocket frame (default 16 MiB); a message is <= 2000 chars
     "limit_concurrency": 200,  # connections and open sockets; past it uvicorn answers 503
@@ -61,7 +63,7 @@ UVICORN = {
 }
 logging.getLogger("uvicorn.access").addFilter(security.RedactTokens())
 # The app's own lines on stderr (Cloud Run collects it). CAUSEMATCH_LOG_LEVEL=DEBUG adds the
-# hashed client key that item 14's X-Forwarded-For check reads.
+# hashed client key that the X-Forwarded-For check (TRUSTED_PROXY_HOPS) reads.
 _log = logging.getLogger("causematch")
 _log.setLevel(os.environ.get("CAUSEMATCH_LOG_LEVEL") or "INFO")
 if not _log.handlers:
@@ -90,7 +92,7 @@ app, rt = fast_app(
     surreal=False,
     pico=False,
     hdrs=(
-        # htmx would otherwise inject its indicator styles inline (theme.css has them)
+        # htmx would otherwise inject its indicator styles inline, which the CSP forbids
         # Eval and script tags off too: the CSP blocks them already; nothing here uses them.
         Meta(
             name="htmx-config",
@@ -100,7 +102,7 @@ app, rt = fast_app(
         Script(src="/static/vendor/htmx-2.0.7.min.js"),
         Script(src="/static/vendor/htmx-ext-ws-2.0.4.min.js"),
         # MonsterUI's Theme.blue.headers(), self-hosted so the CSP allows only 'self': its
-        # inline script and styles are now static/theme.js and static/theme.css, and the
+        # inline script and styles live in static/theme.js and static/theme.css, and the
         # Tailwind Play CDN is replaced by static/vendor/app.css (scripts/build_css.sh).
         # Not loaded: Franken UI's icon script (no UkIcon here).
         Script(src="/static/theme.js"),
@@ -129,28 +131,28 @@ app.mount(
         StaticFiles(directory=Path(__file__).parent / "static"), minimum_size=1024
     ),
 )
-for router in (
-    auth_router,
-    org_auth_router,
-    claim_router,
-    admin_router,
-    onboarding_router,
-    deck_router,
-    matches_router,
-    chat_router,
-    org_router,
-    shifts_router,
-    safety_router,
-    prefs_router,
-    tasks_router,
-    pwa_router,
-    profile_router,
-    photos_router,
-    org_profile_router,
+for routes in (
+    auth_routes,
+    org_auth,
+    claim,
+    admin,
+    onboarding,
+    deck,
+    matches,
+    chat,
+    org,
+    shifts,
+    safety,
+    prefs,
+    tasks,
+    pwa,
+    profile,
+    photos,
+    org_profile,
 ):
-    router.to_app(app)
-# invented orgs and openings: never in production unless asked
-data.start(not is_production() or os.environ.get("CAUSEMATCH_SEED_DEMO") == "1")
+    routes.ar.to_app(app)
+# invented orgs and openings: never in production
+data.start(not is_production())
 if is_preview():  # the demo's orgs and people, reseeded at each cold start
     demo_seed.seed_preview(os.environ.get("PREVIEW_SEED_DIR"))
 

@@ -1,18 +1,19 @@
-"""Design item 7's checks on every phone page, at 375×667: each button and link is a
+"""Checks on every phone page, at 375×667: each button and link is a
 44 px tap target, no text runs past its box or the screen, and the pages fill in."""
 
 import pytest
 from conftest import coordinator_for
-from test_layout import SE, accepted_match
-from test_swipe import (  # noqa: F401  (fixture)
-    guard,
-    offline_under_csp,
-    onboard_page,
-    sign_in_page,
-)
 
 from app import data
 from app.db import openings, orgs, places
+from e2e.helpers import (
+    SE,
+    accepted_match,
+    coordinator_page,
+    guard,
+    onboard_page,
+    sign_in_page,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -45,17 +46,6 @@ OVERFLOW = """() => [...document.body.querySelectorAll('*')].filter(e => {
 def check(page, path):
     page.goto(path)
     return page.evaluate(SMALL), page.evaluate(OVERFLOW)
-
-
-@pytest.fixture
-def phone(browser, live_url):
-    ctx = guard(
-        browser.new_context(
-            viewport=SE, is_mobile=True, has_touch=True, base_url=live_url
-        )
-    )
-    yield ctx.new_page()
-    ctx.close()
 
 
 def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
@@ -103,8 +93,6 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
 
 
 def test_nonprofit_pages_have_big_targets_and_no_overflow(browser, live_url):
-    from helpers import coordinator_page
-
     page = coordinator_page(browser, live_url)
     page.set_viewport_size(SE)
     org_id = orgs()[0].id

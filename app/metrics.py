@@ -6,9 +6,9 @@ Every figure is an aggregate; no row here carries a name, phone or email.
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from statistics import median
-from zoneinfo import ZoneInfo
 
-LA = ZoneInfo("America/Los_Angeles")
+from app.match import LA
+
 LOCAL = "%Y-%m-%dT%H:%M"
 OVERDUE_HOURS = 48
 REPEAT_WINDOW_DAYS = 14  # a volunteer needs this long since their first completed shift
@@ -136,6 +136,10 @@ def _count(n, d=None):
     return {"n": n, "d": d, "value": n}
 
 
+def _median(values):
+    return {"n": len(values), "d": None, "value": median(values) if values else None}
+
+
 def _hours(a, b):
     return (
         datetime.fromisoformat(b) - datetime.fromisoformat(a)
@@ -240,11 +244,7 @@ def _group(swipes, matches, shifts, vols, now):
         "like_rate": _rate(likes, len(swipes)),
         "accept_rate": _rate(len(accepted), len(accepted) + declined),
         "replied_within_48h_rate": _rate(fast, len(judged)),
-        "median_reply_h": {
-            "n": len(replies),
-            "d": None,
-            "value": median(replies) if replies else None,
-        },
+        "median_reply_h": _median(replies),
         "pending_over_48h": _count(pending),
         "shift1_rate": _rate(done, done + no_show + withdrew),
         "unmarked_first_shifts": _count(unmarked_first),
@@ -378,11 +378,7 @@ def _urgent(rows):
         "urgent_filled_rate": _rate(
             sum(c["status"] == "filled" for c in ended), len(ended)
         ),
-        "urgent_median_fill_min": {
-            "n": len(minutes),
-            "d": None,
-            "value": median(minutes) if minutes else None,
-        },
+        "urgent_median_fill_min": _median(minutes),
         "urgent_no_show_rate": no_show(True),
         "normal_no_show_rate": no_show(False),
     }
@@ -459,28 +455,24 @@ def csv_rows(metrics):
         groups = {"all": metrics["overall"]} if kind == "overall" else metrics[kind]
         for key, cells in groups.items():
             for metric in METRICS:
-                c = cells[metric]
-                hide = withheld(metric, c)
-                is_rate = metric in RATES
-                yield (
-                    kind,
-                    _safe(label(metrics, kind, key)),
-                    metric,
-                    c["d"] if is_rate else c["n"],
-                    "" if hide or not is_rate else c["n"],
-                    "" if c["d"] is None else c["d"],
-                    "" if hide or c["value"] is None else round(c["value"], 4),
+                yield _csv_line(
+                    kind, _safe(label(metrics, kind, key)), metric, cells[metric], RATES
                 )
     for metric in URGENT:
-        c = metrics["urgent"][metric]
-        hide = withheld(metric, c)
-        is_rate = metric in URGENT_RATES
-        yield (
-            "urgent",
-            "all",
-            metric,
-            c["d"] if is_rate else c["n"],
-            "" if hide or not is_rate else c["n"],
-            "" if c["d"] is None else c["d"],
-            "" if hide or c["value"] is None else round(c["value"], 4),
+        yield _csv_line(
+            "urgent", "all", metric, metrics["urgent"][metric], URGENT_RATES
         )
+
+
+def _csv_line(kind, group, metric, c, rates):
+    hide = withheld(metric, c)
+    is_rate = metric in rates
+    return (
+        kind,
+        group,
+        metric,
+        c["d"] if is_rate else c["n"],
+        "" if hide or not is_rate else c["n"],
+        "" if c["d"] is None else c["d"],
+        "" if hide or c["value"] is None else round(c["value"], 4),
+    )

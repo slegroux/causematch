@@ -9,9 +9,10 @@ from datetime import datetime
 
 import apsw
 import pytest
+from conftest import close_all_openings, deck_titles, make_opening, uid_of
 
 from app import data, match
-from app.db import Opening, causes, db, now, openings, orgs, profiles
+from app.db import causes, db, openings, profiles
 
 cause_prefs_migration = importlib.import_module("app.migrations.0010_cause_prefs")
 day_slots_migration = importlib.import_module("app.migrations.0011_day_slots")
@@ -32,10 +33,6 @@ SAVE = {
 }
 
 
-def uid_of(client):
-    return data.get_or_create_volunteer(client.phone)
-
-
 def profile_of(client):
     return profiles[uid_of(client)]
 
@@ -47,37 +44,25 @@ def answers(client):
 
 def add(title, cause=FOOD, km=1.0, starts_at="2099-01-03T09:00", **kw):
     """An open opening about km north of the volunteer (see `bare`)."""
-    fields = {
-        "org_id": orgs()[0].id,
-        "title": title,
-        "about": "",
-        "causes": json.dumps(cause if isinstance(cause, list) else [cause]),
-        "skills": "[]",
-        "lat": 34.0560 + km / 111.195,
-        "lon": -118.2365,
-        "neighborhood": "Downtown",
-        "remote": False,
-        "starts_at": starts_at,
-        "recurrence": "one_time",
-        "slots": 3,
-        "status": "open",
-        "created_at": now(),
-    }
-    fields.update(kw)
-    return openings.insert(Opening(**fields)).id
+    return make_opening(
+        title,
+        **{
+            "causes": cause if isinstance(cause, list) else [cause],
+            "lat": 34.0560 + km / 111.195,
+            "lon": -118.2365,
+            "neighborhood": "Downtown",
+            "starts_at": starts_at,
+            **kw,
+        },
+    ).id
 
 
 @pytest.fixture
 def bare(user):
     """The onboarded user at Union Station with a 30 km radius, and no seeded openings."""
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     profiles.update(id=uid_of(user), lat=34.0560, lon=-118.2365, radius_km=30)
     return user
-
-
-def titles(client):
-    return [c["title"] for c in data.deck(uid_of(client), 50)]
 
 
 # --- the page --------------------------------------------------------------------------------
@@ -188,7 +173,7 @@ def test_not_for_me_hides_the_cause_everywhere(bare):
     animals = add("animals", cause=ANIMALS)
     mixed = add("food and animals", cause=[FOOD, ANIMALS])
     rate(bare, food_insecurity="love", animal_shelters="no")
-    assert titles(bare) == ["food"]
+    assert deck_titles(bare) == ["food"]
     for oid in (animals, mixed):
         with pytest.raises(LookupError):
             data.swipe(uid_of(bare), oid, True)
@@ -200,14 +185,14 @@ def test_love_ranks_above_open_above_unrated(bare):
     add("open", cause=PARKS)
     add("love", cause=FOOD)
     rate(bare, food_insecurity="love", environment_parks="open")
-    assert titles(bare) == ["love", "open", "unrated"]
+    assert deck_titles(bare) == ["love", "open", "unrated"]
 
 
 def test_open_alone_still_ranks_above_unrated(bare):
     add("unrated", cause=ANIMALS)
     add("open", cause=PARKS)
     rate(bare, environment_parks="open", food_insecurity="no")
-    assert titles(bare) == ["open", "unrated"]
+    assert deck_titles(bare) == ["open", "unrated"]
 
 
 def test_a_saved_not_for_me_reaches_the_deck_page(bare):
@@ -227,8 +212,8 @@ def test_cause_fit_with_loved_causes_only_is_jaccard():
         set(c) for n in range(len(slugs) + 1) for c in itertools.combinations(slugs, n)
     ]
     for mine, theirs in itertools.product(sets, sets):
-        want = match.jaccard(mine, theirs)
-        assert match.cause_fit(mine, theirs) == pytest.approx(want)
+        union = mine | theirs
+        want = len(mine & theirs) / len(union) if union else 0
         assert match.cause_fit(dict.fromkeys(mine, "love"), theirs) == pytest.approx(
             want
         )
@@ -296,8 +281,8 @@ def old_titles(p, rows):
 
 def test_a_migrated_profile_keeps_its_deck_order(bare, monkeypatch):
     """A profile in the d4906d4 shape ranks exactly as d4906d4 did, before and after the
-    0010/0011 migrations. The weights are pinned to d4906d4's (item 4 reweighted the deck
-    for everyone, on purpose), so this checks every term and the gate, not the weights."""
+    0010/0011 migrations. The weights are pinned to d4906d4's (the deck was reweighted
+    for everyone since, on purpose), so this checks every term and the gate, not the weights."""
     monkeypatch.setattr(match, "WEIGHTS", {**OLD_WEIGHTS, "work": 0, "language": 0})
     rng = random.Random(7)
     combos = [[FOOD], [PARKS], [ANIMALS], [FOOD, PARKS], [FOOD, ANIMALS]]
@@ -326,14 +311,14 @@ def test_a_migrated_profile_keeps_its_deck_order(bare, monkeypatch):
     )
     want = old_titles(profiles[uid], openings(where="status = 'open'"))
     assert 30 < len(want) < 60  # the gate hides some, remote ones are kept
-    assert titles(bare) == want  # read in the legacy shape
+    assert deck_titles(bare) == want  # read in the legacy shape
     with db.conn:
         cause_prefs_migration.up(db.conn)
         day_slots_migration.up(db.conn)
     p = profiles[uid]
     assert json.loads(p.cause_prefs) == {FOOD: "love", ANIMALS: "love"}
     assert "sat_morning" in json.loads(p.availability)
-    assert titles(bare) == want  # and migrated
+    assert deck_titles(bare) == want  # and migrated
 
 
 def test_the_migration_adds_the_column_to_an_old_table(tmp_path):

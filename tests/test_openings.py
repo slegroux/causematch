@@ -3,10 +3,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, deck_titles, org_sign_in
+from conftest import coordinator_for, deck_titles, org_sign_in, uid_of
 from starlette.testclient import TestClient
 
-from app import geo
+from app import data, geo
 from app.db import causes, openings, orgs
 from main import app
 
@@ -44,13 +44,23 @@ def post(c, **over):
 
 
 def test_posted_opening_reaches_deck(coord, user):
-    r = post(coord, starts_at=future(2))  # soonest, so it is the one card shown
+    r = post(coord, starts_at=future(2))
     assert r.status_code == 303 and r.headers["location"] == "/org"
     dash = coord.get("/org")
     assert "Saturday fridge restock" in dash.text and "open" in dash.text
-    deck = user.get("/deck")
-    assert "Saturday fridge restock" in deck.text
-    assert "Westside Pantry Collective" in deck.text
+    # in the deck whatever its rank: a weekday or an afternoon fits this volunteer's
+    # Saturday and Sunday mornings less well, so it is not always the card shown
+    (card,) = [
+        c
+        for c in data.deck(uid_of(user), 50)
+        if c["title"] == "Saturday fridge restock"
+    ]
+    assert card["org"] == "Westside Pantry Collective"
+    page = user.get(
+        f"/deck?card={card['id']}"
+    )  # on top, as an urgent call's link puts it
+    assert "Saturday fridge restock" in page.text
+    assert "Westside Pantry Collective" in page.text
 
 
 def test_closing_removes_it_from_the_deck(coord, user):
@@ -523,7 +533,7 @@ def test_kind_of_work_form_offers_the_fields(coord):
     assert "Good for first-timers" in html and "Spanish" in html
 
 
-# --- what an opening and a coordinator's name may hold (security review pass 4) -------------
+# --- what an opening and a coordinator's name may hold ------------------------------------
 
 
 @pytest.mark.parametrize(

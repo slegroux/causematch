@@ -1,5 +1,4 @@
 import logging
-import re
 
 from fasthtml.common import A, Form, HttpHeader, P, Redirect, Response
 from monsterui.all import TextPresets
@@ -8,7 +7,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.config import is_preview
-from app.forms import query
+from app.forms import EMAIL, query, str_form
 from app.ui import BigButton, Field, Router, SignInPage, TextInput
 
 ar = Router()
@@ -77,16 +76,9 @@ def _send_link(email):
         log.warning("sending a sign-in link failed: %s", type(e).__name__)
 
 
-async def _form(req):
-    form = await req.form()
-    if any(not isinstance(v, str) for _, v in form.multi_items()):
-        return None
-    return form
-
-
 @ar("/org/login/send", methods=["POST"])
 async def org_login_send(req):
-    form = await _form(req)
+    form = await str_form(req)
     if form is None:
         return Response("Bad request", status_code=400)
     return await run_in_threadpool(_sync_org_login_send, req, form)
@@ -94,7 +86,7 @@ async def org_login_send(req):
 
 def _sync_org_login_send(req, form):
     email = form.get("email", "").strip().lower()
-    if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+    if len(email) > 254 or not EMAIL.fullmatch(email):
         return EmailForm(email[:254], BAD_EMAIL)
     # every valid-shape address is counted, so a refusal says nothing about the account
     if not security.allow(
@@ -134,13 +126,13 @@ def org_login_confirm(req, sess):
 
 @ar("/org/login/verify", methods=["POST"])
 async def org_login_verify(req, sess):
-    form = await _form(req)
+    form = await str_form(req)
     if form is None:
         return Response("Bad request", status_code=400)
-    return await run_in_threadpool(_sync_org_login_verify, req, form, sess)
+    return await run_in_threadpool(_sync_org_login_verify, form, sess)
 
 
-def _sync_org_login_verify(req, form, sess):
+def _sync_org_login_verify(form, sess):
     token = sess.pop("login_token", "") or form.get("token", "")
     uid = data.consume_login_token(token) if 0 < len(token) <= 200 else None
     profile = data.get_profile(uid) if uid else None

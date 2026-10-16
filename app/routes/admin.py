@@ -47,7 +47,7 @@ from app.metrics import (
     pilot_metrics,
 )
 from app.org_import import import_ein
-from app.ui import CARD, Refusal, Router, TextInput, TopNav
+from app.ui import CARD, ORG_SECTION, ORG_TITLE, Refusal, Router, TextInput, TopNav
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -77,7 +77,7 @@ def AdminPage(active, title, *content, action=None):
         TopNav(ADMIN_TABS, active, "Admin", "/admin"),
         Container(
             Div(
-                H1(title, cls="font-display text-2xl font-extrabold text-ink"),
+                H1(title, cls=ORG_TITLE),
                 action,
                 cls="flex flex-wrap items-center justify-between gap-3 pb-4",
             ),
@@ -99,7 +99,7 @@ def cell(metric, c):
 def MetricsTable(title, groups, columns=METRICS):
     """columns: {metric: label}, the pilot's METRICS or the urgent calls' URGENT."""
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink mt-6 mb-2"),
+        H2(title, cls=ORG_SECTION + " mt-6 mb-2"),
         Table(
             Thead(
                 Tr(
@@ -124,7 +124,7 @@ def MetricsTable(title, groups, columns=METRICS):
 
 def Definitions():
     return Div(
-        H2("Definitions", cls="font-display text-lg font-extrabold text-ink mt-8 mb-2"),
+        H2("Definitions", cls=ORG_SECTION + " mt-8 mb-2"),
         Dl(
             *[
                 x
@@ -146,7 +146,7 @@ def admin_home():
         Div(
             *[
                 A(
-                    P(name, cls="font-display text-lg font-extrabold text-ink"),
+                    P(name, cls=ORG_SECTION),
                     P(what, cls=TextPresets.muted_sm),
                     href=href,
                     cls="block p-5 hover:border-brand " + CARD,
@@ -230,11 +230,7 @@ def _post(action, label, cls="uk-btn uk-btn-default"):
 
 
 def ReportRow(r):
-    subject = (
-        f"{r['reporter']} (volunteer) reported {r['target']}"
-        if r["by"] == "volunteer"
-        else f"{r['reporter']} (coordinator) reported {r['target']}"
-    )
+    subject = f"{r['reporter']} ({r['by']}) reported {r['target']}"
     return Div(
         P(subject, cls="font-semibold"),
         P(
@@ -281,37 +277,34 @@ def admin_reports(req):
     )
 
 
-def _resolve_with(fn):
-    def run(req, report_id):
-        try:
-            fn(req.scope["uid"], report_id)
-        except LookupError:
-            pass  # already resolved by someone else
-        except (ValueError, PermissionError):
-            return Refusal(400)
-        return Redirect("/admin/reports")
-
-    return run
+def _resolve(fn, req, report_id):
+    try:
+        fn(req.scope["uid"], report_id)
+    except LookupError:
+        pass  # already resolved by someone else
+    except (ValueError, PermissionError):
+        return Refusal(400)
+    return Redirect("/admin/reports")
 
 
 @ar("/admin/reports/{report_id}/dismiss", methods=["POST"])
 def admin_dismiss(req, report_id: int):
-    return _resolve_with(data.dismiss_report)(req, report_id)
+    return _resolve(data.dismiss_report, req, report_id)
 
 
 @ar("/admin/reports/{report_id}/suspend", methods=["POST"])
 def admin_suspend(req, report_id: int):
-    return _resolve_with(data.suspend_target)(req, report_id)
+    return _resolve(data.suspend_target, req, report_id)
 
 
 @ar("/admin/reports/{report_id}/deactivate", methods=["POST"])
 def admin_deactivate(req, report_id: int):
-    return _resolve_with(data.deactivate_target_org)(req, report_id)
+    return _resolve(data.deactivate_target_org, req, report_id)
 
 
 @ar("/admin/reports/{report_id}/remove-photo", methods=["POST"])
 def admin_remove_photo(req, report_id: int):
-    return _resolve_with(data.remove_reported_photo)(req, report_id)
+    return _resolve(data.remove_reported_photo, req, report_id)
 
 
 @ar("/admin/blocks", methods=["GET"])

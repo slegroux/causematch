@@ -7,7 +7,6 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
-    Container,
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
@@ -15,7 +14,7 @@ from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, deck_view, when
+from app.routes.deck import DeckArea, deck_view
 from app.ui import (
     CALENDAR,
     CARD,
@@ -25,21 +24,22 @@ from app.ui import (
     TITLE,
     EventLink,
     Icon,
+    Meta,
     Pill,
     Refusal,
     Router,
-    VolunteerNav,
+    VolunteerShell,
+    when,
 )
 
 ar = Router()
 
-STATUS = {
-    "pending": "Waiting for the nonprofit",
-    "accepted": "Accepted",
-    "declined": "Not this time",
-    "withdrawn": "Withdrawn",
+STATUS = {  # status: (label, PILL tone)
+    "pending": ("Waiting for the nonprofit", "wait"),
+    "accepted": ("Accepted", "good"),
+    "declined": ("Not this time", "off"),
+    "withdrawn": ("Withdrawn", "off"),
 }
-TONE = {"pending": "wait", "accepted": "good", "declined": "off", "withdrawn": "off"}
 
 
 NOTICE = {
@@ -105,17 +105,13 @@ def _sync_swipe(req, form):
 def MatchRow(m):
     return Div(
         Div(
-            Pill(STATUS[m["status"]], TONE[m["status"]]),
+            Pill(*STATUS[m["status"]]),
             Pill("Blocked", "off") if m["blocked"] else None,
             cls="flex flex-wrap gap-1.5",
         ),
         H2(m["title"], cls="font-display text-lg font-extrabold leading-snug text-ink"),
         P(m["org"], cls="text-sm font-semibold text-ink-muted"),
-        P(
-            Icon(CALENDAR, size=16, cls="text-ink-muted"),
-            Span(f"{when(m['starts_at'])} · {m['neighborhood']}"),
-            cls="flex items-center gap-2 text-sm text-ink",
-        ),
+        Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
         EventLink(m.get("event_url")),
         A(
             Icon(CHAT, size=18),
@@ -156,8 +152,8 @@ def NoMatches():
 def matches_page(req):
     rows = data.my_matches(req.scope["uid"])
     notice = query(req, "notice")
-    return Container(
-        VolunteerNav("matches"),
+    return VolunteerShell(
+        "matches",
         Div(
             H1("Your matches", cls=TITLE),
             A("History", href="/history", cls=SMALL_LINK + " text-sm"),
@@ -168,7 +164,6 @@ def matches_page(req):
             *([MatchRow(m) for m in rows] or [NoMatches()]),
             cls="flex flex-col gap-4 pb-8",
         ),
-        cls="max-w-md pb-8",
     )
 
 
@@ -180,8 +175,8 @@ def withdraw_confirm(req, match_id: int):
         return Refusal(403)
     if m["status"] not in ("pending", "accepted"):
         return Redirect("/matches")
-    return Container(
-        VolunteerNav("matches"),
+    return VolunteerShell(
+        "matches",
         Div(
             H1(
                 f"Withdraw from {m['title']}?",
@@ -200,7 +195,6 @@ def withdraw_confirm(req, match_id: int):
             ),
             cls="mt-4 space-y-3 p-5 " + CARD,
         ),
-        cls="max-w-md pb-8",
     )
 
 

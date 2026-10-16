@@ -3,18 +3,16 @@
 import csv
 import hashlib
 import io
-import re
 import subprocess
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 import apsw
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
+from conftest import ROOT, admin_client, coordinator_for, org_sign_in, sign_in, uid_of
 from starlette.testclient import TestClient
 
-from app import data, metrics, notify
+from app import data, metrics
 from app.db import (
     Match,
     Profile,
@@ -36,7 +34,6 @@ from app.metrics import METRICS, OTHER, csv_rows, fmt, pilot_metrics
 from app.routes import admin as admin_routes
 from main import app
 
-ROOT = Path(__file__).resolve().parent.parent
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)  # 05:00 in Los Angeles
 T0 = "2026-10-01T00:00:00+00:00"
 
@@ -397,17 +394,6 @@ def test_csv_cells_are_not_formulas(pilot):
 # --- the pages -------------------------------------------------------------------------
 
 
-def admin_client(email="boss@example.org"):
-    data.add_admin(email, "Boss Person")
-    c = TestClient(app)
-    c.post("/org/login/send", data={"email": email})
-    _, _, body = notify.get_emailer().sent[-1]
-    token = re.search(r"token=([\w-]+)", body).group(1)
-    r = c.post("/org/login/verify", data={"token": token}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/admin"
-    return c
-
-
 def test_admin_signs_in_and_sees_the_pages(pilot, big_n):
     c = admin_client()
     assert c.get("/admin").status_code == 200
@@ -441,7 +427,7 @@ def test_others_cannot_read_the_admin_pages(path, pilot):
     assert anon.get(path, follow_redirects=False).headers["location"] == "/org/login"
     vol = TestClient(app)
     sign_in(vol)
-    profiles.update(id=data.get_or_create_volunteer(vol.phone), onboarded_at=T0)
+    profiles.update(id=uid_of(vol), onboarded_at=T0)
     assert vol.get(path, follow_redirects=False).status_code == 403
     _, email = coordinator_for(0)
     coord = TestClient(app)

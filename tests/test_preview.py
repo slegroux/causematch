@@ -8,10 +8,9 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
-from conftest import coordinator_for
+from conftest import ROOT, coordinator_for
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
@@ -33,7 +32,6 @@ from app.db import matches, openings, orgs, profiles, urgent_calls
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
 
-ROOT = Path(__file__).resolve().parent.parent
 PASSWORD = "p" * 20  # low entropy on purpose: the secret scan reads tests too
 SECRET = "s" * 32
 PREVIEW = {"CAUSEMATCH_ENV": "preview", "PREVIEW_PASSWORD": PASSWORD}

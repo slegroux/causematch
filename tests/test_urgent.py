@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in
+from conftest import coordinator_for, org_sign_in, uid_of
 from starlette.testclient import TestClient
 
 from app import data, notify
@@ -57,10 +57,6 @@ def post_call(c, starts_at=None, needed="2", auto=False, opening=None):
         body["auto_accept"] = "1"
     oid = (opening or c.opening).id
     return c.post(f"/org/openings/{oid}/urgent", data=body, follow_redirects=False)
-
-
-def uid_of(user):
-    return data.get_or_create_volunteer(user.phone)
 
 
 def like_call(uid, shelter):
@@ -937,7 +933,7 @@ def test_auto_accept_card_carries_its_call(shelter, user):
     assert m.urgent_call_id == call.id
 
 
-# --- review fixes -----------------------------------------------------------------------
+# --- waves and auto-accept: quiet hours, budgets and bookings ---------------------------
 
 
 def test_wave_waits_out_quiet_hours_instead_of_spending_itself(shelter, sweep):

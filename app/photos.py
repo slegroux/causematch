@@ -42,6 +42,14 @@ warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 # JPEG includes MPO, an iPhone's multi-picture JPEG
 FORMATS = ("JPEG", "PNG", "WEBP", "GIF")
 PARENT_FORMATS = ("JPEG", "PNG", "GIF")  # _check never opens a WebP with Pillow
+_UNREADABLE = (  # what Pillow raises for a file it refuses or can't read; ValueError covers BadPhoto
+    Image.DecompressionBombError,
+    UnidentifiedImageError,
+    OSError,
+    SyntaxError,
+    ValueError,
+    EOFError,
+)
 Image.init()  # register every plugin, so open(formats=FORMATS) knows WEBP
 FULL = 800  # px, the longest side of a volunteer photo
 CARD = (960, 640)  # px, an org's or opening's photo: cut to the swipe card's 3:2
@@ -217,14 +225,7 @@ def _check(raw):
                 if multi and w * h * bands > MAX_COEFFICIENTS:
                     raise BadPhoto("too many coefficients for a multi-scan JPEG")
             probe.verify()  # structure only; a verified image can't be used after
-    except (
-        Image.DecompressionBombError,
-        UnidentifiedImageError,
-        OSError,
-        SyntaxError,
-        ValueError,  # BadPhoto too
-        EOFError,
-    ) as e:
+    except _UNREADABLE as e:
         if isinstance(e, BadPhoto):
             raise
         raise BadPhoto("not a readable picture") from e
@@ -246,14 +247,7 @@ def _open(raw):
             im = im.convert("RGBA")  # palette, grey, 1-bit: before resampling
         im.thumbnail(size, Image.Resampling.LANCZOS, reducing_gap=3.0)
         return ImageOps.exif_transpose(im)
-    except (
-        Image.DecompressionBombError,
-        UnidentifiedImageError,
-        OSError,
-        SyntaxError,
-        ValueError,
-        EOFError,
-    ) as e:
+    except _UNREADABLE as e:
         raise BadPhoto("not a readable picture") from e
 
 

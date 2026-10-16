@@ -4,11 +4,20 @@ import ast
 import os
 import re
 from datetime import datetime, timedelta
-from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in, sign_in
+from conftest import (
+    PANTRY,
+    ROOT,
+    coordinator_for,
+    jpeg,
+    org_sign_in,
+    pantry_opening,
+    sign_in,
+    volunteer,
+)
 from starlette.routing import Mount, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -38,11 +47,9 @@ from app.db import (
 )
 from main import app
 
-ROOT = Path(__file__).resolve().parent.parent
-TITLE = "Sort and pack pantry boxes"  # org 0's opening that A likes
 NAME = "Zelda"  # volunteer A, whose data nobody else may see
 # What nobody but the owner may see; the world fixture adds A's phone and org 0's coordinator.
-SECRETS = [NAME, TITLE]
+SECRETS = [NAME, PANTRY]
 
 # (method, path) -> (who may use it, how the route is scoped)
 #   who: public | volunteer | coordinator | admin | signed-in (every role; the handler decides)
@@ -233,17 +240,7 @@ def world():
     A has liked an opening of org 0, so a pending match of org 0 exists.
     """
 
-    def volunteer(name):
-        c = TestClient(app)
-        sign_in(c)
-        c.uid = data.get_or_create_volunteer(c.phone)
-        profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
-        return c
-
-    class W:
-        pass
-
-    w = W()
+    w = SimpleNamespace()
     w.a, w.b, w.admin = volunteer(NAME), volunteer("Bianca"), volunteer("Root")
     profiles.update(id=w.admin.uid, role="admin")
     w.anon = TestClient(app)
@@ -253,11 +250,11 @@ def world():
         c = TestClient(app)
         org_sign_in(c, email)
         setattr(w, f"org{i}", c)
-    w.opening = openings(where="title = ?", where_args=[TITLE])[0]
+    w.opening = pantry_opening()
     w.other_opening = openings(where="org_id = ?", where_args=[orgs()[1].id])[0]
     assert w.opening.org_id == orgs()[0].id
     w.match = data.swipe(w.a.uid, w.opening.id, True)
-    SECRETS[:] = [NAME, TITLE, w.a.phone, "coord0@example.org"]
+    SECRETS[:] = [NAME, PANTRY, w.a.phone, "coord0@example.org"]
     return w
 
 
@@ -766,8 +763,6 @@ def check_photo(template):
     """Volunteer A's photo: 404 for B and for an org A never liked, as for a made-up key."""
 
     def check(w):
-        from test_photos import jpeg
-
         r = w.a.post(
             "/me/profile/photo",
             files={"photo": ("a.jpg", jpeg(), "image/jpeg")},
@@ -803,8 +798,6 @@ def org_media_check(method, template, record):
         path = template.format(org_id=i, opening_id=i)
         if method == "GET":
             return w.org1.get(path, follow_redirects=False)
-        from test_photos import jpeg
-
         if path.endswith(("/logo", "/photo")):
             files = {"photo": ("p.jpg", jpeg(), "image/jpeg")}
             return w.org1.post(path, files=files, follow_redirects=False)
@@ -959,7 +952,7 @@ def test_another_users_or_orgs_id_is_refused_and_unchanged(world, route):
 
 def test_the_owner_still_can_use_their_own_id(world):
     page = world.a.get(f"/matches/{world.match.id}/withdraw")
-    assert page.status_code == 200 and TITLE in page.text
+    assert page.status_code == 200 and PANTRY in page.text
     assert matches[world.match.id].status == "pending"  # a GET never withdraws
     r = world.org0.post(
         f"/org/matches/{world.match.id}/decide",
@@ -992,7 +985,7 @@ def past_shift_world(w):
 def test_another_orgs_coordinator_sees_none_of_this_orgs_shifts(world):
     past_shift_world(world)
     mine = world.org0.get("/org/shifts")
-    assert NAME in mine.text and TITLE in mine.text  # the data really is there
+    assert NAME in mine.text and PANTRY in mine.text  # the data really is there
     r = world.org1.get("/org/shifts")
     assert r.status_code == 200
     no_secrets(r)
@@ -1001,14 +994,14 @@ def test_another_orgs_coordinator_sees_none_of_this_orgs_shifts(world):
 def test_a_volunteer_sees_none_of_another_volunteers_shifts(world):
     past_shift_world(world)
     mine = world.a.get("/history")
-    assert TITLE in mine.text  # the data really is there
+    assert PANTRY in mine.text  # the data really is there
     r = world.b.get("/history")
     assert r.status_code == 200
     no_secrets(r)
 
 
 def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
-    assert TITLE in world.a.get("/matches").text
+    assert PANTRY in world.a.get("/matches").text
     r = world.b.get("/matches")
     assert r.status_code == 200
     no_secrets(r)

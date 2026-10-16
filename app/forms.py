@@ -10,6 +10,7 @@ import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
 MAX_URL = 500
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # fullmatch: an address's rough shape
 
 
 async def str_form(req):

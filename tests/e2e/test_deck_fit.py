@@ -6,13 +6,12 @@ text."""
 from datetime import datetime, timedelta
 
 import pytest
-from conftest import coordinator_for
-from test_photos import jpeg
-from test_swipe import guard, offline_under_csp, sign_in_page  # noqa: F401  (fixture)
+from conftest import close_all_openings, coordinator_for, jpeg, make_opening
 
 from app import data, photos
 from app import ui as app_ui
-from app.db import Opening, now, openings, orgs, profiles
+from app.db import orgs, profiles
+from e2e.helpers import guard, sign_in_page
 
 pytestmark = pytest.mark.e2e
 
@@ -22,8 +21,7 @@ LINK = "https://www.lafoodbank.org/volunteer/"
 
 def tall_urgent_card(uid):
     """The card of the live preview's smoke run (smoke2/deck.png), for this volunteer."""
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     org = orgs()[0]
     orgs.update(
         id=org.id,
@@ -34,14 +32,10 @@ def tall_urgent_card(uid):
         ),
     )
     start = datetime.now(data.LA) + timedelta(days=5)
-    oid = openings.insert(
-        Opening(
-            org_id=org.id, title=TITLE, about="", causes='["food-insecurity"]',
-            skills="[]", lat=34.06, lon=-118.24, neighborhood="Central-Alameda",
-            remote=False, starts_at=start.strftime("%Y-%m-%dT10:00"),
-            recurrence="weekly", slots=5, status="open", created_at=now(),
-            first_timer_ok=True, event_url=LINK,
-        )
+    oid = make_opening(
+        TITLE, causes=["food-insecurity"], lat=34.06, lon=-118.24,
+        neighborhood="Central-Alameda", starts_at=start.strftime("%Y-%m-%dT10:00"),
+        recurrence="weekly", slots=5, org_id=org.id, first_timer_ok=True, event_url=LINK,
     ).id  # fmt: skip
     tomorrow = (datetime.now(data.LA) + timedelta(days=1)).date()
     profiles.update(

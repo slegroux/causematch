@@ -1,6 +1,5 @@
 import re
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from fasthtml.common import (
     H1,
@@ -26,7 +25,7 @@ from monsterui.all import (
 )
 from starlette.concurrency import run_in_threadpool
 
-from app import data, notify
+from app import data, notify, prefs
 from app.auth import normalize_phone
 from app.choices import (
     AVAILABILITY,
@@ -40,6 +39,7 @@ from app.choices import (
 )
 from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.geo import zip_latlon
+from app.match import LA
 from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
@@ -51,18 +51,18 @@ from app.ui import (
     Checks,
     Choice,
     Field,
-    Icon,
+    Meta,
     OrgShell,
     Pill,
     Refusal,
     Router,
     TextInput,
     VolunteerHeader,
+    when,
 )
 
 ar = Router()
 
-LA = ZoneInfo("America/Los_Angeles")
 RECURRENCE = [
     ("one_time", "One-time"),
     ("weekly", "Weekly"),
@@ -86,7 +86,7 @@ def reply_options(has_phone):
 
 def DetailsForm(profile, error=None):
     return Form(
-        H2("Your details", cls="font-display text-lg font-extrabold text-ink"),
+        H2("Your details", cls=ORG_SECTION),
         P("Volunteers see your name and role.", cls=TextPresets.muted_sm),
         Field(
             'Your name and role, e.g. "Maria Lopez, volunteer coordinator"',
@@ -123,23 +123,11 @@ ADULT_ONLY = (
 )
 
 
-def when(starts_at):
-    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
-
-
 OPENING_STATUS = {
     "open": ("Open", "good"),
     "filled": ("Filled", "info"),
     "closed": ("Closed", "off"),
 }
-
-
-def Meta(icon, text):
-    return P(
-        Icon(icon, size=16, cls="text-ink-muted"),
-        Span(text),
-        cls="flex items-center gap-2 text-sm text-ink",
-    )
 
 
 def UrgentLine(o, urgent, accepted):
@@ -495,8 +483,8 @@ def OpeningForm(uid, f=None, error=None):
 
 @ar("/org/details", methods=["POST"])
 async def save_details(req):
-    form = await req.form()
-    if any(not isinstance(v, str) for _, v in form.multi_items()):
+    form = await str_form(req)
+    if form is None:
         return Refusal(400)
     return await run_in_threadpool(_sync_save_details, req, form)
 
@@ -597,7 +585,7 @@ def _sync_new_opening_save(req, form):
         not set(f["skills"]) <= {v for v, _ in SKILLS}
         or len(set(f["skills"])) > MAX_OPENING_SKILLS
     ):
-        return fail("Something in that form wasn't recognized. Please try again.")
+        return fail(prefs.UNRECOGNIZED)
     if f["orientation_required"] not in {v for v, _ in ORIENTATION}:
         return fail("Please say whether an orientation is required.")
     if (
@@ -607,7 +595,7 @@ def _sync_new_opening_save(req, form):
         or f["first_timer_ok"] not in (None, "1")
         or not set(f["languages"]) <= {v for v, _ in LANGUAGES}
     ):
-        return fail("Something in that form wasn't recognized. Please try again.")
+        return fail(prefs.UNRECOGNIZED)
     if f["reply_channel"] not in {
         v for v, _ in reply_options(bool(profile.contact_phone))
     }:
@@ -771,7 +759,7 @@ def _sync_urgent_save(req, opening_id, form):
         if not re.fullmatch(r"[0-9]{1,3}", f["needed"]):
             return fail(needs)
         if f["auto_accept"] not in (None, "1"):
-            return fail("Something in that form wasn't recognized. Please try again.")
+            return fail(prefs.UNRECOGNIZED)
         try:
             data.post_urgent_call(
                 uid,
@@ -801,24 +789,16 @@ def label_of(options, value):
 
 
 INBOX_STATUS = {
-    "pending": "Waiting",
-    "accepted": "Accepted",
-    "declined": "Declined",
-    "withdrawn": "Withdrawn",
+    "pending": ("Waiting", "wait"),
+    "accepted": ("Accepted", "good"),
+    "declined": ("Declined", "off"),
+    "withdrawn": ("Withdrawn", "off"),
 }
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
     "reported": "Thanks. A Causematch admin will review the report.",
     "blocked": "Blocked.",
-}
-
-
-INBOX_TONE = {
-    "pending": "wait",
-    "accepted": "good",
-    "declined": "off",
-    "withdrawn": "off",
 }
 
 
@@ -839,7 +819,7 @@ def InboxRow(m):
                 P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
                 cls="min-w-0 flex-1",
             ),
-            Pill(INBOX_STATUS[m["status"]], INBOX_TONE[m["status"]]),
+            Pill(*INBOX_STATUS[m["status"]]),
             cls="flex items-start gap-3",
         ),
         P(m["bio"], cls="whitespace-pre-line text-sm text-ink") if m["bio"] else None,
@@ -932,11 +912,10 @@ async def decide(req, match_id: int):
     decision = form.get("decision") if form else None
     if decision not in ("accept", "decline"):
         return Refusal(400)
-    return await run_in_threadpool(_sync_decide, req, form, match_id)
+    return await run_in_threadpool(_sync_decide, req, decision, match_id)
 
 
-def _sync_decide(req, form, match_id: int):
-    decision = form.get("decision") if form else None
+def _sync_decide(req, decision, match_id: int):
     try:
         data.decide(req.scope["uid"], match_id, decision == "accept")
     except PermissionError:

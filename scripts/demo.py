@@ -77,7 +77,6 @@ def configure(port, db=None, seed_file=None):
         CAUSEMATCH_FAKE_EMAIL="1",
         PUBLIC_BASE_URL=f"http://127.0.0.1:{port}",
     )
-    os.environ.pop("CAUSEMATCH_SEED_DEMO", None)
     if seed_file:
         os.environ["CAUSEMATCH_DEMO_BANNER"] = "1"
     else:
@@ -96,7 +95,6 @@ def serve(port):
 
 
 def main(argv=None):
-    refuse_production()
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--port", type=int, default=5077)
     p.add_argument(

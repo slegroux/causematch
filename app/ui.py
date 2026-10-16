@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fasthtml.common import (
     H1,
     A,
@@ -51,17 +53,6 @@ def PrivacyFooter():
             cls=AT.muted + " inline-flex min-h-11 items-center",
         ),
         cls=TextPresets.muted_sm + " pt-6",
-    )
-
-
-def Page(title, *content, error=None, intro=None):
-    return Container(
-        H1(title, cls="text-2xl font-bold my-4"),
-        P(intro, cls=TextPresets.muted_sm + " mb-4") if intro else None,
-        Alert(error, cls=AlertT.error + " mb-4") if error else None,
-        *content,
-        PrivacyFooter(),
-        cls="max-w-md pb-8",
     )
 
 
@@ -167,13 +158,13 @@ def Router():
     return APIRouter(body_wrap=body_wrap)
 
 
-def Checks(name, options, checked=()):
+def Checks(name, options, checked=(), cls="space-y-1"):
     return Div(
         *[
             LabelCheckboxX(label, name=name, value=value, checked=value in checked)
             for value, label in options
         ],
-        cls="space-y-1",
+        cls=cls,
     )
 
 
@@ -260,6 +251,29 @@ def Icon(paths, size=24, filled=False, cls=""):
     )
 
 
+def Meta(icon, text):
+    """One fact of an opening (when, where, how many), after its icon."""
+    return P(
+        Icon(icon, size=16, cls="text-ink-muted"),
+        Span(text),
+        cls="flex items-center gap-2 text-sm text-ink",
+    )
+
+
+def when(starts_at):
+    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
+
+
+def BackLink(href, text):
+    return A(
+        Icon(BACK, size=18),
+        text,
+        href=href,
+        cls="-ml-1 inline-flex min-h-11 items-center gap-1 text-sm font-semibold "
+        "text-ink-muted hover:text-ink",
+    )
+
+
 def Pill(text, tone):
     """A status: a dot and a word or two on a soft tint (PILL)."""
     return Span(
@@ -271,12 +285,9 @@ def Pill(text, tone):
 
 
 def AddToHomeScreen():
-    """A one-line hint at the top of the deck, under the "I'm free today" switch, hidden
-    until static/a2hs.js decides: iPhone Safari, in a tab, not dismissed. In the page's
-    flow, never fixed: fixed above the tab bar it covered Pass, Like and the filter
-    button. Slim, and while it shows the card's picture band is shorter (static/theme.css),
-    so the card still fits above them. The outer box carries no display class, so
-    `hidden` holds."""
+    """A one-line hint at the top of the deck, hidden until static/a2hs.js decides
+    (iPhone Safari, in a tab, not dismissed). In the page's flow, never fixed: fixed, it
+    covered Pass and Like. The outer box has no display class, so `hidden` holds."""
     return Div(
         Div(
             P(
@@ -355,6 +366,11 @@ def VolunteerNav(active=None):
         ),
         TabBar(active),
     )
+
+
+def VolunteerShell(active, *content):
+    """A volunteer page: the header and tab bar, then the content in one narrow column."""
+    return Container(VolunteerNav(active), *content, cls="max-w-md pb-8")
 
 
 # a page's H1 and a section's H2 on the staff pages (nonprofit, admin)
@@ -528,10 +544,10 @@ def LogoBadge(key, cls):
     )
 
 
-def VolunteerHeader(name, photo_key=None, pronouns=None, size="sm"):
+def VolunteerHeader(name, photo_key=None, pronouns=None):
     """A volunteer as a nonprofit sees them: photo or initial, name, pronouns."""
     return Div(
-        Avatar(name, photo_key, size),
+        Avatar(name, photo_key, "sm"),
         Span(
             Span(name, cls="font-semibold text-ink"),
             Span(f" ({pronouns})", cls="text-sm text-ink-muted") if pronouns else None,

@@ -5,8 +5,7 @@ import json
 import re
 
 import pytest
-from conftest import FORM
-from test_photos import uid_of
+from conftest import FORM, uid_of
 
 from app import data
 from app.choices import INTERESTS, MAX_INTERESTS

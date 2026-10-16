@@ -32,43 +32,43 @@ def test_haversine_zero_and_symmetric():
         (["x"], ["y"], 0),
     ],
 )
-def test_jaccard(a, b, want):
-    assert match.jaccard(a, b) == pytest.approx(want)
+def test_cause_fit_of_loved_causes_is_their_overlap(a, b, want):
+    assert match.cause_fit(dict.fromkeys(a, "love"), b) == pytest.approx(want)
 
 
 # 2026-10-17 is a Saturday, 2026-10-19 a Monday.
 @pytest.mark.parametrize(
-    "starts_at, bucket",
+    "starts_at, slot",
     [
-        ("2026-10-19T00:00", "weekday_morning"),
-        ("2026-10-19T11:59", "weekday_morning"),
-        ("2026-10-19T12:00", "weekday_afternoon"),
-        ("2026-10-19T16:59", "weekday_afternoon"),
-        ("2026-10-19T17:00", "weekday_evening"),
-        ("2026-10-23T23:59", "weekday_evening"),  # Friday night is still a weekday
-        ("2026-10-24T00:00", "weekend_morning"),  # Saturday
-        ("2026-10-24T14:00", "weekend_afternoon"),
-        ("2026-10-25T20:00", "weekend_evening"),  # Sunday
-        ("2026-10-26T00:00", "weekday_morning"),  # Monday
-        ("2026-03-08T09:00", "weekend_morning"),  # the day DST starts
-        ("2026-11-01T09:00", "weekend_morning"),  # the day DST ends
+        ("2026-10-19T00:00", "mon_morning"),
+        ("2026-10-19T11:59", "mon_morning"),
+        ("2026-10-19T12:00", "mon_afternoon"),
+        ("2026-10-19T16:59", "mon_afternoon"),
+        ("2026-10-19T17:00", "mon_evening"),
+        ("2026-10-23T23:59", "fri_evening"),  # Friday night is still Friday
+        ("2026-10-24T00:00", "sat_morning"),  # Saturday
+        ("2026-10-24T14:00", "sat_afternoon"),
+        ("2026-10-25T20:00", "sun_evening"),  # Sunday
+        ("2026-10-26T00:00", "mon_morning"),  # Monday
+        ("2026-03-08T09:00", "sun_morning"),  # the day DST starts
+        ("2026-11-01T09:00", "sun_morning"),  # the day DST ends
     ],
 )
-def test_bucket_of_a_local_wall_clock_start(starts_at, bucket):
-    assert match.availability_bucket(starts_at) == bucket
+def test_slot_of_a_local_wall_clock_start(starts_at, slot):
+    assert match.availability_slot(starts_at) == slot
 
 
 @pytest.mark.parametrize(
-    "utc, bucket",
+    "utc, slot",
     [
         # 00:30 PDT Monday; a fixed UTC-8 would call it 23:30 Sunday
-        (datetime(2026, 3, 9, 7, 30, tzinfo=UTC), "weekday_morning"),
+        (datetime(2026, 3, 9, 7, 30, tzinfo=UTC), "mon_morning"),
         # 23:30 PST Sunday; a fixed UTC-7 would call it 00:30 Monday
-        (datetime(2026, 11, 2, 7, 30, tzinfo=UTC), "weekend_evening"),
+        (datetime(2026, 11, 2, 7, 30, tzinfo=UTC), "sun_evening"),
     ],
 )
-def test_aware_datetimes_are_read_in_los_angeles(utc, bucket):
-    assert match.availability_bucket(utc) == bucket
+def test_aware_datetimes_are_read_in_los_angeles(utc, slot):
+    assert match.availability_slot(utc) == slot
 
 
 def test_availability_overlap_free_then():
@@ -117,7 +117,7 @@ def test_distance_score():
 
 def test_score_weights_sum_to_one_for_a_perfect_fit():
     perfect = {
-        "causes": (["a"], ["a"]),
+        "causes": ({"a": "love"}, ["a"]),
         "skills": (["s"], ["s"]),
         "distance": 1,
         "availability": 1,
@@ -142,7 +142,7 @@ def test_score_weights_sum_to_one_for_a_perfect_fit():
 )
 def test_each_term_carries_its_weight(term, weight):
     zero = {
-        "causes": (["a"], ["b"]),
+        "causes": ({"a": "love"}, ["b"]),
         "skills": (["a"], ["b"]),
         "distance": 0,
         "availability": 0,
@@ -150,7 +150,8 @@ def test_each_term_carries_its_weight(term, weight):
         "work": 0,
         "language": 0,
     }
-    one = {**zero, term: (["a"], ["a"]) if term in ("causes", "skills") else 1}
+    full = {"causes": ({"a": "love"}, ["a"]), "skills": (["a"], ["a"])}
+    one = {**zero, term: full.get(term, 1)}
     assert match.score(**zero) == 0
     assert match.score(**one) == pytest.approx(weight)
 

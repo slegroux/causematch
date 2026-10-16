@@ -5,16 +5,13 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
+from conftest import close_all_openings, make_opening, uid_of
 
 from app import data, geo, match
 from app.db import (
-    Opening,
     causes,
     db,
     deck_empties,
-    now,
-    openings,
-    orgs,
     places,
     profiles,
 )
@@ -39,30 +36,19 @@ BASE = {
 }
 
 
-def uid_of(client):
-    return data.get_or_create_volunteer(client.phone)
-
-
 def add(title, where, starts_at="2099-01-03T09:00", **kw):
     lat, lon = where
-    fields = {
-        "org_id": orgs()[0].id,
-        "title": title,
-        "about": "",
-        "causes": '["food-insecurity"]',
-        "skills": "[]",
-        "lat": lat,
-        "lon": lon,
-        "neighborhood": "Somewhere",
-        "remote": False,
-        "starts_at": starts_at,
-        "recurrence": "one_time",
-        "slots": 3,
-        "status": "open",
-        "created_at": now(),
-    }
-    fields.update(kw)
-    return openings.insert(Opening(**fields)).id
+    return make_opening(
+        title,
+        **{
+            "causes": ["food-insecurity"],
+            "lat": lat,
+            "lon": lon,
+            "neighborhood": "Somewhere",
+            "starts_at": starts_at,
+            **kw,
+        },
+    ).id
 
 
 def place_fields(n, label, where, mode="car", minutes="15", lat="", lon=""):
@@ -78,8 +64,7 @@ def place_fields(n, label, where, mode="car", minutes="15", lat="", lon=""):
 
 @pytest.fixture
 def bare(user):
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     return user
 
 
@@ -486,7 +471,6 @@ def test_when_the_migration_and_match_agree():
 def test_when_a_slot_is_day_specific():
     assert match.availability_slot("2026-10-20T18:00") == "tue_evening"
     assert match.availability_slot("2026-10-24T09:00") == "sat_morning"
-    assert match.availability_bucket("2026-10-20T18:00") == "weekday_evening"  # compat
     assert match.availability_overlap(["tue_evening"], "2026-10-20T18:00") == 1
     assert match.availability_overlap(["tue_evening"], "2026-10-21T18:00") == 0
     assert (
@@ -970,7 +954,7 @@ def test_empty_deck_views_are_counted_once_an_hour(bare):
     assert m["empty_deck"] == {"views": 2, "volunteers": 1}
 
 
-# --- review fixes (items 1-3) ----------------------------------------------------------------
+# --- free dates, free today, dealbreakers and migrations ----------------------------------
 
 
 def test_when_a_kept_date_that_passed_drops_silently_and_a_new_one_is_added(bare):
@@ -1050,7 +1034,7 @@ def test_migrations_skip_a_malformed_row(tmp_path):
     assert json.loads(rows[2][2])[0] == "mon_morning"
 
 
-# --- review fixes (items 4-6) ----------------------------------------------------------------
+# --- swipes, stale forms, languages and why chips -----------------------------------------
 
 
 def test_free_today_cards_can_be_swiped_under_the_when_dealbreaker(bare):
@@ -1082,7 +1066,7 @@ def test_a_swipe_that_does_not_count_says_so(bare):
 
 
 def test_a_stale_form_keeps_what_it_does_not_carry(bare):
-    """A page loaded before items 3-5 (no horizon, kind of work, only-show fields) must
+    """A page loaded before the horizon, kind-of-work and only-show fields existed must
     not reset them when saved."""
     save(bare, work_form(only_causes="only", horizon_days="14", commitment="recurring",
                          setting="outdoor", languages=["es"], surprise="1"))  # fmt: skip
@@ -1155,7 +1139,7 @@ def test_hidden_chars_categories():
     assert hidden_chars("tab\there") and not hidden_chars("tab\there", True)
 
 
-# --- review fixes (4-6 fixes and item 7) -----------------------------------------------------
+# --- filters, views and kept ratings ------------------------------------------------------
 
 
 def test_a_causes_only_filter_does_not_pin_the_travel_time(bare):

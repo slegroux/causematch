@@ -1,11 +1,11 @@
 import pytest
+from conftest import sign_in
 from starlette.testclient import TestClient
 
 from app import data, notify
 from app.auth import DEV_SECRET, normalize_phone, session_secret
 from app.db import profiles
 from main import app
-from tests.conftest import sign_in
 
 
 def test_signed_out_deck_redirects_to_login(anon):
@@ -209,7 +209,7 @@ def test_undeclared_environment_refuses_to_start():
         require_env(env)
 
 
-# --- item 17 (L6): the number a code went to doesn't outlive the code ---------------------
+# --- the number a code went to doesn't outlive the code -----------------------------------
 
 
 class Later:

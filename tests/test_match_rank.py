@@ -3,13 +3,12 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import coordinator_for, locate
+from conftest import close_all_openings, coordinator_for, locate, make_opening, uid_of
 
 from app import data
 from app.data import LA
 from app.db import (
     Match,
-    Opening,
     Profile,
     causes,
     db,
@@ -41,32 +40,25 @@ def at_km(km_north):
 
 def add(title, cause="food-insecurity", org=0, where=None, starts_at=None, **kw):
     lat, lon = where or at_km(1)
-    fields = {
-        "org_id": orgs()[org].id,
-        "title": title,
-        "about": "",
-        "causes": json.dumps([cause]),
-        "skills": "[]",
-        "lat": lat,
-        "lon": lon,
-        "neighborhood": "Downtown",
-        "remote": False,
-        "starts_at": starts_at or saturday(),
-        "recurrence": "one_time",
-        "slots": 3,
-        "status": "open",
-        "created_at": now(),
-    }
-    fields.update(kw)
-    return openings.insert(Opening(**fields)).id
+    return make_opening(
+        title,
+        **{
+            "org_id": orgs()[org].id,
+            "causes": [cause],
+            "lat": lat,
+            "lon": lon,
+            "neighborhood": "Downtown",
+            "starts_at": starts_at or saturday(),
+            **kw,
+        },
+    ).id
 
 
 @pytest.fixture
 def me(user):
     """A volunteer at HOME with a 10 km radius, free Saturday mornings, in a bare world."""
-    for o in openings():
-        openings.update(id=o.id, status="closed")
-    uid = data.get_or_create_volunteer(user.phone)
+    close_all_openings()
+    uid = uid_of(user)
     locate(uid, *HOME, radius_km=10)
     profiles.update(
         id=uid,

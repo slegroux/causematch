@@ -3,15 +3,16 @@ from functools import cache
 from pathlib import Path
 
 
+def _rows(filename):
+    """The rows of a CSV file in app/, skipping its # comment lines."""
+    lines = (ln for ln in (Path(__file__).parent / filename).open() if ln[0] != "#")
+    return csv.DictReader(lines)
+
+
 @cache
 def _zips():
-    """{zip: (lat, lon)} for every ZIP in app/la_zips.csv. Its city column (mostly in the
-    City of Los Angeles) is not read anywhere today: it is kept for a future city/county
-    split, for metrics or an area rule."""
-    lines = (
-        ln for ln in (Path(__file__).parent / "la_zips.csv").open() if ln[0] != "#"
-    )
-    return {r["zip"]: (float(r["lat"]), float(r["lon"])) for r in csv.DictReader(lines)}
+    """{zip: (lat, lon)} for every ZIP in app/la_zips.csv."""
+    return {r["zip"]: (float(r["lat"]), float(r["lon"])) for r in _rows("la_zips.csv")}
 
 
 def zip_latlon(zip_code):
@@ -22,14 +23,9 @@ def zip_latlon(zip_code):
 
 @cache
 def _neighborhoods():
-    lines = (
-        ln
-        for ln in (Path(__file__).parent / "la_neighborhoods.csv").open()
-        if ln[0] != "#"
-    )
     return {
         r["name"].casefold(): (r["name"], (float(r["lat"]), float(r["lon"])))
-        for r in csv.DictReader(lines)
+        for r in _rows("la_neighborhoods.csv")
     }
 
 
@@ -57,3 +53,9 @@ def round_point(lat, lon):
         return None
     south, north, west, east = LA_BOX
     return (lat, lon) if south <= lat <= north and west <= lon <= east else None
+
+
+def shown_point(lat, lon):
+    """A posted device location as a page may show it again: rounded, or nothing."""
+    point = round_point(lat, lon) if lat or lon else None
+    return (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")

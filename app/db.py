@@ -1,11 +1,11 @@
 import json
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from fastlite import database
 
 from app import migrations
 from app.config import db_path, is_dev
+from app.match import LA
 
 DB_PATH = db_path()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -95,8 +95,7 @@ class Profile:
     skills: str  # JSON list
     language_other: str
     volunteered_last_year: str  # yes|no
-    # JSON list: day slots "mon_morning", or the weekday/weekend buckets onboarding still
-    # writes until it moves to the grid (app/match.py day_slots reads both)
+    # JSON list of day slots, "mon_morning" ... "sun_evening"
     availability: str
     frequency: str
     heard_from: str  # personal|second_degree|public|other
@@ -404,8 +403,6 @@ CAUSES = [
     Cause("animal-shelters", "Animal shelters", "paw-print", 3, True),
     Cause("homelessness-services", "Homelessness services", "house", 4, True),
 ]
-
-LA = ZoneInfo("America/Los_Angeles")
 
 
 def _soon(days, hhmm):

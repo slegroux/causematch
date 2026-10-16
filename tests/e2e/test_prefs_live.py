@@ -1,60 +1,31 @@
 """The deck's filter sheet and empty-deck suggestion, on a phone, in a real browser."""
 
-import json
-
 import pytest
+from conftest import close_all_openings, make_opening
 from playwright.sync_api import expect
-from test_swipe import guard, sign_in_page
 
 from app import data, geo
-from app.db import Opening, now, openings, orgs
+from e2e.helpers import sign_in_page
 
 pytestmark = pytest.mark.e2e
 
-SE = {"width": 375, "height": 667}
 DOWNTOWN = geo.neighborhood_latlon("Downtown")[1]
 KOREATOWN = geo.neighborhood_latlon("Koreatown")[1]  # about 5 km from Downtown
 PASADENA = geo.neighborhood_latlon("Pasadena")[1]  # about 17 km
 
 
-@pytest.fixture
-def phone(browser, live_url):
-    ctx = guard(
-        browser.new_context(
-            viewport=SE, is_mobile=True, has_touch=True, base_url=live_url
-        )
-    )
-    yield ctx.new_page()
-    ctx.close()
-
-
 def world(uid, minutes):
     """Home Downtown by car within `minutes`, and three openings at 0, 5 and 17 km."""
-    for o in openings():
-        openings.update(id=o.id, status="closed")
+    close_all_openings()
     for title, (lat, lon) in (
         ("Downtown pantry", DOWNTOWN),
         ("Koreatown kitchen", KOREATOWN),
         ("Pasadena trail day", PASADENA),
     ):
-        openings.insert(
-            Opening(
-                org_id=orgs()[0].id,
-                title=title,
-                about="",
-                causes=json.dumps(["food-insecurity"]),
-                skills="[]",
-                lat=lat,
-                lon=lon,
-                neighborhood="Somewhere",
-                remote=False,
-                starts_at="2099-01-03T09:00",
-                recurrence="one_time",
-                slots=3,
-                status="open",
-                created_at=now(),
-            )
-        )
+        make_opening(
+            title, causes=["food-insecurity"], lat=lat, lon=lon, neighborhood="Somewhere",
+            starts_at="2099-01-03T09:00",
+        )  # fmt: skip
     data.save_preferences(
         uid,
         causes={"food-insecurity": "love"},

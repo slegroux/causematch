@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Secret scan over the whole git history with gitleaks and .gitleaks.toml. CI (item 14) runs
+# Secret scan over the whole git history with gitleaks and .gitleaks.toml. CI runs
 # it on every push; run it locally before pushing. Without gitleaks it skips locally and
 # fails in CI (CI set), so a missing scanner can't pass for a clean scan.
 set -euo pipefail
