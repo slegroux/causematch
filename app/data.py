@@ -508,8 +508,8 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 # what a like means on an auto-accepting call
                 "booked": call
                 and call.auto_accept
-                and f"Like and you're booked for {urgent_when(call.starts_at)}. "
-                f"{org_names.get(o.org_id, 'The nonprofit')} then sees your full name.",
+                and f"Like and you're booked for {urgent_when(call.starts_at)}; "
+                "they then see your full name.",
             }
         )
     return cards, len(ranked)

@@ -993,10 +993,7 @@ def test_deck_auto_accept_card_says_a_like_books_you(shelter, user):
     page = user.get("/deck").text
     assert "Like and you're booked" not in page  # the org decides each one
     urgent_calls.update(id=call.id, auto_accept=True)
-    line = (
-        "Like and you're booked for tomorrow 9 am. Eastside Paws Rescue then sees "
-        "your full name."
-    )
+    line = "Like and you're booked for tomorrow 9 am; they then see your full name."
     assert line in user.get("/deck").text
     assert data.deck(uid_of(user), 1)[0]["booked"] == line
 
