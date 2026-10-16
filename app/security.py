@@ -19,13 +19,14 @@ import time
 import traceback
 import uuid
 from html import escape
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, unquote_plus, urlencode, urlsplit
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import cookie_parser
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from app import data, photos
+from app.auth import session_secret
 from app.config import (
     is_preview,
     is_production,
@@ -322,49 +323,73 @@ def preview_password_ok(headers):
     return _is_preview_password(given)
 
 
-def preview_cookie_value():
-    """The access cookie: keyed with PREVIEW_PASSWORD, so a new password voids them all.
-    Anyone can compute it from a password guess, so checking one is a guess too."""
-    key = os.environ["PREVIEW_PASSWORD"].encode()
-    return hmac.new(key, b"preview-access-v1", hashlib.sha256).hexdigest()
+def _cookie_mac(issued):
+    """Keyed with the session secret, over the password's digest and the issue time: no
+    one can make a cookie without the secret, and a new password voids them all."""
+    digest = hashlib.sha256(os.environ["PREVIEW_PASSWORD"].encode()).hexdigest()
+    msg = f"preview-access-v2|{digest}|{issued}".encode()
+    return hmac.new(
+        session_secret(os.environ).encode(), msg, hashlib.sha256
+    ).hexdigest()
 
 
-def _cookie_ok(value):
-    return value is not None and hmac.compare_digest(
-        value.encode(), preview_cookie_value().encode()
+def preview_cookie_value(now=None):
+    """The access cookie: "<issue time>.<mac>"."""
+    issued = int(time.time() if now is None else now)
+    return f"{issued}.{_cookie_mac(issued)}"
+
+
+def _cookie_ok(value, now=None):
+    """A cookie this preview made, with this password, within PREVIEW_COOKIE_MAX_AGE."""
+    issued, _, mac = (value or "").partition(".")
+    if not issued.isdigit():
+        return False
+    age = int(time.time() if now is None else now) - int(issued)
+    return 0 <= age <= PREVIEW_COOKIE_MAX_AGE and hmac.compare_digest(
+        mac.encode(), _cookie_mac(int(issued)).encode()
     )
 
 
-def _let_in(scope, pairs):
-    """303 to the same path and query without the key, with the access cookie."""
+def _without_key(scope, pairs, cookie=True):
+    """303 to the same path and query without the key, setting the access cookie unless
+    the browser has one already."""
     rest = [(k, v) for k, v in pairs if k != "access"]
     # one leading slash, and quoted (a backslash is %5C): "//host" would leave the site
     location = "/" + quote(scope["path"]).lstrip("/")
     if rest:
         location += "?" + urlencode(rest)
     r = RedirectResponse(location, 303, headers={"Cache-Control": "no-store"})
-    r.set_cookie(
-        PREVIEW_COOKIE,
-        preview_cookie_value(),
-        max_age=PREVIEW_COOKIE_MAX_AGE,
-        path="/",
-        secure=True,
-        httponly=True,
-        samesite="lax",
-    )
+    if cookie:
+        r.set_cookie(
+            PREVIEW_COOKIE,
+            preview_cookie_value(),
+            max_age=PREVIEW_COOKIE_MAX_AGE,
+            path="/",
+            secure=True,
+            httponly=True,
+            samesite="lax",
+        )
     return r
+
+
+def _navigation(headers):
+    """A top-level navigation (a tapped link), or a client that sends no Sec-Fetch headers
+    (curl, scripts). Not an <img> or fetch a foreign page fires at us."""
+    dest, mode = headers.get("sec-fetch-dest"), headers.get("sec-fetch-mode")
+    return (dest, mode) in (("document", "navigate"), (None, None))
 
 
 class PreviewGate:
     """In a preview (config.is_preview), every request needs to be let in: pages, /static,
     /photos, /tasks and websockets. The link's `?access=<PREVIEW_PASSWORD>` on a GET sets
     the access cookie and redirects to the same URL without the key; then the cookie lets
-    the browser in (a websocket handshake carries it too). HTTP Basic with the password
-    still works, for scripts. Anything else gets a plain 401 page with no WWW-Authenticate,
-    so browsers show no password dialog; websockets are closed with 1008. Only /robots.txt
-    is answered without it, from here, with Disallow everything. Wrong keys, cookies and
-    passwords are counted per client address: past the "preview" bucket, 429 without
-    checking. Outside a preview it passes through."""
+    the browser in (a websocket handshake carries it too). The key is weighed only on a
+    top-level navigation; a browser with the cookie just has the key taken out. HTTP Basic
+    with the password still works, for scripts. Anything else gets a plain 401 page with
+    no WWW-Authenticate, so browsers show no password dialog; websockets are closed with
+    1008. Only /robots.txt is answered without it, from here, with Disallow everything.
+    Wrong keys, cookies and passwords are counted per client address: past the "preview"
+    bucket, 429 without checking. Outside a preview it passes through."""
 
     def __init__(self, app):
         self.app = app
@@ -384,9 +409,13 @@ class PreviewGate:
         link = scope["type"] == "http" and scope["method"] in ("GET", "HEAD") and keys
         if not take_token("preview", subject, take=False):
             refused = too_many(retry_after=BUCKETS["preview"][1])
+        elif link and _cookie_ok(cookie):  # in already: the key isn't even compared
+            return await _without_key(scope, pairs, cookie=False)(scope, receive, send)
+        elif link and not _navigation(headers):  # never weighed, so never counted
+            refused = HTMLResponse(PRIVATE_PAGE, 401)
         elif link:
             if len(keys) == 1 and _is_preview_password(keys[0].encode()):
-                return await _let_in(scope, pairs)(scope, receive, send)
+                return await _without_key(scope, pairs)(scope, receive, send)
             take_token("preview", subject)
             refused = HTMLResponse(PRIVATE_PAGE, 401)
         elif _cookie_ok(cookie) or preview_password_ok(headers):
@@ -395,7 +424,9 @@ class PreviewGate:
             refused = HTMLResponse(PRIVATE_PAGE, 401)
             if cookie is not None or "authorization" in headers:
                 take_token("preview", subject)  # a guess; a first visit sends neither
-            if cookie is not None:  # an old password's: dropped, so it counts once
+            if (
+                cookie is not None
+            ):  # expired or an old password's: dropped, counted once
                 refused.delete_cookie(
                     PREVIEW_COOKIE, path="/", secure=True, httponly=True, samesite="lax"
                 )
@@ -589,6 +620,24 @@ def reset_buckets():
 # --- logs ----------------------------------------------------------------------------
 
 
+REDACTED = ("token", "access")
+
+
+def redact_query(target):
+    """target ("/path?query") with the values of REDACTED parameters replaced, matched by
+    name as parse_qsl reads it, so "acc%65ss=" is caught too."""
+    path, sep, query = target.partition("?")
+    if not sep:
+        return target
+    parts = []
+    for part in query.split("&"):
+        name, eq, _ = part.partition("=")
+        parts.append(
+            f"{name}=[redacted]" if eq and unquote_plus(name) in REDACTED else part
+        )
+    return f"{path}?{'&'.join(parts)}"
+
+
 class RedactTokens(logging.Filter):
     """Drop the sign-in token (the emailed link's query) and a preview's access key from
     uvicorn's access log lines."""
@@ -596,8 +645,6 @@ class RedactTokens(logging.Filter):
     def filter(self, record):
         if isinstance(record.args, tuple) and len(record.args) >= 3:
             args = list(record.args)
-            args[2] = re.sub(
-                r"((?:token|access)=)[^&\s]+", r"\1[redacted]", str(args[2])
-            )
+            args[2] = redact_query(str(args[2]))
             record.args = tuple(args)
         return True
