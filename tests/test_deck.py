@@ -1,11 +1,17 @@
 import re
 from datetime import datetime, timedelta
 
-from conftest import close_all_openings, deck_titles, make_opening, uid_of
+from conftest import (
+    close_all_openings,
+    coordinator_for,
+    deck_titles,
+    make_opening,
+    uid_of,
+)
 
 from app import data
 from app.data import LA
-from app.db import openings
+from app.db import matches, openings, profiles
 
 HOME_PLACES = (
     True  # each test runs with a saved Home place and as a profile from before
@@ -132,12 +138,27 @@ def test_a_like_says_where_it_went_and_lights_the_matches_dot(user):
     assert f"Sent to {org}." in r.text and "text you when they say yes." in r.text
     dot = re.search(r'<span[^>]*id="matches-dot"[^>]*>', r.text).group(0)
     assert "hidden" not in dot and 'hx-swap-oob="true"' in dot
-    for page in ("/deck", "/matches", "/history", "/profile", "/me/preferences"):
+    for page in ("/deck", "/history", "/profile", "/me/preferences"):
         html = user.get(page).text  # every volunteer page, not only the deck
         assert (
             '<span id="matches-dot"' in html
             and '<span hidden id="matches-dot"' not in html
         ), page
+
+
+def test_the_matches_dot_is_news_since_the_last_look(user):
+    close_all_openings()
+    oid = add_opening("Greet guests", ["food-insecurity"]).id
+    m = data.swipe(uid_of(user), oid, True)
+    off = '<span hidden id="matches-dot"'
+    assert off not in user.get("/deck").text
+    assert off in user.get("/matches").text  # looked: still pending, nothing new
+    assert off in user.get("/deck").text
+    profiles.update(id=uid_of(user), matches_seen_at="2000-01-01T00:00:00+00:00")
+    matches.update(id=m.id, created_at="1999-01-01T00:00:00+00:00")  # an old like
+    assert off in user.get("/deck").text
+    data.decide(coordinator_for(0)[0], m.id, True)  # decided after their last look
+    assert off not in user.get("/deck").text
 
 
 def test_one_nudge_at_a_time_photo_first_then_home_screen(user):

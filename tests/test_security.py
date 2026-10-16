@@ -170,6 +170,32 @@ def test_code_limits_per_phone_and_address_slide_and_cap_the_day():
     assert security.allow(*rules, now=t + 24 * 3600 + 1)
 
 
+def test_the_demo_number_keeps_per_phone_limits_unless_a_demo_shares_it(monkeypatch):
+    """Without config.demo_matches (production can't have it), the demo number is any
+    number: 5 codes per address in 10 minutes. In a demo every visitor shares it, so only
+    the address and network limits count."""
+    from app import demo_seed
+    from app.auth import normalize_phone
+    from app.config import DEMO_PHONE
+
+    assert normalize_phone(demo_seed.ME_PHONE) == DEMO_PHONE
+
+    def sends(n, at):
+        c = TestClient(app, client=(at, 1))
+        return [c.post("/login/send", data={"phone": DEMO_PHONE[2:]}).status_code
+                for _ in range(n)]  # fmt: skip
+
+    assert sends(6, "198.51.100.70") == [200] * 5 + [429]
+    assert security.verify_limits(DEMO_PHONE)  # wrong codes still lock it
+    for env in ({"CAUSEMATCH_ENV": "production"}, {"K_SERVICE": "x"}):
+        assert not security.shared_demo_phone(DEMO_PHONE, env)
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    rate_events.delete_where()
+    assert sends(25, "198.51.100.71") == [200] * 25  # past 5 per address, 20 a day
+    assert security.verify_limits(DEMO_PHONE) == ()
+    assert security.verify_limits("+13105550130")  # any other number: as before
+
+
 def test_someone_else_hammering_a_number_does_not_lock_its_owner_out():
     """L1: the 10-minute limit is per (phone, address), so the owner, elsewhere, still
     gets a code; the per-phone cap across addresses is 20 a day."""

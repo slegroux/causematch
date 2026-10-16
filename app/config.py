@@ -54,6 +54,16 @@ def demo_matches(env=os.environ):
     return True
 
 
+# The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164
+DEMO_PHONE = "+13105550100"
+
+
+def shared_demo_phone(phone, env=os.environ):
+    """The demo number while demo_matches is on: every visitor signs in with it (each gets
+    their own copy), so per-number sign-in limits would lock the demo for everyone."""
+    return phone == DEMO_PHONE and demo_matches(env)
+
+
 def is_dev(env=os.environ):
     """Development is something you declare; an unset environment is not development."""
     return env.get("CAUSEMATCH_ENV") in ("development", "test") and not is_production(

@@ -607,11 +607,22 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
 
 
-def has_pending_like(uid):
-    """True while a like of this volunteer waits for the nonprofit (the Matches tab's dot)."""
+def has_match_news(uid):
+    """The Matches tab's dot: since the volunteer last opened Matches, a like of theirs
+    is waiting or a nonprofit decided one (never seen: any of those)."""
+    seen = _db.profiles[uid].matches_seen_at or ""
     return bool(
-        _db.matches.count_where("volunteer_id = ? AND status = 'pending'", [uid])
+        _db.matches.count_where(
+            "volunteer_id = ? AND ((status = 'pending' AND created_at > ?) "
+            "OR (decided_at IS NOT NULL AND decided_at > ?))",
+            [uid, seen, seen],
+        )
     )
+
+
+def saw_matches(uid):
+    """They opened Matches: the dot goes until something new happens."""
+    _db.profiles.update(id=uid, matches_seen_at=_now())
 
 
 def org_name_of(opening_id):
@@ -619,10 +630,11 @@ def org_name_of(opening_id):
 
 
 def liked_org(uid, opening_id):
-    """The org's name when this volunteer liked the opening (a match of theirs is on it),
-    else None: /onboarding/more names it without trusting the id it was given."""
+    """The org's name when this volunteer liked the opening (a match of theirs is on it,
+    blind or not: a block never shows), else None: /onboarding/more names it without
+    trusting the id it was given."""
     m = _match_for(uid, opening_id) if _is_id(opening_id) else None
-    return org_name_of(opening_id) if m and not m.org_blind else None
+    return org_name_of(opening_id) if m else None
 
 
 def _accepted(opening_id):
@@ -766,9 +778,11 @@ def swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
 
 def swipe_created(uid, opening_id, liked, today=False, view=None, call_id=None):
     """Like `swipe`, but the Match only when this call created it (not a pass or a repeat);
-    it is already accepted when an urgent call auto-accepted it."""
+    it is already accepted when an urgent call auto-accepted it. A blind match (the org
+    blocked them) comes back too: the volunteer must see what any like shows, and only
+    the caller's notice to the org is skipped."""
     match, created = _swipe(uid, opening_id, liked, today, view, call_id)
-    return match if created and not match.org_blind else None
+    return match if created else None
 
 
 def _like_starts_at(m, o):
@@ -3350,6 +3364,12 @@ DEMO_COPIES = 200  # demo volunteers kept at once; past it the oldest is reused
 DEMO_PHONE_PREFIX = "+1310000"
 
 
+def is_demo_volunteer(uid):
+    """True for a demo copy (new_demo_volunteer): only its likes are auto-accepted."""
+    p = get_profile(uid)
+    return bool(p and (p.phone or "").startswith(DEMO_PHONE_PREFIX))
+
+
 def demo_team(org_id):
     """The org's stand-in demo coordinator (an address at DEMO_TEAM_DOMAIN), else None."""
     rows = _db.db.q(
@@ -3417,12 +3437,13 @@ def new_demo_volunteer():
 
 
 def demo_accept_due(uid):
-    """Demo only, else []: the volunteer's likes made DEMO_ACCEPT_AFTER to
+    """Demo only, and a demo copy's likes only (an ordinary volunteer of a preview waits
+    like anyone), else []: the volunteer's likes made DEMO_ACCEPT_AFTER to
     DEMO_ACCEPT_WITHIN ago, on openings of an org a demo team runs, are accepted by that
     team with a welcome message, so a like turns into a match while the visitor watches.
     [{"id", "org"}] of the matches accepted now. Production never runs it: with
     CAUSEMATCH_DEMO_MATCHES set it refuses to start."""
-    if not demo_matches():
+    if not demo_matches() or not is_demo_volunteer(uid):
         return []
     now = datetime.now(UTC)
     due = _db.matches(

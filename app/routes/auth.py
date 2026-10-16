@@ -139,7 +139,7 @@ def _sync_verify(form, sess):
     if not re.fullmatch(r"[0-9]{6}", code):
         return CodeForm(e164, "Enter the 6-digit code from the text.")
     # only wrong codes count, so the right one always gets through below the limit
-    if not security.allow((security.VERIFY_PER_PHONE, e164), record=False):
+    if not security.allow(*security.verify_limits(e164), record=False):
         return security.too_many()
     try:
         ok = notify.check_code(e164, code)
@@ -147,7 +147,7 @@ def _sync_verify(form, sess):
         log.warning("checking a sign-in code failed: %s", type(e).__name__)
         return CodeForm(e164, "We couldn't check that code just now. Try again.")
     if not ok:
-        security.allow((security.VERIFY_PER_PHONE, e164))
+        security.allow(*security.verify_limits(e164))
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
     uid = demo_volunteer(e164) if demo_matches() and demo_volunteer else None
     uid = uid or data.get_or_create_volunteer(e164)

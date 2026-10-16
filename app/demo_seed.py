@@ -573,9 +573,9 @@ def demo_volunteer(phone):
     matches, chat and shifts, and a full deck whose first card is the urgent call. Its
     profile id; None for any other number."""
     from app import data
-    from app.auth import normalize_phone
+    from app.config import DEMO_PHONE  # ME_PHONE, in E.164
 
-    if phone != normalize_phone(ME_PHONE):
+    if phone != DEMO_PHONE:
         return None
     uid = _sam(data.new_demo_volunteer())
     _preferences(uid)

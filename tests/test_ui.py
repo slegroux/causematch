@@ -41,6 +41,7 @@ NOT_PAGES = {
     "/photos/{key}.jpg",
     "/photos/thumb/{key}.jpg",
     "/shifts/{shift_id}.ics",
+    "/org/zip",
 }
 
 

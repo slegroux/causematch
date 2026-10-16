@@ -12,6 +12,7 @@ from fasthtml.common import (
     P,
     Progress,
     Redirect,
+    Script,
     Span,
     Summary,
     Textarea,
@@ -27,6 +28,7 @@ from monsterui.all import (
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 
 from app import data, notify, prefs
 from app.auth import normalize_phone
@@ -399,7 +401,7 @@ def OpeningForm(uid, f=None, error=None):
                     TextInput(
                         name="neighborhood",
                         value=f.get("neighborhood", ""),
-                        placeholder="Filled in from the ZIP code",
+                        placeholder="Filled in from the ZIP code; you can change it",
                     ),
                 ),
                 cls="grid gap-4 sm:grid-cols-2",
@@ -415,7 +417,8 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 "Does it repeat?",
-                Choice("recurrence", RECURRENCE, f.get("recurrence", "one_time")),
+                # no preset: it decides who the opening fits (match.commitment_fits)
+                Choice("recurrence", RECURRENCE, f.get("recurrence", "")),
             ),
         ),
         Group(
@@ -509,6 +512,7 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Alert(error, cls=AlertT.error + " mb-4") if error else None,
             form,
+            Script(src="/static/zip.js", defer=True),  # the neighborhood, from the ZIP
             cls="mx-auto max-w-2xl",
         ),
     )
@@ -534,6 +538,15 @@ def _sync_save_details(req, form):
         return org_home(req, BAD_PHONE)
     data.set_coordinator_details(uid, name, e164)
     return Redirect("/org")
+
+
+@ar("/org/zip", methods=["GET"])
+def zip_neighborhood_json(req):
+    """{"neighborhood": ...} for the opening form's ZIP (static/zip.js), "" when unknown:
+    a lookup in a local table, nothing stored."""
+    zip_code = query(req, "zip")
+    hood = zip_neighborhood(zip_code) if re.fullmatch(r"[0-9]{5}", zip_code) else None
+    return JSONResponse({"neighborhood": hood or ""})
 
 
 @ar("/org/openings/new", methods=["GET"])

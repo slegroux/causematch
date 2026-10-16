@@ -122,6 +122,28 @@ def test_bad_details_are_refused_and_change_nothing(user, over, message):
     assert (p.display_name, p.last_name, p.pronouns) == ("Sam", "Lee", "they/them")
 
 
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("email", "sam\u200b@example.com"),  # zero-width space
+        ("other_causes", "owls \u202eslwo"),  # right-to-left override
+        ("neighborhood", "Palms\ufeff"),  # zero-width no-break space
+    ],
+)
+def test_hidden_characters_are_refused_in_the_fields_moved_from_onboarding(
+    user, field, value
+):
+    save(user, email="sam@example.com", other_causes="owls", neighborhood="Palms")
+    r = save(user, **{field: value})
+    assert r.status_code == 400 and "hidden or special characters" in r.text
+    p = profiles[uid_of(user)]
+    assert (p.email, p.other_causes, p.neighborhood) == (
+        "sam@example.com",
+        "owls",
+        "Palms",
+    )
+
+
 def test_a_bio_keeps_emoji_line_breaks_and_accents(user):
     bio = "Proud \U0001f3f3\ufe0f\u200d\U0001f308 volunteer, I \u2764\ufe0f LA.\nJosé, Zoë."
     assert save(user, bio=bio, last_name="Nguyễn").status_code == 303

@@ -101,7 +101,10 @@ def _sync_swipe(req, form):
                 return Response(headers={"HX-Redirect": f"/chat/{m.id}?notice=in"})
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
-            notify.on_new_like(m.id)
+            if (
+                not m.org_blind
+            ):  # the org never hears of a blind like; the volunteer can't tell
+                notify.on_new_like(m.id)
             notice = LIKE_SENT.format(data.org_name_of(m.opening_id))
             if not data.get_profile(uid).heard_from:  # the one optional card, once
                 more = (
@@ -113,7 +116,7 @@ def _sync_swipe(req, form):
     notice = MatchNotice(data.demo_accept_due(uid)) or notice  # a demo's live match
     if req.headers.get("HX-Request"):
         return DeckArea(uid, today, view, notice), MatchesDot(
-            data.has_pending_like(uid), oob=True
+            data.has_match_news(uid), oob=True
         )
     return Redirect("/deck?today=1" if today else "/deck")
 
@@ -180,6 +183,9 @@ def NoMatches():
 def matches_page(req):
     uid = req.scope["uid"]
     matched = MatchNotice(data.demo_accept_due(uid))  # a demo's live match
+    data.saw_matches(
+        uid
+    )  # before the tab bar draws: no dot on the page that shows it all
     rows = data.my_matches(uid)
     notice = query(req, "notice")
     return VolunteerShell(

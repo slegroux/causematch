@@ -246,6 +246,9 @@ def more_page(req):
     org = (
         data.liked_org(uid, int(liked)) if re.fullmatch(r"[0-9]{1,18}", liked) else None
     )
+    # asked once: shown is enough, so leaving it unanswered never holds up a later like
+    # (Save still records the answers)
+    data.save_about(uid, SKIPPED)
     return MoreCard(uid, org)
 
 

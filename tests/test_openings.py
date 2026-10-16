@@ -565,8 +565,10 @@ def test_a_coordinator_name_refuses_hidden_characters(coord):
 # --- a shorter form ----------------------------------------------------------------------
 
 
-def test_minimal_post_fills_at_most_eight_inputs(coord):
-    """What a coordinator must still choose or type: required fields with no preset value."""
+def test_minimal_post_fills_at_most_nine_inputs(coord):
+    """What a coordinator must still choose or type: required fields with no preset value.
+    12 before; 9 now. Recurrence has no preset (it decides who the opening fits), so the
+    plan's 8 was traded for an honest answer."""
     html = coord.get("/org/openings/new").text
     assert (
         'type="hidden" name="org_id"' in html or 'name="org_id" type="hidden"' in html
@@ -578,11 +580,23 @@ def test_minimal_post_fills_at_most_eight_inputs(coord):
         if "required" in tag and 'type="hidden"' not in tag:
             blank += 1
     for sel in re.findall(r"<select.*?</select>", html, re.DOTALL):
-        if 'name="reply_channel"' in sel or 'name="recurrence"' in sel:
+        if 'name="reply_channel"' in sel:
             assert "selected" in re.sub(r'<option[^>]*value=""[^>]*>', "", sel)
         else:
             blank += 1
-    assert blank <= 8, blank
+            if 'name="recurrence"' in sel:  # chosen, never preset
+                assert "selected" not in re.sub(r'<option[^>]*value=""[^>]*>', "", sel)
+    assert blank <= 9, blank
+
+
+def test_the_form_shows_the_zips_neighborhood_before_posting(coord):
+    """static/zip.js asks this as the ZIP is typed and fills an empty Neighborhood, which
+    the coordinator can still change; a well-known area wins a near tie (Palms, not
+    Reynier Village)."""
+    assert coord.get("/org/zip?zip=90034").json() == {"neighborhood": "Palms"}
+    for junk in ("00000", "9003", "abcde", "<b>"):
+        assert coord.get(f"/org/zip?zip={junk}").json() == {"neighborhood": ""}
+    assert 'src="/static/zip.js"' in coord.get("/org/openings/new").text
 
 
 def test_empty_neighborhood_is_filled_from_the_zip(coord):

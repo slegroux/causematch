@@ -39,7 +39,10 @@
 
   function openSheet(c) {
     var s = c.parentNode.querySelector("dialog.cm-sheet");
-    if (s && !s.open) s.showModal();
+    if (s && !s.open) {
+      s.showModal();
+      quietUntil = Date.now() + SETTLE_MS; // the opening tap's ghost click can't Like
+    }
   }
 
   document.addEventListener("pointerdown", function (e) {
@@ -111,9 +114,11 @@
     }
   });
 
-  // Ignore taps that land on a card just swapped in (the second tap of a double tap).
+  // Ignore taps that land on a card just swapped in (the second tap of a double tap), or
+  // on the sheet just opened; its Close always works.
   document.addEventListener("click", function (e) {
-    if (e.target.closest && e.target.closest("#deck-area button") && !ready()) {
+    if (e.target.closest && e.target.closest("#deck-area button:not([data-close-sheet])") &&
+        !ready()) {
       e.preventDefault();
       e.stopPropagation();
     }

@@ -24,6 +24,7 @@ from test_photos import key_of, upload
 from app import data, demo_seed, notify, security
 from app.auth import session_cookie, session_secret
 from app.config import (
+    DEMO_PHONE,
     contact_email,
     demo_banner,
     demo_matches,
@@ -40,6 +41,7 @@ from app.db import (
     messages,
     openings,
     orgs,
+    places,
     profiles,
     shifts,
     swipes,
@@ -749,28 +751,65 @@ def test_a_demo_sam_has_matches_in_several_states_none_in_the_coordinators_inbox
 
 def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
     monkeypatch.setattr(data, "DEMO_COPIES", 2)
-    a, b, c = (data.new_demo_volunteer() for _ in range(3))
+    (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
+    a, b, c = (as_demo_volunteer().uid for _ in range(3))
     phones = {p.id: p.phone for p in profiles() if p.id in (a, b, c)}
     assert set(phones) == {b, c} and phones[c] == f"{data.DEMO_PHONE_PREFIX}0000"
+    for table, col in ((matches, "volunteer_id"), (swipes, "volunteer_id"),
+                       (places, "user_id")):  # fmt: skip
+        count = lambda uid, t=table, k=col: t.count_where(f"{k} = ?", [uid])
+        assert count(a) == 0, table  # a's rows went with it
+        assert count(b) and count(seed_sam.id), table  # the others keep theirs
 
 
-def test_in_a_preview_a_demo_team_says_yes_with_a_welcome(user, demo):
-    user.headers["Authorization"] = basic()
-    uid = uid_of(user)
+def test_without_the_switch_the_demo_number_is_the_seeds_sam(preview):
+    _empty()
+    demo_seed.seed_preview(None)
+    (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
+    c = TestClient(app, headers={"Authorization": basic()})
+    c.post("/login/send", data={"phone": demo_seed.ME_PHONE})
+    c.post("/login/verify", data={"code": "000000"})
+    assert data.get_or_create_volunteer(DEMO_PHONE) == seed_sam.id
+    assert not [
+        p for p in profiles() if (p.phone or "").startswith(data.DEMO_PHONE_PREFIX)
+    ]
+    with pytest.raises(PermissionError):
+        data.new_demo_volunteer()
+    assert "Sam" in c.get("/profile").text
+
+
+def _like_a_team_card(client, uid):
+    """Likes the first card a stand-in team runs, made long enough ago to be due."""
     card = next(
         c for c in data.deck(uid, 50)
         if not c["call_id"] and data.demo_team(openings[c["id"]].org_id)
     )  # fmt: skip
-    user.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
-    (m,) = matches(where="volunteer_id = ?", where_args=[uid])
+    client.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+    (m,) = matches(
+        where="volunteer_id = ? AND opening_id = ?", where_args=[uid, card["id"]]
+    )
     assert m.status == "pending"  # not at once: a few seconds later
     early = (datetime.now(UTC) - data.DEMO_ACCEPT_AFTER).isoformat(timespec="seconds")
     matches.update(id=m.id, created_at=early)
-    page = user.get("/deck").text
+    return m
+
+
+def test_in_a_preview_a_demo_team_says_yes_with_a_welcome(demo):
+    sam = as_demo_volunteer()
+    m = _like_a_team_card(sam, sam.uid)
+    page = sam.get("/deck").text
     assert "It&#x27;s a match!" in page or "It's a match!" in page
     assert f'href="/chat/{m.id}"' in page and matches[m.id].status == "accepted"
     (hi,) = messages(where="match_id = ?", where_args=[m.id])
-    assert hi.body.startswith(f"Hi {profiles[uid].display_name}! Thanks for signing up")
+    assert hi.body.startswith("Hi Sam! Thanks for signing up")
+
+
+def test_in_a_preview_an_ordinary_volunteers_like_waits(user, demo):
+    user.headers["Authorization"] = basic()
+    uid = uid_of(user)
+    m = _like_a_team_card(user, uid)
+    assert "s a match!" not in user.get("/deck").text
+    assert matches[m.id].status == "pending" and data.demo_accept_due(uid) == []
 
 
 # --- the deploy ----------------------------------------------------------------------

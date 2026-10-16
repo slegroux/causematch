@@ -327,10 +327,11 @@ LIKE_SENT = "Sent to {}. We'll text you when they say yes."
 
 
 def MatchesDot(on, oob=False):
-    """The small dot on the Matches tab while a like waits for a nonprofit. Always in the
-    page (hidden when off), so a like's response can swap it in without a reload."""
+    """The small dot on the Matches tab: news since they last looked (data.has_match_news).
+    Always in the page (hidden when off), so a like's response can swap it in without a
+    reload."""
     return Span(
-        Span(" (a like is waiting)", cls="sr-only"),
+        Span(" (something new)", cls="sr-only"),
         id="matches-dot",
         hidden=not on,
         hx_swap_oob="true" if oob else None,
@@ -385,7 +386,7 @@ def VolunteerNav(active, uid):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        TabBar(active, data.has_pending_like(uid)),
+        TabBar(active, data.has_match_news(uid)),
     )
 
 

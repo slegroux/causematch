@@ -128,6 +128,7 @@ class Profile:
     bio: str  # optional, up to choices.MAX_BIO characters
     interests: str  # JSON list of choices.INTERESTS values
     photo_nudge_dismissed_at: str  # UTC; "Not now" on the deck's "Add a photo"
+    matches_seen_at: str  # UTC; their last look at Matches (the tab's dot: news since)
     # Last-minute calls, private (app/prefs.py urgent): off unless turned on
     urgent_on: bool
     urgent_window: str  # today|48h (NULL: 48h)
@@ -260,6 +261,9 @@ login_tokens = db.create(LoginToken, pk="token_hash", transform=True)
 swipes = db.create(Swipe, pk=["volunteer_id", "opening_id"], transform=True)
 matches = db.create(Match, pk="id", transform=True)
 matches.create_index(["opening_id", "volunteer_id"], unique=True, if_not_exists=True)
+matches.create_index(
+    ["volunteer_id", "status"], if_not_exists=True
+)  # a volunteer's own
 messages = db.create(Message, pk="id", transform=True)
 messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id", transform=True)

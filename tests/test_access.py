@@ -96,6 +96,7 @@ ROUTES = {
     ("GET", "/org"): ("coordinator", "own-org"),
     ("POST", "/org/details"): ("coordinator", "own-org"),
     ("GET", "/org/openings/new"): ("coordinator", "own-org"),
+    ("GET", "/org/zip"): ("coordinator", None),  # a public table lookup
     ("POST", "/org/openings/new"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("GET", "/org/openings/{opening_id}/urgent"): ("coordinator", "own-org"),

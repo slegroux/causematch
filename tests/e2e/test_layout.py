@@ -352,3 +352,20 @@ def test_the_home_screen_toast_never_covers_pass_like_or_filters(
     page.wait_for_load_state("networkidle")
     assert toast.is_visible()
     ctx.close()
+
+
+def test_the_zip_fills_an_empty_neighborhood_before_posting(browser, live_url):
+    """static/zip.js: typing a ZIP shows its neighborhood, still editable; a typed one
+    stays."""
+    page = coordinator_page(browser, live_url)
+    page.goto("/org/openings/new")
+    hood = page.get_by_label("Neighborhood")
+    page.get_by_label("ZIP code").fill("90034")
+    page.wait_for_function(
+        "() => document.querySelector('[name=neighborhood]').value === 'Palms'"
+    )
+    hood.fill("Mine")
+    page.get_by_label("ZIP code").fill("90012")
+    page.wait_for_timeout(300)
+    assert hood.input_value() == "Mine"
+    page.context.close()

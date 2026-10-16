@@ -127,6 +127,16 @@ def test_the_card_shows_what_you_will_do_and_a_tap_opens_the_sheet(
         assert box["y"] + box["height"] <= 667 - 64  # above the tab bar
     sheet = page.locator("dialog.cm-sheet")
     assert not sheet.is_visible()
+    # a drag (short of a swipe: the card snaps back) is not a tap: no sheet
+    box = page.locator("[data-swipe-card]").bounding_box()
+    x, y = box["x"] + 40, box["y"] + 30
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for i in range(1, 6):
+        page.mouse.move(x + 12 * i, y)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    assert not sheet.is_visible()
     page.locator("[data-swipe-card]").click(position={"x": 40, "y": 30})  # a tap
     assert sheet.is_visible()
     assert "Park behind the building." in sheet.inner_text()
