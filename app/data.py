@@ -838,24 +838,75 @@ def withdraw(uid, match_id):
         _end_match(m, uid, "withdrawn")
 
 
+def _face(org, o):
+    """The keys ui.OrgFace draws a nonprofit with: its logo, else the opening's photo
+    (else the org's), else its first cause's tint. Logos and these photos are public to
+    anyone signed in (photo_for)."""
+    return {
+        "logo": org.logo_key if org else None,
+        "photo": o.photo_key or (org.photo_key if org else None),
+        "slug": next(iter(json.loads(o.causes or "[]")), None),
+    }
+
+
+# An upcoming shift for a calendar: ui.AddToCalendar and GET /shifts/{id}.ics read it.
+_EVENT_SELECT = (
+    "SELECT s.id, s.match_id, s.starts_at, o.title, g.name AS org, o.neighborhood "
+    "FROM shift s JOIN match m ON m.id = s.match_id "
+    "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
+    "WHERE m.status = 'accepted' AND s.status = 'scheduled' AND s.starts_at > ? "
+)
+
+
+def _next_shift(match_id):
+    """The match's soonest upcoming shift while it is accepted, as _EVENT_SELECT reads it;
+    else None."""
+    rows = _db.db.q(
+        _EVENT_SELECT + "AND s.match_id = ? ORDER BY s.starts_at LIMIT 1",
+        [_local_now(), match_id],
+    )
+    return rows[0] if rows else None
+
+
+def shift_event(uid, shift_id):
+    """{"id", "match_id", "starts_at", "title", "org", "neighborhood"} of this volunteer's
+    own upcoming shift on an accepted match. PermissionError for anything else (another
+    volunteer's shift, a cancelled or past one, an unknown id), so the caller answers 404."""
+    if not _is_id(shift_id):
+        raise PermissionError("no such shift")
+    rows = _db.db.q(
+        _EVENT_SELECT + "AND s.id = ? AND m.volunteer_id = ?",
+        [_local_now(), shift_id, uid],
+    )
+    if not rows:
+        raise PermissionError("no such shift")
+    return rows[0]
+
+
 def my_matches(uid):
-    """This volunteer's matches, newest first, with the opening's public details."""
-    org_names = {o.id: o.name for o in _db.orgs()}
+    """This volunteer's matches, newest first, with the opening's public details, the
+    org's face (_face), and on an accepted match its notes and next shift."""
+    org_rows = {o.id: o for o in _db.orgs()}
     out = []
     for m in _db.matches(
         where="volunteer_id = ?", where_args=[uid], order_by="id DESC"
     ):
         o = _db.openings[m.opening_id]
+        org = org_rows.get(o.org_id)
+        accepted = m.status == "accepted"
         out.append(
             {
                 "blocked": _volunteer_blocked_org(uid, o.org_id),
                 "id": m.id,
                 "status": m.status,
                 "title": o.title,
-                "org": org_names.get(o.org_id, ""),
+                "org": org.name if org else "",
                 "starts_at": _like_starts_at(m, o),
                 "neighborhood": o.neighborhood,
                 "event_url": o.event_url,
+                "notes": o.notes if accepted else None,
+                "shift": _next_shift(m.id) if accepted else None,
+                **_face(org, o),
             }
         )
     return out
@@ -1105,7 +1156,9 @@ _BLOCKED = (
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
     "o.title, o.recurrence, g.name AS org, p.display_name, p.last_name, p.photo_key, "
-    "m.status AS match_status, " + _BLOCKED + " AS blocked "
+    "m.status AS match_status, " + _BLOCKED + " AS blocked, "
+    "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
+    "o.causes "
     "FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "JOIN profile p ON p.id = m.volunteer_id "
@@ -1116,7 +1169,8 @@ def my_shifts(uid):
     """{"upcoming": [...], "past": [...]} of this volunteer's own shifts.
 
     Upcoming: scheduled, soonest first. Past: everything else but cancelled, latest first;
-    a past shift nobody marked yet has status "scheduled".
+    a past shift nobody marked yet has status "scheduled". Rows carry the org's face
+    (_face's keys).
     """
     now = _local_now()
     out = {"upcoming": [], "past": []}
@@ -1128,6 +1182,8 @@ def my_shifts(uid):
         row = {
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
+        row["logo"], row["photo"] = r["org_logo"], r["opening_photo"]
+        row["slug"] = next(iter(json.loads(r["causes"] or "[]")), None)
         upcoming = r["status"] == "scheduled" and r["starts_at"] > now
         out["upcoming" if upcoming else "past"].append(row)
     out["past"].reverse()
@@ -1292,12 +1348,14 @@ def chat_header(uid, match_id):
 
     The volunteer sees the org name and the contact name of the coordinator who accepted
     them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
-    photo when data.photo_for would serve it. Also whether the caller may still write.
+    photo when data.photo_for would serve it. Also whether the caller may still write,
+    the org's face (_face), and while accepted the opening's notes and next shift.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
     o = _db.openings[m.opening_id]
-    org = _db.orgs[o.org_id].name
+    the_org = _db.orgs[o.org_id]
+    org = the_org.name
     photo = None
     if role == "volunteer":
         decider = get_profile(m.decided_by) if m.decided_by else None
@@ -1330,6 +1388,9 @@ def chat_header(uid, match_id):
         "other": other,
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
+        "notes": o.notes if m.status == "accepted" else None,
+        "shift": _next_shift(m.id) if m.status == "accepted" else None,
+        **_face(the_org, o),
     }
 
 

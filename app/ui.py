@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import quote, urlencode
 
 from fasthtml.common import (
     H1,
@@ -27,7 +28,7 @@ from monsterui.all import (
     TextPresets,
 )
 
-from app.config import demo_banner, is_preview
+from app.config import demo_banner, is_preview, public_base_url
 from app.forms import domain
 
 # Each cause's chip: its soft tint with its ink (static/theme.css). Literal class strings,
@@ -567,4 +568,90 @@ def VolunteerHeader(name, photo_key=None, pronouns=None):
             Span(f" ({pronouns})", cls="text-sm text-ink-muted") if pronouns else None,
         ),
         cls="flex items-center gap-3",
+    )
+
+
+def OrgFace(org, logo=None, photo=None, slug=None):
+    """A nonprofit at 48 px on the volunteer's lists: its logo, else the opening's photo,
+    else its initial on its cause's tint. Decorative: the org's name is written next to it.
+    Logos and opening photos are public to anyone signed in (data.photo_for)."""
+    cls = "h-12 w-12 shrink-0 rounded-full"
+    if logo or photo:
+        return Img(
+            src=f"/photos/thumb/{logo or photo}.jpg",
+            alt="",
+            loading="lazy",
+            width="48",
+            height="48",
+            cls=cls + " object-cover ring-1 ring-line",
+        )
+    return Span(
+        ((org or "").strip()[:1] or "?").upper(),
+        aria_hidden="true",
+        cls=f"{cls} grid place-items-center font-display text-xl font-extrabold "
+        + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
+    )
+
+
+CALENDAR_HOURS = 2  # openings have no end time yet: a calendar gets this long
+CALENDAR_ZONE = "America/Los_Angeles"  # the wall clock starts_at is stored in
+
+
+def calendar_event(s):
+    """What a calendar gets for an upcoming shift s (data.shift_event's keys): start and
+    end as CALENDAR_ZONE wall clock "YYYYMMDDTHHMMSS", title, place (the neighborhood: no
+    address is stored), and a line with the link back to the chat."""
+    start = datetime.fromisoformat(s["starts_at"])
+    end = start + timedelta(hours=CALENDAR_HOURS)
+    return {
+        "start": start.strftime("%Y%m%dT%H%M%S"),
+        "end": end.strftime("%Y%m%dT%H%M%S"),
+        "title": f"{s['title']} · {s['org']}",
+        "place": s["neighborhood"] or "",
+        "details": f"Chat with {s['org']}: {public_base_url()}/chat/{s['match_id']}",
+    }
+
+
+def AddToCalendar(s):
+    """On an upcoming accepted shift: its .ics (iPhone opens it in Calendar) and a Google
+    Calendar link, both from calendar_event."""
+    e = calendar_event(s)
+    google = "https://calendar.google.com/calendar/render?" + urlencode(
+        {
+            "action": "TEMPLATE",
+            "text": e["title"],
+            "dates": f"{e['start']}/{e['end']}",
+            "ctz": CALENDAR_ZONE,
+            "details": e["details"],
+            "location": e["place"],
+        },
+        quote_via=quote,
+    )
+    return Div(
+        Span(
+            Icon(CALENDAR, size=16, cls="text-ink-muted"),
+            "Add to calendar:",
+            cls="inline-flex items-center gap-2 text-ink",
+        ),
+        A("Apple", href=f"/shifts/{s['id']}.ics", cls=SMALL_LINK),
+        A(
+            "Google",
+            Span(" (opens in a new tab)", cls="sr-only"),
+            href=google,
+            target="_blank",
+            rel="noopener noreferrer",
+            cls=SMALL_LINK,
+        ),
+        cls="flex flex-wrap items-center gap-x-4 text-sm",
+    )
+
+
+def Notes(text):
+    """An opening's notes ("closed-toe shoes", parking), shown once the volunteer is in."""
+    if not text:
+        return None
+    return Div(  # not a P: Franken UI spaces a p after a p
+        Span("Good to know: ", cls="font-bold text-ink"),
+        text,
+        cls="whitespace-pre-line break-words text-sm text-ink-muted",
     )
