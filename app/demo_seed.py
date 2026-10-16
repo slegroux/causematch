@@ -501,19 +501,14 @@ def _teams(coordinator_org_id):
         )
 
 
-# A demo volunteer's matches, in the order they are made: accepted with an upcoming shift
-# (Add to calendar), waiting to hear back, accepted with the team's unanswered welcome, and
-# accepted with a past shift marked done.
-MATCH_KINDS = ("calendar", "waiting", "message", "done")
-
-
-def _matches(uid, coordinator_org_id, kinds=MATCH_KINDS):
-    """One match per kind for the seed's own Sam, each from another org a stand-in team
+def _matches(uid, coordinator_org_id, kinds):
+    """One match per kind ("calendar": accepted, with an upcoming shift; "waiting": liked
+    two days ago, still unanswered) for the seed's own Sam, each from another org a stand-in team
     runs and, while it can, in another cause; logos first, and the openings with the most
     room. The coordinator's org gets none, and an opening in the next 48 hours only when
     nothing else is left: those are the "Free in the next 48h" cards."""
     from app import data
-    from app.db import Shift, matches, now, openings, shifts
+    from app.db import matches, openings
 
     soon = (datetime.now(LA) + timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M")
     found = []
@@ -541,29 +536,13 @@ def _matches(uid, coordinator_org_id, kinds=MATCH_KINDS):
         orgs_used.add(o.org_id)
         causes_used.add(cause)
         m = data.swipe(uid, o.id, True)
-        if kind == "waiting":  # liked two days ago: the demo's auto-accept leaves it
+        if (
+            kind == "waiting"
+        ):  # older than DEMO_ACCEPT_WITHIN: the auto-accept leaves it
             two_days = datetime.now(UTC) - timedelta(days=2)
             matches.update(id=m.id, created_at=two_days.isoformat(timespec="seconds"))
             continue
         data.decide(team, m.id, True)
-        if kind == "message":
-            data.send_message(team, m.id, data.DEMO_WELCOME.format("Sam"))
-        elif kind == "done":  # its shift was two weeks ago, and they came
-            past = (datetime.now(LA) - timedelta(days=14)).strftime("%Y-%m-%dT09:00")
-            for sh in shifts(where="match_id = ?", where_args=[m.id]):
-                shifts.delete(sh.id)
-            shifts.insert(
-                Shift(
-                    match_id=m.id,
-                    starts_at=past,
-                    status="completed",
-                    kind="accept",
-                    created_by=team,
-                    created_at=now(),
-                    marked_at=now(),
-                    marked_by=team,
-                )
-            )
 
 
 def demo_volunteer(phone):

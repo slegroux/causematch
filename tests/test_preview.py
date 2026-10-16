@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import pytest
@@ -38,6 +38,8 @@ from app.config import (
     tasks_token,
 )
 from app.db import (
+    Match,
+    Profile,
     matches,
     messages,
     openings,
@@ -46,6 +48,9 @@ from app.db import (
     profiles,
     swipes,
     urgent_calls,
+)
+from app.db import (
+    now as db_now,
 )
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
@@ -740,7 +745,8 @@ def test_a_new_demo_sam_starts_with_no_matches_and_a_full_deck(demo):
     assert not messages(where="match_id IN (SELECT id FROM match WHERE volunteer_id = ?)",
                         where_args=[uid])  # fmt: skip
     deck = data.deck(uid, 200)
-    assert len(deck) >= 5 and deck[0]["urgent"]
+    # the invented seed holds 7 openings (the real seed dir holds more than 40)
+    assert len(deck) >= 7 and deck[0]["urgent"]
 
 
 def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
@@ -939,6 +945,53 @@ def test_outside_a_demo_every_accepted_match_fills_an_opening(user):
     matches.update(id=m.id, status="accepted")
     data._sync_fill(o.id)
     assert openings[o.id].status == "filled"
+
+
+def test_outside_a_demo_decide_counts_a_copy_like_phone(user):
+    o = openings(where="status = 'open'", order_by="id")[0]
+    openings.update(id=o.id, slots=1)
+    other = profiles.insert(
+        Profile(role="volunteer", phone="+13105550777", created_at=db_now())
+    ).id
+    mine = data.swipe(uid_of(user), o.id, True)
+    profiles.update(id=other, phone=f"{data.DEMO_PHONE_PREFIX}9999")
+    matches.update(id=mine.id, status="accepted")
+    pending = matches.insert(
+        Match(
+            opening_id=o.id, volunteer_id=other, status="pending", created_at=db_now()
+        )
+    )
+    team = data.add_coordinator("boss@example.org", o.org_id, name="Boss")
+    with pytest.raises(ValueError, match="no slots left"):
+        data.decide(team, pending.id, True)
+
+
+def test_in_a_demo_copies_never_fill_pats_side_or_the_urgent_card(demo):
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    row = next(r for r in data.org_inbox(pat)["pending"])
+    o = openings[matches[row["id"]].opening_id]
+    accepted = data.opening_counts(pat)[o.id]["accepted"]
+    openings.update(id=o.id, slots=accepted + 1)  # one real spot left
+    for _ in range(3):  # copies accepted on Pat's opening
+        uid = as_demo_volunteer().uid
+        data.decide(pat, data.swipe(uid, o.id, True).id, True)
+    assert openings[o.id].status == "open"
+    assert data.opening_counts(pat)[o.id]["accepted"] == accepted
+    inbox = {r["id"]: r for r in data.org_inbox(pat)["pending"]}
+    assert not inbox[row["id"]]["full"]
+    assert data.open_spots(pat, o.id) == 1
+    starts = (datetime.now(data.LA) + timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M")
+    data.post_urgent_call(pat, o.id, starts, 1, False)  # still available
+    data.decide(pat, row["id"], True)  # the seeded waiting volunteer is accepted
+    assert openings[o.id].status == "filled"
+
+
+def test_the_urgent_card_stays_first_for_every_copy(demo):
+    for _ in range(4):
+        sam = as_demo_volunteer()
+        card = data.deck(sam.uid, 1)[0]
+        assert card["urgent"]
+        data.swipe(sam.uid, card["id"], True, call_id=card["call_id"])
 
 
 # --- the deploy ----------------------------------------------------------------------

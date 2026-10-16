@@ -288,8 +288,7 @@ def EmptyDeck(today=False, relax=None):
             cls="font-display text-xl font-extrabold text-ink",
         ),
         P(
-            "No shift you could reach starts that soon. Turn off “Free in the next "
-            "48h” to see everything."
+            "No shift you could reach starts that soon."
             if today
             else "You have seen every opening for now. Check back soon.",
             cls="mx-auto max-w-xs text-ink-muted",
@@ -307,7 +306,11 @@ def EmptyDeck(today=False, relax=None):
         )
         if relax
         else None,
-        A("Show everything", href="/deck", cls="uk-btn uk-btn-primary mt-2 px-6")
+        A(
+            "Show everything",
+            href="/deck",
+            cls="uk-btn mt-2 px-6 " + ("uk-btn-default" if relax else "uk-btn-primary"),
+        )
         if today
         else None,
         A(
@@ -523,7 +526,6 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
         note,
         P(
             f"{count} shift{'' if count == 1 else 's'} in the next 48 hours",
-            role="status",
             cls="mb-2 text-center text-sm font-semibold text-ink-muted",
         )
         if today

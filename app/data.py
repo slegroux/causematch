@@ -445,8 +445,8 @@ def deck(uid, limit=20, today=False, view=None, first=None):
 
 
 def deck_and_count(uid, limit=20, today=False, view=None, first=None):
-    """Cards for open openings with an active cause, best fit first. today ("I'm free
-    today"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
+    """Cards for open openings with an active cause, best fit first. today ("Free in the next
+    48h"): only shifts starting in the next TODAY_HOURS, soonest first, then nearest.
 
     With "Surprise me", every SURPRISE_EVERY-th card the volunteer meets (counted by their
     swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
@@ -637,20 +637,23 @@ def liked_org(uid, opening_id):
     return org_name_of(opening_id) if m else None
 
 
-def _accepted(opening_id):
-    return _db.matches.count_where(
-        "opening_id = ? AND status = 'accepted'", [opening_id]
-    )
-
-
-def _filling():
-    """(SQL, args) for the accepted matches that fill an opening: all of them, except in a
-    demo, where a copy's don't count, so visitors keep finding the same openings open."""
+def _filling(match="match"):
+    """(SQL, args) for an `AND ...` that keeps the accepted matches that fill an opening
+    (and its urgent call): all of them, except in a demo, where a copy's don't count, so
+    visitors keep finding the same openings open. match: the alias of the match table.
+    Every such count goes through it, so they cannot drift apart."""
     if not demo_matches():
         return "", []
     return (
-        " AND volunteer_id NOT IN (SELECT id FROM profile WHERE phone LIKE ?)",
+        f" AND {match}.volunteer_id NOT IN (SELECT id FROM profile WHERE phone LIKE ?)",
         [DEMO_PHONE_PREFIX + "%"],
+    )
+
+
+def _accepted(opening_id):
+    skip, args = _filling()
+    return _db.matches.count_where(
+        f"opening_id = ? AND status = 'accepted'{skip}", [opening_id, *args]
     )
 
 
@@ -751,16 +754,18 @@ def _auto_accept(m, call):
     `needed` likes are in, booked at the call's time; the rest stay pending for the org.
     One statement decides, so concurrent likes never take more than `needed` (nor more
     than the opening's slots)."""
+    skip, args = _filling()
     _db.db.execute(
         "UPDATE match SET status = 'accepted', decided_at = ?, decided_by = ? "
         "WHERE id = ? AND status = 'pending' "
-        "AND (SELECT count(*) FROM match WHERE urgent_call_id = ? AND status = 'accepted') "
+        f"AND (SELECT count(*) FROM match WHERE urgent_call_id = ? AND status = 'accepted'{skip}) "
         "< (SELECT needed FROM urgent_call WHERE id = ? AND status = 'open' "
         "AND auto_accept = 1) "
-        "AND (SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted') "
+        f"AND (SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
         "< (SELECT slots FROM opening WHERE id = ?)",
-        [_now(), call.created_by, m.id, call.id, call.id, m.opening_id, m.opening_id],
-    )
+        [_now(), call.created_by, m.id, call.id, *args, call.id, m.opening_id, *args,
+         m.opening_id],
+    )  # fmt: skip
     if _db.db.conn.changes() != 1:
         return
     _sync_fill(m.opening_id)
@@ -961,6 +966,7 @@ def org_inbox(coordinator_uid):
     they speak, neighborhood, frequency. One query
     selects only those columns, so phone, email and location never leave SQLite.
     """
+    skip, args = _filling("a")
     labels = {c.slug: c.label for c in _db.causes()}
     interests = dict(INTERESTS)
     rows = _db.db.query(
@@ -970,7 +976,7 @@ def org_inbox(coordinator_uid):
         "p.interests, "
         "p.photo_key, " + _BLOCKED + " AS blocked, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
-        "AND a.status = 'accepted') >= o.slots AS full "
+        f"AND a.status = 'accepted'{skip}) >= o.slots AS full "
         "FROM match m JOIN opening o ON o.id = m.opening_id "
         "JOIN profile p ON p.id = m.volunteer_id "
         "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
@@ -980,7 +986,7 @@ def org_inbox(coordinator_uid):
         "OR (m.status = 'withdrawn' AND m.decided_at IS NOT NULL)) "
         "AND (m.status = 'withdrawn' OR NOT " + _BLOCKED + ") "
         "ORDER BY m.id DESC",
-        [coordinator_uid],
+        [*args, coordinator_uid],
     )
     out = {"pending": [], "decided": [], "past": []}
     for r in rows:
@@ -1892,8 +1898,9 @@ def opening_counts(coordinator_uid):
     """{opening id: {"pending": n, "accepted": n}} for the coordinator's own orgs only.
 
     pending counts the likes their inbox lists as waiting (org_inbox's filters);
-    accepted counts every accepted match, as the full check does.
+    accepted counts the accepted matches that fill the opening (_filling), as the full check does.
     """
+    skip, args = _filling("a")
     rows = _db.db.query(
         "SELECT o.id AS id, "
         "(SELECT count(*) FROM match m JOIN profile p ON p.id = m.volunteer_id "
@@ -1902,10 +1909,10 @@ def opening_counts(coordinator_uid):
         "AND coalesce(m.org_blind, 0) = 0 "
         "AND NOT " + _BLOCKED + ") AS pending, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
-        "AND a.status = 'accepted') AS accepted "
+        f"AND a.status = 'accepted'{skip}) AS accepted "
         "FROM opening o "
         "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?)",
-        [coordinator_uid],
+        [*args, coordinator_uid],
     )
     return {r["id"]: {"pending": r["pending"], "accepted": r["accepted"]} for r in rows}
 
@@ -1964,8 +1971,9 @@ def _open_calls():
 
 def _urgent_found(call_id):
     """How many likes on the call were accepted."""
+    skip, args = _filling()
     return _db.matches.count_where(
-        "urgent_call_id = ? AND status = 'accepted'", [call_id]
+        f"urgent_call_id = ? AND status = 'accepted'{skip}", [call_id, *args]
     )
 
 
@@ -3374,7 +3382,7 @@ def rate_take(keys, now, record=True):
 # signs in as them, and their orgs say yes to a like by themselves (demo_accept_due).
 DEMO_TEAM_DOMAIN = "team.demo.causematch.test"
 DEMO_ACCEPT_AFTER = timedelta(seconds=4)  # how long a demo team takes to say yes
-DEMO_ACCEPT_WITHIN = timedelta(hours=1)  # an older like stays as the seed left it
+DEMO_ACCEPT_WITHIN = timedelta(hours=1)  # a like older than this is left pending
 DEMO_WELCOME = "Hi {}! Thanks for signing up. We'll see you there, and you can ask us anything here."
 DEMO_COPIES = 200  # demo volunteers kept at once; past it the oldest is reused
 # Their numbers: exchange 000 is no real number, and the sign-in form refuses it
