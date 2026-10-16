@@ -536,9 +536,8 @@ def _matches(uid, coordinator_org_id, kinds):
         orgs_used.add(o.org_id)
         causes_used.add(cause)
         m = data.swipe(uid, o.id, True)
-        if (
-            kind == "waiting"
-        ):  # older than DEMO_ACCEPT_WITHIN: the auto-accept leaves it
+        # older than DEMO_ACCEPT_WITHIN: the auto-accept leaves it
+        if kind == "waiting":
             two_days = datetime.now(UTC) - timedelta(days=2)
             matches.update(id=m.id, created_at=two_days.isoformat(timespec="seconds"))
             continue

@@ -948,19 +948,23 @@ def test_outside_a_demo_every_accepted_match_fills_an_opening(user):
 
 
 def test_outside_a_demo_decide_counts_a_copy_like_phone(user):
+    """Outside a demo a copy-like phone's accepted match still takes the slot: the gate
+    in _filling() is what lets copies through, and only in a demo."""
     o = openings(where="status = 'open'", order_by="id")[0]
     openings.update(id=o.id, slots=1)
-    other = profiles.insert(
-        Profile(role="volunteer", phone="+13105550777", created_at=db_now())
+    copy = profiles.insert(
+        Profile(
+            role="volunteer",
+            phone=f"{data.DEMO_PHONE_PREFIX}9999",
+            created_at=db_now(),
+        )
     ).id
-    mine = data.swipe(uid_of(user), o.id, True)
-    profiles.update(id=other, phone=f"{data.DEMO_PHONE_PREFIX}9999")
-    matches.update(id=mine.id, status="accepted")
-    pending = matches.insert(
+    matches.insert(
         Match(
-            opening_id=o.id, volunteer_id=other, status="pending", created_at=db_now()
+            opening_id=o.id, volunteer_id=copy, status="accepted", created_at=db_now()
         )
     )
+    pending = data.swipe(uid_of(user), o.id, True)
     team = data.add_coordinator("boss@example.org", o.org_id, name="Boss")
     with pytest.raises(ValueError, match="no slots left"):
         data.decide(team, pending.id, True)
