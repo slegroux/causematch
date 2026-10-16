@@ -113,7 +113,7 @@ flowchart LR
         gcs[("GCS via Litestream<br/>planned")]
     end
 
-    phone -- "HTTPS, HTTP Basic in preview" --> uv
+    phone -- "HTTPS; preview: access link and cookie" --> uv
     sched -. "POST /tasks/*, bearer token (not set up)" .-> uv
     app -- "production only" --> twv
     app -- "production only" --> tws
@@ -149,7 +149,7 @@ flowchart TD
     req(["HTTP request or websocket handshake"]) --> guard
     guard["<b>security.Guard</b><br/>same-origin check on POST/PUT/PATCH/DELETE, exempt: /tasks/reminders, /tasks/urgent<br/>websocket: exact Origin, else close 1008<br/>body limit 64 KB, 6 MB on photo uploads<br/>adds CSP and security headers, X-Request-Id<br/>production: plain 500 page with a reference"]
     guard --> gate
-    gate["<b>security.PreviewGate</b><br/>preview only: HTTP Basic password on every request<br/>/robots.txt answered here with Disallow: /<br/>wrong guesses limited per client address"]
+    gate["<b>security.PreviewGate</b><br/>preview only: access cookie or HTTP Basic password on every request<br/>?access=key on a navigation sets the cookie, 303 without the key<br/>else a plain 401 page, no WWW-Authenticate<br/>/robots.txt answered here with Disallow: /<br/>wrong guesses limited per client address"]
     gate --> sess["Starlette SessionMiddleware<br/>signed cookie: __Host-cm_session in production and preview, cm_session in dev"]
     sess --> exc["Starlette ExceptionMiddleware<br/>404 page: app/routes/safety.py not_found"]
     exc --> router{"Router"}
@@ -777,13 +777,13 @@ Rate limits fall into two kinds:
 | Kind | Limits |
 |---|---|
 | Persistent, stored in `rate_event` so a restart doesn't reset them | **Sign-in codes:** 5 per 10 min and 10 per day per (phone, IP); 20 per day per phone; 60 per hour per IP; 120 per hour per IPv6 /48. **Wrong codes:** 10 per 10 min per phone. **Email links:** 5 per hour per email, 20 per hour per IP. **Claims:** 5 per hour per IP, 3 per day per email. **ProPublica calls:** 30 per hour across all admins. **SMS ceiling** on every text: `SMS_MAX_PER_HOUR` (default 100) and `SMS_MAX_PER_DAY` (default 500). Urgent waves may use only half of each, so sign-in codes always have room. |
-| In-memory token buckets per user | Swipe: 30, then 1 per second. Chat: 20, then 2 per second. Report/block: 10, then 1 every 6 minutes. Uploads: 10, then 1 per minute. Wrong preview passwords: 10 per client address, then 1 per minute. |
+| In-memory token buckets per user | Swipe: 30, then 1 per second. Chat: 20, then 2 per second. Report/block: 10, then 1 every 6 minutes. Uploads: 10, then 1 per minute. Wrong preview keys, cookies and passwords: 10 per client address, then 1 per minute. |
 
 HTTP requests over a limit get a 429 page with `Retry-After` (600 s for the persistent limits). Chat frames over the bucket close the socket with 1013. Texts over the SMS ceiling are deferred. A reporter may also file at most 10 reports in any 24 hours, counted from the `report` table; the 11th is refused on the form.
 
 ### Preview gate
 
-When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters, `PreviewGate` asks for that password by HTTP Basic auth on every request: pages, `/static`, `/photos`, `/tasks` and websocket handshakes, so in a preview nothing can call `/tasks/*` (see section 2). Any user name works. The password is compared in constant time on SHA-256 digests. Only `/robots.txt` answers without it, with `Disallow: /`.
+When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters, `PreviewGate` lets a request through only with the access cookie or the password by HTTP Basic auth, on every request: pages, `/static`, `/photos`, `/tasks` and websocket handshakes, so in a preview nothing can call `/tasks/*` (see section 2). The link people are sent carries the password as `?access=`. On a top-level navigation (`Sec-Fetch-Dest: document` with `Sec-Fetch-Mode: navigate`, or no Sec-Fetch headers, as from curl) a GET with the right key gets a 303 to the same URL without the key and the cookie `__Host-cm_preview` (Secure, HttpOnly, SameSite=Lax, 30 days). Any other request with `?access=` is refused without weighing the key, so a foreign page's `<img>` can't use up a visitor's guesses; a browser that has the cookie just gets the 303 without the key. The cookie is `<issue time>.<mac>`, the mac an HMAC-SHA256 keyed with `SESSION_SECRET` over a label, the password's SHA-256 and the issue time: it can't be made without the secret, expires after 30 days on the server side too, and a new password (or session secret) voids every one. Basic auth (any user name) stays for scripts. The password is compared in constant time on SHA-256 digests. Anything else gets a plain 401 page with no `WWW-Authenticate`, so browsers show no dialog; websockets are closed with 1008. Wrong keys, cookies and passwords share the per-address limit above. Only `/robots.txt` answers without it, with `Disallow: /`.
 
 ### Secrets and what never enters git
 
@@ -856,7 +856,7 @@ flowchart LR
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SID` | Sign-in codes | unless `CAUSEMATCH_FAKE_SMS=1` |
 | `TWILIO_FROM_NUMBER` | Sender of notification texts | unless `CAUSEMATCH_FAKE_SMS=1` |
 | `EMAIL_API_KEY`, `EMAIL_FROM` | Resend | unless `CAUSEMATCH_FAKE_EMAIL=1` |
-| `PREVIEW_PASSWORD` | HTTP Basic password | preview (16+) |
+| `PREVIEW_PASSWORD` | The preview's access key (`?access=` link) and HTTP Basic password | preview (16+) |
 | `PREVIEW_SEED_DIR` | Folder with `orgs.json`, `logos-raw/`, `photos-raw/` | optional, preview |
 | `CAUSEMATCH_FAKE_SMS`, `CAUSEMATCH_FAKE_EMAIL` | `1` = fakes | optional; dev, test, preview only |
 | `CAUSEMATCH_DEMO_BANNER` | `1` = demo banner (set by `scripts/demo.py --seed-file`) | optional; refused in production |

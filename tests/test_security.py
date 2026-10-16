@@ -641,6 +641,16 @@ def test_the_access_log_drops_sign_in_tokens():
     )
     security.RedactTokens().filter(rec)
     assert "abc" not in rec.getMessage() and "token=[redacted]&x=1" in rec.getMessage()
+    # a preview's access link carries its password
+    rec.args = ("1.2.3.4:5", "GET", "/?x=1&access=pass-WORD_9", "1.1", 303)
+    security.RedactTokens().filter(rec)
+    assert (
+        "pass" not in rec.getMessage() and "?x=1&access=[redacted] " in rec.getMessage()
+    )
+    # by the name the gate reads, however it is written
+    rec.args = ("1.2.3.4:5", "GET", "/?acc%65ss=pass-WORD_9&%74oken=abc", "1.1", 303)
+    security.RedactTokens().filter(rec)
+    assert "pass" not in rec.getMessage() and "abc" not in rec.getMessage()
 
 
 # --- client IP ------------------------------------------------------------------------------
