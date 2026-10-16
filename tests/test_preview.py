@@ -2,6 +2,8 @@
 demo's data and a banner. Production stays exactly as strict."""
 
 import base64
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -10,10 +12,11 @@ import subprocess
 import sys
 
 import pytest
-from conftest import ROOT, coordinator_for
+from conftest import ROOT, coordinator_for, jpeg
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
+from test_photos import key_of, upload
 
 from app import demo_seed, notify, security
 from app.auth import session_cookie, session_secret
@@ -45,6 +48,15 @@ PRODUCTION = (
 
 def basic(password=PASSWORD, user="preview"):
     return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+
+
+def access_cookie(password=PASSWORD):
+    """The cookie's value worked out here, not by the code under test."""
+    return hmac.new(password.encode(), b"preview-access-v1", hashlib.sha256).hexdigest()
+
+
+COOKIE = "__Host-cm_preview"
+PRIVATE = "This is a private preview. Ask the Causematch team for the link."
 
 
 @pytest.fixture
@@ -190,17 +202,20 @@ EVERYWHERE = (
 
 
 def test_every_path_needs_the_password(preview):
-    for headers in ({}, {"Authorization": basic("w" * 20)}):
+    for headers in (
+        {},
+        {"Authorization": basic("w" * 20)},
+        {"Cookie": f"{COOKIE}={access_cookie('w' * 20)}"},
+    ):
         c = TestClient(app, headers=headers)
         for path in EVERYWHERE:
             security.reset_buckets()  # wrong ones count: test_guessing_...
             r = c.get(path, follow_redirects=False)
             assert r.status_code == 401, path
-            assert r.headers["www-authenticate"] == (
-                'Basic realm="Causematch preview", charset="UTF-8"'
-            )
+            assert "www-authenticate" not in r.headers  # no browser dialog
             assert r.headers["x-robots-tag"] == "noindex, nofollow"
-            assert "Causematch" not in r.text  # nothing of the app
+            assert r.headers["content-type"].startswith("text/html")
+            assert PRIVATE in r.text and "<link" not in r.text  # nothing of the app
         r = c.post("/tasks/reminders", headers={"Authorization": f"Bearer {SECRET}"})
         assert r.status_code == 401
         r = c.post("/login/send", data={"phone": "3105550123"})
@@ -267,11 +282,94 @@ def test_websockets_need_the_password(one_loop, monkeypatch):  # noqa: F811
     with chat.vol.websocket_connect(chat.vol_ws) as ws:
         say(ws, "hello from the preview")
         assert "hello from the preview" in bubble(ws)
+    del chat.vol.headers["Authorization"]
+    # The test client's sockets are ws://, so a Secure cookie stays home: set it plain.
+    chat.vol.cookies.set(COOKIE, access_cookie("w" * 20))
+    assert refused(chat.vol, chat.vol_ws)
+    chat.vol.cookies.set(COOKIE, access_cookie())
+    with chat.vol.websocket_connect(chat.vol_ws) as ws:
+        say(ws, "hello again")
+        assert "hello again" in bubble(ws)
+
+
+# --- the access link ---------------------------------------------------------------
+
+
+def test_the_link_sets_the_cookie_and_drops_the_key(preview):
+    c = TestClient(app, base_url="https://testserver")  # the cookie is Secure
+    r = c.get(f"/login?next=%2Forg&access={PASSWORD}&x=1", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login?next=%2Forg&x=1"
+    assert r.headers["cache-control"] == "no-store"
+    flags = [f.strip().lower() for f in r.headers["set-cookie"].split(";")]
+    assert flags[0] == f"{COOKIE}={access_cookie()}".lower()
+    assert set(flags[1:]) == {
+        "httponly",
+        "max-age=2592000",
+        "path=/",
+        "samesite=lax",
+        "secure",
+    }
+    assert PASSWORD not in r.headers["location"] + r.headers["set-cookie"]
+    # just the key: back to the bare path; curl -I sends HEAD
+    r = c.head(f"/?access={PASSWORD}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    # never off the site, whatever the path
+    r = c.get(
+        f"https://testserver//evil.example/?access={PASSWORD}", follow_redirects=False
+    )
+    assert r.headers["location"] == "/evil.example/"
+
+
+def test_the_cookie_lets_pages_static_and_photos_through(user, monkeypatch):
+    upload(user, jpeg())  # before the preview starts
+    key = key_of(user)
+    for k, v in {**PREVIEW, "PHONE_HASH_KEY": SECRET, "TASKS_TOKEN": SECRET}.items():
+        monkeypatch.setenv(k, v)
+    user.base_url = "https://testserver"
+    assert user.get("/me/profile").status_code == 401
+    r = user.get(f"/me/profile?access={PASSWORD}")  # follows the 303
+    assert r.status_code == 200 and str(r.url) == "https://testserver/me/profile"
+    assert user.get("/static/theme.css").status_code == 200
+    assert user.get(f"/photos/{key}.jpg").status_code == 200
+    assert user.get(f"/photos/thumb/{key}.jpg").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        access_cookie()[:-1] + ("0" if access_cookie()[-1] != "0" else "1"),
+        access_cookie("o" * 20),  # before the password was changed
+        access_cookie().upper(),
+        "",
+    ],
+)
+def test_a_tampered_or_old_cookie_is_refused_and_dropped(preview, value):
+    r = TestClient(app, headers={"Cookie": f"{COOKIE}={value}"}).get("/login")
+    assert r.status_code == 401 and PRIVATE in r.text
+    dropped = r.headers["set-cookie"].lower()
+    assert dropped.startswith(f'{COOKIE.lower()}=""') and "max-age=0" in dropped
+
+
+def test_guessing_the_key_is_slowed(preview):
+    c = TestClient(app, base_url="https://testserver")
+    for _ in range(20):  # a first visit sends no key: not a guess
+        assert c.get("/login").status_code == 401
+    # two keys in one link are one wrong guess, even with the right one among them
+    assert c.get(f"/login?access={PASSWORD}&access=x").status_code == 401
+    for i in range(security.BUCKETS["preview"][0] - 1):
+        assert c.get(f"/login?access=g{i}").status_code == 401
+    assert c.get("/login?access=g").status_code == 429
+    # past the limit the right key waits too: a guess can't be confirmed
+    r = c.get(f"/login?access={PASSWORD}", follow_redirects=False)
+    assert r.status_code == 429 and "set-cookie" not in r.headers
 
 
 def test_outside_a_preview_there_is_no_password(anon):
     r = anon.get("/login")
     assert r.status_code == 200 and "x-robots-tag" not in r.headers
+    r = anon.get(f"/login?access={PASSWORD}", follow_redirects=False)
+    assert r.status_code == 200 and COOKIE not in r.headers.get("set-cookie", "")
     assert anon.get("/robots.txt").status_code == 404
 
 
