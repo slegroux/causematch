@@ -48,7 +48,11 @@ The design tokens (warm palette, one color per cause, the self-hosted Nunito fon
 
 ### Demo
 
-`uv run python scripts/demo.py` serves the app on a throwaway database with demo data and prints how to sign in as a volunteer, a coordinator and an admin. It refuses production. `--seed-file PATH` loads nonprofits from a JSON file kept outside the repo (its docstring has the format); their openings are titled "Sample: ..." and every page shows a demo banner. Logos and event photos come from `logos-raw/` and `photos-raw/` next to the seed file, read only through `photos.process` (SVG logos are skipped); every demo volunteer's photo is drawn by the script, never a real person. `scripts/screenshots.py --out DIR` screenshots every page of the same demo with Playwright.
+`uv run python scripts/demo.py` serves the app on a throwaway database with demo data and prints how to sign in as a volunteer, a coordinator and an admin. It refuses production. `--seed-file PATH` loads nonprofits from a JSON file kept outside the repo (`app/demo_seed.py`'s docstring has the format); their openings are titled "Sample: ..." and every page shows a demo banner. Logos and event photos come from `logos-raw/` and `photos-raw/` next to the seed file, read only through `photos.process` (SVG logos are skipped); every demo volunteer's photo is drawn by the script, never a real person. `scripts/screenshots.py --out DIR` screenshots every page of the same demo with Playwright.
+
+### Preview deploy
+
+`scripts/deploy_preview.sh` deploys the password-protected preview (`CAUSEMATCH_ENV=preview`, see Security) to Cloud Run: service `causematch-preview` in project `causematch`, `us-west1` (override with `PROJECT`, `REGION`, `SERVICE`). It needs the secrets `PREVIEW_PASSWORD`, `SESSION_SECRET`, `PHONE_HASH_KEY` and `TASKS_TOKEN` in Secret Manager, and no Twilio or email: the preview uses the fake ones. It copies the seed (`SEED_SRC`: `orgs.json`, `logos-raw/`, `photos-raw/`) into `preview-seed/`, which git ignores and `.gcloudignore` sends, builds the `Dockerfile` with Cloud Build (`gcloud run deploy --source .`), removes `preview-seed/` again, and sets `PUBLIC_BASE_URL` to the service URL it prints: open that URL, since forms only work on that origin. One instance at most, scaled to zero when idle, 1 GiB. The database lives in the container and is reseeded at each cold start; the demo coordinator's and admin's sign-in links are in the startup log, or `/org/login` shows a new one on the page.
 
 ### Schema changes
 

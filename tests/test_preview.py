@@ -401,3 +401,25 @@ def test_seed_preview_only_fills_an_empty_database(seed_dir):
     before = [o.name for o in orgs()]
     demo_seed.seed_preview(str(seed_dir))
     assert [o.name for o in orgs()] == before
+
+
+# --- the deploy ----------------------------------------------------------------------
+
+
+def test_the_preview_seed_stays_out_of_git_but_goes_to_cloud_build():
+    r = subprocess.run(
+        ["git", "-C", str(ROOT), "check-ignore", "-q", "preview-seed/orgs.json"],
+        check=False,
+        timeout=30,
+    )
+    assert r.returncode == 0  # ignored
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "preview-seed"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert tracked.stdout == ""
+    rules = (ROOT / ".gcloudignore").read_text().splitlines()
+    assert rules.index("#!include:.gitignore") < rules.index("!preview-seed/")
