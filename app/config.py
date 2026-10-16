@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 MIN_SECRET = 32  # characters, for every secret a production start requires
+MIN_PREVIEW_PASSWORD = 16  # characters
 
 
 def strong_secret(name, value, env):
@@ -14,8 +15,28 @@ def strong_secret(name, value, env):
 
 
 def is_production(env=os.environ):
-    """Cloud Run (K_SERVICE) counts as production whatever CAUSEMATCH_ENV says."""
-    return env.get("CAUSEMATCH_ENV") == "production" or "K_SERVICE" in env
+    """Production's rules apply: CAUSEMATCH_ENV=production or preview, or Cloud Run
+    (K_SERVICE), whatever CAUSEMATCH_ENV says. A preview is a production deploy behind a
+    password: is_preview says what it may do on top."""
+    return env.get("CAUSEMATCH_ENV") in ("production", "preview") or "K_SERVICE" in env
+
+
+def is_preview(env=os.environ):
+    """CAUSEMATCH_ENV=preview with a PREVIEW_PASSWORD of at least MIN_PREVIEW_PASSWORD
+    characters: the password-protected demo deploy. On top of production's rules every
+    request needs that password (security.PreviewGate), and fake SMS and email, the
+    banner and the demo seed are allowed. Without the password it is not a preview, and
+    require_env refuses to start."""
+    return (
+        env.get("CAUSEMATCH_ENV") == "preview"
+        and len(env.get("PREVIEW_PASSWORD") or "") >= MIN_PREVIEW_PASSWORD
+    )
+
+
+def fakes_allowed(env=os.environ):
+    """Fake SMS and email (every code 000000, links in the log): development, test and a
+    preview; never production."""
+    return is_dev(env) or is_preview(env)
 
 
 def is_dev(env=os.environ):
@@ -43,12 +64,20 @@ def public_base_url(env=os.environ):
 
 
 def require_env(env=os.environ):
-    """Refuse to start unless CAUSEMATCH_ENV is declared (Cloud Run counts as production)."""
+    """Refuse to start unless CAUSEMATCH_ENV is declared (Cloud Run counts as production),
+    or when a preview has no strong PREVIEW_PASSWORD."""
+    if env.get("CAUSEMATCH_ENV") == "preview":
+        if not is_preview(env):
+            raise RuntimeError(
+                f"PREVIEW_PASSWORD must be at least {MIN_PREVIEW_PASSWORD} characters "
+                "for CAUSEMATCH_ENV=preview"
+            )
+        return
     if "K_SERVICE" in env:
         return
     if env.get("CAUSEMATCH_ENV") not in ("development", "test", "production"):
         raise RuntimeError(
-            "CAUSEMATCH_ENV must be set to development, test or production"
+            "CAUSEMATCH_ENV must be set to development, test, preview or production"
         )
 
 
@@ -124,8 +153,11 @@ def sms_ceilings(env=os.environ):
 
 def demo_banner(env=os.environ):
     """CAUSEMATCH_DEMO_BANNER=1 (scripts/demo.py --seed-file, which loads real nonprofits
-    with sample openings): every page says they are samples. Local demos only: production
-    refuses it, so a real deploy never shows sample openings as a demo."""
+    with sample openings): every page says they are samples. Local demos and a preview
+    (always on there) only: production refuses it, so a real deploy never shows sample
+    openings as a demo."""
+    if is_preview(env):
+        return True
     if env.get("CAUSEMATCH_DEMO_BANNER") != "1":
         return False
     if is_production(env):

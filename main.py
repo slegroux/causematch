@@ -7,11 +7,12 @@ from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app import data, notify, security, ui
+from app import data, demo_seed, notify, security, ui
 from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
     contact_email,
     demo_banner,
+    is_preview,
     is_production,
     phone_hash_key,
     public_base_url,
@@ -39,7 +40,7 @@ from app.routes.safety import not_found
 from app.routes.shifts import ar as shifts_router
 from app.routes.tasks import ar as tasks_router
 
-require_env()  # an undeclared environment never runs
+require_env()  # an undeclared environment, or a preview without its password, never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
 notify.get_emailer()  # ... or sign-in links
 notify.get_sms()  # ... or texts
@@ -70,9 +71,9 @@ if not _log.handlers:
 
 app, rt = fast_app(
     before=(beforeware, security.throttle),
-    middleware=(
-        Middleware(security.Guard),
-    ),  # outside the session: covers every request
+    # outside the session: covers every request. The preview's password, inside Guard so
+    # its 401 carries the headers too.
+    middleware=(Middleware(security.Guard), Middleware(security.PreviewGate)),
     secret_key=session_secret(os.environ),
     session_cookie=session_cookie(),
     sess_https_only=is_production(),
@@ -150,6 +151,8 @@ for router in (
     router.to_app(app)
 # invented orgs and openings: never in production unless asked
 data.start(not is_production() or os.environ.get("CAUSEMATCH_SEED_DEMO") == "1")
+if is_preview():  # the demo's orgs and people, reseeded at each cold start
+    demo_seed.seed_preview(os.environ.get("PREVIEW_SEED_DIR"))
 
 if __name__ == "__main__":
     serve(**UVICORN)

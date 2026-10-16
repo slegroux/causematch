@@ -7,6 +7,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
+from app.config import is_preview
 from app.forms import query
 from app.ui import BigButton, Field, Router, SignInPage, TextInput
 
@@ -18,9 +19,15 @@ BAD_EMAIL = "Enter your email address."
 BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
 
 
-def EmailForm(email="", error=None, notice=None):
+def EmailForm(email="", error=None, notice=None, link=None):
     return SignInPage(
         "Nonprofit sign in",
+        P(
+            A("Open your sign-in link", href=link, cls="text-brand font-bold"),
+            " (a preview sends no email)",
+        )
+        if link
+        else None,
         Form(
             Field(
                 "Email",
@@ -57,14 +64,15 @@ def org_login_page():
 
 
 def _send_link(email):
-    """After the response, so known and unknown addresses take the same time to answer."""
+    """After the response, so known and unknown addresses take the same time to answer.
+    The link, or None."""
     uid = data.coordinator_by_email(email)
     if not (uid and data.coordinator_org_ids(uid)):
         uid = data.admin_by_email(email)
     if not uid or data.get_profile(uid) is None:  # unknown, deleted or suspended
         return
     try:
-        notify.send_login_link(email, data.create_login_token(uid))
+        return notify.send_login_link(email, data.create_login_token(uid))
     except Exception as e:  # noqa: BLE001  nothing here may reach the user: it would reveal the account
         log.warning("sending a sign-in link failed: %s", type(e).__name__)
 
@@ -94,6 +102,13 @@ def _sync_org_login_send(req, form):
         (security.LINK_PER_IP, security.ip_subject(req)),
     ):
         return security.too_many()
+    if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
+        # Nothing is emailed, so the page shows a coordinator's link: anyone with the
+        # preview password may sign in as any coordinator, of the demo's data only. An
+        # admin's link stays in the log.
+        uid = data.coordinator_by_email(email)
+        if uid and data.coordinator_org_ids(uid):
+            return EmailForm(notice=SENT, link=_send_link(email))
     return EmailForm(notice=SENT), BackgroundTask(_send_link, email)
 
 

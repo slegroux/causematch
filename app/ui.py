@@ -25,7 +25,7 @@ from monsterui.all import (
     TextPresets,
 )
 
-from app.config import demo_banner
+from app.config import demo_banner, is_preview
 from app.forms import domain
 
 # Each cause's chip: its soft tint with its ink (static/theme.css). Literal class strings,
@@ -37,6 +37,10 @@ CAUSE_CHIP = {
     "homelessness-services": "bg-cause-homeless-soft text-cause-homeless-ink",
 }
 DEMO_NOTICE = "Demo: sample openings, not affiliated with these organizations"
+PREVIEW_NOTICE = (
+    "Preview · sample openings, not affiliated with these organizations · "
+    "don't enter real details"
+)
 
 
 def PrivacyFooter():
@@ -146,7 +150,7 @@ def SignInPage(title, *content, error=None, intro=None, aside=None):
 
 def DemoBanner():
     return P(
-        DEMO_NOTICE,
+        PREVIEW_NOTICE if is_preview() else DEMO_NOTICE,
         role="note",
         cls="bg-ink text-cream text-center text-xs font-semibold px-4 py-1.5",
     )

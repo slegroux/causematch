@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import data, security
-from app.config import contact_email, is_dev, public_base_url
+from app.config import contact_email, fakes_allowed, public_base_url
 
 log = logging.getLogger("causematch")
 
@@ -22,16 +22,24 @@ MAX_REMINDERS_PER_SWEEP = 100  # the rest wait for the next hourly sweep
 LA = ZoneInfo("America/Los_Angeles")
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
+FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days
+
+
+def _record(sent, item):
+    """Append to a fake's .sent, dropping the oldest past FAKE_KEPT."""
+    sent.append(item)
+    if len(sent) > FAKE_KEPT:
+        del sent[0]
 
 
 class FakeVerifier:
-    """Test and local-dev verifier: sends nothing, accepts 000000."""
+    """Test, local-dev and preview verifier: sends nothing, accepts 000000."""
 
     def __init__(self):
         self.sent = []
 
     def send(self, phone):
-        self.sent.append((phone, FAKE_CODE))
+        _record(self.sent, (phone, FAKE_CODE))
 
     def check(self, phone, code):
         return code == FAKE_CODE and any(p == phone for p, _ in self.sent)
@@ -64,9 +72,9 @@ class TwilioVerifier:
 
 def make_verifier(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not is_dev(env):
+        if not fakes_allowed(env):
             raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development or test"
+                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
             )
         return FakeVerifier()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
@@ -98,17 +106,18 @@ def check_code(phone, code):
 
 
 class FakeEmailer:
-    """Test and local-dev emailer: sends nothing, records messages, logs them."""
+    """Test, local-dev and preview emailer: sends nothing, records messages, logs them
+    (the address masked)."""
 
     def __init__(self):
         self.sent = []
         self.with_headers = []  # (to, subject, headers) of messages that had any
 
     def send(self, to, subject, body, headers=None):
-        self.sent.append((to, subject, body))
+        _record(self.sent, (to, subject, body))
         if headers:
-            self.with_headers.append((to, subject, headers))
-        log.warning("FAKE EMAIL to %s: %s\n%s", to, subject, body)
+            _record(self.with_headers, (to, subject, headers))
+        log.warning("FAKE EMAIL to %s: %s\n%s", mask_email(to), subject, body)
 
 
 class ResendEmailer:
@@ -129,9 +138,9 @@ class ResendEmailer:
 
 def make_emailer(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_EMAIL") == "1":
-        if not is_dev(env):
+        if not fakes_allowed(env):
             raise RuntimeError(
-                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development or test"
+                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development, test or preview"
             )
         return FakeEmailer()
     if not (env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM")):
@@ -153,7 +162,7 @@ def get_emailer():
 
 
 def send_login_link(email, token):
-    """The one place a coordinator sign-in link leaves the app."""
+    """The one place a coordinator sign-in link leaves the app. Returns the link."""
     link = f"{public_base_url()}/org/login/verify?token={token}"
     get_emailer().send(
         email,
@@ -161,6 +170,7 @@ def send_login_link(email, token):
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
     )
+    return link
 
 
 def send_claim_approved(email, org_name):
@@ -194,14 +204,21 @@ def mask(phone):
     return "***" + phone[-4:]
 
 
+def mask_email(addr):
+    """An email address for logs: pat@demo.causematch.test -> p***@d***.test."""
+    local, _, domain = addr.partition("@")
+    host, dot, tld = domain.rpartition(".") if "." in domain else (domain, "", "")
+    return f"{local[:1]}***@{host[:1]}***{dot}{tld}"
+
+
 class FakeSMS:
-    """Test and local-dev sender: sends nothing, records (phone, text)."""
+    """Test, local-dev and preview sender: sends nothing, records (phone, text)."""
 
     def __init__(self):
         self.sent = []
 
     def send(self, phone, text):
-        self.sent.append((phone, text))
+        _record(self.sent, (phone, text))
         log.warning("FAKE SMS to %s: %s", mask(phone), text)
 
 
@@ -230,9 +247,9 @@ class TwilioSMS:
 
 def make_sms(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not is_dev(env):
+        if not fakes_allowed(env):
             raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development or test"
+                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
             )
         return FakeSMS()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")

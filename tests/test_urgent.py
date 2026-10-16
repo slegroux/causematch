@@ -302,12 +302,12 @@ def test_close_when_its_opening_fills(shelter):
 
 def test_deck_demo_seeds_an_urgent_call_first_in_the_deck(user):
     """scripts/demo.py's call: on the invented seed it adds the org's second opening."""
-    from test_ui import _demo
+    from app import demo_seed
 
     coord, _ = coordinator_for(0)
     org = orgs()[0]
     first = openings(where="org_id = ? AND status = 'open'", where_args=[org.id])[0]
-    oid = _demo()._urgent_call(coord, org, first)
+    oid = demo_seed._urgent_call(coord, org, first)
     assert oid != first.id
     (call,) = urgent_calls()
     assert (call.opening_id, call.needed, call.auto_accept) == (oid, 2, True)
@@ -1067,11 +1067,11 @@ def test_wave_text_quotes_no_web_address_and_no_emoji(shelter, sweep):
 
 
 def test_deck_demo_skips_a_call_on_a_fully_booked_opening():
-    from test_ui import _demo
+    from app import demo_seed
 
     coord, _ = coordinator_for(0)
     org = orgs()[0]
     first, full = openings(where="org_id = ?", where_args=[org.id], order_by="id")[:2]
     openings.update(id=full.id, status="open", slots=0)  # the closed holiday drive
-    assert _demo()._urgent_call(coord, org, first) == full.id
+    assert demo_seed._urgent_call(coord, org, first) == full.id
     assert not urgent_calls()

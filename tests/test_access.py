@@ -1078,7 +1078,9 @@ def test_the_import_check_catches_every_spelling():
 
 def test_only_data_imports_db():
     files = [ROOT / "main.py"] + sorted((ROOT / "app").rglob("*.py"))
-    files = [f for f in files if f.name not in ("data.py", "db.py")]
+    # demo_seed.py writes the demo's rows directly, as scripts/ do: it runs at startup and
+    # in scripts, never on a request
+    files = [f for f in files if f.name not in ("data.py", "db.py", "demo_seed.py")]
     assert any(f.parent.name == "routes" for f in files)  # the glob found the routes
     offenders = [str(f.relative_to(ROOT)) for f in files if imports_db(f.read_text())]
     assert offenders == []

@@ -812,8 +812,9 @@ def test_production_session_cookie_is_host_prefixed_and_secure(tmp_path):
     assert out.stdout.split() == ["__Host-cm_session", "True", "lax", "/", "None"]
 
 
-def test_procfile_runs_uvicorn_with_mains_settings():
-    line = (ROOT / "Procfile").read_text()
+@pytest.mark.parametrize("file", ["Procfile", "Dockerfile"])
+def test_procfile_runs_uvicorn_with_mains_settings(file):
+    line = (ROOT / file).read_text()
     assert f"--ws-max-size {UVICORN['ws_max_size']}" in line
     assert f"--limit-concurrency {UVICORN['limit_concurrency']}" in line
     assert f"--timeout-keep-alive {UVICORN['timeout_keep_alive']}" in line
