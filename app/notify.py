@@ -70,12 +70,17 @@ class TwilioVerifier:
             raise httpx.DecodingError("Twilio returned a non-JSON body") from e
 
 
+def _fake(env, var):
+    """Whether the fake gate `var` is on; RuntimeError if it is on outside dev, test, preview."""
+    if env.get(var) != "1":
+        return False
+    if not fakes_allowed(env):
+        raise RuntimeError(f"{var}=1 needs CAUSEMATCH_ENV=development, test or preview")
+    return True
+
+
 def make_verifier(env=os.environ):
-    if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not fakes_allowed(env):
-            raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
-            )
+    if _fake(env, "CAUSEMATCH_FAKE_SMS"):
         return FakeVerifier()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
     if not all(env.get(k) for k in keys):
@@ -137,11 +142,7 @@ class ResendEmailer:
 
 
 def make_emailer(env=os.environ):
-    if env.get("CAUSEMATCH_FAKE_EMAIL") == "1":
-        if not fakes_allowed(env):
-            raise RuntimeError(
-                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development, test or preview"
-            )
+    if _fake(env, "CAUSEMATCH_FAKE_EMAIL"):
         return FakeEmailer()
     if not (env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM")):
         raise RuntimeError(
@@ -246,11 +247,7 @@ class TwilioSMS:
 
 
 def make_sms(env=os.environ):
-    if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not fakes_allowed(env):
-            raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
-            )
+    if _fake(env, "CAUSEMATCH_FAKE_SMS"):
         return FakeSMS()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")
     if not all(env.get(k) for k in keys):
