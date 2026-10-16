@@ -928,7 +928,7 @@ def test_env_example_lists_contact_email_and_phone_hash_key():
     text = (ROOT / ".env.example").read_text()
     for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY="):
         assert name in text
-        assert name.rstrip("=") in (ROOT / "README.md").read_text()
+        assert name.rstrip("=") in (ROOT / "docs" / "OPERATIONS.md").read_text()
 
 
 # no data call on the event loop
