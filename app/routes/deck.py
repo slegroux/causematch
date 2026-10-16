@@ -38,15 +38,12 @@ from app.ui import (
     EventLink,
     Icon,
     LogoBadge,
+    Meta,
     Router,
     VolunteerNav,
 )
 
 ar = Router()
-
-
-def when(starts_at):
-    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
 
 
 def place_line(c):
@@ -55,14 +52,6 @@ def place_line(c):
     if c["distance"]:
         return f"{c['neighborhood']} · about {c['distance']} away"
     return c["neighborhood"]
-
-
-def Meta(icon, text):
-    return P(
-        Icon(icon, size=16, cls="text-ink-muted"),
-        Span(text),
-        cls="flex items-center gap-2 text-sm text-ink",
-    )
 
 
 def CauseArt(slug):

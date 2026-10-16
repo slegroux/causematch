@@ -21,24 +21,26 @@ from app.config import (
     tasks_token,
     trusted_proxy_hops,
 )
-from app.routes.admin import ar as admin_router
-from app.routes.auth import ar as auth_router
-from app.routes.chat import ar as chat_router
-from app.routes.claim import ar as claim_router
-from app.routes.deck import ar as deck_router
-from app.routes.matches import ar as matches_router
-from app.routes.onboarding import ar as onboarding_router
-from app.routes.org import ar as org_router
-from app.routes.org_auth import ar as org_auth_router
-from app.routes.org_profile import ar as org_profile_router
-from app.routes.photos import ar as photos_router
-from app.routes.prefs import ar as prefs_router
-from app.routes.profile import ar as profile_router
-from app.routes.pwa import ar as pwa_router
-from app.routes.safety import ar as safety_router
+from app.routes import (
+    admin,
+    chat,
+    claim,
+    deck,
+    matches,
+    onboarding,
+    org,
+    org_auth,
+    org_profile,
+    photos,
+    prefs,
+    profile,
+    pwa,
+    safety,
+    shifts,
+    tasks,
+)
+from app.routes import auth as auth_routes
 from app.routes.safety import not_found
-from app.routes.shifts import ar as shifts_router
-from app.routes.tasks import ar as tasks_router
 
 require_env()  # an undeclared environment, or a preview without its password, never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
@@ -129,26 +131,26 @@ app.mount(
         StaticFiles(directory=Path(__file__).parent / "static"), minimum_size=1024
     ),
 )
-for router in (
-    auth_router,
-    org_auth_router,
-    claim_router,
-    admin_router,
-    onboarding_router,
-    deck_router,
-    matches_router,
-    chat_router,
-    org_router,
-    shifts_router,
-    safety_router,
-    prefs_router,
-    tasks_router,
-    pwa_router,
-    profile_router,
-    photos_router,
-    org_profile_router,
+for routes in (
+    auth_routes,
+    org_auth,
+    claim,
+    admin,
+    onboarding,
+    deck,
+    matches,
+    chat,
+    org,
+    shifts,
+    safety,
+    prefs,
+    tasks,
+    pwa,
+    profile,
+    photos,
+    org_profile,
 ):
-    router.to_app(app)
+    routes.ar.to_app(app)
 # invented orgs and openings: never in production
 data.start(not is_production())
 if is_preview():  # the demo's orgs and people, reseeded at each cold start

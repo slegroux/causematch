@@ -21,7 +21,6 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
-    Container,
     LabelCheckboxX,
     TextPresets,
 )
@@ -51,7 +50,7 @@ from app.ui import (
     Refusal,
     Router,
     SimplePage,
-    VolunteerNav,
+    VolunteerShell,
 )
 
 ar = Router()
@@ -70,7 +69,7 @@ def Shell(uid, back, title, *content, error=None):
     )
     if org:
         return OrgShell("inbox", data.org_waiting(uid), Div(*body, cls="max-w-md"))
-    return Container(VolunteerNav("matches"), *body, cls="max-w-md pb-8")
+    return VolunteerShell("matches", *body)
 
 
 def ReportPage(uid, action, back, target, error=None, f=None):
@@ -313,8 +312,8 @@ def HubRow(icon, label, href=None, danger=False):
 def profile_page(req):
     me = data.get_profile(req.scope["uid"])
     name = (me.display_name or "").strip()
-    return Container(
-        VolunteerNav("me"),
+    return VolunteerShell(
+        "me",
         H1("Me", cls=TITLE),
         Div(
             Avatar(name, me.photo_key),
@@ -340,14 +339,13 @@ def profile_page(req):
             "withdraws your matches.",
             cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
-        cls="max-w-md pb-8",
     )
 
 
 @ar("/profile/delete", methods=["GET"])
 def delete_confirm():
-    return Container(
-        VolunteerNav("me"),
+    return VolunteerShell(
+        "me",
         H1("Delete your account?", cls=TITLE),
         Div(
             Ul(
@@ -368,7 +366,6 @@ def delete_confirm():
             ),
             cls="space-y-3 p-5 " + CARD,
         ),
-        cls="max-w-md pb-8",
     )
 
 

@@ -51,13 +51,14 @@ from app.ui import (
     Checks,
     Choice,
     Field,
-    Icon,
+    Meta,
     OrgShell,
     Pill,
     Refusal,
     Router,
     TextInput,
     VolunteerHeader,
+    when,
 )
 
 ar = Router()
@@ -123,23 +124,11 @@ ADULT_ONLY = (
 )
 
 
-def when(starts_at):
-    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
-
-
 OPENING_STATUS = {
     "open": ("Open", "good"),
     "filled": ("Filled", "info"),
     "closed": ("Closed", "off"),
 }
-
-
-def Meta(icon, text):
-    return P(
-        Icon(icon, size=16, cls="text-ink-muted"),
-        Span(text),
-        cls="flex items-center gap-2 text-sm text-ink",
-    )
 
 
 def UrgentLine(o, urgent, accepted):

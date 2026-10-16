@@ -5,7 +5,6 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
-    Container,
     Form,
     TextPresets,
 )
@@ -13,7 +12,6 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data
 from app.forms import query, str_form
-from app.routes.deck import when
 from app.ui import (
     CARD,
     ORG_TITLE,
@@ -26,7 +24,8 @@ from app.ui import (
     Router,
     TextInput,
     VolunteerHeader,
-    VolunteerNav,
+    VolunteerShell,
+    when,
 )
 
 ar = Router()
@@ -282,8 +281,8 @@ def _sync_new_shift_save(req, form, match_id: int):
 @ar("/history", methods=["GET"])
 def history(req):
     mine = data.my_shifts(req.scope["uid"])
-    return Container(
-        VolunteerNav("me"),
+    return VolunteerShell(
+        "me",
         H1("Your history", cls=TITLE),
         Section(
             "Upcoming",
@@ -307,5 +306,4 @@ def history(req):
             ],
             "Nothing yet.",
         ),
-        cls="max-w-md pb-8",
     )

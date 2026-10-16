@@ -1,13 +1,18 @@
-import re
-
 from fasthtml.common import H1, A, Datalist, Div, Form, Option, P, Redirect, Script
 from monsterui.all import AT, Alert, AlertT, Container, LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 
 from app import data, match, prefs
 from app.choices import ANY_DISTANCE_KM, SHARED_WITH_NONPROFIT
-from app.forms import HIDDEN_CHARS_MESSAGE, bad_request, hidden_chars, str_form
-from app.geo import neighborhoods, round_point, zip_latlon
+from app.forms import (
+    EMAIL,
+    HIDDEN_CHARS_MESSAGE,
+    bad_request,
+    hidden_chars,
+    shown_point,
+    str_form,
+)
+from app.geo import neighborhoods, zip_latlon
 from app.routes.prefs import SLOTS, CauseRow, DayGrid, PlaceFields, Section
 from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput
 
@@ -15,11 +20,9 @@ ar = Router()
 
 ADULTS_ONLY = "Causematch is for adults 18+"
 LA_ONLY = "Causematch is only in Los Angeles County for now"
-FIVE_DIGITS = prefs.FIVE_DIGITS
 NO_PLACE = (
     "Tell us where you'll help from: a neighborhood, a ZIP code or your location."
 )
-UNRECOGNIZED = "Something in that form wasn't recognized. Please try again."
 
 VOLUNTEERED = [("yes", "Yes"), ("no", "No")]
 # Longest accepted value per free-text field.
@@ -184,19 +187,13 @@ async def onboarding_save(req):
     return await run_in_threadpool(_sync_onboarding_save, req, form)
 
 
-def _shown_point(lat, lon):
-    """A posted device location as the page may show it again: rounded, or nothing."""
-    point = round_point(lat, lon) if lat or lon else None
-    return (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
-
-
 def _sync_onboarding_save(req, form):
     if data.get_profile(req.scope["uid"]).onboarded_at:
         return Redirect("/deck")  # later edits go through /me/preferences, /me/profile
     text = lambda k: form.get(k, "").strip()
     active = [c.slug for c in data.active_causes()]
     posted = {k: form.get(f"place1_{k}", v) for k, v in HOME.items() if k != "label"}
-    shown_lat, shown_lon = _shown_point(posted["lat"], posted["lon"])
+    shown_lat, shown_lon = shown_point(posted["lat"], posted["lon"])
     f = {
         **{k: text(k) for k in LIMITS},
         "adult": form.get("adult"),
@@ -219,27 +216,27 @@ def _sync_onboarding_save(req, form):
         return fail(HIDDEN_CHARS_MESSAGE)
     if not f["first_name"]:
         return fail("Please enter your first name.")
-    if f["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", f["email"]):
+    if f["email"] and not EMAIL.fullmatch(f["email"]):
         return fail("That email doesn't look right. Leave it blank to skip.")
     where = " ".join(posted["where"].split())
     if not where:
         return fail(NO_PLACE)
     typed_zip = prefs.as_zip(where)
     if typed_zip == "":
-        return fail(FIVE_DIGITS)
+        return fail(prefs.FIVE_DIGITS)
     if typed_zip and not zip_latlon(typed_zip):
         return fail(LA_ONLY)
     place, error = prefs.resolve_place({**posted, "label": "Home"}, None, 0)
     if error:
         return fail(error)
     if not set(f["causes"].values()) <= {v for v, _ in prefs.CAUSE_STATES}:
-        return fail(UNRECOGNIZED)
+        return fail(prefs.UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(f["causes"].values()):
         return fail("Please pick at least one cause you love or are open to.")
     if not set(f["availability"]) <= SLOTS:
-        return fail(UNRECOGNIZED)
+        return fail(prefs.UNRECOGNIZED)
     if f["volunteered_last_year"] not in {v for v, _ in VOLUNTEERED} | {""}:
-        return fail(UNRECOGNIZED)
+        return fail(prefs.UNRECOGNIZED)
     if f["heard_from"] not in {v for v, _ in HEARD_FROM}:
         return fail("Please tell us how you heard about Causematch.")
     if not f["consent"]:

@@ -1,12 +1,10 @@
-import re
-
 from fasthtml.common import A, P
 from monsterui.all import AT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
-from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, str_form
+from app.forms import EMAIL, HIDDEN_CHARS_MESSAGE, hidden_chars, str_form
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
 ar = Router()
@@ -127,9 +125,7 @@ def _sync_claim_submit(req, form):
         error = "Enter your name."
     elif hidden_chars(v["org_name"]) or hidden_chars(v["name"]):
         error = HIDDEN_CHARS_MESSAGE
-    elif len(email) > limits["email"] or not re.fullmatch(
-        r"[^@\s]+@[^@\s]+\.[^@\s]+", email
-    ):
+    elif len(email) > limits["email"] or not EMAIL.fullmatch(email):
         error = "Enter your email address."
     elif v["phone"] and not phone:
         error = BAD_PHONE
