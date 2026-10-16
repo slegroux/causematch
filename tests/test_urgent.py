@@ -243,6 +243,7 @@ def test_post_page_prefills_a_soon_opening_start(shelter):
 
 
 def test_close_by_the_org_takes_it_out_of_the_deck(shelter, user):
+    openings.update(id=shelter.opening.id, starts_at=tomorrow("10:00"))
     post_call(shelter)
     dash = shelter.get("/org")
     assert "Urgent · tomorrow 9 am · needs 2" in dash.text
@@ -255,7 +256,7 @@ def test_close_by_the_org_takes_it_out_of_the_deck(shelter, user):
     assert call.status == "closed" and call.ended_at
     top = data.deck(uid_of(user), 50)
     assert not any(c["urgent"] for c in top)
-    assert "Post an urgent call" in shelter.get("/org").text
+    assert "Post an urgent call" in shelter.get("/org").text  # still within 48 h
 
 
 def test_close_when_its_time_passes(shelter, user):

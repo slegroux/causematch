@@ -560,3 +560,47 @@ def test_an_opening_keeps_line_breaks_in_its_text(coord):
 def test_a_coordinator_name_refuses_hidden_characters(coord):
     r = coord.post("/org/details", data={"name": "Maria\u202e, lead", "phone": ""})
     assert "hidden or special characters" in r.text
+
+
+# --- a shorter form ----------------------------------------------------------------------
+
+
+def test_minimal_post_fills_at_most_eight_inputs(coord):
+    """What a coordinator must still choose or type: required fields with no preset value."""
+    html = coord.get("/org/openings/new").text
+    assert (
+        'type="hidden" name="org_id"' in html or 'name="org_id" type="hidden"' in html
+    )
+    assert "More details (optional)" in html and 'href="/org"' in html
+    blank = 0
+    html = html.split("More details (optional)")[0]  # the rest is folded and optional
+    for tag in re.findall(r"<(?:input|textarea)[^>]*>", html):
+        if "required" in tag and 'type="hidden"' not in tag:
+            blank += 1
+    for sel in re.findall(r"<select.*?</select>", html, re.DOTALL):
+        if 'name="reply_channel"' in sel or 'name="recurrence"' in sel:
+            assert "selected" in re.sub(r'<option[^>]*value=""[^>]*>', "", sel)
+        else:
+            blank += 1
+    assert blank <= 8, blank
+
+
+def test_empty_neighborhood_is_filled_from_the_zip(coord):
+    assert post(coord, neighborhood="").status_code == 303
+    (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    assert o.neighborhood == geo.zip_neighborhood("90012") != ""
+    assert post(coord, title="Typed one", neighborhood="Echo Park").status_code == 303
+    assert openings(where="title = ?", where_args=["Typed one"])[0].neighborhood == (
+        "Echo Park"
+    )
+
+
+def test_urgent_link_only_within_48_hours(coord):
+    post(coord, title="Far away", starts_at=future(8))
+    post(coord, title="Tomorrow", starts_at=future(1))
+    far = openings(where="title = ?", where_args=["Far away"])[0]
+    near = openings(where="title = ?", where_args=["Tomorrow"])[0]
+    page = coord.get("/org").text
+    assert f"/org/openings/{near.id}/urgent" in page
+    assert f"/org/openings/{far.id}/urgent" not in page
+    assert near.starts_at in coord.get(f"/org/openings/{near.id}/urgent").text

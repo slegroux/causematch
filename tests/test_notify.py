@@ -122,7 +122,7 @@ def test_accept_sends_one_text_with_the_expected_words(world):
     assert texts() == [
         (
             world.vol.phone,
-            f"{orgs()[0].name} said yes to {PANTRY}! Chat and details: {BASE}/matches",
+            f"{orgs()[0].name} said yes to {PANTRY}! Say hi: {BASE}/chat/{world.match.id}",
         )
     ]
 
@@ -647,3 +647,13 @@ def test_reminders_per_sweep_are_capped(world, clock, anon, monkeypatch):
     assert len(texts()) == 1
     post_reminders(anon, Authorization=f"Bearer {TOKEN}")
     assert len(texts()) == 2  # the other volunteer, one sweep later
+
+
+def test_accept_notice_links_to_the_chat(world):
+    r = world.coord.post(
+        f"/org/matches/{world.match.id}/decide",
+        data={"decision": "accept"},
+        follow_redirects=True,
+    )
+    assert "Accepted · " in r.text
+    assert f'href="/org/chat/{world.match.id}"' in r.text

@@ -1,4 +1,5 @@
 import csv
+import math
 from functools import cache
 from pathlib import Path
 
@@ -59,3 +60,18 @@ def shown_point(lat, lon):
     """A posted device location as a page may show it again: rounded, or nothing."""
     point = round_point(lat, lon) if lat or lon else None
     return (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
+
+
+def zip_neighborhood(zip_code):
+    """The listed area whose center is nearest a Los Angeles County ZIP's point, else None."""
+    point = zip_latlon(zip_code)
+    if not point:
+        return None
+    lat, lon = point
+    squeeze = math.cos(
+        math.radians(lat)
+    )  # a degree of longitude is shorter than one of latitude
+    return min(
+        _neighborhoods().values(),
+        key=lambda n: (n[1][0] - lat) ** 2 + ((n[1][1] - lon) * squeeze) ** 2,
+    )[0]

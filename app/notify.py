@@ -352,7 +352,7 @@ def on_accepted(match_id):
             f"accepted:{match_id}",
             info["volunteer_id"],
             f"{info['org']} said yes to {info['opening']}! "
-            f"Chat and details: {public_base_url()}/matches",
+            f"Say hi: {public_base_url()}/chat/{match_id}",
         )
 
 
