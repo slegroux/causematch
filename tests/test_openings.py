@@ -56,7 +56,11 @@ def test_posted_opening_reaches_deck(coord, user):
         if c["title"] == "Saturday fridge restock"
     ]
     assert card["org"] == "Westside Pantry Collective"
-    assert user.get("/deck").status_code == 200
+    page = user.get(
+        f"/deck?card={card['id']}"
+    )  # on top, as an urgent call's link puts it
+    assert "Saturday fridge restock" in page.text
+    assert "Westside Pantry Collective" in page.text
 
 
 def test_closing_removes_it_from_the_deck(coord, user):

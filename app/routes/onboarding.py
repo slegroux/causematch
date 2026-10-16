@@ -9,10 +9,9 @@ from app.forms import (
     HIDDEN_CHARS_MESSAGE,
     bad_request,
     hidden_chars,
-    shown_point,
     str_form,
 )
-from app.geo import neighborhoods, zip_latlon
+from app.geo import neighborhoods, shown_point, zip_latlon
 from app.routes.prefs import SLOTS, CauseRow, DayGrid, PlaceFields, Section
 from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput
 

@@ -1,6 +1,5 @@
 import re
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from fasthtml.common import (
     H1,
@@ -40,6 +39,7 @@ from app.choices import (
 )
 from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.geo import zip_latlon
+from app.match import LA
 from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
@@ -63,7 +63,6 @@ from app.ui import (
 
 ar = Router()
 
-LA = ZoneInfo("America/Los_Angeles")
 RECURRENCE = [
     ("one_time", "One-time"),
     ("weekly", "Weekly"),

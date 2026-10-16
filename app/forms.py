@@ -9,8 +9,6 @@ import re
 import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
-from app.geo import round_point
-
 MAX_URL = 500
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # fullmatch: an address's rough shape
 
@@ -33,12 +31,6 @@ def bad_request():
 def query(req, name):
     """One query-string value, "" when absent."""
     return req.query_params.get(name, "")
-
-
-def shown_point(lat, lon):
-    """A posted device location as a page may show it again: rounded, or nothing."""
-    point = round_point(lat, lon) if lat or lon else None
-    return (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
 
 
 # Characters that reorder how text is drawn: they let "good.org" display for another host

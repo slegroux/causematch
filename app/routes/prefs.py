@@ -49,8 +49,8 @@ from app.choices import (
     URGENT_PER_WEEK,
     URGENT_WINDOWS,
 )
-from app.forms import bad_request, query, shown_point, str_form
-from app.geo import neighborhoods
+from app.forms import bad_request, query, str_form
+from app.geo import neighborhoods, shown_point
 from app.ui import (
     BACK,
     CARD,

@@ -53,3 +53,9 @@ def round_point(lat, lon):
         return None
     south, north, west, east = LA_BOX
     return (lat, lon) if south <= lat <= north and west <= lon <= east else None
+
+
+def shown_point(lat, lon):
+    """A posted device location as a page may show it again: rounded, or nothing."""
+    point = round_point(lat, lon) if lat or lon else None
+    return (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")

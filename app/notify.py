@@ -3,12 +3,12 @@ import os
 import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import httpx
 
 from app import data, security
 from app.config import contact_email, fakes_allowed, public_base_url
+from app.match import LA
 
 log = logging.getLogger("causematch")
 
@@ -19,7 +19,6 @@ MESSAGE_WINDOW = 30 * 60  # seconds: at most one new-message text per match per 
 LIKES_WINDOW = 15 * 60  # seconds: at most one new-likes email per org per window
 MAX_ATTEMPTS = 5  # tries for one send before it is left failed
 MAX_REMINDERS_PER_SWEEP = 100  # the rest wait for the next hourly sweep
-LA = ZoneInfo("America/Los_Angeles")
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
 FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days

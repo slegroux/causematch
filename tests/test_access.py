@@ -763,7 +763,6 @@ def check_photo(template):
     """Volunteer A's photo: 404 for B and for an org A never liked, as for a made-up key."""
 
     def check(w):
-
         r = w.a.post(
             "/me/profile/photo",
             files={"photo": ("a.jpg", jpeg(), "image/jpeg")},
@@ -799,7 +798,6 @@ def org_media_check(method, template, record):
         path = template.format(org_id=i, opening_id=i)
         if method == "GET":
             return w.org1.get(path, follow_redirects=False)
-
         if path.endswith(("/logo", "/photo")):
             files = {"photo": ("p.jpg", jpeg(), "image/jpeg")}
             return w.org1.post(path, files=files, follow_redirects=False)
