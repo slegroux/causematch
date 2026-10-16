@@ -16,7 +16,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 from test_claim import admin_client
 
-from app import data
+from app import data, demo_seed
 from app.config import demo_banner
 from app.db import blocks, now, openings, org_members, orgs, profiles
 from app.ui import DEMO_NOTICE
@@ -186,7 +186,7 @@ def test_demo_banner_is_refused_in_production():
         assert not demo_banner(prod)
 
 
-# --- scripts/demo.py ---------------------------------------------------------------
+# --- scripts/demo.py and app/demo_seed.py ---------------------------------------------
 
 
 def _demo():
@@ -220,7 +220,7 @@ def test_demo_refuses_production(prod, tmp_path):
 
 
 def test_demo_first_start_reads_free_text_times():
-    first_start = _demo().first_start
+    first_start = demo_seed.first_start
     today = date(2026, 10, 15)  # a Thursday
     assert first_start("Saturdays 9:30am-noon", today=today) == "2026-10-17T09:30"
     assert first_start("Wednesdays 5-7pm (4-5:30pm Nov-Mar)", today=today) == (
@@ -252,12 +252,12 @@ def test_demo_first_start_reads_free_text_times():
     ],
 )
 def test_demo_first_start_reads_am_pm_ranges_and_skips_durations(text, starts):
-    assert _demo().first_start(text, today=date(2026, 10, 15)) == starts
+    assert demo_seed.first_start(text, today=date(2026, 10, 15)) == starts
 
 
 def test_demo_seed_file_orgs_are_verified_samples():
     before = {o.id for o in orgs()}
-    _demo().load_orgs(
+    demo_seed.load_orgs(
         [
             {
                 "name": "Invented Riverside Helpers",

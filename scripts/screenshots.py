@@ -15,6 +15,8 @@ from pathlib import Path
 
 import demo  # scripts/demo.py: this script's folder is first on sys.path
 
+from app import demo_seed  # demo put the repo on sys.path
+
 
 def start_server(port):
     import uvicorn
@@ -42,7 +44,7 @@ def volunteer_sign_in(page, phone):
 
 
 def staff_sign_in(page, email, lands_on):
-    page.goto(demo.sign_in_link(email))
+    page.goto(demo_seed.sign_in_link(email))
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url(f"**{lands_on}")
 
@@ -61,7 +63,7 @@ def main():
         )
     a.out.mkdir(parents=True, exist_ok=True)
     demo.configure(a.port, seed_file=a.seed_file)
-    info = demo.seed(a.seed_file)
+    info = demo_seed.seed(a.seed_file)
     server = start_server(a.port)
     url = f"http://127.0.0.1:{a.port}"
     shots = []
@@ -88,7 +90,7 @@ def main():
         v.wait_for_url("**/onboarding")
         shot(v, "v03-onboarding")
         phone.clear_cookies()
-        volunteer_sign_in(v, demo.ME_PHONE)
+        volunteer_sign_in(v, demo_seed.ME_PHONE)
         v.wait_for_url("**/deck")
         # the Home Screen toast shows (an iPhone user agent, in a tab); then dismiss it, so
         # it covers nothing in the other shots
@@ -122,7 +124,7 @@ def main():
         o = desk.new_page()
         o.goto("/org/login")
         shot(o, "o01-login", full_page=False)
-        staff_sign_in(o, demo.COORDINATOR[0], "/org")
+        staff_sign_in(o, demo_seed.COORDINATOR[0], "/org")
         shot(o, "o02-dashboard")
         for name, path in (
             ("o03-inbox", "/org/inbox"),
@@ -141,7 +143,7 @@ def main():
             viewport={"width": 1280, "height": 860}, base_url=url
         )
         ad = admin.new_page()
-        staff_sign_in(ad, demo.ADMIN[0], "/admin")
+        staff_sign_in(ad, demo_seed.ADMIN[0], "/admin")
         shot(ad, "a01-admin")
         ad.goto("/admin/orgs")
         shot(ad, "a02-admin-orgs")
@@ -151,7 +153,7 @@ def main():
         # a volunteer with no photo: the deck's "Add a photo" nudge
         bare = browser.new_context(**pw.devices["iPhone 13"], base_url=url)
         n = bare.new_page()
-        volunteer_sign_in(n, demo.NO_PHOTO_PHONE)
+        volunteer_sign_in(n, demo_seed.NO_PHOTO_PHONE)
         n.wait_for_url("**/deck")
         n.get_by_role("button", name="Dismiss").click()
         shot(n, "v10-deck-photo-nudge")

@@ -10,9 +10,8 @@ import pytest
 from fasthtml.common import to_xml
 from PIL import Image, ImageDraw
 from test_photos import jpeg, uid_of
-from test_ui import _demo
 
-from app import data, photos
+from app import data, demo_seed, photos
 from app.db import openings, orgs
 from app.forms import domain, https_url
 from app.routes.deck import OpeningCard
@@ -275,7 +274,7 @@ def test_the_deck_page_shows_the_top_cards_photo(user):
     assert f'src="/photos/{top["photo"]}.jpg"' in page
 
 
-# --- scripts/demo.py ---------------------------------------------------------------------
+# --- scripts/demo.py and app/demo_seed.py ---------------------------------------------
 
 
 def test_the_demo_loads_logos_photos_and_links(tmp_path):
@@ -292,7 +291,7 @@ def test_the_demo_loads_logos_photos_and_links(tmp_path):
         "volunteer_url": "https://invented.example.org/volunteer",
     }
     before = {o.id for o in orgs()}
-    _demo().load_orgs(
+    demo_seed.load_orgs(
         [
             {
                 **org,

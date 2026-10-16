@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import data, security
-from app.config import contact_email, is_dev, public_base_url
+from app.config import contact_email, fakes_allowed, public_base_url
 
 log = logging.getLogger("causematch")
 
@@ -23,7 +23,7 @@ VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
 
 
 class FakeVerifier:
-    """Test and local-dev verifier: sends nothing, accepts 000000."""
+    """Test, local-dev and preview verifier: sends nothing, accepts 000000."""
 
     def __init__(self):
         self.sent = []
@@ -62,9 +62,9 @@ class TwilioVerifier:
 
 def make_verifier(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not is_dev(env):
+        if not fakes_allowed(env):
             raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development or test"
+                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
             )
         return FakeVerifier()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
@@ -124,9 +124,9 @@ class ResendEmailer:
 
 def make_emailer(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_EMAIL") == "1":
-        if not is_dev(env):
+        if not fakes_allowed(env):
             raise RuntimeError(
-                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development or test"
+                "CAUSEMATCH_FAKE_EMAIL=1 needs CAUSEMATCH_ENV=development, test or preview"
             )
         return FakeEmailer()
     if not (env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM")):
@@ -148,7 +148,7 @@ def get_emailer():
 
 
 def send_login_link(email, token):
-    """The one place a coordinator sign-in link leaves the app."""
+    """The one place a coordinator sign-in link leaves the app. Returns the link."""
     link = f"{public_base_url()}/org/login/verify?token={token}"
     get_emailer().send(
         email,
@@ -156,6 +156,7 @@ def send_login_link(email, token):
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
     )
+    return link
 
 
 def send_claim_approved(email, org_name):
@@ -225,9 +226,9 @@ class TwilioSMS:
 
 def make_sms(env=os.environ):
     if env.get("CAUSEMATCH_FAKE_SMS") == "1":
-        if not is_dev(env):
+        if not fakes_allowed(env):
             raise RuntimeError(
-                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development or test"
+                "CAUSEMATCH_FAKE_SMS=1 needs CAUSEMATCH_ENV=development, test or preview"
             )
         return FakeSMS()
     keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")

@@ -1,14 +1,18 @@
 """Request-level defences: same-origin checks, security headers, body size, rate limits, the
-client IP, and the error pages.
+client IP, the error pages, and a preview's password.
 
 `Guard` wraps the whole app (main.py) and runs before routing, sessions and Beforeware, so
-it also covers the public routes and websockets that Beforeware skips.
+it also covers the public routes and websockets that Beforeware skips. `PreviewGate` is
+next, still ahead of all of them.
 """
 
+import base64
+import binascii
 import hashlib
 import hmac
 import ipaddress
 import logging
+import os
 import re
 import threading
 import time
@@ -18,10 +22,11 @@ from html import escape
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers, MutableHeaders
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, PlainTextResponse
 
 from app import data, photos
 from app.config import (
+    is_preview,
     is_production,
     phone_hash_key,
     public_base_url,
@@ -123,6 +128,8 @@ def security_headers(path):
     }
     if is_production():
         h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if is_preview():
+        h["X-Robots-Tag"] = "noindex, nofollow"
     if not path.startswith(CACHEABLE):
         h["Cache-Control"] = "no-store"
     return h
@@ -279,6 +286,61 @@ class Guard:
             await _server_error(rid)(scope, receive, send_with_headers)
 
 
+# --- preview password ----------------------------------------------------------------
+
+PREVIEW_REALM = 'Basic realm="Causematch preview", charset="UTF-8"'
+ROBOTS_DISALLOW = "User-agent: *\nDisallow: /\n"
+
+
+def preview_password_ok(headers):
+    """The request's Basic credentials carry PREVIEW_PASSWORD (any user name). Hashed
+    first, so the constant-time compare doesn't give away the length either."""
+    scheme, _, encoded = headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "basic":
+        return False
+    try:
+        given = base64.b64decode(encoded.strip(), validate=True).partition(b":")[2]
+    except (binascii.Error, ValueError):
+        return False
+    expected = os.environ["PREVIEW_PASSWORD"].encode()
+    return hmac.compare_digest(
+        hashlib.sha256(given).digest(), hashlib.sha256(expected).digest()
+    )
+
+
+class PreviewGate:
+    """In a preview (config.is_preview), every request needs the preview password by HTTP
+    Basic auth: pages, /static, /photos, /tasks and websockets (a browser sends the cached
+    credentials on a same-origin handshake). Only /robots.txt is answered without it, from
+    here, with Disallow everything. Wrong passwords are counted per client address: past
+    the "preview" bucket, 429 without checking. Outside a preview it passes through."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket") or not is_preview():
+            return await self.app(scope, receive, send)
+        if scope["type"] == "http" and scope["path"] == "/robots.txt":
+            return await PlainTextResponse(ROBOTS_DISALLOW)(scope, receive, send)
+        headers = Headers(scope=scope)
+        subject = _subject(client_ip(scope))
+        refused = None
+        if not take_token("preview", subject, take=False):
+            refused = too_many(retry_after=BUCKETS["preview"][1])
+        elif not preview_password_ok(headers):
+            if "authorization" in headers:  # a guess; a first visit sends none
+                take_token("preview", subject)
+            refused = PlainTextResponse(
+                "Password required", 401, headers={"WWW-Authenticate": PREVIEW_REALM}
+            )
+        if refused is None:
+            return await self.app(scope, receive, send)
+        if scope["type"] == "websocket":
+            return await send({"type": "websocket.close", "code": 1008})
+        return await refused(scope, receive, send)
+
+
 # --- client IP -----------------------------------------------------------------------
 
 
@@ -406,6 +468,7 @@ BUCKETS = {
     "chat": (20, 10),  # chat POSTs and websocket frames together
     "safety": (10, 3600),  # report and block POSTs
     "upload": (10, 600),  # pictures (UPLOADS): 10 in a row, then one a minute
+    "preview": (10, 600),  # wrong preview passwords, per client address
 }
 # POST paths and their bucket
 THROTTLED = (
@@ -418,7 +481,8 @@ _buckets = {}  # (name, user id) -> (tokens, last refill time)
 _buckets_lock = threading.Lock()
 
 
-def take_token(name, uid, now=None):
+def take_token(name, uid, now=None, take=True):
+    """False when the bucket is empty; else True, taking a token unless take=False."""
     capacity, refill = BUCKETS[name]
     now = time.monotonic() if now is None else now
     with _buckets_lock:
@@ -427,7 +491,7 @@ def take_token(name, uid, now=None):
         if tokens < 1:
             _buckets[(name, uid)] = (tokens, now)
             return False
-        _buckets[(name, uid)] = (tokens - 1, now)
+        _buckets[(name, uid)] = (tokens - take, now)
         return True
 
 
