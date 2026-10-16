@@ -384,7 +384,7 @@ def test_vendored_ws_extension_is_served_and_pinned():
     assert TestClient(app).get("/static/chat.js").status_code == 200
 
 
-# --- review fixes --------------------------------------------------------------------------
+# --- sockets: sign-out, refusals, caps and the new-message hook ---------------------------
 
 
 def test_logout_ends_open_sockets_and_the_next_frame_is_refused(chat):
@@ -571,7 +571,7 @@ def test_socket_caps_per_match_and_per_user(chat):
     assert not chat_routes._sockets
 
 
-# --- item 17: cross-site sockets and the frame limit -----------------------------------
+# --- cross-site sockets and the frame limit --------------------------------------------
 
 
 @pytest.mark.parametrize("origin", ["https://evil.example", "null", None])

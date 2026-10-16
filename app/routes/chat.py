@@ -243,7 +243,7 @@ def volunteer_online(match_id, vol_uid):
 
 
 async def _deliver(uid, match_id, text):
-    """Save, then broadcast, then tell item 7's hook. ValueError for a bad message,
+    """Save, then broadcast, then tell notify.on_new_message. ValueError for a bad message,
     PermissionError for a bad caller. Every data call runs off the event loop."""
     m = await run_in_threadpool(data.send_message, uid, match_id, text)
     await _broadcast(match_id, m)

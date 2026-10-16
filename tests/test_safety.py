@@ -780,7 +780,7 @@ def test_contact_email_is_required_in_production():
         contact_email({"CAUSEMATCH_ENV": "production"})
 
 
-# --- review fixes --------------------------------------------------------------------------------
+# --- deactivating an org ------------------------------------------------------------------
 
 
 def sms_log():
@@ -856,7 +856,7 @@ def test_the_deactivated_filter_alone_hides_a_reopened_opening(w):
     assert w.opening.id not in deck_ids(w.other)
 
 
-# S1: a number keeps its blocks and suspension through delete and sign-up
+# a number keeps its blocks and suspension through delete and sign-up
 
 
 def retained():
@@ -928,14 +928,14 @@ def test_phone_hash_key_is_required_in_production():
         phone_hash_key({"CAUSEMATCH_ENV": "production"})
 
 
-def test_env_example_lists_the_new_variables():
+def test_env_example_lists_contact_email_and_phone_hash_key():
     text = (ROOT / ".env.example").read_text()
     for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY="):
         assert name in text
         assert name.rstrip("=") in (ROOT / "README.md").read_text()
 
 
-# S3: no data call on the event loop
+# no data call on the event loop
 
 
 def test_no_async_route_calls_data_directly():
@@ -959,7 +959,7 @@ def test_no_async_route_calls_data_directly():
     assert offenders == []
 
 
-# S4: the privacy page
+# the privacy page
 
 
 def test_privacy_page_is_complete_and_honest(anon):
@@ -982,7 +982,7 @@ def test_privacy_page_is_complete_and_honest(anon):
     assert "only if it is part of a report" not in text
 
 
-# S6: ProPublica
+# ProPublica
 
 
 def test_a_made_up_ein_that_answers_200_with_nulls_is_unknown():
@@ -1018,7 +1018,7 @@ def test_the_recorded_404_body_is_unknown():
     assert propublica.lookup("123456789", c) is None
 
 
-# S7 and the nits
+# reports, blocks and admin checks
 
 
 def test_a_coordinator_can_report_after_the_volunteer_withdraws(w):
@@ -1095,7 +1095,7 @@ def test_report_details_with_a_bidi_control_are_refused():
     assert data._checked_report_text("spam", " plain text ") == "plain text"
 
 
-# --- final security review: names after a block, and on pages the inbox wouldn't list ------
+# --- names after a block, and on pages the inbox wouldn't list ----------------------------
 
 
 def test_chat_messages_name_a_blocked_volunteer_volunteer_only(w):

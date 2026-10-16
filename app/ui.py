@@ -54,17 +54,6 @@ def PrivacyFooter():
     )
 
 
-def Page(title, *content, error=None, intro=None):
-    return Container(
-        H1(title, cls="text-2xl font-bold my-4"),
-        P(intro, cls=TextPresets.muted_sm + " mb-4") if intro else None,
-        Alert(error, cls=AlertT.error + " mb-4") if error else None,
-        *content,
-        PrivacyFooter(),
-        cls="max-w-md pb-8",
-    )
-
-
 def Field(label, *inputs):
     """A label and its field. A lone input, select or textarea gets an id from its name
     (unless it has one), and the label points at it: tapping the label focuses the field,
@@ -271,12 +260,9 @@ def Pill(text, tone):
 
 
 def AddToHomeScreen():
-    """A one-line hint at the top of the deck, under the "I'm free today" switch, hidden
-    until static/a2hs.js decides: iPhone Safari, in a tab, not dismissed. In the page's
-    flow, never fixed: fixed above the tab bar it covered Pass, Like and the filter
-    button. Slim, and while it shows the card's picture band is shorter (static/theme.css),
-    so the card still fits above them. The outer box carries no display class, so
-    `hidden` holds."""
+    """A one-line hint at the top of the deck, hidden until static/a2hs.js decides
+    (iPhone Safari, in a tab, not dismissed). In the page's flow, never fixed: fixed, it
+    covered Pass and Like. The outer box has no display class, so `hidden` holds."""
     return Div(
         Div(
             P(
@@ -528,10 +514,10 @@ def LogoBadge(key, cls):
     )
 
 
-def VolunteerHeader(name, photo_key=None, pronouns=None, size="sm"):
+def VolunteerHeader(name, photo_key=None, pronouns=None):
     """A volunteer as a nonprofit sees them: photo or initial, name, pronouns."""
     return Div(
-        Avatar(name, photo_key, size),
+        Avatar(name, photo_key, "sm"),
         Span(
             Span(name, cls="font-semibold text-ink"),
             Span(f" ({pronouns})", cls="text-sm text-ink-muted") if pronouns else None,

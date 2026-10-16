@@ -345,7 +345,7 @@ def profile_page(req):
 
 
 @ar("/profile/delete", methods=["GET"])
-def delete_confirm(req):
+def delete_confirm():
     return Container(
         VolunteerNav("me"),
         H1("Delete your account?", cls=TITLE),

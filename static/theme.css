@@ -1,31 +1,5 @@
 /* MonsterUI 1.0.47's inline <style> blocks (Theme.headers()), moved here so the CSP can
    forbid inline styles. */
-.monster-navbar.navbar-bold a {
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.monster-navbar.navbar-bold a.uk-active {
-    transform: scale(1.15) ;
-    font-weight: bold;
-    text-shadow: 0 0 12px rgba(var(--p-rgb), 0.4);
-    letter-spacing: 0.02em;
-    color: hsl(var(--p) / 1);
-}
-.monster-navbar.navbar-underline a.uk-active { position: relative; }
-.monster-navbar.navbar-underline a.uk-active::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    bottom: -2px;
-    width: 100%;
-    height: 2px;
-    background: currentColor;
-    animation: slideIn 0.3s ease forwards;
-}
-@keyframes slideIn {
-    from { transform: scaleX(0); }
-    to { transform: scaleX(1); }
-}
-
 :root {
   --b1: from hsl(var(--background)) l c h;
   --bc: from hsl(var(--foreground)) l c h;
@@ -52,13 +26,6 @@
   --ch4: from hsl(var(--chart-4)) l c h;
   --ch5: from hsl(var(--chart-5)) l c h;
   --rd: var(--radius);
-}
-
-/* htmx's indicator styles: htmx-config in the page head stops htmx injecting them inline. */
-.htmx-indicator { opacity: 0; }
-.htmx-request .htmx-indicator, .htmx-request.htmx-indicator {
-  opacity: 1;
-  transition: opacity 200ms ease-in;
 }
 
 /* --- Causematch: "Warm & friendly" ------------------------------------------------------
@@ -189,8 +156,7 @@ h1, h2, h3, .font-display {
 }
 
 /* The volunteer's bottom tab bar (app/ui.py TabBar): fixed above the iPhone's home
-   indicator, with the page padded so nothing hides under it, and the Home Screen toast
-   just above it. */
+   indicator, with the page padded so nothing hides under it. */
 .cm-tabbar {
   padding-bottom: env(safe-area-inset-bottom);
   -webkit-backdrop-filter: saturate(1.4) blur(10px);

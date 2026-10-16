@@ -475,7 +475,7 @@ def test_phone_numbers_are_masked_in_logs():
     assert notify.mask("+13105550123") == "***0123"
 
 
-# --- review fixes -----------------------------------------------------------------------
+# --- send windows, presence and retries -------------------------------------------------
 
 
 def test_message_texts_never_come_closer_than_the_window_even_across_a_bucket_edge(
@@ -602,7 +602,7 @@ def test_overlapping_reminder_calls_send_once(world, clock, monkeypatch):
     assert len(sms.sent) == 1
 
 
-# --- item 17: the SMS ceiling and the reminder cap ----------------------------------------
+# --- the SMS ceiling and the reminder cap -------------------------------------------------
 
 
 def status_of(key):

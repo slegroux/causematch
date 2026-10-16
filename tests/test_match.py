@@ -330,7 +330,7 @@ def test_inbox_never_shows_contact_or_location(user, coord):
     }  # fmt: skip
 
 
-# --- review fixes -----------------------------------------------------------
+# --- closed, full and past openings; withdrawals; bad input -----------------
 
 
 def accept_one(oid, name="Sam"):

@@ -1435,7 +1435,6 @@ def save_onboarding(
     other_causes="",
     availability=(),
     skills=(),
-    language_other="",
     volunteered_last_year="",
     frequency="",
     heard_from,
@@ -1459,7 +1458,6 @@ def save_onboarding(
             last_name=last_name or None,
             email=email,
             neighborhood=neighborhood,
-            language_other=language_other,
             volunteered_last_year=volunteered_last_year,
             adult_attested=True,
             lat=lat,
@@ -2436,7 +2434,7 @@ def _checked_report_text(reason, details):
     return details.strip()
 
 
-REPORTS_PER_DAY = 10  # one reporter; item 17 lists it with the other limits
+REPORTS_PER_DAY = 10  # per reporter
 
 
 def _add_report(reporter_id, match_id, reason, details, *, user_id=None, org_id=None):
@@ -3292,7 +3290,7 @@ def rate_take(keys, now, record=True):
     return None
 
 
-# One apsw connection is shared by every request thread (and, later, websockets); apsw
+# One apsw connection is shared by every request and websocket thread; apsw
 # raises ThreadingViolationError when two threads use it at once. SQLite allows a single
 # writer anyway, so every public function here runs under one re-entrant lock.
 _lock = threading.RLock()

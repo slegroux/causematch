@@ -2,8 +2,8 @@
 signs in as. scripts/demo.py and scripts/screenshots.py seed a local throwaway database
 with it, and a preview (config.is_preview) seeds itself at startup (seed_preview).
 
-Imports nothing from app at module level but app.config: scripts/demo.py sets the
-environment app.db reads after importing this.
+Imports nothing from app at module level: scripts/demo.py sets the environment app.db
+reads after importing this.
 
 A seed file is a list of {name, ein, ntee_code, cause, website, mission, neighborhood,
 zip, lat, lon, volunteer_url, logo_url, logo_file, photo_file, openings: [{title, about,

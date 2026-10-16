@@ -5,9 +5,7 @@ from pathlib import Path
 
 @cache
 def _zips():
-    """{zip: (lat, lon)} for every ZIP in app/la_zips.csv. Its city column (mostly in the
-    City of Los Angeles) is not read anywhere today: it is kept for a future city/county
-    split, for metrics or an area rule."""
+    """{zip: (lat, lon)} for every ZIP in app/la_zips.csv."""
     lines = (
         ln for ln in (Path(__file__).parent / "la_zips.csv").open() if ln[0] != "#"
     )

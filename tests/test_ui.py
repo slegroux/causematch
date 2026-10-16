@@ -365,7 +365,7 @@ def test_real_org_data_stays_out_of_every_checkout_of_this_repo(tmp_path):
     assert not inside(other / "screens")
 
 
-# --- the nonprofit's pages (design item 5) ------------------------------------------
+# --- the nonprofit's pages ----------------------------------------------------------
 
 
 class Joined(HTMLParser):
@@ -453,7 +453,7 @@ def test_upcoming_shifts_say_upcoming_not_unmarked(pages, coord):
     assert "Upcoming" in upcoming and "Not marked yet" not in upcoming
 
 
-# --- admin, privacy and error pages (design item 6) -----------------------------------
+# --- admin, privacy and error pages ---------------------------------------------------
 
 
 def test_admin_pages_share_the_top_nav():

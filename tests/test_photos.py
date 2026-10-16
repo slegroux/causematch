@@ -133,7 +133,7 @@ def test_a_photo_is_served_privately_with_an_etag(user):
     upload(user, jpeg())
     url = f"/photos/{key_of(user)}.jpg"
     r = user.get(url)
-    # asked for again on every view, so a block hides it at once (review LOW-4)
+    # asked for again on every view, so a block hides it at once
     assert r.headers["cache-control"] == "private, no-cache"
     assert r.headers["cross-origin-resource-policy"] == "same-origin"
     etag = r.headers["etag"]
@@ -471,7 +471,7 @@ def test_the_nudge_can_be_dismissed(user):
     assert "Add a photo so nonprofits know" not in user.get("/deck").text
 
 
-# --- the security review's fixes (review-security-items1-4) --------------------------------
+# --- decode memory, decode slots and upload throttling ------------------------------------
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -489,7 +489,7 @@ im = Image.new("RGBA", (4000, 3000), (0, 0, 0, 0))
 for x in range(0, 4000, 200):
     ImageDraw.Draw(im).rectangle((x, 0, x + 100, 3000), fill=(x % 255, 90, 160, 255))
 im.save(f"{out}/12mp-rgba.png")
-# progressive JPEGs: libjpeg keeps every coefficient of a multi-scan file (review pass 2)
+# progressive JPEGs: libjpeg keeps every coefficient of a multi-scan file
 stripes = Image.new("RGB", (7071, 7071), (40, 120, 200))
 for x in range(0, 7071, 400):
     ImageDraw.Draw(stripes).rectangle((x, 0, x + 150, 7071), fill=(200, 60, 30))
@@ -694,7 +694,7 @@ def test_another_orgs_upload_is_refused_before_decoding(coord, monkeypatch):
     assert orgs[coord.org_id].logo_key is None
 
 
-# --- review pass 2: JPEG scans and decode slots ------------------------------------------
+# --- JPEG scans and decode slots ---------------------------------------------------------
 
 
 def test_scans_are_counted_by_the_marker_stream():
@@ -800,7 +800,7 @@ def test_only_baseline_extended_and_progressive_jpegs_are_read():
     assert photos.jpeg_frame(one_component_scan(raw)) == (0xC0, 1, 1)
 
 
-# --- review pass 4: a header walk that fails closed, and the decode in a child -------------
+# --- a header walk that fails closed, and the decode in a child ---------------------------
 
 
 def _decoy(segment):
@@ -991,7 +991,7 @@ def test_the_production_cap_leaves_room_for_the_worst_accepted_files(
     print("\n".join(rows))
 
 
-# --- review pass 5: what the child sees, how much it may say, and the parent's logs -------
+# --- what the child sees, how much it may say, and the parent's logs ----------------------
 
 
 def _child(monkeypatch, script):

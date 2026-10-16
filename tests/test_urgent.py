@@ -937,7 +937,7 @@ def test_auto_accept_card_carries_its_call(shelter, user):
     assert m.urgent_call_id == call.id
 
 
-# --- review fixes -----------------------------------------------------------------------
+# --- waves and auto-accept: quiet hours, budgets and bookings ---------------------------
 
 
 def test_wave_waits_out_quiet_hours_instead_of_spending_itself(shelter, sweep):

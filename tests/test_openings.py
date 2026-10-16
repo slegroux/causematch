@@ -523,7 +523,7 @@ def test_kind_of_work_form_offers_the_fields(coord):
     assert "Good for first-timers" in html and "Spanish" in html
 
 
-# --- what an opening and a coordinator's name may hold (security review pass 4) -------------
+# --- what an opening and a coordinator's name may hold ------------------------------------
 
 
 @pytest.mark.parametrize(

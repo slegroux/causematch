@@ -124,10 +124,10 @@ async def verify(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
-    return await run_in_threadpool(_sync_verify, req, form, sess)
+    return await run_in_threadpool(_sync_verify, form, sess)
 
 
-def _sync_verify(req, form, sess):
+def _sync_verify(form, sess):
     e164 = pending_phone(sess)  # only the number a code was sent to, for 15 minutes
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")

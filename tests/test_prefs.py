@@ -227,8 +227,8 @@ def test_cause_fit_with_loved_causes_only_is_jaccard():
         set(c) for n in range(len(slugs) + 1) for c in itertools.combinations(slugs, n)
     ]
     for mine, theirs in itertools.product(sets, sets):
-        want = match.jaccard(mine, theirs)
-        assert match.cause_fit(mine, theirs) == pytest.approx(want)
+        union = mine | theirs
+        want = len(mine & theirs) / len(union) if union else 0
         assert match.cause_fit(dict.fromkeys(mine, "love"), theirs) == pytest.approx(
             want
         )
@@ -296,8 +296,8 @@ def old_titles(p, rows):
 
 def test_a_migrated_profile_keeps_its_deck_order(bare, monkeypatch):
     """A profile in the d4906d4 shape ranks exactly as d4906d4 did, before and after the
-    0010/0011 migrations. The weights are pinned to d4906d4's (item 4 reweighted the deck
-    for everyone, on purpose), so this checks every term and the gate, not the weights."""
+    0010/0011 migrations. The weights are pinned to d4906d4's (the deck was reweighted
+    for everyone since, on purpose), so this checks every term and the gate, not the weights."""
     monkeypatch.setattr(match, "WEIGHTS", {**OLD_WEIGHTS, "work": 0, "language": 0})
     rng = random.Random(7)
     combos = [[FOOD], [PARKS], [ANIMALS], [FOOD, PARKS], [FOOD, ANIMALS]]

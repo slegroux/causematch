@@ -1,4 +1,4 @@
-"""Design item 7's checks on every phone page, at 375×667: each button and link is a
+"""Checks on every phone page, at 375×667: each button and link is a
 44 px tap target, no text runs past its box or the screen, and the pages fill in."""
 
 import pytest

@@ -95,8 +95,7 @@ class Profile:
     skills: str  # JSON list
     language_other: str
     volunteered_last_year: str  # yes|no
-    # JSON list: day slots "mon_morning", or the weekday/weekend buckets onboarding still
-    # writes until it moves to the grid (app/match.py day_slots reads both)
+    # JSON list of day slots, "mon_morning" ... "sun_evening"
     availability: str
     frequency: str
     heard_from: str  # personal|second_degree|public|other

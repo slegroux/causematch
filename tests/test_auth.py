@@ -209,7 +209,7 @@ def test_undeclared_environment_refuses_to_start():
         require_env(env)
 
 
-# --- item 17 (L6): the number a code went to doesn't outlive the code ---------------------
+# --- the number a code went to doesn't outlive the code -----------------------------------
 
 
 class Later:

@@ -61,24 +61,16 @@ def best_place(places, lat, lon):
     return best
 
 
-def jaccard(a, b):
-    """Overlap of two collections as |a & b| / |a | b|; 0 when both are empty."""
-    a, b = set(a), set(b)
-    return len(a & b) / len(a | b) if a | b else 0.0
-
-
 CAUSE_VALUE = {"love": 1.0, "open": 0.6}  # anything else (unrated) counts 0
 
 
 def cause_fit(mine, theirs):
     """How well an opening's causes suit a volunteer, in 0..1.
 
-    mine is {slug: love|open|no}, or a collection of slugs, all loved. Each of the opening's
-    causes counts CAUSE_VALUE, over the union of its causes and the loved ones. With loved
-    causes only this is jaccard, so a profile from before three-state causes ranks as it did.
+    mine is {slug: love|open|no}. Each of the opening's causes counts CAUSE_VALUE, over
+    the union of its causes and the loved ones. With loved causes only this is the Jaccard
+    overlap, so a profile from before three-state causes ranks as it did.
     """
-    if not isinstance(mine, dict):
-        mine = dict.fromkeys(mine, "love")
     theirs = set(theirs)
     union = theirs | {s for s, v in mine.items() if v == "love"}
     if not union:
@@ -92,7 +84,7 @@ def causes_allowed(mine, theirs):
 
 
 DAY_KEYS = [d for d, _ in DAYS]
-# The older weekday/weekend buckets, as the day slots each one stands for
+# The weekday/weekend buckets a nonprofit sees, as the day slots each one stands for
 BUCKET_DAYS = {"weekday": DAY_KEYS[:5], "weekend": DAY_KEYS[5:]}
 
 
@@ -108,16 +100,9 @@ def availability_slot(starts_at):
     return f"{DAY_KEYS[t.weekday()]}_{part}"
 
 
-def availability_bucket(starts_at):
-    """'weekday_morning' etc.: the older, coarser summary of availability_slot. Kept for
-    compatibility (tests/test_match_unit.py); the app ranks by availability_slot."""
-    day, part = availability_slot(starts_at).split("_")
-    return f"{'weekend' if day in BUCKET_DAYS['weekend'] else 'weekday'}_{part}"
-
-
 def day_slots(values):
-    """Availability as day slots, in grid order: a slot stays, an older bucket
-    ('weekday_morning') becomes the slots it stands for (Mon-Fri mornings), the rest drops."""
+    """Availability as day slots, in grid order: a slot stays, a bucket ('weekday_morning')
+    becomes the slots it stands for (Mon-Fri mornings), the rest drops."""
     want = set()
     for v in values:
         kind, _, part = v.partition("_")
