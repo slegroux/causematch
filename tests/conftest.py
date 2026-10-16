@@ -123,7 +123,8 @@ def homelessness_off():
     causes.update(slug="homelessness-services", active=False)
 
 
-_phones = itertools.count(3105550100)
+# past app/demo_seed.py's numbers, (310) 555-0100 to 0103
+_phones = itertools.count(3105550200)
 
 FORM = {
     "first_name": "Sam",

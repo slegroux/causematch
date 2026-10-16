@@ -412,7 +412,7 @@ def PlaceFields(slot, pf, named=True):
     )
 
 
-def PrefsPage(f, error=None, saved=False):
+def PrefsPage(uid, f, error=None, saved=False):
     return VolunteerShell(
         "me",
         A(
@@ -580,6 +580,7 @@ def PrefsPage(f, error=None, saved=False):
             cls="space-y-4",
         ),
         Script(src="/static/geo.js", defer=True),
+        uid=uid,
     )
 
 
@@ -595,8 +596,10 @@ def form_values(saved):
 
 @ar("/me/preferences", methods=["GET"])
 def preferences_page(req):
+    uid = req.scope["uid"]
     return PrefsPage(
-        form_values(data.preferences(req.scope["uid"])),
+        uid,
+        form_values(data.preferences(uid)),
         saved=query(req, "saved") == "1",
     )
 
@@ -691,13 +694,13 @@ def _sync_save(req, form):
         or form.get("urgent_on") not in (None, "1")
     ):
         f["urgent"] = saved["urgent"]  # the page shows what is saved
-        return PrefsPage(f, prefs.UNRECOGNIZED)
+        return PrefsPage(uid, f, prefs.UNRECOGNIZED)
     u = f["urgent"] = {
         **u,
         **{k: int(u[k]) for k in ("quiet_from", "quiet_to", "per_week")},
     }
     if u["quiet_from"] == u["quiet_to"]:
-        return PrefsPage(f, QUIET_SAME)
+        return PrefsPage(uid, f, QUIET_SAME)
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
         or not set(f["availability"]) <= SLOTS
@@ -714,21 +717,21 @@ def _sync_save(req, form):
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
-        return PrefsPage(f, prefs.UNRECOGNIZED)
+        return PrefsPage(uid, f, prefs.UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
-        return PrefsPage(f, NO_CAUSE)
+        return PrefsPage(uid, f, NO_CAUSE)
     if date_error:
-        return PrefsPage(f, date_error)
+        return PrefsPage(uid, f, date_error)
     places = []
     for i, pf in enumerate(posted):
         current = saved["places"][i] if i < len(saved["places"]) else None
         place, error = prefs.resolve_place(pf, current, i)
         if error:
-            return PrefsPage(f, error)
+            return PrefsPage(uid, f, error)
         if place:
             places.append(place)
     if not places or not f["place_forms"][0]["where"].strip():
-        return PrefsPage(f, NO_PLACE)
+        return PrefsPage(uid, f, NO_PLACE)
     data.save_preferences(
         uid,
         **{k: v for k, v in f.items() if k not in ("place_forms", "horizon_days")},

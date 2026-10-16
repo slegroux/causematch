@@ -103,14 +103,17 @@ def main(argv=None):
     p.add_argument("--seed-file", help="nonprofits JSON, kept outside the repo")
     a = p.parse_args(argv)
     db = configure(a.port, a.db, a.seed_file)
+    # each sign-in with ME_PHONE gets its own Sam, and the stand-in teams say yes to a like
+    # (config.demo_matches); scripts/screenshots.py leaves it off, to shoot the seed's Sam
+    os.environ["CAUSEMATCH_DEMO_MATCHES"] = "1"
     info = demo_seed.seed(a.seed_file)
     import main as _app  # noqa: F401  after seeding, so its startup seeds nothing more
 
     url = os.environ["PUBLIC_BASE_URL"]
     print(f"Causematch demo on {url}  (database {db})")
     print(
-        f"  Volunteer: {url}/login  phone {demo_seed.ME_PHONE}, code 000000 "
-        "(any number works)"
+        f"  Volunteer: {url}/login  phone {demo_seed.ME_PHONE}, code 000000: a fresh "
+        "Sam with matches each time (any other number starts at onboarding)"
     )
     for role, (email, _) in (
         ("Coordinator", demo_seed.COORDINATOR),

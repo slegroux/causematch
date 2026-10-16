@@ -12,6 +12,7 @@ from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
     contact_email,
     demo_banner,
+    demo_matches,
     is_preview,
     is_production,
     phone_hash_key,
@@ -53,6 +54,7 @@ phone_hash_key()  # ... or deleted accounts' blocks can't be kept
 trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
 sms_ceilings()  # ... or the SMS ceiling is unreadable
 demo_banner()  # ... or production was asked to show the demo banner
+demo_matches()  # ... or production was asked to clone the demo volunteer and auto-accept
 # uvicorn settings; the Procfile runs the same ones.
 UVICORN = {
     "ws_max_size": 65536,  # bytes per websocket frame (default 16 MiB); a message is <= 2000 chars
@@ -131,6 +133,9 @@ app.mount(
         StaticFiles(directory=Path(__file__).parent / "static"), minimum_size=1024
     ),
 )
+# the demo number's sign-in (config.demo_matches): set here, since no route imports the
+# demo seed; it only runs while demo_matches() is on
+auth_routes.demo_volunteer = demo_seed.demo_volunteer
 for routes in (
     auth_routes,
     org_auth,

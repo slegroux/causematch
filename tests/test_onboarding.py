@@ -358,8 +358,8 @@ def test_the_after_first_like_card_shows_once_and_can_be_skipped(new_user):
     new_user.post("/onboarding", data=FORM)
     like = {"opening_id": two_cards(new_user)[0], "liked": "1"}
     r = new_user.post("/swipe", data=like, follow_redirects=False)
-    assert r.headers["location"] == "/onboarding/more"
-    assert "How did you hear" in new_user.get("/onboarding/more").text
+    assert r.headers["location"] == f"/onboarding/more?liked={like['opening_id']}"
+    assert "How did you hear" in new_user.get(r.headers["location"]).text
     r = new_user.post("/onboarding/more", data={"skip": "1"}, follow_redirects=False)
     assert r.headers["location"] == "/deck"
     assert profile_of(new_user).heard_from == "skipped"
@@ -370,6 +370,20 @@ def test_the_after_first_like_card_shows_once_and_can_be_skipped(new_user):
     )
     assert r.headers["location"] == "/deck"  # not asked again
     assert new_user.get("/onboarding/more", follow_redirects=False).status_code == 303
+
+
+def test_the_after_first_like_card_confirms_the_like_by_the_orgs_name(new_user):
+    new_user.post("/onboarding", data=FORM)
+    liked, other = two_cards(new_user)
+    new_user.post("/swipe", data={"opening_id": liked, "liked": "1"})
+    page = new_user.get(f"/onboarding/more?liked={liked}").text
+    assert f"Sent to {data.org_name_of(liked)}." in page, page
+    # junk, an id they didn't like, or markup: no notice, nothing echoed
+    for junk in ("x1", str(other), "<b>1</b>", "9" * 30):
+        page = new_user.get("/onboarding/more", params={"liked": junk}).text
+        assert (
+            "Sent to" not in page and "<b>1" not in page and "How did you hear" in page
+        )
 
 
 def test_the_after_first_like_card_saves_its_answers(new_user):

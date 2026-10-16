@@ -142,12 +142,19 @@ def OpeningCard(c):
             P(c["org"], cls="font-semibold text-ink-muted"),
             # a tap anywhere on the card opens the sheet (static/swipe.js); this button is
             # the same thing for a keyboard or a screen reader
-            Button(
-                c["about"],
-                type="button",
-                data_open_sheet="1",
-                aria_haspopup="dialog",
-                cls="cm-about line-clamp-2 w-full text-left text-sm leading-snug text-ink",
+            # Its padding makes a 44 px target and the equal negative margin takes the
+            # height back (inside a flow-root Div, which keeps space-y's margin); the clamp
+            # is on the span, so the padding shows no third line.
+            Div(
+                Button(
+                    Span(c["about"], cls="cm-about line-clamp-2"),
+                    type="button",
+                    data_open_sheet="1",
+                    aria_haspopup="dialog",
+                    cls="-my-3 block w-full py-3 text-left text-sm leading-snug "
+                    "text-ink",
+                ),
+                cls="flow-root",
             )
             if c.get("about")
             else None,
@@ -469,6 +476,18 @@ def FilterSheet(uid, today, count, view):
     )
 
 
+def MatchNotice(matched):
+    """The demo's "It's a match!" for the likes data.demo_accept_due just accepted (none
+    outside a demo), with the newest one's chat."""
+    if not matched:
+        return None
+    m = matched[-1]
+    return Span(
+        f"It's a match! {m['org']} said yes. ",
+        A("Say hi", href=f"/chat/{m['id']}", cls="underline"),
+    )
+
+
 def DeckArea(uid, today=False, view=None, notice=None, first=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet's round button sits left of Pass and Like, clear of the picture and
@@ -569,13 +588,15 @@ def deck(req):
     me = data.get_profile(uid)
     nudge = not (me.photo_key or me.photo_nudge_dismissed_at)
     return Container(
-        VolunteerNav("openings", data.has_pending_like(uid)),
+        VolunteerNav("openings", uid),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         TodaySwitch(today),
         # one nudge at a time: the photo prompt first, the Home Screen tip after it. On the
         # deck only: elsewhere it would push the page's content
         None if nudge else AddToHomeScreen(),
-        DeckArea(uid, today, deck_view(req), first=first),
+        DeckArea(
+            uid, today, deck_view(req), MatchNotice(data.demo_accept_due(uid)), first
+        ),
         PhotoNudge() if nudge else None,
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",

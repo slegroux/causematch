@@ -270,6 +270,7 @@ def ProfilePage(uid, error=None, notice=None, f=None):
         ),
         Div(DetailsForm(p, f), cls="mt-4"),
         Script(src="/static/photo.js", defer=True),
+        uid=uid,
     )
 
 

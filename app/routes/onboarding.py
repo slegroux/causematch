@@ -1,3 +1,5 @@
+import re
+
 from fasthtml.common import (
     H1,
     A,
@@ -19,11 +21,21 @@ from app.forms import (
     HIDDEN_CHARS_MESSAGE,
     bad_request,
     hidden_chars,
+    query,
     str_form,
 )
 from app.geo import neighborhoods, shown_point, zip_latlon
 from app.routes.prefs import CauseRow, PlaceFields, Section
-from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput, VolunteerShell
+from app.ui import (
+    LIKE_SENT,
+    TITLE,
+    BigButton,
+    Choice,
+    Field,
+    Router,
+    TextInput,
+    VolunteerShell,
+)
 
 ar = Router()
 
@@ -196,9 +208,11 @@ def _sync_onboarding_save(req, form):
 SKIPPED = "skipped"  # asked and passed on: metrics count it as unknown, and we don't ask again
 
 
-def MoreCard(error=None):
+def MoreCard(uid, org=None, error=None):
+    """org: the nonprofit the first like went to, confirmed at the top."""
     return VolunteerShell(
-        "deck",
+        "openings",
+        Alert(LIKE_SENT.format(org), cls=AlertT.success + " mb-4") if org else None,
         H1("Liked! Two quick questions", cls=TITLE),
         P(
             "Both optional. They help us see who Causematch reaches.",
@@ -219,14 +233,20 @@ def MoreCard(error=None):
             method="post",
             cls="space-y-4",
         ),
+        uid=uid,
     )
 
 
 @ar("/onboarding/more", methods=["GET"])
 def more_page(req):
-    if data.get_profile(req.scope["uid"]).heard_from:
+    uid = req.scope["uid"]
+    if data.get_profile(uid).heard_from:
         return Redirect("/deck")
-    return MoreCard()
+    liked = query(req, "liked")
+    org = (
+        data.liked_org(uid, int(liked)) if re.fullmatch(r"[0-9]{1,18}", liked) else None
+    )
+    return MoreCard(uid, org)
 
 
 @ar("/onboarding/more", methods=["POST"])
@@ -247,6 +267,6 @@ def _sync_more_save(uid, form):
     elif heard not in {v for v, _ in HEARD_FROM} | {""} or volunteered not in {
         v for v, _ in VOLUNTEERED
     } | {""}:
-        return MoreCard(prefs.UNRECOGNIZED)
+        return MoreCard(uid, error=prefs.UNRECOGNIZED)
     data.save_about(uid, heard or SKIPPED, volunteered)
     return Redirect("/deck")

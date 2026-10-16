@@ -70,7 +70,7 @@ def Shell(uid, back, title, *content, error=None):
     )
     if org:
         return OrgShell("inbox", data.org_waiting(uid), Div(*body, cls="max-w-md"))
-    return VolunteerShell("matches", *body)
+    return VolunteerShell("matches", *body, uid=uid)
 
 
 def ReportPage(uid, action, back, target, error=None, f=None):
@@ -340,11 +340,12 @@ def profile_page(req):
             "withdraws your matches.",
             cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
+        uid=req.scope["uid"],
     )
 
 
 @ar("/profile/delete", methods=["GET"])
-def delete_confirm():
+def delete_confirm(req):
     return VolunteerShell(
         "me",
         H1("Delete your account?", cls=TITLE),
@@ -367,6 +368,7 @@ def delete_confirm():
             ),
             cls="space-y-3 p-5 " + CARD,
         ),
+        uid=req.scope["uid"],
     )
 
 
@@ -417,6 +419,8 @@ def privacy():
             "you pick; how often you'd like to help; which of these only show or only "
             "rank openings; and whether you want last-minute calls, for which shifts, "
             "your quiet hours and how many a week.",
+            "Causematch uses your answers (your causes, places, when you're free and the "
+            "rest) to match you with openings.",
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",

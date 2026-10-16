@@ -8,11 +8,15 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
+from app.config import demo_matches
 from app.forms import bad_request, str_form
 from app.ui import BigButton, CauseChip, Field, Router, SignInPage, TextInput
 
 ar = Router()
 log = logging.getLogger("causematch")
+# The demo seed's demo_volunteer, set by main.py (no route imports the demo seed): with
+# config.demo_matches on, the demo number signs in as a fresh copy of the demo volunteer
+demo_volunteer = None
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 
@@ -145,7 +149,8 @@ def _sync_verify(form, sess):
     if not ok:
         security.allow((security.VERIFY_PER_PHONE, e164))
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
-    uid = data.get_or_create_volunteer(e164)
+    uid = demo_volunteer(e164) if demo_matches() and demo_volunteer else None
+    uid = uid or data.get_or_create_volunteer(e164)
     profile = data.get_profile(uid)
     sess.clear()  # the code is used: the number leaves the session either way
     if profile is None:  # suspended by an admin

@@ -28,6 +28,7 @@ from monsterui.all import (
     TextPresets,
 )
 
+from app import data
 from app.config import demo_banner, is_preview, public_base_url
 from app.forms import domain
 
@@ -321,6 +322,10 @@ TABS = (
 )
 
 
+# a like's confirmation, on the deck and on the card after the first like
+LIKE_SENT = "Sent to {}. We'll text you when they say yes."
+
+
 def MatchesDot(on, oob=False):
     """The small dot on the Matches tab while a like waits for a nonprofit. Always in the
     page (hidden when off), so a like's response can swap it in without a reload."""
@@ -367,9 +372,10 @@ def TabBar(active, dot=False):
     )
 
 
-def VolunteerNav(active=None, dot=False):
-    """The volunteer's header and bottom tab bar. The bar is fixed, so it can sit anywhere
-    in the page; static/theme.css pads the body above it."""
+def VolunteerNav(active, uid):
+    """The volunteer's header and bottom tab bar, with the Matches dot while a like of
+    theirs waits. The bar is fixed, so it can sit anywhere in the page; static/theme.css
+    pads the body above it."""
     return Div(
         Div(
             A(
@@ -379,13 +385,14 @@ def VolunteerNav(active=None, dot=False):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        TabBar(active, dot),
+        TabBar(active, data.has_pending_like(uid)),
     )
 
 
-def VolunteerShell(active, *content):
-    """A volunteer page: the header and tab bar, then the content in one narrow column."""
-    return Container(VolunteerNav(active), *content, cls="max-w-md pb-8")
+def VolunteerShell(active, *content, uid):
+    """A volunteer page: the header and tab bar, then the content in one narrow column.
+    uid is required, so no page leaves out the Matches dot."""
+    return Container(VolunteerNav(active, uid), *content, cls="max-w-md pb-8")
 
 
 # a page's H1 and a section's H2 on the staff pages (nonprofit, admin)

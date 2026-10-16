@@ -17,16 +17,18 @@ import json
 import logging
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger("causematch")
 
 LA = ZoneInfo("America/Los_Angeles")
-ME_PHONE = "(310) 555-0199"  # the volunteer with a match, a chat and shifts
-NO_PHOTO_PHONE = "(310) 555-0102"  # Priya, who has no photo yet
+ME_PHONE = "(310) 555-0100"  # Sam, with matches, a chat and shifts (demo_volunteer)
+NO_PHOTO_PHONE = "(310) 555-0103"  # Priya, who has no photo yet
 COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
+# the stand-in coordinators of the other orgs (data.DEMO_TEAM_DOMAIN), by turns
+TEAM_NAMES = ("Rosa", "Alex", "Jamie", "Noor", "Luis", "Kim", "Theo", "Dana")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
 SOON_TIMES = ("10:00", "13:00", "16:00", "18:30")  # tomorrow's shifts (_soon_shifts)
 # the seed file's words -> the opening form's values (app/routes/org.py)
@@ -225,6 +227,12 @@ def _volunteer(phone, name, hood, causes, skills, frequency):
     from app.auth import normalize_phone
 
     uid = data.get_or_create_volunteer(normalize_phone(phone))
+    return _onboard(uid, name, hood, causes, skills, frequency)
+
+
+def _onboard(uid, name, hood, causes, skills, frequency):
+    from app import data
+
     data.save_onboarding(
         uid,
         display_name=name,
@@ -348,12 +356,17 @@ def drawn_photo(seed=0):
 
 
 def seed(seed_file=None):
-    """Orgs and openings, then people: a coordinator and an admin, volunteers who liked
-    the coordinator's opening, and ME_PHONE's volunteer with an accepted match (chat,
-    upcoming and past shifts) and a pending like; then the coordinator's urgent call for
-    tomorrow 9 am, the first card in ME_PHONE's deck, and its first wave (the fake SMS log
-    shows ME_PHONE's text). Returns what a demo needs to sign in."""
+    """Orgs and openings, then people: a coordinator and an admin, a stand-in coordinator
+    for every other org (_teams), volunteers who liked the coordinator's opening, and
+    ME_PHONE's volunteer with an accepted match (chat, upcoming and past shifts), another
+    upcoming shift and a waiting like; then the coordinator's urgent call for tomorrow
+    9 am, the first card in ME_PHONE's deck, and its first wave (the fake SMS log shows
+    ME_PHONE's text). Returns what a demo needs to sign in.
+
+    With config.demo_matches on, ME_PHONE signs each visitor in as a fresh copy of Sam
+    instead (demo_volunteer); this one stays for the coordinator's inbox and chat."""
     from app import data, photos
+    from app.auth import normalize_phone
     from app.db import ensure_causes, matches, now, openings, orgs, seed_demo
 
     ensure_causes()
@@ -379,7 +392,8 @@ def seed(seed_file=None):
                 ("Maya", "Palms", "food-insecurity", ["physical"], "weekly"),
                 ("Jordan", "Culver City", "environment-parks", ["car"], "monthly"),
                 ("Priya", "Mar Vista", "animal-shelters", ["food_handling"], "once"),
-            ]
+            ],
+            start=1,  # (310) 555-0101 to 0103: 0100 is ME_PHONE
         )
     ]
     for n, (uid, last, pronouns, bio, interests) in enumerate(
@@ -418,8 +432,39 @@ def seed(seed_file=None):
         "Demo report: is this landscape really the volunteer?",
     )
 
-    me = _volunteer(
-        ME_PHONE,
+    _teams(org.id)
+    me = _sam(data.get_or_create_volunteer(normalize_phone(ME_PHONE)))
+    m = data.swipe(me, first.id, True)
+    data.decide(coord, m.id, True)
+    data.send_message(
+        coord, m.id, "Hi Sam! Thanks for signing up. We start at 9, side door."
+    )
+    data.send_message(me, m.id, "Great, see you there. Anything I should bring?")
+    data.send_message(coord, m.id, "Closed-toe shoes. We have gloves and coffee.")
+    _past_shift(m.id, coord, 14, "completed")
+    _past_shift(m.id, coord, 2, "scheduled")  # for the coordinator to mark
+    _preferences(me)
+    soon = _soon_shifts(me, org.id)
+    urgent = _urgent_call(coord, org, first, sample=bool(seed_file))
+    # the match with the coordinator holds a chat and shifts already
+    _matches(me, org.id, ("calendar", "waiting"))
+    return {
+        "org": org.name,
+        "match_id": m.id,
+        "coordinator_id": coord,
+        "opening_id": first.id,
+        "urgent_opening_id": urgent,
+        "soon_opening_ids": soon,
+    }
+
+
+def _sam(uid):
+    """Profile uid becomes the demo volunteer Sam: onboarded, with a drawn photo and a
+    profile (their match preferences come after, from _preferences)."""
+    from app import data, photos
+
+    _onboard(
+        uid,
         "Sam",
         "Sawtelle",
         [
@@ -431,45 +476,112 @@ def seed(seed_file=None):
         ["physical", "car"],
         "weekly",
     )
-    data.set_volunteer_photo(me, photos.process(drawn_photo()))
+    data.set_volunteer_photo(uid, photos.process(drawn_photo()))
     data.save_profile_details(
-        me,
+        uid,
         first_name="Sam",
         last_name="Lee",
         pronouns="they/them",
         bio="Weekend hiker and home cook. Happy to lift boxes or walk dogs.",
         interests=["cooking", "hiking", "animals"],
     )
-    m = data.swipe(me, first.id, True)
-    data.decide(coord, m.id, True)
-    data.send_message(
-        coord, m.id, "Hi Sam! Thanks for signing up. We start at 9, side door."
-    )
-    data.send_message(me, m.id, "Great, see you there. Anything I should bring?")
-    data.send_message(coord, m.id, "Closed-toe shoes. We have gloves and coffee.")
-    _past_shift(m.id, coord, 14, "completed")
-    _past_shift(m.id, coord, 2, "scheduled")  # for the coordinator to mark
-    pending = next(
-        (
-            o
-            for o in openings(order_by="id")
-            if "animal-shelters" in o.causes and o.org_id != org.id
-        ),
-        None,
-    )
-    if pending:
-        data.swipe(me, pending.id, True)
-    _preferences(me)
-    soon = _soon_shifts(me, org.id)
-    urgent = _urgent_call(coord, org, first, sample=bool(seed_file))
-    return {
-        "org": org.name,
-        "match_id": m.id,
-        "coordinator_id": coord,
-        "opening_id": first.id,
-        "urgent_opening_id": urgent,
-        "soon_opening_ids": soon,
-    }
+    return uid
+
+
+def _teams(coordinator_org_id):
+    """A stand-in coordinator for every org but the demo coordinator's, so their openings
+    can be matched (and, with config.demo_matches, say yes by themselves)."""
+    from app import data
+    from app.db import orgs
+
+    for n, o in enumerate(x for x in orgs(order_by="id") if x.id != coordinator_org_id):
+        name = TEAM_NAMES[n % len(TEAM_NAMES)]
+        data.add_coordinator(
+            f"team{o.id}@{data.DEMO_TEAM_DOMAIN}", o.id, name=f"{name}, volunteer lead"
+        )
+
+
+# A demo volunteer's matches, in the order they are made: accepted with an upcoming shift
+# (Add to calendar), waiting to hear back, accepted with the team's unanswered welcome, and
+# accepted with a past shift marked done.
+MATCH_KINDS = ("calendar", "waiting", "message", "done")
+
+
+def _matches(uid, coordinator_org_id, kinds=MATCH_KINDS):
+    """One match per kind, each from another org a stand-in team runs and, while it can, in
+    another cause; logos first, and the openings with the most room, so copies spread out.
+    The coordinator's org gets none (its inbox shows the seed's people, not every copy),
+    and an opening in the next 48 hours only when nothing else is left: those are the
+    "I'm free today" cards."""
+    from app import data
+    from app.db import Shift, matches, now, openings, shifts
+
+    soon = (datetime.now(LA) + timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M")
+    found = []
+    for card in data.deck(uid, 200):
+        o = openings[card["id"]]
+        team = data.demo_team(o.org_id)
+        if card["call_id"] or o.org_id == coordinator_org_id or team is None:
+            continue
+        rank = (o.starts_at < soon, not card["logo"], -data.open_spots(team, o.id))
+        found.append((rank, o, team, (json.loads(o.causes) or [""])[0]))
+    found.sort(key=lambda f: f[0])
+    orgs_used, causes_used = set(), set()
+    for kind in kinds:
+        pick = next(
+            (
+                f
+                for f in found
+                if f[1].org_id not in orgs_used and f[3] not in causes_used
+            ),
+            None,
+        ) or next((f for f in found if f[1].org_id not in orgs_used), None)
+        if pick is None:
+            return
+        _, o, team, cause = pick
+        orgs_used.add(o.org_id)
+        causes_used.add(cause)
+        m = data.swipe(uid, o.id, True)
+        if kind == "waiting":  # liked two days ago: the demo's auto-accept leaves it
+            two_days = datetime.now(UTC) - timedelta(days=2)
+            matches.update(id=m.id, created_at=two_days.isoformat(timespec="seconds"))
+            continue
+        data.decide(team, m.id, True)
+        if kind == "message":
+            data.send_message(team, m.id, data.DEMO_WELCOME.format("Sam"))
+        elif kind == "done":  # its shift was two weeks ago, and they came
+            past = (datetime.now(LA) - timedelta(days=14)).strftime("%Y-%m-%dT09:00")
+            for sh in shifts(where="match_id = ?", where_args=[m.id]):
+                shifts.delete(sh.id)
+            shifts.insert(
+                Shift(
+                    match_id=m.id,
+                    starts_at=past,
+                    status="completed",
+                    kind="accept",
+                    created_by=team,
+                    created_at=now(),
+                    marked_at=now(),
+                    marked_by=team,
+                )
+            )
+
+
+def demo_volunteer(phone):
+    """Signing in with ME_PHONE while config.demo_matches is on (the auth route's hook,
+    set by main.py): a fresh Sam for this visitor alone, with their preferences, photo,
+    matches, chat and shifts, and a full deck whose first card is the urgent call. Its
+    profile id; None for any other number."""
+    from app import data
+    from app.auth import normalize_phone
+
+    if phone != normalize_phone(ME_PHONE):
+        return None
+    uid = _sam(data.new_demo_volunteer())
+    _preferences(uid)
+    coord = data.coordinator_by_email(COORDINATOR[0])
+    _matches(uid, data.coordinator_org_ids(coord)[0] if coord else None)
+    return uid
 
 
 def _soon_shifts(me, coordinator_org_id):

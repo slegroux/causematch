@@ -22,7 +22,7 @@ from app.choices import (
     LANGUAGES,
     MAX_MINUTES,
 )
-from app.config import phone_hash_key
+from app.config import demo_matches, phone_hash_key
 from app.forms import BIDI, hidden_chars
 from app.match import LA
 from app.metrics_rows import fetch_rows
@@ -616,6 +616,13 @@ def has_pending_like(uid):
 
 def org_name_of(opening_id):
     return _db.orgs[_db.openings[opening_id].org_id].name
+
+
+def liked_org(uid, opening_id):
+    """The org's name when this volunteer liked the opening (a match of theirs is on it),
+    else None: /onboarding/more names it without trusting the id it was given."""
+    m = _match_for(uid, opening_id) if _is_id(opening_id) else None
+    return org_name_of(opening_id) if m and not m.org_blind else None
 
 
 def _accepted(opening_id):
@@ -3328,6 +3335,120 @@ def rate_take(keys, now, record=True):
             for key, _, _ in keys:
                 _db.rate_events.insert(key=key, at=now)
     return None
+
+
+# --- the demo: development, test and a preview only (config.demo_matches) -------------
+
+# Stand-in coordinators the demo seed gives every org but the demo coordinator's: nobody
+# signs in as them, and their orgs say yes to a like by themselves (demo_accept_due).
+DEMO_TEAM_DOMAIN = "team.demo.causematch.test"
+DEMO_ACCEPT_AFTER = timedelta(seconds=4)  # how long a demo team takes to say yes
+DEMO_ACCEPT_WITHIN = timedelta(hours=1)  # an older like stays as the seed left it
+DEMO_WELCOME = "Hi {}! Thanks for signing up. We'll see you there, and you can ask us anything here."
+DEMO_COPIES = 200  # demo volunteers kept at once; past it the oldest is reused
+# Their numbers: exchange 000 is no real number, and the sign-in form refuses it
+DEMO_PHONE_PREFIX = "+1310000"
+
+
+def demo_team(org_id):
+    """The org's stand-in demo coordinator (an address at DEMO_TEAM_DOMAIN), else None."""
+    rows = _db.db.q(
+        "SELECT p.id FROM org_member m JOIN profile p ON p.id = m.user_id "
+        "WHERE m.org_id = ? AND p.email LIKE ? AND p.deleted_at IS NULL "
+        "ORDER BY p.id LIMIT 1",
+        [org_id, f"%@{DEMO_TEAM_DOMAIN}"],
+    )
+    return rows[0]["id"] if rows else None
+
+
+def _drop_demo_volunteer(uid):
+    """One demo volunteer and every row of theirs, gone; the openings they held reopen."""
+    held = {
+        m.opening_id for m in _db.matches(where="volunteer_id = ?", where_args=[uid])
+    }
+    theirs = "(SELECT id FROM match WHERE volunteer_id = ?)"
+    for sql, n in (
+        (f"DELETE FROM message WHERE match_id IN {theirs}", 1),
+        (f"DELETE FROM shift WHERE match_id IN {theirs}", 1),
+        ("DELETE FROM match WHERE volunteer_id = ?", 1),
+        ("DELETE FROM swipe WHERE volunteer_id = ?", 1),
+        ("DELETE FROM place WHERE user_id = ?", 1),
+        ("DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", 1),
+        ("DELETE FROM deck_empty WHERE volunteer_id = ?", 1),
+        ("DELETE FROM notification WHERE recipient_id = ? AND kind != 'likes'", 1),
+        ("DELETE FROM report WHERE reporter_id = ? OR target_user_id = ?", 2),
+        ("DELETE FROM block WHERE blocker_id = ? OR blocked_user_id = ?", 2),
+        ("DELETE FROM profile WHERE id = ?", 1),
+    ):
+        _db.db.execute(sql, [uid] * n)
+    for opening_id in held:
+        _sync_fill(opening_id)
+
+
+def new_demo_volunteer():
+    """A new, empty volunteer profile for one visitor of a demo (demo_seed fills it in),
+    under a number nobody can sign in with. With DEMO_COPIES of them already, the oldest is
+    dropped and its number reused, so a busy preview stays bounded. Demo only."""
+    if not demo_matches():
+        raise PermissionError("demo and preview only")
+    with _db.db.conn:
+        taken = _db.profiles(
+            where="phone LIKE ? AND deleted_at IS NULL",
+            where_args=[DEMO_PHONE_PREFIX + "%"],
+            order_by="id",
+        )
+        used = {p.phone for p in taken}
+        phone = next(
+            (
+                f"{DEMO_PHONE_PREFIX}{n:04d}"
+                for n in range(DEMO_COPIES)
+                if f"{DEMO_PHONE_PREFIX}{n:04d}" not in used
+            ),
+            None,
+        )
+        if phone is None:
+            phone = taken[0].phone
+            _drop_demo_volunteer(taken[0].id)
+        return _db.profiles.insert(
+            _db.Profile(
+                role="volunteer", phone=phone, session_version=1, created_at=_now()
+            )
+        ).id
+
+
+def demo_accept_due(uid):
+    """Demo only, else []: the volunteer's likes made DEMO_ACCEPT_AFTER to
+    DEMO_ACCEPT_WITHIN ago, on openings of an org a demo team runs, are accepted by that
+    team with a welcome message, so a like turns into a match while the visitor watches.
+    [{"id", "org"}] of the matches accepted now. Production never runs it: with
+    CAUSEMATCH_DEMO_MATCHES set it refuses to start."""
+    if not demo_matches():
+        return []
+    now = datetime.now(UTC)
+    due = _db.matches(
+        where="volunteer_id = ? AND status = 'pending' AND NOT coalesce(org_blind, 0) "
+        "AND created_at BETWEEN ? AND ?",
+        where_args=[
+            uid,
+            (now - DEMO_ACCEPT_WITHIN).isoformat(timespec="seconds"),
+            (now - DEMO_ACCEPT_AFTER).isoformat(timespec="seconds"),
+        ],
+        order_by="id",
+    )
+    first = _first_name(_db.profiles[uid].display_name)
+    accepted = []
+    for m in due:
+        org_id = _db.openings[m.opening_id].org_id
+        team = demo_team(org_id)
+        if team is None:
+            continue
+        try:
+            decide(team, m.id, True)
+        except (PermissionError, ValueError):
+            continue  # blocked, full or decided meanwhile: it stays as it is
+        send_message(team, m.id, DEMO_WELCOME.format(first))
+        accepted.append({"id": m.id, "org": _db.orgs[org_id].name})
+    return accepted
 
 
 # One apsw connection is shared by every request and websocket thread; apsw

@@ -530,6 +530,54 @@ OPENINGS = [
     ),
 ]
 
+# title -> (about, notes) of each invented opening: what the card and its sheet show
+ABOUT = {
+    "Sort and pack pantry boxes": (
+        (
+            "Sort donated cans and fresh produce, then pack boxes for families picking up "
+            "that afternoon."
+        ),
+        "Closed-toe shoes. We have gloves and coffee.",
+    ),
+    "Serve a weekend lunch line": (
+        (
+            "Plate hot lunches and hand them out to about 200 guests. A cook shows you the "
+            "line first."
+        ),
+        "Hair tied back; we give you an apron and a hairnet.",
+    ),
+    "Trail cleanup along the arroyo": (
+        "Pick up litter and pull invasive weeds along a mile of trail, in small teams.",
+        "Bring water and a hat. Parking at the Avenue 43 lot.",
+    ),
+    "Walk dogs at the shelter": (
+        "Take shelter dogs on 20-minute walks so they are calmer when families visit.",
+        "A 15-minute safety talk the first time.",
+    ),
+    "Community garden planting day": (
+        "Turn the beds, plant winter vegetables and mulch the paths with neighbors.",
+        "",
+    ),
+    "Foster-home photo day for adoptable cats": (
+        (
+            "Take bright, friendly photos of cats in foster homes for their adoption pages. "
+            "A phone camera is enough."
+        ),
+        "",
+    ),
+    "Pack hygiene kits for outreach": (
+        (
+            "Pack soap, socks and toothbrushes into kits the outreach team hands out that "
+            "week."
+        ),
+        "",
+    ),
+    "Holiday pantry drive (past sign-up deadline)": (
+        "Collect and sort holiday food donations at the pantry.",
+        "",
+    ),
+}
+
 
 def now():
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -572,7 +620,8 @@ def _seed_demo():
             Opening(
                 org_id=ids[oi],
                 title=title,
-                about="",
+                about=ABOUT[title][0],
+                notes=ABOUT[title][1],
                 causes=json.dumps(cs),
                 skills=json.dumps(skills),
                 lat=lat,

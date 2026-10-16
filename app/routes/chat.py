@@ -169,7 +169,7 @@ def ChatPage(uid, match_id, role, notice=""):
     )
     if role == "coordinator":  # the nonprofit's own top nav, from the inbox
         return OrgShell("inbox", data.org_waiting(uid), Div(*content, cls="max-w-md"))
-    return VolunteerShell("matches", *content)
+    return VolunteerShell("matches", *content, uid=uid)
 
 
 def _chat_page(req, match_id, role, notice):

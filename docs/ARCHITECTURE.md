@@ -813,6 +813,7 @@ When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters,
 | Fake SMS (code `000000`) and fake email (logged) | allowed with `CAUSEMATCH_FAKE_SMS=1` / `CAUSEMATCH_FAKE_EMAIL=1` | allowed, and set by the deploy script | refused at startup |
 | Password on every request | no | yes, `PreviewGate` | no |
 | Banner on every page | only with `CAUSEMATCH_DEMO_BANNER=1` (`scripts/demo.py --seed-file`) | always ("Preview") | refused at startup |
+| Demo matches: a fresh demo volunteer per sign-in with `(310) 555-0100`, and stand-in coordinators that accept a like after a few seconds | with `CAUSEMATCH_DEMO_MATCHES=1` (`scripts/demo.py`) | with `CAUSEMATCH_DEMO_MATCHES=1`, set by the deploy script | refused at startup |
 | Seeding | invented orgs from `app/db.py` into an empty database (verified in dev and test) | `app/demo_seed.py` into an empty database at each cold start: `PREVIEW_SEED_DIR`, else the invented orgs, plus demo people | none |
 | Coordinator sign-in link | emailed by the fake, i.e. logged | shown on the `/org/login` result page for a coordinator's address (never an admin's); demo coordinator and admin links in the startup log | emailed by Resend |
 
@@ -834,7 +835,7 @@ flowchart LR
 ```
 
 - **`Dockerfile`:** the image's `CMD` runs uvicorn with the `Procfile`'s flags (`--ws-max-size 65536`, `--limit-concurrency 200`, `--timeout-keep-alive 15`, `--timeout-graceful-shutdown 8`, `--no-proxy-headers`) on `$PORT`, default 8080.
-- **`scripts/deploy_preview.sh`** sets `CAUSEMATCH_ENV=preview`, `PREVIEW_SEED_DIR=/app/preview-seed`, `TRUSTED_PROXY_HOPS=1`, both fakes, `CONTACT_EMAIL` and `PUBLIC_BASE_URL`. The seed also ends up in the Cloud Build source bucket and in the image. Both are private to the project.
+- **`scripts/deploy_preview.sh`** sets `CAUSEMATCH_ENV=preview`, `PREVIEW_SEED_DIR=/app/preview-seed`, `TRUSTED_PROXY_HOPS=1`, both fakes, `CAUSEMATCH_DEMO_MATCHES=1`, `CONTACT_EMAIL` and `PUBLIC_BASE_URL`. The seed also ends up in the Cloud Build source bucket and in the image. Both are private to the project.
 - **Production is not deployed yet.** The code expects these additions:
   - real Twilio and Resend credentials
   - a persistent database (Litestream replication to GCS is the plan)
@@ -859,6 +860,7 @@ flowchart LR
 | `PREVIEW_SEED_DIR` | Folder with `orgs.json`, `logos-raw/`, `photos-raw/` | optional, preview |
 | `CAUSEMATCH_FAKE_SMS`, `CAUSEMATCH_FAKE_EMAIL` | `1` = fakes | optional; dev, test, preview only |
 | `CAUSEMATCH_DEMO_BANNER` | `1` = demo banner (set by `scripts/demo.py --seed-file`) | optional; refused in production |
+| `CAUSEMATCH_DEMO_MATCHES` | `1` = a fresh demo volunteer per sign-in with the demo number, and stand-in coordinators that accept likes (set by `scripts/demo.py` and the preview deploy) | optional; dev, test, preview only |
 | `CAUSEMATCH_DB` | SQLite path, default `data/causematch.db` | optional |
 | `SMS_MAX_PER_HOUR`, `SMS_MAX_PER_DAY` | Global SMS ceiling, defaults 100 / 500 | optional |
 | `CAUSEMATCH_LOG_LEVEL` | `DEBUG` adds a hashed client key per limited request | optional |

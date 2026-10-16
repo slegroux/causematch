@@ -320,6 +320,7 @@ def history(req):
             ],
             "Nothing yet.",
         ),
+        uid=req.scope["uid"],
     )
 
 

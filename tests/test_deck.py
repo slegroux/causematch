@@ -132,6 +132,12 @@ def test_a_like_says_where_it_went_and_lights_the_matches_dot(user):
     assert f"Sent to {org}." in r.text and "text you when they say yes." in r.text
     dot = re.search(r'<span[^>]*id="matches-dot"[^>]*>', r.text).group(0)
     assert "hidden" not in dot and 'hx-swap-oob="true"' in dot
+    for page in ("/deck", "/matches", "/history", "/profile", "/me/preferences"):
+        html = user.get(page).text  # every volunteer page, not only the deck
+        assert (
+            '<span id="matches-dot"' in html
+            and '<span hidden id="matches-dot"' not in html
+        ), page
 
 
 def test_one_nudge_at_a_time_photo_first_then_home_screen(user):

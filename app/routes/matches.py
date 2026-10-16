@@ -14,12 +14,13 @@ from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, deck_view
+from app.routes.deck import DeckArea, MatchNotice, deck_view
 from app.ui import (
     CALENDAR,
     CARD,
     CHAT,
     HEART,
+    LIKE_SENT,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
@@ -101,7 +102,7 @@ def _sync_swipe(req, form):
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
             notify.on_new_like(m.id)
-            notice = f"Sent to {data.org_name_of(m.opening_id)}. We'll text you when they say yes."
+            notice = LIKE_SENT.format(data.org_name_of(m.opening_id))
             if not data.get_profile(uid).heard_from:  # the one optional card, once
                 more = (
                     f"/onboarding/more?liked={m.opening_id}"  # it shows the notice too
@@ -109,6 +110,7 @@ def _sync_swipe(req, form):
                 if req.headers.get("HX-Request"):
                     return Response(headers={"HX-Redirect": more})
                 return Redirect(more)
+    notice = MatchNotice(data.demo_accept_due(uid)) or notice  # a demo's live match
     if req.headers.get("HX-Request"):
         return DeckArea(uid, today, view, notice), MatchesDot(
             data.has_pending_like(uid), oob=True
@@ -176,7 +178,9 @@ def NoMatches():
 
 @ar("/matches", methods=["GET"])
 def matches_page(req):
-    rows = data.my_matches(req.scope["uid"])
+    uid = req.scope["uid"]
+    matched = MatchNotice(data.demo_accept_due(uid))  # a demo's live match
+    rows = data.my_matches(uid)
     notice = query(req, "notice")
     return VolunteerShell(
         "matches",
@@ -186,10 +190,12 @@ def matches_page(req):
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
+        Alert(matched, cls=AlertT.success + " mb-4") if matched else None,
         Div(
             *([MatchRow(m) for m in rows] or [NoMatches()]),
             cls="flex flex-col gap-4 pb-8",
         ),
+        uid=uid,
     )
 
 
@@ -221,6 +227,7 @@ def withdraw_confirm(req, match_id: int):
             ),
             cls="mt-4 space-y-3 p-5 " + CARD,
         ),
+        uid=req.scope["uid"],
     )
 
 

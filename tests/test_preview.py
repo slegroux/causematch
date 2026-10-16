@@ -8,18 +8,20 @@ import os
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime
 
 import pytest
-from conftest import ROOT, coordinator_for
+from conftest import ROOT, coordinator_for, uid_of
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
 
-from app import demo_seed, notify, security
+from app import data, demo_seed, notify, security
 from app.auth import session_cookie, session_secret
 from app.config import (
     contact_email,
     demo_banner,
+    demo_matches,
     is_dev,
     is_preview,
     is_production,
@@ -28,7 +30,16 @@ from app.config import (
     require_env,
     tasks_token,
 )
-from app.db import matches, openings, orgs, profiles, urgent_calls
+from app.db import (
+    matches,
+    messages,
+    openings,
+    orgs,
+    profiles,
+    shifts,
+    swipes,
+    urgent_calls,
+)
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
 
@@ -473,6 +484,104 @@ def test_seed_preview_only_fills_an_empty_database(preview, seed_dir):
     before = [o.name for o in orgs()]
     demo_seed.seed_preview(str(seed_dir))
     assert [o.name for o in orgs()] == before
+
+
+# --- the demo's matches (config.demo_matches) ------------------------------------------
+
+ON = {"CAUSEMATCH_DEMO_MATCHES": "1"}
+
+
+def test_production_refuses_the_demo_matches_switch(tmp_path):
+    for env in PRODUCTION:
+        with pytest.raises(RuntimeError):
+            demo_matches({**env, **ON})
+        assert not demo_matches(env)
+    assert demo_matches({**PREVIEW, **ON}) and not demo_matches(PREVIEW)
+    assert demo_matches({"CAUSEMATCH_ENV": "development", **ON})
+    real = {k: "x" for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+                             "TWILIO_VERIFY_SID", "TWILIO_FROM_NUMBER",
+                             "EMAIL_API_KEY", "EMAIL_FROM")}  # fmt: skip
+    r = _start(tmp_path, CAUSEMATCH_ENV="production", CAUSEMATCH_FAKE_SMS="",
+               CAUSEMATCH_FAKE_EMAIL="", **real, **ON)  # fmt: skip
+    assert r.returncode != 0 and "CAUSEMATCH_DEMO_MATCHES=1 needs" in r.stderr
+
+
+@pytest.fixture
+def demo(preview, monkeypatch):
+    """A preview with the demo's matches on, seeded with the invented orgs."""
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    _empty()
+    return demo_seed.seed_preview(None) or demo_seed
+
+
+def as_demo_volunteer():
+    c = TestClient(app, headers={"Authorization": basic()})
+    c.post("/login/send", data={"phone": demo_seed.ME_PHONE})
+    r = c.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.headers["location"] == "/deck"
+    (c.uid,) = [
+        p.id
+        for p in profiles(order_by="id")
+        if (p.phone or "").startswith(data.DEMO_PHONE_PREFIX)
+    ][-1:]
+    return c
+
+
+def test_each_visitor_of_the_demo_number_gets_their_own_sam(demo):
+    a, b = as_demo_volunteer(), as_demo_volunteer()
+    assert a.uid != b.uid
+    assert profiles[a.uid].display_name == profiles[b.uid].display_name == "Sam"
+    first = data.deck(a.uid, 1)[0]
+    assert first["urgent"]  # the urgent call is still the first card
+    before = [c["id"] for c in data.deck(b.uid, 50)]
+    swiped = swipes.count_where("volunteer_id = ?", [a.uid])
+    a.post("/swipe", data={"opening_id": first["id"], "liked": "0"})
+    second = data.deck(a.uid, 1)[0]["id"]
+    a.post("/swipe", data={"opening_id": second, "liked": "1"})
+    assert swipes.count_where("volunteer_id = ?", [a.uid]) == swiped + 2
+    assert [c["id"] for c in data.deck(b.uid, 50)] == before
+    assert data.deck(b.uid, 1)[0]["id"] == first["id"]  # b's urgent card is still up
+
+
+def test_a_demo_sam_has_matches_in_several_states_none_in_the_coordinators_inbox(demo):
+    uid = as_demo_volunteer().uid
+    mine = matches(where="volunteer_id = ?", where_args=[uid])
+    assert len(mine) >= 3 and len({m.status for m in mine}) >= 2
+    pat_org = data.coordinator_org_ids(
+        data.coordinator_by_email(demo_seed.COORDINATOR[0])
+    )
+    assert all(openings[m.opening_id].org_id not in pat_org for m in mine)
+    held = shifts(where=f"match_id IN ({','.join(str(m.id) for m in mine)})")
+    assert {"scheduled", "completed"} <= {s.status for s in held}
+    assert messages(where=f"match_id IN ({','.join(str(m.id) for m in mine)})")
+    # the seeded waiting like stays waiting: the demo's auto-accept leaves old likes
+    assert data.demo_accept_due(uid) == [] and "pending" in {m.status for m in mine}
+
+
+def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
+    monkeypatch.setattr(data, "DEMO_COPIES", 2)
+    a, b, c = (data.new_demo_volunteer() for _ in range(3))
+    phones = {p.id: p.phone for p in profiles() if p.id in (a, b, c)}
+    assert set(phones) == {b, c} and phones[c] == f"{data.DEMO_PHONE_PREFIX}0000"
+
+
+def test_in_a_preview_a_demo_team_says_yes_with_a_welcome(user, demo):
+    user.headers["Authorization"] = basic()
+    uid = uid_of(user)
+    card = next(
+        c for c in data.deck(uid, 50)
+        if not c["call_id"] and data.demo_team(openings[c["id"]].org_id)
+    )  # fmt: skip
+    user.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+    (m,) = matches(where="volunteer_id = ?", where_args=[uid])
+    assert m.status == "pending"  # not at once: a few seconds later
+    early = (datetime.now(UTC) - data.DEMO_ACCEPT_AFTER).isoformat(timespec="seconds")
+    matches.update(id=m.id, created_at=early)
+    page = user.get("/deck").text
+    assert "It&#x27;s a match!" in page or "It's a match!" in page
+    assert f'href="/chat/{m.id}"' in page and matches[m.id].status == "accepted"
+    (hi,) = messages(where="match_id = ?", where_args=[m.id])
+    assert hi.body.startswith(f"Hi {profiles[uid].display_name}! Thanks for signing up")
 
 
 # --- the deploy ----------------------------------------------------------------------
