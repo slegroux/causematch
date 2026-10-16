@@ -941,14 +941,12 @@ def test_the_childs_memory_is_capped(monkeypatch, crafted):
     """RLIMIT_AS is set in the child and stops a decode that needs more: under a cap of
     the address space after imports plus 48 MB, the 72 MB coefficient buffer of an
     accepted progressive JPEG can't be had; under the production cap it decodes."""
-    MB = 2**20
+    MB, production = 2**20, photos.WORKER_MEMORY
     raw = (crafted / "prog-grey-36mp.jpg").read_bytes()
 
-    code, out, report, err = run_capped(
-        raw, "volunteer", photos.WORKER_MEMORY, monkeypatch
-    )
+    code, out, report, err = run_capped(raw, "volunteer", production, monkeypatch)
     assert code == 0 and out, err
-    assert int(report["ready"]["as_limit"]) == photos.WORKER_MEMORY  # read back
+    assert int(report["ready"]["as_limit"]) == production  # read back
     imported = int(report["ready"]["vmsize_kb"]) * 1024
     peak = int(report["done"]["vmpeak_kb"]) * 1024
     assert peak - imported > 64 * MB  # this decode really needs the room
@@ -965,7 +963,7 @@ def test_the_childs_memory_is_capped(monkeypatch, crafted):
         photos.process(raw, "volunteer")
     print(
         f"\nRLIMIT_AS: after imports {imported / MB:.0f} MB; stopped under "
-        f"{cap / MB:.0f} MB; decodes under {photos.WORKER_MEMORY / MB:.0f} MB with a "
+        f"{cap / MB:.0f} MB; decodes under {production / MB:.0f} MB with a "
         f"peak of {peak / MB:.0f} MB"
     )
 
