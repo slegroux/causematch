@@ -722,8 +722,10 @@ def _swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
                 volunteer_id=uid,
                 status="pending",
                 created_at=_now(),
-                # a blocked volunteer's like looks normal to them and never reaches the org
-                org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id),
+                # a blocked volunteer's like looks normal to them and never reaches the org;
+                # in a demo, neither does a real tester's (anyone can be its coordinator)
+                org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id)
+                or _hidden_in_demo(uid),
                 urgent_call_id=call[0].id if call else None,
             )
         )
@@ -801,8 +803,10 @@ def decide(coordinator_uid, match_id, accept):
     """
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
-    if _db.orgs[o.org_id].deactivated_at or _org_blocked_volunteer(
-        m.volunteer_id, o.org_id
+    if (
+        _db.orgs[o.org_id].deactivated_at
+        or m.org_blind
+        or _org_blocked_volunteer(m.volunteer_id, o.org_id)
     ):
         raise PermissionError("no such match")
     status = "accepted" if accept else "declined"
@@ -3364,6 +3368,21 @@ DEMO_COPIES = 200  # demo volunteers kept at once; past it the oldest is reused
 DEMO_PHONE_PREFIX = "+1310000"
 
 
+# The demo seed's own volunteers (demo_seed: ME_PHONE and 0101 to 0103)
+DEMO_SEEDED_PHONES = frozenset(f"+1310555010{n}" for n in range(4))
+
+
+def _hidden_in_demo(uid):
+    """While config.demo_matches is on, anyone may sign in as a demo org's coordinator
+    (the one-tap button, the preview's on-page links): a like from someone who is not a
+    demo person (a tester with their own number) is made blind, like a blocked one, so
+    no org ever sees their name, photo or count. Off: False, as production."""
+    if not demo_matches():
+        return False
+    phone = (get_profile(uid) or _db.profiles[uid]).phone or ""
+    return not (phone.startswith(DEMO_PHONE_PREFIX) or phone in DEMO_SEEDED_PHONES)
+
+
 def is_demo_volunteer(uid):
     """True for a demo copy (new_demo_volunteer): only its likes are auto-accepted."""
     p = get_profile(uid)
@@ -3408,7 +3427,9 @@ def _drop_demo_volunteer(uid):
 def new_demo_volunteer():
     """A new, empty volunteer profile for one visitor of a demo (demo_seed fills it in),
     under a number nobody can sign in with. With DEMO_COPIES of them already, the oldest is
-    dropped and its number reused, so a busy preview stays bounded. Demo only."""
+    dropped and its number reused, so a busy preview stays bounded. A copy is signed in
+    once, when it is made, so the oldest is also the one least recently signed in. Demo
+    only."""
     if not demo_matches():
         raise PermissionError("demo and preview only")
     with _db.db.conn:

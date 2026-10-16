@@ -805,6 +805,60 @@ def test_the_demo_buttons_sign_in_each_role_in_one_tap(demo):
     assert TestClient(app, headers=evil).post("/login/demo").status_code == 403
 
 
+def test_in_a_demo_the_coordinator_sees_demo_people_only(demo):
+    """Anyone can become the demo coordinator, so a tester who signed up with their own
+    number never shows in its inbox; a demo copy's like does."""
+    from app.auth import normalize_phone
+
+    assert {normalize_phone(p) for p in (demo_seed.ME_PHONE, demo_seed.NO_PHOTO_PHONE)}
+    assert normalize_phone(demo_seed.NO_PHOTO_PHONE) in data.DEMO_SEEDED_PHONES
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    tester = TestClient(app, headers={"Authorization": basic()})
+    tester.post("/login/send", data={"phone": "(213) 555-0188"})
+    tester.post("/login/verify", data={"code": "000000"})
+    (real,) = profiles(where="phone = ?", where_args=["+12135550188"])
+    profiles.update(id=real.id, display_name="Realtester", onboarded_at="2026-01-01",
+                    heard_from="skipped")  # fmt: skip
+    sam = as_demo_volunteer()
+    opening = demo_seed_first_opening(pat)
+    before = data.org_pending_count(opening.org_id)
+    for c, uid in ((tester, real.id), (sam, sam.uid)):
+        r = c.post("/swipe", data={"opening_id": opening.id, "liked": "1"},
+                   follow_redirects=False)  # fmt: skip
+        assert r.status_code == 303, uid
+    ids = {m.volunteer_id: m.id for m in matches(where="opening_id = ?",
+                                                  where_args=[opening.id])}  # fmt: skip
+    pending = {r["id"] for r in data.org_inbox(pat)["pending"]}
+    assert ids[sam.uid] in pending and ids[real.id] not in pending
+    pat_page = TestClient(app, headers={"Authorization": basic()})
+    pat_page.post("/org/login/demo")
+    inbox = pat_page.get("/org/inbox").text
+    assert "Realtester" not in inbox and "Sam" in inbox
+    assert data.org_pending_count(opening.org_id) == before + 1  # the copy only
+    (m,) = matches(where="volunteer_id = ?", where_args=[real.id])
+    with pytest.raises(PermissionError):  # nor accepted by id, so no chat or shift
+        data.decide(pat, m.id, True)
+
+
+def demo_seed_first_opening(coordinator):
+    org_id = data.coordinator_org_ids(coordinator)[0]
+    return openings(where="org_id = ? AND status = 'open'", where_args=[org_id],
+                    order_by="id")[0]  # fmt: skip
+
+
+def test_a_demo_makes_at_most_ten_copies_an_hour_per_address(demo):
+    browser = TestClient(
+        app, headers={"Authorization": basic()}, client=("198.51.100.80", 1)
+    )
+    codes = [browser.post("/login/demo", follow_redirects=False).status_code
+             for _ in range(11)]  # fmt: skip
+    assert codes == [303] * 10 + [429]
+    other = TestClient(
+        app, headers={"Authorization": basic()}, client=("198.51.100.81", 1)
+    )
+    assert other.post("/login/demo", follow_redirects=False).status_code == 303
+
+
 def _like_a_team_card(client, uid):
     """Likes the first card a stand-in team runs, made long enough ago to be due."""
     card = next(

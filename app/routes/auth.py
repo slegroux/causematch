@@ -138,10 +138,10 @@ async def verify(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
-    return await run_in_threadpool(_sync_verify, form, sess)
+    return await run_in_threadpool(_sync_verify, req, form, sess)
 
 
-def _sync_verify(form, sess):
+def _sync_verify(req, form, sess):
     e164 = pending_phone(sess)  # only the number a code was sent to, for 15 minutes
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")
@@ -159,7 +159,11 @@ def _sync_verify(form, sess):
     if not ok:
         security.allow(*security.verify_limits(e164))
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
-    uid = demo_volunteer(e164) if demo_matches() and demo_volunteer else None
+    uid = None
+    if demo_matches() and demo_volunteer and e164 == DEMO_PHONE:
+        if not security.allow((security.DEMO_PER_IP, security.ip_subject(req))):
+            return security.too_many()  # a fresh copy each time: 10 an hour per address
+        uid = demo_volunteer(e164)
     uid = uid or data.get_or_create_volunteer(e164)
     profile = data.get_profile(uid)
     sess.clear()  # the code is used: the number leaves the session either way
@@ -180,6 +184,7 @@ def demo_sign_in(req, sess):
     if not (demo_matches() and demo_volunteer):
         return Refusal(403)
     if not security.allow(
+        (security.DEMO_PER_IP, security.ip_subject(req)),
         (security.SMS_PER_IP, security.ip_subject(req)),
         (security.SMS_PER_NET, security.ip_subject(req, 48)),
     ):

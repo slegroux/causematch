@@ -495,6 +495,7 @@ VERIFY_PER_PHONE = (
     ("verify-phone", 10, 600),
 )  # wrong codes; then locked for the window
 LINK_PER_EMAIL = (("link-email", 5, 3600),)
+DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo only)
 
 
 def verify_limits(phone):
