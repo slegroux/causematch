@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +19,7 @@ from app.db import (
     orgs,
     profiles,
 )
+from app.routes.deck import place_line
 
 HOME_PLACES = (
     True  # each test runs with a saved Home place and as a profile from before
@@ -208,21 +210,35 @@ def test_limit_takes_the_top_of_the_ranking(me):
     assert titles(me, limit=1) == ["best"]
 
 
-def test_cards_carry_whole_km_and_never_coordinates(me):
+def test_cards_carry_whole_miles_and_never_coordinates(me):
     add("six", where=at_km(6.4))
     add("close", where=at_km(0.3))
     add("remote", remote=True)
     cards = {c["title"]: c for c in data.deck(me.uid, 10)}
-    assert cards["six"]["distance"] == "6 km"
-    assert cards["close"]["distance"] == "< 1 km"
+    assert cards["six"]["distance"] == "4 mi"  # 6.4 km
+    assert cards["close"]["distance"] == "< 1 mi"
     assert cards["remote"]["distance"] is None and cards["remote"]["remote"]
     for c in cards.values():
         assert not {"lat", "lon", "latitude", "longitude"} & set(c)
 
 
-def test_pages_say_about_n_km_or_remote(me):
+def test_pages_say_one_place_line_in_miles_or_remote(me):
     add("six", where=at_km(6.4))
-    assert "about 6 km away" in me.get("/deck").text
+    page = me.get("/deck").text
+    assert re.search(r"\d+ min by car · Downtown", page)
+    assert " km" not in page
+    # without a travel time, the miles
+    assert (
+        place_line(
+            {
+                "remote": False,
+                "neighborhood": "Palms",
+                "distance": "3 mi",
+                "travel_short": None,
+            }
+        )
+        == "Palms · about 3 mi away"
+    )
     openings.update(
         id=openings(where="title = ?", where_args=["six"])[0].id, remote=True
     )
@@ -259,9 +275,7 @@ def test_no_page_html_contains_a_volunteer_or_opening_coordinate(me):
         headers={"HX-Request": "true"},
     )
     pages += [swipe.text, me.get("/matches").text]
-    assert (
-        "about" in pages[0] and "km away" in pages[0]
-    )  # positive control: a card rendered
+    assert "min by car" in pages[0]  # positive control: a card rendered
     secrets = {olat, olon, olat + 0.0013, olon - 0.0017, vlat, vlon}
     for page in pages:
         for x in secrets:

@@ -113,7 +113,8 @@ def test_place_near_work_but_far_from_home_is_shown_from_work(bare):
     assert got["by the office"]["travel"].endswith("by car from Work")
     assert got["by home"]["travel"].endswith("by car from Home")
     top = data.deck(uid_of(bare), 1)[0]["travel"]
-    assert f">{top}</span>" in bare.get("/deck").text  # a why-chip on the card says it
+    # the card's place line says it
+    assert f"{top.split(' from ')[0]} · " in bare.get("/deck").text
 
 
 def test_place_the_quickest_place_labels_the_card(bare):
@@ -729,7 +730,6 @@ def test_why_chips_say_cause_travel_time_and_first_timer(bare):
     (c,) = data.deck(uid_of(bare), 5)
     assert [w["text"] for w in c["why"]] == [
         "♥ Food insecurity",
-        c["travel"],
         "You're free Sat mornings",
         "First-timer friendly",
     ]
@@ -747,10 +747,10 @@ def test_why_chips_name_a_free_date_a_work_match_and_a_language(bare):
     (c,) = data.deck(uid_of(bare), 5)
     texts = [w["text"] for w in c["why"]]
     assert texts[0] == "Food insecurity"  # open, so no heart
-    assert texts[2:] == ["You're free that day", "Outdoors"]  # 4 at most
+    assert texts[1:] == ["You're free that day", "Outdoors", "Spanish helps"]
     profiles.update(id=uid_of(bare), free_dates="[]")
     (c,) = data.deck(uid_of(bare), 5)
-    assert [w["text"] for w in c["why"]][2:] == ["Outdoors", "Spanish helps"]
+    assert [w["text"] for w in c["why"]][1:] == ["Outdoors", "Spanish helps"]
 
 
 def test_why_every_card_has_one_to_four_chips(user):
@@ -1106,11 +1106,19 @@ def test_why_first_timer_chip_comes_after_matches_unless_wanted(bare):
     save(bare, work_form(setting="outdoor", languages=["es"], availability=[]))
     add("trail", DOWNTOWN, first_timer_ok=True, setting="outdoor", languages='["es"]')
     (c,) = data.deck(uid_of(bare), 5)
-    assert [w["text"] for w in c["why"]][2:] == ["Outdoors", "Spanish helps"]
+    assert [w["text"] for w in c["why"]][1:] == [
+        "Outdoors",
+        "Spanish helps",
+        "First-timer friendly",
+    ]
     save(bare, work_form(setting="outdoor", languages=["es"], first_timer="1",
                          availability=[]))  # fmt: skip
     (c,) = data.deck(uid_of(bare), 5)
-    assert [w["text"] for w in c["why"]][2:] == ["First-timer friendly", "Outdoors"]
+    assert [w["text"] for w in c["why"]][1:] == [
+        "First-timer friendly",
+        "Outdoors",
+        "Spanish helps",
+    ]
 
 
 def test_place_names_with_hidden_characters_are_refused(bare):

@@ -406,8 +406,15 @@ def _org_reply_rates():
     return {r["org_id"]: _match.reply_rate(r["fast"], r["eligible"]) for r in rows}
 
 
+KM_PER_MILE = 1.609344
+
+
 def _distance_label(km):
-    return None if km is None else "< 1 km" if km < 1 else f"{round(km)} km"
+    """Whole miles for a volunteer to read; the matching works in km."""
+    if km is None:
+        return None
+    miles = km / KM_PER_MILE
+    return "< 1 mi" if miles < 1 else f"{round(miles)} mi"
 
 
 def _work_of(o):
@@ -427,6 +434,11 @@ def _travel(near):
     return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} from {near[0]['label']}"
 
 
+def _travel_short(near):
+    """ "7 min by car": the card's place line, without the place it is from."""
+    return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]}"
+
+
 def deck(uid, limit=20, today=False, view=None, first=None):
     """deck_and_count()'s cards."""
     return deck_and_count(uid, limit, today, view, first)[0]
@@ -438,7 +450,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
 
     With "Surprise me", every SURPRISE_EVERY-th card the volunteer meets (counted by their
     swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
-    distance rounded to whole km and the travel estimate, never coordinates. Returns
+    distance rounded to whole miles and the travel estimate, never coordinates. Returns
     (cards, how many the deck holds in all). view: the filter sheet's (see _viewed).
     first: an opening id to put on top when the deck holds it (an urgent call's link).
     """
@@ -496,6 +508,11 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "remote": bool(o.remote),
                 "distance": _distance_label(near and near[1]),
                 "travel": near and _travel(near),
+                "travel_short": near and _travel_short(near),
+                # what the volunteer will do (the card's sheet)
+                "about": o.about,
+                "notes": o.notes,
+                "orientation": o.orientation_required,
                 "surprise": odd,
                 # an urgent card says more up top: fewer reasons, so it still fits
                 "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd)[
@@ -570,9 +587,7 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     more = []
     if surprise:
         more.append("Surprise pick")
-    if near:
-        more.append(_travel(near))
-    elif o.remote:
+    if o.remote and not near:
         more.append("Remote")
     if o.starts_at[:10] in p["free_dates"]:
         more.append("You're free that day")
@@ -590,6 +605,17 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     if o.first_timer_ok and not wanted:  # a fact about it, after what matches
         more.append("First-timer friendly")
     return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
+
+
+def has_pending_like(uid):
+    """True while a like of this volunteer waits for the nonprofit (the Matches tab's dot)."""
+    return bool(
+        _db.matches.count_where("volunteer_id = ? AND status = 'pending'", [uid])
+    )
+
+
+def org_name_of(opening_id):
+    return _db.orgs[_db.openings[opening_id].org_id].name
 
 
 def _accepted(opening_id):

@@ -320,7 +320,20 @@ TABS = (
 )
 
 
-def TabBar(active):
+def MatchesDot(on, oob=False):
+    """The small dot on the Matches tab while a like waits for a nonprofit. Always in the
+    page (hidden when off), so a like's response can swap it in without a reload."""
+    return Span(
+        Span(" (a like is waiting)", cls="sr-only"),
+        id="matches-dot",
+        hidden=not on,
+        hx_swap_oob="true" if oob else None,
+        cls="absolute left-1/2 top-2 ml-3 h-2.5 w-2.5 rounded-full bg-brand "
+        "ring-2 ring-white",
+    )
+
+
+def TabBar(active, dot=False):
     def tab(key, label, href, icon):
         on = key == active
         # the current tab differs by more than hue: a brand bar on top, a heavier label
@@ -334,6 +347,7 @@ def TabBar(active):
                 + ("bg-brand-soft" if on else ""),
             ),
             Span(label),
+            MatchesDot(dot) if key == "matches" else None,
             href=href,
             aria_current="page" if on else None,
             cls="relative flex h-16 flex-col items-center justify-center gap-0.5 text-xs "
@@ -352,7 +366,7 @@ def TabBar(active):
     )
 
 
-def VolunteerNav(active=None):
+def VolunteerNav(active=None, dot=False):
     """The volunteer's header and bottom tab bar. The bar is fixed, so it can sit anywhere
     in the page; static/theme.css pads the body above it."""
     return Div(
@@ -364,7 +378,7 @@ def VolunteerNav(active=None):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        TabBar(active),
+        TabBar(active, dot),
     )
 
 

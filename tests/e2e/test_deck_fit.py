@@ -17,6 +17,10 @@ pytestmark = pytest.mark.e2e
 
 TITLE = "Sample: Help distribute food at a partner pantry"
 LINK = "https://www.lafoodbank.org/volunteer/"
+ABOUT = (
+    "You'll sort donated produce, pack boxes with a small team and hand them out at "
+    "the curb. Lifting up to 20 lbs; closed shoes."
+)  # two clamped lines on the card
 
 
 def tall_urgent_card(uid):
@@ -36,6 +40,7 @@ def tall_urgent_card(uid):
         TITLE, causes=["food-insecurity"], lat=34.06, lon=-118.24,
         neighborhood="Central-Alameda", starts_at=start.strftime("%Y-%m-%dT10:00"),
         recurrence="weekly", slots=5, org_id=org.id, first_timer_ok=True, event_url=LINK,
+        about=ABOUT,
     ).id  # fmt: skip
     tomorrow = (datetime.now(data.LA) + timedelta(days=1)).date()
     profiles.update(
@@ -70,6 +75,7 @@ def test_a_tall_urgent_card_fits_above_pass_and_like(
     page = ctx.new_page()
     p = sign_in_page(page, "(310) 555-0167")
     tall_urgent_card(p.id)
+    data.dismiss_photo_nudge(p.id)  # one nudge at a time: the photo prompt comes first
     page.goto("/deck")
     assert page.locator("#a2hs").is_visible()  # the iPhone toast is part of the case
     assert "don't enter real details" in page.locator("[role=note]").inner_text()
@@ -93,4 +99,37 @@ def test_a_tall_urgent_card_fits_above_pass_and_like(
         [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2],
     )
     assert hit == LINK
+    ctx.close()
+
+
+def test_the_card_shows_what_you_will_do_and_a_tap_opens_the_sheet(
+    browser, playwright, live_url
+):
+    ctx = guard(
+        browser.new_context(
+            **playwright.devices["iPhone SE (3rd gen)"], base_url=live_url
+        )
+    )  # 375x667
+    page = ctx.new_page()
+    p = sign_in_page(page, "(310) 555-0168")
+    tall_urgent_card(p.id)
+    close_all_openings()
+    make_opening(
+        TITLE, causes=["food-insecurity"], lat=34.06, lon=-118.24, neighborhood="Palms",
+        starts_at=(datetime.now(data.LA) + timedelta(days=5)).strftime("%Y-%m-%dT10:00"),
+        about=ABOUT, notes="Park behind the building.",
+    )  # fmt: skip
+    data.dismiss_photo_nudge(p.id)
+    page.goto("/deck")
+    assert page.locator("[data-open-sheet]").is_visible()
+    for name in ("Pass", "Like"):
+        box = page.get_by_role("button", name=name, exact=True).bounding_box()
+        assert box["y"] + box["height"] <= 667 - 64  # above the tab bar
+    sheet = page.locator("dialog.cm-sheet")
+    assert not sheet.is_visible()
+    page.locator("[data-swipe-card]").click(position={"x": 40, "y": 30})  # a tap
+    assert sheet.is_visible()
+    assert "Park behind the building." in sheet.inner_text()
+    sheet.get_by_role("button", name="Close").click()
+    assert not sheet.is_visible()
     ctx.close()

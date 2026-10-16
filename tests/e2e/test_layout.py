@@ -2,7 +2,7 @@ import pytest
 from conftest import close_all_openings, coordinator_for, make_opening
 
 from app import data
-from app.db import openings, orgs
+from app.db import matches, openings, orgs
 from e2e.helpers import SE, accepted_match, coordinator_page, guard, sign_in_page
 
 pytestmark = pytest.mark.e2e
@@ -107,13 +107,14 @@ def test_the_home_screen_toast_never_covers_the_chat(browser, playwright, live_u
         browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
     )
     page = ctx.new_page()
-    long_chat(page, "(310) 555-0163")
+    match_id = long_chat(page, "(310) 555-0163")
     box = page.get_by_label("Message").bounding_box()
     hit = page.evaluate(
         f"document.elementFromPoint({box['x'] + box['width'] / 2}, "
         f"{box['y'] + box['height'] / 2}).getAttribute('aria-label')"
     )
     assert hit == "Message"
+    data.dismiss_photo_nudge(matches[match_id].volunteer_id)
     page.goto("/deck")  # the toast's one page: an iPhone in a tab sees it there
     assert page.locator("#a2hs").is_visible()
     ctx.close()
@@ -216,6 +217,7 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(phone):
         causes=["environment-parks"], lat=34.05, lon=-118.25,
         neighborhood="Sepulveda Basin (Encino / Van Nuys)",
         starts_at=saturday.strftime("%Y-%m-%dT09:00"), slots=6, first_timer_ok=True,
+        about="You'll help set up the stage, greet guests and hand out programs.",
     )  # fmt: skip
     profiles.update(
         id=p.id,
@@ -226,7 +228,7 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(phone):
         availability='["sat_morning"]',
     )
     (card,) = data.deck(p.id, 5)
-    assert len(card["why"]) == 4
+    assert len(card["why"]) == 3  # travel is in the place line
     phone.goto("/deck")
     bar = phone.get_by_role("navigation", name="Main").bounding_box()
     for name in ("Pass", "Like"):
@@ -316,7 +318,8 @@ def test_the_home_screen_toast_never_covers_pass_like_or_filters(
     under the header, so a tap on Like, Pass or the filter button reaches it."""
     ctx = guard(browser.new_context(**playwright.devices[device], base_url=live_url))
     page = ctx.new_page()
-    sign_in_page(page, "(310) 555-0166")
+    p = sign_in_page(page, "(310) 555-0166")
+    data.dismiss_photo_nudge(p.id)  # one nudge at a time: the photo prompt comes first
     page.goto("/deck")
     toast = page.locator("#a2hs")
     assert toast.is_visible()  # the precondition: an iPhone in a tab sees it
