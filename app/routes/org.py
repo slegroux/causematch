@@ -6,11 +6,15 @@ from fasthtml.common import (
     H2,
     H3,
     A,
+    Details,
     Div,
+    Input,
     P,
     Progress,
     Redirect,
+    Script,
     Span,
+    Summary,
     Textarea,
 )
 from fasthtml.common import Form as PlainForm
@@ -24,6 +28,7 @@ from monsterui.all import (
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 
 from app import data, notify, prefs
 from app.auth import normalize_phone
@@ -38,7 +43,7 @@ from app.choices import (
     SKILLS,
 )
 from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
-from app.geo import zip_latlon
+from app.geo import zip_latlon, zip_neighborhood
 from app.match import LA
 from app.routes.shifts import RepeatForm
 from app.ui import (
@@ -130,6 +135,13 @@ OPENING_STATUS = {
 }
 
 
+def urgent_possible(starts_at):
+    """Whether a shift starting at this local time is within the urgent window."""
+    now = datetime.now(LA)
+    soon = now + timedelta(hours=data.URGENT_HOURS)
+    return now.strftime("%Y-%m-%dT%H:%M") < starts_at <= soon.strftime("%Y-%m-%dT%H:%M")
+
+
 def UrgentLine(o, urgent, accepted):
     """The opening's open urgent call and a way to stop it, or a link to post one."""
     if urgent:
@@ -154,7 +166,7 @@ def UrgentLine(o, urgent, accepted):
             ),
             cls="space-y-2 rounded-2xl bg-cream p-3",
         )
-    if o.status == "open" and accepted < o.slots:
+    if o.status == "open" and accepted < o.slots and urgent_possible(o.starts_at):
         return Div(
             A(
                 "Short of people? Post an urgent call",
@@ -328,10 +340,23 @@ def OpeningForm(uid, f=None, error=None):
     f = f or {}
     my_orgs = data.coordinator_orgs(uid)
     org_id = f.get("org_id") or (str(my_orgs[0][0].id) if len(my_orgs) == 1 else "")
+    reply_choices = reply_options(bool(data.get_profile(uid).contact_phone))
+    reply_channel = f.get("reply_channel") or (
+        reply_choices[0][0] if len(reply_choices) == 1 else ""
+    )
+    reply_field = Group(
+        "Reaching you",
+        Field(
+            "Best way to send you interested volunteers?",
+            Choice("reply_channel", reply_choices, reply_channel),
+        ),
+    )
     form = Form(
         Group(
             "The opening",
-            Field(
+            Input(type="hidden", name="org_id", value=org_id)
+            if len(my_orgs) == 1
+            else Field(
                 "Organization",
                 Choice("org_id", [(str(o.id), o.name) for o, _ in my_orgs], org_id),
             ),
@@ -376,7 +401,7 @@ def OpeningForm(uid, f=None, error=None):
                     TextInput(
                         name="neighborhood",
                         value=f.get("neighborhood", ""),
-                        required=True,
+                        placeholder="Filled in from the ZIP code; you can change it",
                     ),
                 ),
                 cls="grid gap-4 sm:grid-cols-2",
@@ -392,6 +417,7 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Field(
                 "Does it repeat?",
+                # no preset: it decides who the opening fits (match.commitment_fits)
                 Choice("recurrence", RECURRENCE, f.get("recurrence", "")),
             ),
         ),
@@ -418,10 +444,6 @@ def OpeningForm(uid, f=None, error=None):
                 ),
             ),
             Field(
-                f"Skills that help (optional, up to {MAX_OPENING_SKILLS})",
-                Checks("skills", SKILLS, f.get("skills", ())),
-            ),
-            Field(
                 "Anything volunteers should know? Shoes, physical demands, parking. (optional)",
                 Textarea(f.get("notes", ""), name="notes", rows=3, cls="uk-textarea"),
             ),
@@ -446,19 +468,33 @@ def OpeningForm(uid, f=None, error=None):
                 cls="cm-adult-box space-y-3 rounded-2xl border border-line p-4",
             ),
         ),
-        Group("Kind of work", *KindOfWork(f)),
-        Group(
-            "Reaching you",
-            Field(
-                "Best way to send you interested volunteers?",
-                Choice(
-                    "reply_channel",
-                    reply_options(bool(data.get_profile(uid).contact_phone)),
-                    f.get("reply_channel", ""),
-                ),
+        reply_field,
+        Details(
+            Summary(
+                "More details (optional)",
+                cls="cursor-pointer py-3 font-bold text-ink",  # a 44 px tap target
             ),
+            Div(
+                H2("Kind of work", cls=ORG_SECTION),
+                *KindOfWork(f),
+                Field(
+                    f"Skills that help (optional, up to {MAX_OPENING_SKILLS})",
+                    Checks("skills", SKILLS, f.get("skills", ())),
+                ),
+                cls="mt-4 space-y-4",
+            ),
+            open=bool(
+                any(
+                    f.get(k)
+                    for k in ("setting", "effort", "group_size", "first_timer_ok")
+                )
+                or f.get("languages")
+                or f.get("skills")
+            ),
+            cls="p-5 " + CARD,
         ),
         Button("Post opening", cls=ButtonT.primary + " w-full h-12 text-lg"),
+        A("Cancel", href="/org", cls=SMALL_LINK + " block text-center"),
         action="/org/openings/new",
         method="post",
         # without :has() (static/theme.css), a redrawn form still shows the note
@@ -476,6 +512,7 @@ def OpeningForm(uid, f=None, error=None):
             ),
             Alert(error, cls=AlertT.error + " mb-4") if error else None,
             form,
+            Script(src="/static/zip.js", defer=True),  # the neighborhood, from the ZIP
             cls="mx-auto max-w-2xl",
         ),
     )
@@ -501,6 +538,15 @@ def _sync_save_details(req, form):
         return org_home(req, BAD_PHONE)
     data.set_coordinator_details(uid, name, e164)
     return Redirect("/org")
+
+
+@ar("/org/zip", methods=["GET"])
+def zip_neighborhood_json(req):
+    """{"neighborhood": ...} for the opening form's ZIP (static/zip.js), "" when unknown:
+    a lookup in a local table, nothing stored."""
+    zip_code = query(req, "zip")
+    hood = zip_neighborhood(zip_code) if re.fullmatch(r"[0-9]{5}", zip_code) else None
+    return JSONResponse({"neighborhood": hood or ""})
 
 
 @ar("/org/openings/new", methods=["GET"])
@@ -552,10 +598,8 @@ def _sync_new_opening_save(req, form):
         return fail("One of your answers is too long. Please shorten it.")
     if any(hidden_chars(f[k], multiline=k in ("about", "notes")) for k in LIMITS):
         return fail(HIDDEN_CHARS_MESSAGE)
-    if not f["title"] or not f["about"] or not f["neighborhood"]:
-        return fail(
-            "Please fill in the title, what volunteers will do, and the neighborhood."
-        )
+    if not f["title"] or not f["about"]:
+        return fail("Please fill in the title and what volunteers will do.")
     if f["cause"] not in {c.slug for c in data.active_causes()}:
         return fail("Please pick a cause from the list.")
     if not re.fullmatch(r"[0-9]{5}", f["zip"]):
@@ -565,6 +609,7 @@ def _sync_new_opening_save(req, form):
         return fail(
             "Openings must be in Los Angeles County for now. Check the ZIP code."
         )
+    f["neighborhood"] = f["neighborhood"] or zip_neighborhood(f["zip"])
     try:
         start = datetime.strptime(f["starts_at"], "%Y-%m-%dT%H:%M")
     except ValueError:
@@ -660,16 +705,8 @@ def UrgentPage(uid, opening_id, f=None, error=None):
     o = data.coordinator_opening(uid, opening_id)
     spots = data.open_spots(uid, opening_id)
     f = f or {}
-    now = datetime.now(LA)
-    soon = now + timedelta(hours=data.URGENT_HOURS)
     # the opening's own start when it is soon enough
-    default = (
-        o.starts_at
-        if now.strftime("%Y-%m-%dT%H:%M")
-        < o.starts_at
-        <= soon.strftime("%Y-%m-%dT%H:%M")
-        else ""
-    )
+    default = o.starts_at if urgent_possible(o.starts_at) else ""
     return OrgShell(
         "openings",
         data.org_waiting(uid),
@@ -879,6 +916,8 @@ def InboxSection(title, rows, empty=None):
 @ar("/org/inbox", methods=["GET"])
 def inbox(req):
     notice = query(req, "notice")
+    chat_id = query(req, "match")
+    chat_id = chat_id if chat_id.isascii() and chat_id.isdigit() else ""
     uid = req.scope["uid"]
     box = data.org_inbox(uid)
     return OrgShell(
@@ -887,6 +926,13 @@ def inbox(req):
         H1("Volunteer inbox", cls=ORG_TITLE + " pb-4"),
         Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in INBOX_NOTICE
+        else None,
+        Alert(
+            "Accepted · ",
+            A("Say hi", href=f"/org/chat/{chat_id}", cls=SMALL_LINK),
+            cls=AlertT.success + " mb-4",
+        )
+        if notice == "accepted" and chat_id
         else None,
         Div(
             InboxSection(
@@ -926,4 +972,5 @@ def _sync_decide(req, decision, match_id: int):
         )
     if decision == "accept":
         notify.on_accepted(match_id)
+        return Redirect(f"/org/inbox?notice=accepted&match={match_id}")
     return Redirect("/org/inbox")

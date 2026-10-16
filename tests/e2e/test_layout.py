@@ -2,7 +2,7 @@ import pytest
 from conftest import close_all_openings, coordinator_for, make_opening
 
 from app import data
-from app.db import openings, orgs
+from app.db import matches, openings, orgs
 from e2e.helpers import SE, accepted_match, coordinator_page, guard, sign_in_page
 
 pytestmark = pytest.mark.e2e
@@ -107,13 +107,14 @@ def test_the_home_screen_toast_never_covers_the_chat(browser, playwright, live_u
         browser.new_context(**playwright.devices["iPhone 13"], base_url=live_url)
     )
     page = ctx.new_page()
-    long_chat(page, "(310) 555-0163")
+    match_id = long_chat(page, "(310) 555-0163")
     box = page.get_by_label("Message").bounding_box()
     hit = page.evaluate(
         f"document.elementFromPoint({box['x'] + box['width'] / 2}, "
         f"{box['y'] + box['height'] / 2}).getAttribute('aria-label')"
     )
     assert hit == "Message"
+    data.dismiss_photo_nudge(matches[match_id].volunteer_id)
     page.goto("/deck")  # the toast's one page: an iPhone in a tab sees it there
     assert page.locator("#a2hs").is_visible()
     ctx.close()
@@ -216,6 +217,7 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(phone):
         causes=["environment-parks"], lat=34.05, lon=-118.25,
         neighborhood="Sepulveda Basin (Encino / Van Nuys)",
         starts_at=saturday.strftime("%Y-%m-%dT09:00"), slots=6, first_timer_ok=True,
+        about="You'll help set up the stage, greet guests and hand out programs.",
     )  # fmt: skip
     profiles.update(
         id=p.id,
@@ -226,7 +228,7 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(phone):
         availability='["sat_morning"]',
     )
     (card,) = data.deck(p.id, 5)
-    assert len(card["why"]) == 4
+    assert len(card["why"]) == 3  # travel is in the place line
     phone.goto("/deck")
     bar = phone.get_by_role("navigation", name="Main").bounding_box()
     for name in ("Pass", "Like"):
@@ -247,14 +249,43 @@ def test_onboarding_fills_and_submits_on_a_small_phone(phone):
     phone.get_by_text("I'm 18 or older").click()
     phone.get_by_label("Neighborhood or ZIP").fill("90012")
     phone.locator("label:has(input[name='cause_food-insecurity'][value=love])").click()
-    phone.locator("label:has(input[name=availability][value=sat_morning])").click()
-    phone.locator("select[name=heard_from]").select_option("public")
-    phone.get_by_text("I agree", exact=True).click()
+    phone.get_by_text("I agree to the").click()
     start = phone.get_by_role("button", name="Start swiping")
     box = start.bounding_box()
     assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
     start.click()
     phone.wait_for_url("**/deck")
+
+
+def test_a_new_volunteer_reaches_the_first_card_in_nine_taps_or_fewer(phone):
+    """Taps count every click or field focus, from the sign-in screen (the UX audit's count)."""
+    taps = 0
+
+    def tap(locator, text=None):
+        nonlocal taps
+        taps += 1
+        locator.click()
+        if text is not None:
+            locator.fill(text)
+
+    phone.goto("/login")
+    tap(phone.get_by_label("Mobile number"), "(310) 555-0167")
+    tap(phone.get_by_role("button", name="Text me a code"))
+    tap(phone.get_by_label("Code"), "000000")
+    tap(phone.get_by_role("button", name="Sign in"))
+    phone.wait_for_url("**/onboarding")
+    assert phone.locator("input[name=first_name]").evaluate(
+        "e => e === document.activeElement"
+    )
+    phone.keyboard.type("Sam")  # autofocus: no tap needed
+    tap(phone.get_by_text("I'm 18 or older"))
+    tap(phone.get_by_label("Neighborhood or ZIP"), "90012")
+    tap(phone.locator("label:has(input[name='cause_food-insecurity'][value=love])"))
+    tap(phone.get_by_text("I agree to the"))
+    tap(phone.get_by_role("button", name="Start swiping"))
+    phone.wait_for_url("**/deck")
+    assert phone.locator("[data-swipe-card]").count() == 1
+    assert taps <= 9, taps
 
 
 def test_pass_and_like_stay_above_the_tab_bar_on_a_short_screen(browser, live_url):
@@ -287,7 +318,8 @@ def test_the_home_screen_toast_never_covers_pass_like_or_filters(
     under the header, so a tap on Like, Pass or the filter button reaches it."""
     ctx = guard(browser.new_context(**playwright.devices[device], base_url=live_url))
     page = ctx.new_page()
-    sign_in_page(page, "(310) 555-0166")
+    p = sign_in_page(page, "(310) 555-0166")
+    data.dismiss_photo_nudge(p.id)  # one nudge at a time: the photo prompt comes first
     page.goto("/deck")
     toast = page.locator("#a2hs")
     assert toast.is_visible()  # the precondition: an iPhone in a tab sees it
@@ -320,3 +352,20 @@ def test_the_home_screen_toast_never_covers_pass_like_or_filters(
     page.wait_for_load_state("networkidle")
     assert toast.is_visible()
     ctx.close()
+
+
+def test_the_zip_fills_an_empty_neighborhood_before_posting(browser, live_url):
+    """static/zip.js: typing a ZIP shows its neighborhood, still editable; a typed one
+    stays."""
+    page = coordinator_page(browser, live_url)
+    page.goto("/org/openings/new")
+    hood = page.get_by_label("Neighborhood")
+    page.get_by_label("ZIP code").fill("90034")
+    page.wait_for_function(
+        "() => document.querySelector('[name=neighborhood]').value === 'Palms'"
+    )
+    hood.fill("Mine")
+    page.get_by_label("ZIP code").fill("90012")
+    page.wait_for_timeout(300)
+    assert hood.input_value() == "Mine"
+    page.context.close()

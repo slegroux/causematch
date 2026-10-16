@@ -247,7 +247,12 @@ body:has(#a2hs:not([hidden])) .cm-pic {
   height: 5rem;
 }
 body:has(#a2hs:not([hidden])) .cm-urgent .cm-pic {
-  height: 3.5rem;
+  height: 1.5rem;
+}
+body:has(#a2hs:not([hidden])) .cm-urgent .cm-logo {
+  width: 2rem;
+  height: 2rem;
+  bottom: 0;
 }
 .cm-urgent .cm-logo,
 body:has(#a2hs:not([hidden])) .cm-logo {
@@ -261,4 +266,29 @@ body:has(#a2hs:not([hidden])) .cm-logo {
 .cm-filter-sheet {
   bottom: calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
   max-height: calc(100dvh - 4rem - 1px - 1.5rem - env(safe-area-inset-bottom));
+}
+/* The deck card's details sheet (app/routes/deck.py DetailsSheet): a modal <dialog> that
+   static/swipe.js opens on a tap of the card, kept above the tab bar and never taller
+   than the screen above it. */
+dialog.cm-sheet {
+  position: fixed;
+  inset: auto 1rem calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
+  max-width: 28rem;
+  width: calc(100% - 2rem);
+  margin-inline: auto;
+  max-height: calc(100dvh - 4rem - 1px - 1.5rem - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+dialog.cm-sheet:not([open]) {
+  display: none;
+}
+dialog.cm-sheet::backdrop {
+  background-color: rgb(43 30 22 / 0.4);
+}
+/* The tallest card (an urgent call, or the Home Screen hint above it) gives its "what you'll
+   do" a single line, so Pass and Like still fit a small phone; the sheet has the rest. */
+.cm-urgent .cm-about,
+body:has(#a2hs:not([hidden])) .cm-about {
+  -webkit-line-clamp: 1;
 }

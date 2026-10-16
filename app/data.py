@@ -22,7 +22,7 @@ from app.choices import (
     LANGUAGES,
     MAX_MINUTES,
 )
-from app.config import phone_hash_key
+from app.config import demo_matches, phone_hash_key
 from app.forms import BIDI, hidden_chars
 from app.match import LA
 from app.metrics_rows import fetch_rows
@@ -406,8 +406,15 @@ def _org_reply_rates():
     return {r["org_id"]: _match.reply_rate(r["fast"], r["eligible"]) for r in rows}
 
 
+KM_PER_MILE = 1.609344
+
+
 def _distance_label(km):
-    return None if km is None else "< 1 km" if km < 1 else f"{round(km)} km"
+    """Whole miles for a volunteer to read; the matching works in km."""
+    if km is None:
+        return None
+    miles = km / KM_PER_MILE
+    return "< 1 mi" if miles < 1 else f"{round(miles)} mi"
 
 
 def _work_of(o):
@@ -427,6 +434,11 @@ def _travel(near):
     return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} from {near[0]['label']}"
 
 
+def _travel_short(near):
+    """ "7 min by car": the card's place line, without the place it is from."""
+    return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]}"
+
+
 def deck(uid, limit=20, today=False, view=None, first=None):
     """deck_and_count()'s cards."""
     return deck_and_count(uid, limit, today, view, first)[0]
@@ -438,7 +450,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
 
     With "Surprise me", every SURPRISE_EVERY-th card the volunteer meets (counted by their
     swipes) is the best one with no loved cause. Each card carries 1 to 4 why-chips, the
-    distance rounded to whole km and the travel estimate, never coordinates. Returns
+    distance rounded to whole miles and the travel estimate, never coordinates. Returns
     (cards, how many the deck holds in all). view: the filter sheet's (see _viewed).
     first: an opening id to put on top when the deck holds it (an urgent call's link).
     """
@@ -496,6 +508,11 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "remote": bool(o.remote),
                 "distance": _distance_label(near and near[1]),
                 "travel": near and _travel(near),
+                "travel_short": near and _travel_short(near),
+                # what the volunteer will do (the card's sheet)
+                "about": o.about,
+                "notes": o.notes,
+                "orientation": o.orientation_required,
                 "surprise": odd,
                 # an urgent card says more up top: fewer reasons, so it still fits
                 "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd)[
@@ -570,9 +587,7 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     more = []
     if surprise:
         more.append("Surprise pick")
-    if near:
-        more.append(_travel(near))
-    elif o.remote:
+    if o.remote and not near:
         more.append("Remote")
     if o.starts_at[:10] in p["free_dates"]:
         more.append("You're free that day")
@@ -590,6 +605,36 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     if o.first_timer_ok and not wanted:  # a fact about it, after what matches
         more.append("First-timer friendly")
     return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
+
+
+def has_match_news(uid):
+    """The Matches tab's dot: since the volunteer last opened Matches, a like of theirs
+    is waiting or a nonprofit decided one (never seen: any of those)."""
+    seen = _db.profiles[uid].matches_seen_at or ""
+    return bool(
+        _db.matches.count_where(
+            "volunteer_id = ? AND ((status = 'pending' AND created_at > ?) "
+            "OR (decided_at IS NOT NULL AND decided_at > ?))",
+            [uid, seen, seen],
+        )
+    )
+
+
+def saw_matches(uid):
+    """They opened Matches: the dot goes until something new happens."""
+    _db.profiles.update(id=uid, matches_seen_at=_now())
+
+
+def org_name_of(opening_id):
+    return _db.orgs[_db.openings[opening_id].org_id].name
+
+
+def liked_org(uid, opening_id):
+    """The org's name when this volunteer liked the opening (a match of theirs is on it,
+    blind or not: a block never shows), else None: /onboarding/more names it without
+    trusting the id it was given."""
+    m = _match_for(uid, opening_id) if _is_id(opening_id) else None
+    return org_name_of(opening_id) if m else None
 
 
 def _accepted(opening_id):
@@ -677,8 +722,10 @@ def _swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
                 volunteer_id=uid,
                 status="pending",
                 created_at=_now(),
-                # a blocked volunteer's like looks normal to them and never reaches the org
-                org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id),
+                # a blocked volunteer's like looks normal to them and never reaches the org;
+                # in a demo, neither does a real tester's (anyone can be its coordinator)
+                org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id)
+                or _hidden_in_demo(uid),
                 urgent_call_id=call[0].id if call else None,
             )
         )
@@ -733,9 +780,11 @@ def swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
 
 def swipe_created(uid, opening_id, liked, today=False, view=None, call_id=None):
     """Like `swipe`, but the Match only when this call created it (not a pass or a repeat);
-    it is already accepted when an urgent call auto-accepted it."""
+    it is already accepted when an urgent call auto-accepted it. A blind match (the org
+    blocked them) comes back too: the volunteer must see what any like shows, and only
+    the caller's notice to the org is skipped."""
     match, created = _swipe(uid, opening_id, liked, today, view, call_id)
-    return match if created and not match.org_blind else None
+    return match if created else None
 
 
 def _like_starts_at(m, o):
@@ -754,8 +803,10 @@ def decide(coordinator_uid, match_id, accept):
     """
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
-    if _db.orgs[o.org_id].deactivated_at or _org_blocked_volunteer(
-        m.volunteer_id, o.org_id
+    if (
+        _db.orgs[o.org_id].deactivated_at
+        or m.org_blind
+        or _org_blocked_volunteer(m.volunteer_id, o.org_id)
     ):
         raise PermissionError("no such match")
     status = "accepted" if accept else "declined"
@@ -812,24 +863,75 @@ def withdraw(uid, match_id):
         _end_match(m, uid, "withdrawn")
 
 
+def _face(org, o):
+    """The keys ui.OrgFace draws a nonprofit with: its logo, else the opening's photo
+    (else the org's), else its first cause's tint. Logos and these photos are public to
+    anyone signed in (photo_for)."""
+    return {
+        "logo": org.logo_key if org else None,
+        "photo": o.photo_key or (org.photo_key if org else None),
+        "slug": next(iter(json.loads(o.causes or "[]")), None),
+    }
+
+
+# An upcoming shift for a calendar: ui.AddToCalendar and GET /shifts/{id}.ics read it.
+_EVENT_SELECT = (
+    "SELECT s.id, s.match_id, s.starts_at, o.title, g.name AS org, o.neighborhood "
+    "FROM shift s JOIN match m ON m.id = s.match_id "
+    "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
+    "WHERE m.status = 'accepted' AND s.status = 'scheduled' AND s.starts_at > ? "
+)
+
+
+def _next_shift(match_id):
+    """The match's soonest upcoming shift while it is accepted, as _EVENT_SELECT reads it;
+    else None."""
+    rows = _db.db.q(
+        _EVENT_SELECT + "AND s.match_id = ? ORDER BY s.starts_at LIMIT 1",
+        [_local_now(), match_id],
+    )
+    return rows[0] if rows else None
+
+
+def shift_event(uid, shift_id):
+    """{"id", "match_id", "starts_at", "title", "org", "neighborhood"} of this volunteer's
+    own upcoming shift on an accepted match. PermissionError for anything else (another
+    volunteer's shift, a cancelled or past one, an unknown id), so the caller answers 404."""
+    if not _is_id(shift_id):
+        raise PermissionError("no such shift")
+    rows = _db.db.q(
+        _EVENT_SELECT + "AND s.id = ? AND m.volunteer_id = ?",
+        [_local_now(), shift_id, uid],
+    )
+    if not rows:
+        raise PermissionError("no such shift")
+    return rows[0]
+
+
 def my_matches(uid):
-    """This volunteer's matches, newest first, with the opening's public details."""
-    org_names = {o.id: o.name for o in _db.orgs()}
+    """This volunteer's matches, newest first, with the opening's public details, the
+    org's face (_face), and on an accepted match its notes and next shift."""
+    org_rows = {o.id: o for o in _db.orgs()}
     out = []
     for m in _db.matches(
         where="volunteer_id = ?", where_args=[uid], order_by="id DESC"
     ):
         o = _db.openings[m.opening_id]
+        org = org_rows.get(o.org_id)
+        accepted = m.status == "accepted"
         out.append(
             {
                 "blocked": _volunteer_blocked_org(uid, o.org_id),
                 "id": m.id,
                 "status": m.status,
                 "title": o.title,
-                "org": org_names.get(o.org_id, ""),
+                "org": org.name if org else "",
                 "starts_at": _like_starts_at(m, o),
                 "neighborhood": o.neighborhood,
                 "event_url": o.event_url,
+                "notes": o.notes if accepted else None,
+                "shift": _next_shift(m.id) if accepted else None,
+                **_face(org, o),
             }
         )
     return out
@@ -1079,7 +1181,9 @@ _BLOCKED = (
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
     "o.title, o.recurrence, g.name AS org, p.display_name, p.last_name, p.photo_key, "
-    "m.status AS match_status, " + _BLOCKED + " AS blocked "
+    "m.status AS match_status, " + _BLOCKED + " AS blocked, "
+    "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
+    "o.causes "
     "FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "JOIN profile p ON p.id = m.volunteer_id "
@@ -1090,7 +1194,8 @@ def my_shifts(uid):
     """{"upcoming": [...], "past": [...]} of this volunteer's own shifts.
 
     Upcoming: scheduled, soonest first. Past: everything else but cancelled, latest first;
-    a past shift nobody marked yet has status "scheduled".
+    a past shift nobody marked yet has status "scheduled". Rows carry the org's face
+    (_face's keys).
     """
     now = _local_now()
     out = {"upcoming": [], "past": []}
@@ -1102,6 +1207,8 @@ def my_shifts(uid):
         row = {
             k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
         }
+        row["logo"], row["photo"] = r["org_logo"], r["opening_photo"]
+        row["slug"] = next(iter(json.loads(r["causes"] or "[]")), None)
         upcoming = r["status"] == "scheduled" and r["starts_at"] > now
         out["upcoming" if upcoming else "past"].append(row)
     out["past"].reverse()
@@ -1266,12 +1373,14 @@ def chat_header(uid, match_id):
 
     The volunteer sees the org name and the contact name of the coordinator who accepted
     them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
-    photo when data.photo_for would serve it. Also whether the caller may still write.
+    photo when data.photo_for would serve it. Also whether the caller may still write,
+    the org's face (_face), and while accepted the opening's notes and next shift.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
     o = _db.openings[m.opening_id]
-    org = _db.orgs[o.org_id].name
+    the_org = _db.orgs[o.org_id]
+    org = the_org.name
     photo = None
     if role == "volunteer":
         decider = get_profile(m.decided_by) if m.decided_by else None
@@ -1304,6 +1413,9 @@ def chat_header(uid, match_id):
         "other": other,
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
+        "notes": o.notes if m.status == "accepted" else None,
+        "shift": _next_shift(m.id) if m.status == "accepted" else None,
+        **_face(the_org, o),
     }
 
 
@@ -1378,7 +1490,7 @@ def save_onboarding(
     skills=(),
     volunteered_last_year="",
     frequency="",
-    heard_from,
+    heard_from="",
     cause_prefs=None,
     place=None,
     last_name="",
@@ -1413,6 +1525,15 @@ def save_onboarding(
             heard_from=heard_from,
             onboarded_at=_now(),
         )
+
+
+def save_about(uid, heard_from, volunteered_last_year=""):
+    """The answers of the one optional card after the first Like; heard_from is never
+    blank here, so the card is asked once."""
+    _volunteer(uid)
+    _db.profiles.update(
+        id=uid, heard_from=heard_from, volunteered_last_year=volunteered_last_year
+    )
 
 
 def preferences(uid):
@@ -1494,10 +1615,19 @@ def save_preferences(
 
 
 def save_profile_details(
-    uid, *, first_name, last_name, pronouns, bio, interests, neighborhood=None
+    uid,
+    *,
+    first_name,
+    last_name,
+    pronouns,
+    bio,
+    interests,
+    neighborhood=None,
+    email=None,
+    other_causes=None,
 ):
     """A volunteer's own name, pronouns, bio, interests and, unless None, the neighborhood
-    nonprofits see (checked by the caller)."""
+    nonprofits see, the email and the other causes they asked for (checked by the caller)."""
     _volunteer(uid)
     _db.profiles.update(
         id=uid,
@@ -1507,6 +1637,8 @@ def save_profile_details(
         bio=bio or None,
         interests=json.dumps(list(interests)),
         **({} if neighborhood is None else {"neighborhood": neighborhood}),
+        **({} if email is None else {"email": email}),
+        **({} if other_causes is None else {"other_causes": other_causes}),
     )
 
 
@@ -3221,6 +3353,144 @@ def rate_take(keys, now, record=True):
             for key, _, _ in keys:
                 _db.rate_events.insert(key=key, at=now)
     return None
+
+
+# --- the demo: development, test and a preview only (config.demo_matches) -------------
+
+# Stand-in coordinators the demo seed gives every org but the demo coordinator's: nobody
+# signs in as them, and their orgs say yes to a like by themselves (demo_accept_due).
+DEMO_TEAM_DOMAIN = "team.demo.causematch.test"
+DEMO_ACCEPT_AFTER = timedelta(seconds=4)  # how long a demo team takes to say yes
+DEMO_ACCEPT_WITHIN = timedelta(hours=1)  # an older like stays as the seed left it
+DEMO_WELCOME = "Hi {}! Thanks for signing up. We'll see you there, and you can ask us anything here."
+DEMO_COPIES = 200  # demo volunteers kept at once; past it the oldest is reused
+# Their numbers: exchange 000 is no real number, and the sign-in form refuses it
+DEMO_PHONE_PREFIX = "+1310000"
+
+
+# The demo seed's own volunteers (demo_seed: ME_PHONE and 0101 to 0103)
+DEMO_SEEDED_PHONES = frozenset(f"+1310555010{n}" for n in range(4))
+
+
+def _hidden_in_demo(uid):
+    """While config.demo_matches is on, anyone may sign in as a demo org's coordinator
+    (the one-tap button, the preview's on-page links): a like from someone who is not a
+    demo person (a tester with their own number) is made blind, like a blocked one, so
+    no org ever sees their name, photo or count. Off: False, as production."""
+    if not demo_matches():
+        return False
+    phone = (get_profile(uid) or _db.profiles[uid]).phone or ""
+    return not (phone.startswith(DEMO_PHONE_PREFIX) or phone in DEMO_SEEDED_PHONES)
+
+
+def is_demo_volunteer(uid):
+    """True for a demo copy (new_demo_volunteer): only its likes are auto-accepted."""
+    p = get_profile(uid)
+    return bool(p and (p.phone or "").startswith(DEMO_PHONE_PREFIX))
+
+
+def demo_team(org_id):
+    """The org's stand-in demo coordinator (an address at DEMO_TEAM_DOMAIN), else None."""
+    rows = _db.db.q(
+        "SELECT p.id FROM org_member m JOIN profile p ON p.id = m.user_id "
+        "WHERE m.org_id = ? AND p.email LIKE ? AND p.deleted_at IS NULL "
+        "ORDER BY p.id LIMIT 1",
+        [org_id, f"%@{DEMO_TEAM_DOMAIN}"],
+    )
+    return rows[0]["id"] if rows else None
+
+
+def _drop_demo_volunteer(uid):
+    """One demo volunteer and every row of theirs, gone; the openings they held reopen."""
+    held = {
+        m.opening_id for m in _db.matches(where="volunteer_id = ?", where_args=[uid])
+    }
+    theirs = "(SELECT id FROM match WHERE volunteer_id = ?)"
+    for sql, n in (
+        (f"DELETE FROM message WHERE match_id IN {theirs}", 1),
+        (f"DELETE FROM shift WHERE match_id IN {theirs}", 1),
+        ("DELETE FROM match WHERE volunteer_id = ?", 1),
+        ("DELETE FROM swipe WHERE volunteer_id = ?", 1),
+        ("DELETE FROM place WHERE user_id = ?", 1),
+        ("DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", 1),
+        ("DELETE FROM deck_empty WHERE volunteer_id = ?", 1),
+        ("DELETE FROM notification WHERE recipient_id = ? AND kind != 'likes'", 1),
+        ("DELETE FROM report WHERE reporter_id = ? OR target_user_id = ?", 2),
+        ("DELETE FROM block WHERE blocker_id = ? OR blocked_user_id = ?", 2),
+        ("DELETE FROM profile WHERE id = ?", 1),
+    ):
+        _db.db.execute(sql, [uid] * n)
+    for opening_id in held:
+        _sync_fill(opening_id)
+
+
+def new_demo_volunteer():
+    """A new, empty volunteer profile for one visitor of a demo (demo_seed fills it in),
+    under a number nobody can sign in with. With DEMO_COPIES of them already, the oldest is
+    dropped and its number reused, so a busy preview stays bounded. A copy is signed in
+    once, when it is made, so the oldest is also the one least recently signed in. Demo
+    only."""
+    if not demo_matches():
+        raise PermissionError("demo and preview only")
+    with _db.db.conn:
+        taken = _db.profiles(
+            where="phone LIKE ? AND deleted_at IS NULL",
+            where_args=[DEMO_PHONE_PREFIX + "%"],
+            order_by="id",
+        )
+        used = {p.phone for p in taken}
+        phone = next(
+            (
+                f"{DEMO_PHONE_PREFIX}{n:04d}"
+                for n in range(DEMO_COPIES)
+                if f"{DEMO_PHONE_PREFIX}{n:04d}" not in used
+            ),
+            None,
+        )
+        if phone is None:
+            phone = taken[0].phone
+            _drop_demo_volunteer(taken[0].id)
+        return _db.profiles.insert(
+            _db.Profile(
+                role="volunteer", phone=phone, session_version=1, created_at=_now()
+            )
+        ).id
+
+
+def demo_accept_due(uid):
+    """Demo only, and a demo copy's likes only (an ordinary volunteer of a preview waits
+    like anyone), else []: the volunteer's likes made DEMO_ACCEPT_AFTER to
+    DEMO_ACCEPT_WITHIN ago, on openings of an org a demo team runs, are accepted by that
+    team with a welcome message, so a like turns into a match while the visitor watches.
+    [{"id", "org"}] of the matches accepted now. Production never runs it: with
+    CAUSEMATCH_DEMO_MATCHES set it refuses to start."""
+    if not demo_matches() or not is_demo_volunteer(uid):
+        return []
+    now = datetime.now(UTC)
+    due = _db.matches(
+        where="volunteer_id = ? AND status = 'pending' AND NOT coalesce(org_blind, 0) "
+        "AND created_at BETWEEN ? AND ?",
+        where_args=[
+            uid,
+            (now - DEMO_ACCEPT_WITHIN).isoformat(timespec="seconds"),
+            (now - DEMO_ACCEPT_AFTER).isoformat(timespec="seconds"),
+        ],
+        order_by="id",
+    )
+    first = _first_name(_db.profiles[uid].display_name)
+    accepted = []
+    for m in due:
+        org_id = _db.openings[m.opening_id].org_id
+        team = demo_team(org_id)
+        if team is None:
+            continue
+        try:
+            decide(team, m.id, True)
+        except (PermissionError, ValueError):
+            continue  # blocked, full or decided meanwhile: it stays as it is
+        send_message(team, m.id, DEMO_WELCOME.format(first))
+        accepted.append({"id": m.id, "org": _db.orgs[org_id].name})
+    return accepted
 
 
 # One apsw connection is shared by every request and websocket thread; apsw

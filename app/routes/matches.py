@@ -14,17 +14,22 @@ from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, deck_view
+from app.routes.deck import DeckArea, MatchNotice, deck_view
 from app.ui import (
     CALENDAR,
     CARD,
     CHAT,
     HEART,
+    LIKE_SENT,
     SMALL_LINK,
     TITLE,
+    AddToCalendar,
     EventLink,
     Icon,
+    MatchesDot,
     Meta,
+    Notes,
+    OrgFace,
     Pill,
     Refusal,
     Router,
@@ -96,9 +101,23 @@ def _sync_swipe(req, form):
                 return Response(headers={"HX-Redirect": f"/chat/{m.id}?notice=in"})
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
-            notify.on_new_like(m.id)
+            if (
+                not m.org_blind
+            ):  # the org never hears of a blind like; the volunteer can't tell
+                notify.on_new_like(m.id)
+            notice = LIKE_SENT.format(data.org_name_of(m.opening_id))
+            if not data.get_profile(uid).heard_from:  # the one optional card, once
+                more = (
+                    f"/onboarding/more?liked={m.opening_id}"  # it shows the notice too
+                )
+                if req.headers.get("HX-Request"):
+                    return Response(headers={"HX-Redirect": more})
+                return Redirect(more)
+    notice = MatchNotice(data.demo_accept_due(uid)) or notice  # a demo's live match
     if req.headers.get("HX-Request"):
-        return DeckArea(uid, today, view, notice)
+        return DeckArea(uid, today, view, notice), MatchesDot(
+            data.has_match_news(uid), oob=True
+        )
     return Redirect("/deck?today=1" if today else "/deck")
 
 
@@ -109,9 +128,21 @@ def MatchRow(m):
             Pill("Blocked", "off") if m["blocked"] else None,
             cls="flex flex-wrap gap-1.5",
         ),
-        H2(m["title"], cls="font-display text-lg font-extrabold leading-snug text-ink"),
-        P(m["org"], cls="text-sm font-semibold text-ink-muted"),
+        Div(
+            OrgFace(m["org"], m["logo"], m["photo"], m["slug"]),
+            Div(
+                H2(
+                    m["title"],
+                    cls="font-display text-lg font-extrabold leading-snug text-ink",
+                ),
+                P(m["org"], cls="text-sm font-semibold text-ink-muted"),
+                cls="min-w-0",
+            ),
+            cls="flex items-center gap-3",
+        ),
         Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
+        Notes(m["notes"]),
+        AddToCalendar(m["shift"]) if m["shift"] else None,
         EventLink(m.get("event_url")),
         A(
             Icon(CHAT, size=18),
@@ -150,7 +181,12 @@ def NoMatches():
 
 @ar("/matches", methods=["GET"])
 def matches_page(req):
-    rows = data.my_matches(req.scope["uid"])
+    uid = req.scope["uid"]
+    matched = MatchNotice(data.demo_accept_due(uid))  # a demo's live match
+    data.saw_matches(
+        uid
+    )  # before the tab bar draws: no dot on the page that shows it all
+    rows = data.my_matches(uid)
     notice = query(req, "notice")
     return VolunteerShell(
         "matches",
@@ -160,10 +196,12 @@ def matches_page(req):
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
+        Alert(matched, cls=AlertT.success + " mb-4") if matched else None,
         Div(
             *([MatchRow(m) for m in rows] or [NoMatches()]),
             cls="flex flex-col gap-4 pb-8",
         ),
+        uid=uid,
     )
 
 
@@ -195,6 +233,7 @@ def withdraw_confirm(req, match_id: int):
             ),
             cls="mt-4 space-y-3 p-5 " + CARD,
         ),
+        uid=req.scope["uid"],
     )
 
 

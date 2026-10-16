@@ -7,6 +7,7 @@ from fasthtml.common import (
     A,
     Button,
     Details,
+    Dialog,
     Div,
     Fieldset,
     Hidden,
@@ -50,8 +51,11 @@ ar = Router()
 
 
 def place_line(c):
+    """ "7 min by car · Palms"; without a travel time, "Palms · about 3 mi away"."""
     if c["remote"]:
         return "Remote"
+    if c.get("travel_short"):
+        return f"{c['travel_short']} · {c['neighborhood']}"
     if c["distance"]:
         return f"{c['neighborhood']} · about {c['distance']} away"
     return c["neighborhood"]
@@ -136,6 +140,24 @@ def OpeningCard(c):
                 cls="font-display text-xl font-extrabold leading-tight text-ink",
             ),
             P(c["org"], cls="font-semibold text-ink-muted"),
+            # a tap anywhere on the card opens the sheet (static/swipe.js); this button is
+            # the same thing for a keyboard or a screen reader
+            # Its padding makes a 44 px target and the equal negative margin takes the
+            # height back (inside a flow-root Div, which keeps space-y's margin); the clamp
+            # is on the span, so the padding shows no third line.
+            Div(
+                Button(
+                    Span(c["about"], cls="cm-about line-clamp-2"),
+                    type="button",
+                    data_open_sheet="1",
+                    aria_haspopup="dialog",
+                    cls="-my-3 block w-full py-3 text-left text-sm leading-snug "
+                    "text-ink",
+                ),
+                cls="flow-root",
+            )
+            if c.get("about")
+            else None,
             Div(
                 Meta(CALENDAR, starts.strftime("%a %b %-d · %-I:%M %p")),
                 Meta(PIN, place_line(c)),
@@ -156,6 +178,60 @@ def OpeningCard(c):
         + CARD
         + (" cm-urgent" if c.get("urgent") else ""),
         data_swipe_card="1",
+    )
+
+
+ORIENTATION_WORDS = {
+    "same_day": "Orientation: done the same day, before the shift.",
+    "separate": "Orientation: a separate session beforehand.",
+}
+
+
+def DetailsSheet(c):
+    """What the card clamps, whole: about, notes and the orientation, in a modal <dialog>
+    that static/swipe.js opens on a tap of the card. Pass and Like press the card's own
+    buttons (data-sheet-vote), so a vote has one code path."""
+
+    def vote(label, liked, icon, cls):
+        return Button(
+            icon,
+            Span(label),
+            type="button",
+            data_sheet_vote=liked,
+            cls="uk-btn h-12 flex-1 gap-2 " + cls,
+        )
+
+    return Dialog(
+        Div(
+            H2("What you'll do", cls=ORG_SECTION),
+            Button(
+                Icon(CROSS, size=20),
+                Span("Close", cls="sr-only"),
+                type="button",
+                data_close_sheet="1",
+                cls="-mr-2 grid h-11 w-11 shrink-0 place-items-center rounded-full "
+                "text-ink-muted hover:bg-sand hover:text-ink",
+            ),
+            cls="flex items-start justify-between gap-2",
+        ),
+        P(c["about"] or "The nonprofit hasn't described it yet.", cls="text-ink"),
+        Div(
+            P("Good to know", cls="text-sm font-bold text-ink"),
+            P(c["notes"], cls="text-ink"),
+        )
+        if c.get("notes")
+        else None,
+        P(ORIENTATION_WORDS[c["orientation"]], cls="text-sm font-semibold text-ink")
+        if c.get("orientation") in ORIENTATION_WORDS
+        else None,
+        Div(
+            vote("Pass", "0", Icon(CROSS, size=20), "uk-btn-default"),
+            vote("Like", "1", Icon(HEART, size=20, filled=True), "uk-btn-primary"),
+            cls="flex gap-2 pt-2",
+        ),
+        # cm-sheet (static/theme.css): fixed above the tab bar, scrolls on a short screen
+        cls="cm-sheet space-y-2 " + CARD,
+        aria_label=f"About {c['title']}",
     )
 
 
@@ -400,6 +476,18 @@ def FilterSheet(uid, today, count, view):
     )
 
 
+def MatchNotice(matched):
+    """The demo's "It's a match!" for the likes data.demo_accept_due just accepted (none
+    outside a demo), with the newest one's chat."""
+    if not matched:
+        return None
+    m = matched[-1]
+    return Span(
+        f"It's a match! {m['org']} said yes. ",
+        A("Say hi", href=f"/chat/{m['id']}", cls="underline"),
+    )
+
+
 def DeckArea(uid, today=False, view=None, notice=None, first=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet's round button sits left of Pass and Like, clear of the picture and
@@ -430,6 +518,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
     return Div(
         note,
         OpeningCard(c),
+        DetailsSheet(c),
         # cm-swipe-buttons (static/theme.css): a tall card scrolls under this row, so Pass
         # and Like stay in reach above the tab bar; the gaps between them still drag
         Div(
@@ -495,14 +584,20 @@ def deck(req):
     today = query(req, "today") == "1"
     card = query(req, "card")
     first = int(card) if card and re.fullmatch(r"[0-9]{1,18}", card) else None
-    me = data.get_profile(req.scope["uid"])
+    uid = req.scope["uid"]
+    me = data.get_profile(uid)
+    nudge = not (me.photo_key or me.photo_nudge_dismissed_at)
     return Container(
-        VolunteerNav("openings"),
+        VolunteerNav("openings", uid),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         TodaySwitch(today),
-        AddToHomeScreen(),  # the deck only: elsewhere it would push the page's content
-        DeckArea(req.scope["uid"], today, deck_view(req), first=first),
-        None if me.photo_key or me.photo_nudge_dismissed_at else PhotoNudge(),
+        # one nudge at a time: the photo prompt first, the Home Screen tip after it. On the
+        # deck only: elsewhere it would push the page's content
+        None if nudge else AddToHomeScreen(),
+        DeckArea(
+            uid, today, deck_view(req), MatchNotice(data.demo_accept_due(uid)), first
+        ),
+        PhotoNudge() if nudge else None,
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",
     )

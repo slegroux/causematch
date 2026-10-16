@@ -1,4 +1,5 @@
 import csv
+import math
 from functools import cache
 from pathlib import Path
 
@@ -59,3 +60,47 @@ def shown_point(lat, lon):
     """A posted device location as a page may show it again: rounded, or nothing."""
     point = round_point(lat, lon) if lat or lon else None
     return (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
+
+
+# Names most people in Los Angeles know. The nearest center to a ZIP is often a small
+# area (90034: Reynier Village); one of these within KNOWN_MARGIN_KM more reads better (Palms).
+WELL_KNOWN = frozenset(
+    ("Boyle Heights", "Burbank", "Chinatown", "Culver City", "Downtown", "Eagle Rock",
+     "Echo Park", "Encino", "Glendale", "Hancock Park", "Highland Park", "Hollywood",
+     "Inglewood", "Koreatown", "Leimert Park", "Little Tokyo", "Long Beach", "Los Feliz",
+     "Mar Vista", "North Hollywood", "Palms", "Pasadena", "Pico-Union", "Playa Vista",
+     "San Pedro", "Santa Monica", "Sherman Oaks", "Studio City", "Van Nuys", "Venice",
+     "Watts", "West Adams", "West Los Angeles", "Westchester", "Westlake", "Westwood",
+     "Wilmington")
+)  # fmt: skip
+KNOWN_MARGIN_KM = 1.0
+KM_PER_DEGREE = 111.2
+
+
+def zip_neighborhood(zip_code):
+    """The listed area whose center is nearest a Los Angeles County ZIP's point, or a
+    well-known one at most KNOWN_MARGIN_KM farther; None for an unknown ZIP."""
+    point = zip_latlon(zip_code)
+    if not point:
+        return None
+    lat, lon = point
+    squeeze = math.cos(
+        math.radians(lat)
+    )  # a degree of longitude is shorter than one of latitude
+    by_distance = sorted(
+        (
+            math.hypot(n[1][0] - lat, (n[1][1] - lon) * squeeze) * KM_PER_DEGREE,
+            n[0],
+        )
+        for n in _neighborhoods().values()
+    )
+    nearest = by_distance[0][0]
+    known = next(
+        (
+            name
+            for km, name in by_distance
+            if km <= nearest + KNOWN_MARGIN_KM and name in WELL_KNOWN
+        ),
+        None,
+    )
+    return known or by_distance[0][1]

@@ -88,12 +88,10 @@ def test_volunteer_coordinates_never_reach_html(user):
 
 @pytest.mark.parametrize(
     "field,limit",
-    [("first_name", 80), ("neighborhood", 80), ("other_causes", 300), ("email", 254)],
+    [("first_name", 80)],
 )
 def test_over_long_text_rejected(new_user, field, limit):
     value = "a" * (limit + 1)
-    if field == "email":
-        value = "a" * (limit - 5) + "@ex.com"  # valid shape, too long
     r = new_user.post(
         "/onboarding", data={**FORM, field: value}, follow_redirects=False
     )
@@ -109,24 +107,6 @@ def test_file_upload_in_text_field_is_400_not_500(new_user):
         files={"first_name": ("x.txt", b"hello")},
     )
     assert r.status_code == 400
-
-
-def test_extra_onboarding_fields_are_stored(new_user):
-    new_user.post(
-        "/onboarding",
-        data={
-            **FORM,
-            "other_causes": "rescue owls",
-            "volunteered_last_year": "yes",
-        },
-    )
-    (p,) = profiles(where="phone = ?", where_args=[new_user.phone])
-    assert p.other_causes == "rescue owls" and p.volunteered_last_year == "yes"
-
-
-def test_bad_volunteered_value_rejected(new_user):
-    r = new_user.post("/onboarding", data={**FORM, "volunteered_last_year": "maybe"})
-    assert r.status_code == 200 and "wasn't recognized" in r.text
 
 
 def test_la_zip_list_is_county_only():
@@ -188,6 +168,32 @@ def test_code_limits_per_phone_and_address_slide_and_cap_the_day():
         assert security.allow(*rules, now=t + 1300 + i * 601)
     assert not security.allow(*rules, now=t + 9000)  # 10 today from this address
     assert security.allow(*rules, now=t + 24 * 3600 + 1)
+
+
+def test_the_demo_number_keeps_per_phone_limits_unless_a_demo_shares_it(monkeypatch):
+    """Without config.demo_matches (production can't have it), the demo number is any
+    number: 5 codes per address in 10 minutes. In a demo every visitor shares it, so only
+    the address and network limits count."""
+    from app import demo_seed
+    from app.auth import normalize_phone
+    from app.config import DEMO_PHONE
+
+    assert normalize_phone(demo_seed.ME_PHONE) == DEMO_PHONE
+
+    def sends(n, at):
+        c = TestClient(app, client=(at, 1))
+        return [c.post("/login/send", data={"phone": DEMO_PHONE[2:]}).status_code
+                for _ in range(n)]  # fmt: skip
+
+    assert sends(6, "198.51.100.70") == [200] * 5 + [429]
+    assert security.verify_limits(DEMO_PHONE)  # wrong codes still lock it
+    for env in ({"CAUSEMATCH_ENV": "production"}, {"K_SERVICE": "x"}):
+        assert not security.shared_demo_phone(DEMO_PHONE, env)
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    rate_events.delete_where()
+    assert sends(25, "198.51.100.71") == [200] * 25  # past 5 per address, 20 a day
+    assert security.verify_limits(DEMO_PHONE) == ()
+    assert security.verify_limits("+13105550130")  # any other number: as before
 
 
 def test_someone_else_hammering_a_number_does_not_lock_its_owner_out():

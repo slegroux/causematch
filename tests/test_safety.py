@@ -1,6 +1,7 @@
 """Trust and safety: report, block, suspension, org verification, account deletion, privacy."""
 
 import json
+import re
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -233,6 +234,33 @@ def test_coordinator_block_declines_pending_and_closes_accepted(w):
         pending.id
     ]  # the accepted one stays reportable
     assert "Sam" not in w.coord.get("/org/shifts").text
+
+
+def test_a_blocked_volunteers_like_gets_the_same_notice_and_survey(w):
+    first = like(w)
+    data.block_volunteer(w.coord_uid, first.id)
+    third, fourth = (
+        openings.insert(
+            openings.dataclass()(
+                **{**openings[w.opening.id].__dict__, "id": None, "title": t}
+            )
+        )
+        for t in ("Third", "Fourth")
+    )
+    org = data.org_name_of(third.id)
+    seen = []
+    for who in (w.vol, w.other):
+        profiles.update(id=who.uid, heard_from="")  # the first like asks the survey
+        r = who.post("/swipe", data={"opening_id": third.id, "liked": "1"},
+                     follow_redirects=False)  # fmt: skip
+        survey = who.get(r.headers["location"]).text
+        r2 = who.post("/swipe", data={"opening_id": fourth.id, "liked": "1"},
+                      headers={"HX-Request": "true"})  # fmt: skip
+        notice = re.search(r'<p role="status"[^>]*>([^<]*)', r2.text)[1]
+        seen.append((r.headers["location"], f"Sent to {org}." in survey, notice))
+    assert seen[0] == seen[1] and seen[0][1], seen
+    assert matches(where="volunteer_id = ? AND opening_id = ?",
+                   where_args=[w.vol.uid, third.id])[0].org_blind  # fmt: skip
 
 
 def test_a_blocked_volunteers_like_looks_normal_to_them_and_never_reaches_the_org(w):
@@ -721,9 +749,12 @@ def test_delete_account_scrubs_pii(w):
 
 
 def test_delete_account_through_onboarding_form_data(new_user):
-    new_user.post("/onboarding", data={**FORM, "email": "a@b.co"})
+    new_user.post("/onboarding", data=FORM)
     uid = uid_of(new_user)
-    assert profiles[uid].email == "a@b.co"
+    # the email moved from onboarding to the profile (UX item 3)
+    data.save_profile_details(uid, first_name="Sam", last_name="Quinn", pronouns="",
+                              bio="", interests=[], email="a@b.co")  # fmt: skip
+    assert profiles[uid].email == "a@b.co" and profiles[uid].onboarded_at
     data.delete_account(uid)
     p = profiles[uid]
     assert all(getattr(p, c) is None for c in PII)
@@ -765,7 +796,7 @@ def test_privacy_is_linked_from_consent_login_pages_and_footer(anon, new_user):
     assert 'href="/privacy"' in anon.get("/login").text
     assert 'href="/privacy"' in anon.get("/org/login").text
     assert 'href="/privacy"' in new_user.get("/onboarding").text
-    assert "Read the privacy policy" in new_user.get("/onboarding").text
+    assert "I agree to the" in new_user.get("/onboarding").text  # the consent's link
 
 
 def test_contact_email_is_required_in_production():

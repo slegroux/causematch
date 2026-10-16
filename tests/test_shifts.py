@@ -511,3 +511,40 @@ print("ok")
 """
     done = run_python(code, tmp_path / "t.db")
     assert done.returncode == 0 and "ok" in done.stdout, done.stderr[-800:]
+
+
+def test_the_ics_is_one_event_in_los_angeles_time(accepted):
+    openings.update(id=accepted.opening.id, title="Sort, pack; then\nstack")
+    [s] = shifts_of(accepted.match)
+    r = accepted.a.get(f"/shifts/{s.id}.ics")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "text/calendar; charset=utf-8"
+    assert r.headers["content-disposition"].startswith("attachment;")
+    raw = r.content.decode()
+    assert raw.endswith("\r\n") and "\n" not in raw.replace("\r\n", "")
+    assert all(len(line.encode()) <= 75 for line in raw.split("\r\n"))
+    lines = raw.replace("\r\n ", "").split("\r\n")  # unfolded
+    assert lines.count("BEGIN:VEVENT") == 1 and "END:VEVENT" in lines
+    assert "DTSTART;TZID=America/Los_Angeles:20261022T090000" in lines
+    assert "DTEND;TZID=America/Los_Angeles:20261022T110000" in lines
+    assert f"SUMMARY:Sort\\, pack\\; then\\nstack · {orgs()[0].name}" in lines
+    assert f"DESCRIPTION:Chat with {orgs()[0].name}: " in "\n".join(lines)
+    assert f"https://causematch.test/chat/{accepted.match.id}" in raw.replace(
+        "\r\n ", ""
+    )
+    assert any(line.startswith(f"UID:shift-{s.id}@") for line in lines)
+
+
+def test_only_the_volunteer_on_an_upcoming_shift_gets_its_ics(accepted, clock, anon):
+    [s] = shifts_of(accepted.match)
+    path = f"/shifts/{s.id}.ics"
+    assert accepted.b.get(path).status_code == 404  # another volunteer
+    for staff in (accepted.org0, accepted.org1):  # turned away before the handler
+        assert staff.get(path, follow_redirects=False).status_code in (303, 403)
+    r = anon.get(path, follow_redirects=False)
+    assert (r.status_code, r.headers["location"]) == (303, "/login")
+    clock.advance(days=8)  # past
+    assert accepted.a.get(path).status_code == 404
+    clock.at = NOW
+    data.cancel_shift(accepted.org0.uid, s.id)
+    assert accepted.a.get(path).status_code == 404

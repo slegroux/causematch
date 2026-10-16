@@ -136,7 +136,7 @@ def test_a_volunteer_with_a_home_place_gets_the_whole_filter_sheet(
     p = onboard_page(page, "(310) 555-0174")
     assert places(where="user_id = ?", where_args=[p.id])  # the real Home place
     assert check(page, "/deck") == ([], [])
-    assert page.get_by_text("from Home").first.is_visible()  # a travel why-chip
+    assert page.get_by_text("min by").first.is_visible()  # the place line
     page.locator("summary").click()
     sheet = page.locator("form[action='/deck/filters']")
     box = sheet.bounding_box()

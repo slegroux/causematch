@@ -32,6 +32,7 @@ from app.config import (
     is_production,
     phone_hash_key,
     public_base_url,
+    shared_demo_phone,
     sms_ceilings,
     trusted_proxy_hops,
 )
@@ -494,6 +495,14 @@ VERIFY_PER_PHONE = (
     ("verify-phone", 10, 600),
 )  # wrong codes; then locked for the window
 LINK_PER_EMAIL = (("link-email", 5, 3600),)
+DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo only)
+
+
+def verify_limits(phone):
+    """The wrong-code limit of a number: none for the shared demo number of a demo."""
+    return () if shared_demo_phone(phone) else ((VERIFY_PER_PHONE, phone),)
+
+
 LINK_PER_IP = (("link-ip", 20, 3600),)
 CLAIM_PER_IP = (("claim-ip", 5, 3600),)
 CLAIM_PER_EMAIL = (("claim-email", 3, 24 * 3600),)
@@ -555,11 +564,16 @@ def ip_subject(req, v6_prefix=64):
 
 
 def sms_send_limits(req, phone):
-    """Every limit one sign-in code counts against."""
+    """Every limit one sign-in code counts against; the shared demo number of a demo
+    (config.shared_demo_phone) counts against its address and network only."""
     ip = ip_subject(req)
+    per_phone = (
+        ()
+        if shared_demo_phone(phone)
+        else ((SMS_PER_PHONE_IP, f"{phone}|{ip}"), (SMS_PER_PHONE, phone))
+    )
     return (
-        (SMS_PER_PHONE_IP, f"{phone}|{ip}"),
-        (SMS_PER_PHONE, phone),
+        *per_phone,
         (SMS_PER_IP, ip),
         (SMS_PER_NET, ip_subject(req, 48)),
         (sms_all(), "all"),

@@ -1,5 +1,5 @@
 import threading
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import PANTRY, coordinator_for, org_sign_in, uid_of, volunteer
@@ -470,10 +470,13 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
     from app.choices import SHARED_WITH_NONPROFIT
 
     user = new_user
-    onboarding = unescape(user.get("/onboarding").text)
+    onboarding = unescape(user.get("/privacy").text)  # the full wording lives there
     user.post("/onboarding", data=FORM)
     # the consent promises exactly these things ...
     assert SHARED_WITH_NONPROFIT in onboarding
+    assert (
+        "uses your answers" in onboarding and "to match you with openings" in onboarding
+    )
     for promised in (
         "photo",
         "first name and last initial",
@@ -689,3 +692,30 @@ def test_a_declined_volunteer_keeps_the_initial(user, coord):
     coord.post(f"/org/matches/{matches()[0].id}/decide", data={"decision": "decline"})
     html = coord.get("/org/inbox").text
     assert "Sam L." in html and "Lee" not in html
+
+
+def test_in_production_a_like_stays_pending(user, monkeypatch):
+    """The demo's auto-accept (data.demo_accept_due) never runs outside a demo, even for an
+    org whose coordinator is a demo stand-in."""
+    uid = uid_of(user)
+    card = data.deck(uid, 1)[0]
+    org_id = openings[card["id"]].org_id
+    data.add_coordinator(f"team@{data.DEMO_TEAM_DOMAIN}", org_id, name="Rosa")
+    secret = "s" * 32
+    for k, v in {
+        "CAUSEMATCH_ENV": "production",
+        "PHONE_HASH_KEY": secret,
+        "TASKS_TOKEN": secret,
+        "CONTACT_EMAIL": "x@causematch.test",
+    }.items():
+        monkeypatch.setenv(k, v)  # fmt: skip
+    user.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+    (m,) = matches(where="volunteer_id = ?", where_args=[uid])
+    matches.update(id=m.id, created_at=(datetime.now(UTC) - timedelta(minutes=1))
+                   .isoformat(timespec="seconds"))  # fmt: skip
+    assert user.get("/deck").status_code == user.get("/matches").status_code == 200
+    assert matches[m.id].status == "pending" and not db.q("SELECT id FROM message")
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")  # refused at startup; here too
+    with pytest.raises(RuntimeError):
+        data.demo_accept_due(uid)
+    assert matches[m.id].status == "pending"

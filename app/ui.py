@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import quote, urlencode
 
 from fasthtml.common import (
     H1,
@@ -27,7 +28,8 @@ from monsterui.all import (
     TextPresets,
 )
 
-from app.config import demo_banner, is_preview
+from app import data
+from app.config import demo_banner, demo_matches, is_preview, public_base_url
 from app.forms import domain
 
 # Each cause's chip: its soft tint with its ink (static/theme.css). Literal class strings,
@@ -84,6 +86,29 @@ def BigButton(text):
     """The one main action of a short form: full width and easy to hit with a thumb."""
     return Button(
         text, type="submit", cls="uk-btn uk-btn-primary w-full h-12 text-lg shadow-warm"
+    )
+
+
+def DemoSignIn(volunteer=True):
+    """One tap into a demo (config.demo_matches, never production): a fresh copy of the
+    demo volunteer, and the demo coordinator. POSTs, so the same-origin check applies."""
+    if not demo_matches():
+        return None
+    return Div(
+        P("Demo: you'll get your own sample account.", cls="text-sm text-ink-muted"),
+        Form(BigButton("Try it as a volunteer"), action="/login/demo", method="post")
+        if volunteer
+        else None,
+        Form(
+            Button(
+                "Try it as a nonprofit",
+                type="submit",
+                cls="uk-btn uk-btn-default h-12 w-full",
+            ),
+            action="/org/login/demo",
+            method="post",
+        ),
+        cls="space-y-3 border-b border-line pb-6",
     )
 
 
@@ -320,7 +345,25 @@ TABS = (
 )
 
 
-def TabBar(active):
+# a like's confirmation, on the deck and on the card after the first like
+LIKE_SENT = "Sent to {}. We'll text you when they say yes."
+
+
+def MatchesDot(on, oob=False):
+    """The small dot on the Matches tab: news since they last looked (data.has_match_news).
+    Always in the page (hidden when off), so a like's response can swap it in without a
+    reload."""
+    return Span(
+        Span(" (something new)", cls="sr-only"),
+        id="matches-dot",
+        hidden=not on,
+        hx_swap_oob="true" if oob else None,
+        cls="absolute left-1/2 top-2 ml-3 h-2.5 w-2.5 rounded-full bg-brand "
+        "ring-2 ring-white",
+    )
+
+
+def TabBar(active, dot=False):
     def tab(key, label, href, icon):
         on = key == active
         # the current tab differs by more than hue: a brand bar on top, a heavier label
@@ -334,6 +377,7 @@ def TabBar(active):
                 + ("bg-brand-soft" if on else ""),
             ),
             Span(label),
+            MatchesDot(dot) if key == "matches" else None,
             href=href,
             aria_current="page" if on else None,
             cls="relative flex h-16 flex-col items-center justify-center gap-0.5 text-xs "
@@ -352,9 +396,10 @@ def TabBar(active):
     )
 
 
-def VolunteerNav(active=None):
-    """The volunteer's header and bottom tab bar. The bar is fixed, so it can sit anywhere
-    in the page; static/theme.css pads the body above it."""
+def VolunteerNav(active, uid):
+    """The volunteer's header and bottom tab bar, with the Matches dot while a like of
+    theirs waits. The bar is fixed, so it can sit anywhere in the page; static/theme.css
+    pads the body above it."""
     return Div(
         Div(
             A(
@@ -364,13 +409,14 @@ def VolunteerNav(active=None):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        TabBar(active),
+        TabBar(active, data.has_match_news(uid)),
     )
 
 
-def VolunteerShell(active, *content):
-    """A volunteer page: the header and tab bar, then the content in one narrow column."""
-    return Container(VolunteerNav(active), *content, cls="max-w-md pb-8")
+def VolunteerShell(active, *content, uid):
+    """A volunteer page: the header and tab bar, then the content in one narrow column.
+    uid is required, so no page leaves out the Matches dot."""
+    return Container(VolunteerNav(active, uid), *content, cls="max-w-md pb-8")
 
 
 # a page's H1 and a section's H2 on the staff pages (nonprofit, admin)
@@ -553,4 +599,90 @@ def VolunteerHeader(name, photo_key=None, pronouns=None):
             Span(f" ({pronouns})", cls="text-sm text-ink-muted") if pronouns else None,
         ),
         cls="flex items-center gap-3",
+    )
+
+
+def OrgFace(org, logo=None, photo=None, slug=None):
+    """A nonprofit at 48 px on the volunteer's lists: its logo, else the opening's photo,
+    else its initial on its cause's tint. Decorative: the org's name is written next to it.
+    Logos and opening photos are public to anyone signed in (data.photo_for)."""
+    cls = "h-12 w-12 shrink-0 rounded-full"
+    if logo or photo:
+        return Img(
+            src=f"/photos/thumb/{logo or photo}.jpg",
+            alt="",
+            loading="lazy",
+            width="48",
+            height="48",
+            cls=cls + " object-cover ring-1 ring-line",
+        )
+    return Span(
+        ((org or "").strip()[:1] or "?").upper(),
+        aria_hidden="true",
+        cls=f"{cls} grid place-items-center font-display text-xl font-extrabold "
+        + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
+    )
+
+
+CALENDAR_HOURS = 2  # openings have no end time yet: a calendar gets this long
+CALENDAR_ZONE = "America/Los_Angeles"  # the wall clock starts_at is stored in
+
+
+def calendar_event(s):
+    """What a calendar gets for an upcoming shift s (data.shift_event's keys): start and
+    end as CALENDAR_ZONE wall clock "YYYYMMDDTHHMMSS", title, place (the neighborhood: no
+    address is stored), and a line with the link back to the chat."""
+    start = datetime.fromisoformat(s["starts_at"])
+    end = start + timedelta(hours=CALENDAR_HOURS)
+    return {
+        "start": start.strftime("%Y%m%dT%H%M%S"),
+        "end": end.strftime("%Y%m%dT%H%M%S"),
+        "title": f"{s['title']} · {s['org']}",
+        "place": s["neighborhood"] or "",
+        "details": f"Chat with {s['org']}: {public_base_url()}/chat/{s['match_id']}",
+    }
+
+
+def AddToCalendar(s):
+    """On an upcoming accepted shift: its .ics (iPhone opens it in Calendar) and a Google
+    Calendar link, both from calendar_event."""
+    e = calendar_event(s)
+    google = "https://calendar.google.com/calendar/render?" + urlencode(
+        {
+            "action": "TEMPLATE",
+            "text": e["title"],
+            "dates": f"{e['start']}/{e['end']}",
+            "ctz": CALENDAR_ZONE,
+            "details": e["details"],
+            "location": e["place"],
+        },
+        quote_via=quote,
+    )
+    return Div(
+        Span(
+            Icon(CALENDAR, size=16, cls="text-ink-muted"),
+            "Add to calendar:",
+            cls="inline-flex items-center gap-2 text-ink",
+        ),
+        A("Apple", href=f"/shifts/{s['id']}.ics", cls=SMALL_LINK),
+        A(
+            "Google",
+            Span(" (opens in a new tab)", cls="sr-only"),
+            href=google,
+            target="_blank",
+            rel="noopener noreferrer",
+            cls=SMALL_LINK,
+        ),
+        cls="flex flex-wrap items-center gap-x-4 text-sm",
+    )
+
+
+def Notes(text):
+    """An opening's notes ("closed-toe shoes", parking), shown once the volunteer is in."""
+    if not text:
+        return None
+    return Div(  # not a P: Franken UI spaces a p after a p
+        Span("Good to know: ", cls="font-bold text-ink"),
+        text,
+        cls="whitespace-pre-line break-words text-sm text-ink-muted",
     )

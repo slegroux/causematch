@@ -122,6 +122,28 @@ def test_bad_details_are_refused_and_change_nothing(user, over, message):
     assert (p.display_name, p.last_name, p.pronouns) == ("Sam", "Lee", "they/them")
 
 
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("email", "sam\u200b@example.com"),  # zero-width space
+        ("other_causes", "owls \u202eslwo"),  # right-to-left override
+        ("neighborhood", "Palms\ufeff"),  # zero-width no-break space
+    ],
+)
+def test_hidden_characters_are_refused_in_the_fields_moved_from_onboarding(
+    user, field, value
+):
+    save(user, email="sam@example.com", other_causes="owls", neighborhood="Palms")
+    r = save(user, **{field: value})
+    assert r.status_code == 400 and "hidden or special characters" in r.text
+    p = profiles[uid_of(user)]
+    assert (p.email, p.other_causes, p.neighborhood) == (
+        "sam@example.com",
+        "owls",
+        "Palms",
+    )
+
+
 def test_a_bio_keeps_emoji_line_breaks_and_accents(user):
     bio = "Proud \U0001f3f3\ufe0f\u200d\U0001f308 volunteer, I \u2764\ufe0f LA.\nJosé, Zoë."
     assert save(user, bio=bio, last_name="Nguyễn").status_code == 303
@@ -176,28 +198,8 @@ def test_volunteer_name(first, last, full, shown):
 # --- onboarding --------------------------------------------------------------------------
 
 
-def test_onboarding_asks_for_an_optional_last_name(new_user):
-    assert 'name="last_name"' in new_user.get("/onboarding").text
-    r = new_user.post("/onboarding", data={**FORM, "last_name": "Lee"})
-    assert r.status_code == 200  # followed to the deck
-    assert profiles[uid_of(new_user)].last_name == "Lee"
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("last_name", "Lee\x00"),
-        ("last_name", "Le\u200be"),
-        ("last_name", "Lee\u202e"),
-        ("first_name", "Sam\u3164"),
-        ("neighborhood", "Echo\u202e Park"),
-        ("neighborhood", "Echo Park\u3164"),
-        ("other_causes", "parks\x07"),
-        ("other_causes", "par\u2028ks"),  # inside: strip() takes it off the ends
-    ],
-)
-def test_onboarding_refuses_hidden_characters_in_its_text(new_user, field, value):
-    r = new_user.post("/onboarding", data={**FORM, field: value})
+def test_onboarding_refuses_hidden_characters_in_its_text(new_user):
+    r = new_user.post("/onboarding", data={**FORM, "first_name": "Sam\u3164"})
     assert HIDDEN_CHARS_MESSAGE in r.text.replace("&#x27;", "'")
     assert not profiles[uid_of(new_user)].onboarded_at
 
@@ -209,16 +211,6 @@ def test_onboarding_is_answered_once(user):
     )
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     assert profiles[uid_of(user)].display_name == "Sam"
-
-
-def test_onboarding_without_a_last_name(new_user):
-    new_user.post("/onboarding", data=FORM)
-    assert profiles[uid_of(new_user)].last_name is None
-
-
-def test_onboarding_refuses_a_long_last_name(new_user):
-    r = new_user.post("/onboarding", data={**FORM, "last_name": "x" * 81})
-    assert "too long" in r.text and not profiles[uid_of(new_user)].onboarded_at
 
 
 def test_deleting_the_account_erases_the_details(user):
@@ -294,3 +286,10 @@ def test_names_keep_the_joiners_of_indic_conjuncts(user, field, value):
 def test_joiners_outside_one_indic_word_are_refused(user, value):
     r = save(user, last_name=value)
     assert r.status_code == 400 and "hidden or special characters" in r.text
+
+
+def test_email_and_other_causes_are_edited_in_the_profile(user):
+    assert save(user, email="sam@example.com", other_causes="owls").status_code == 303
+    p = profiles[uid_of(user)]
+    assert (p.email, p.other_causes) == ("sam@example.com", "owls")
+    assert save(user, email="nope").status_code == 400

@@ -17,6 +17,7 @@ from conftest import (
     coordinator_for,
     sign_in,
     uid_of,
+    volunteer,
 )
 from starlette.routing import Route
 from starlette.testclient import TestClient
@@ -39,6 +40,8 @@ NOT_PAGES = {
     "/admin/metrics.csv",
     "/photos/{key}.jpg",
     "/photos/thumb/{key}.jpg",
+    "/shifts/{shift_id}.ics",
+    "/org/zip",
 }
 
 
@@ -82,6 +85,8 @@ def pages(anon, user, coord):
     data.decide(data.coordinator_by_email(coordinator_for(0)[1]), m.id, True)
     newcomer = TestClient(app)
     sign_in(newcomer)
+    liker = volunteer("Lee")  # liked once, not yet asked the after-first-like card
+    profiles.update(id=liker.uid, heard_from="")
     admin = admin_client()
     return [
         (anon, "/login"),
@@ -91,6 +96,7 @@ def pages(anon, user, coord):
         (anon, "/privacy"),
         (anon, f"/urgent/off/{data.urgent_off_key(uid)}"),
         (newcomer, "/onboarding"),
+        (liker, "/onboarding/more"),
         (user, "/deck"),
         (user, "/matches"),
         (user, "/history"),

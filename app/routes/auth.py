@@ -8,11 +8,24 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
+from app.config import DEMO_PHONE, demo_matches
 from app.forms import bad_request, str_form
-from app.ui import BigButton, CauseChip, Field, Router, SignInPage, TextInput
+from app.ui import (
+    BigButton,
+    CauseChip,
+    DemoSignIn,
+    Field,
+    Refusal,
+    Router,
+    SignInPage,
+    TextInput,
+)
 
 ar = Router()
 log = logging.getLogger("causematch")
+# The demo seed's demo_volunteer, set by main.py (no route imports the demo seed): with
+# config.demo_matches on, the demo number signs in as a fresh copy of the demo volunteer
+demo_volunteer = None
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 
@@ -20,6 +33,7 @@ INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 def PhoneForm(phone="", error=None):
     return SignInPage(
         "Sign in",
+        DemoSignIn(),
         Form(
             Field(
                 "Mobile number",
@@ -124,10 +138,10 @@ async def verify(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
-    return await run_in_threadpool(_sync_verify, form, sess)
+    return await run_in_threadpool(_sync_verify, req, form, sess)
 
 
-def _sync_verify(form, sess):
+def _sync_verify(req, form, sess):
     e164 = pending_phone(sess)  # only the number a code was sent to, for 15 minutes
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")
@@ -135,7 +149,7 @@ def _sync_verify(form, sess):
     if not re.fullmatch(r"[0-9]{6}", code):
         return CodeForm(e164, "Enter the 6-digit code from the text.")
     # only wrong codes count, so the right one always gets through below the limit
-    if not security.allow((security.VERIFY_PER_PHONE, e164), record=False):
+    if not security.allow(*security.verify_limits(e164), record=False):
         return security.too_many()
     try:
         ok = notify.check_code(e164, code)
@@ -143,9 +157,14 @@ def _sync_verify(form, sess):
         log.warning("checking a sign-in code failed: %s", type(e).__name__)
         return CodeForm(e164, "We couldn't check that code just now. Try again.")
     if not ok:
-        security.allow((security.VERIFY_PER_PHONE, e164))
+        security.allow(*security.verify_limits(e164))
         return CodeForm(e164, "That code didn't work. Check the text and try again.")
-    uid = data.get_or_create_volunteer(e164)
+    uid = None
+    if demo_matches() and demo_volunteer and e164 == DEMO_PHONE:
+        if not security.allow((security.DEMO_PER_IP, security.ip_subject(req))):
+            return security.too_many()  # a fresh copy each time: 10 an hour per address
+        uid = demo_volunteer(e164)
+    uid = uid or data.get_or_create_volunteer(e164)
     profile = data.get_profile(uid)
     sess.clear()  # the code is used: the number leaves the session either way
     if profile is None:  # suspended by an admin
@@ -155,6 +174,26 @@ def _sync_verify(form, sess):
     sess["uid"] = uid
     sess["sv"] = profile.session_version or 1
     return Redirect("/deck" if profile.onboarded_at else "/onboarding")
+
+
+@ar("/login/demo", methods=["POST"])
+def demo_sign_in(req, sess):
+    """ "Try it as a volunteer" (config.demo_matches only; production answers 403): a fresh
+    copy of the demo volunteer, as signing in with the demo number gives. Counted against
+    the address's sign-in limits, so it can't make copies in a loop."""
+    if not (demo_matches() and demo_volunteer):
+        return Refusal(403)
+    if not security.allow(
+        (security.DEMO_PER_IP, security.ip_subject(req)),
+        (security.SMS_PER_IP, security.ip_subject(req)),
+        (security.SMS_PER_NET, security.ip_subject(req, 48)),
+    ):
+        return security.too_many()
+    uid = demo_volunteer(DEMO_PHONE)
+    sess.clear()
+    sess["uid"] = uid
+    sess["sv"] = data.get_profile(uid).session_version or 1
+    return Redirect("/deck")
 
 
 @ar("/logout", methods=["POST"])

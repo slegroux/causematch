@@ -39,6 +39,33 @@ def fakes_allowed(env=os.environ):
     return is_dev(env) or is_preview(env)
 
 
+def demo_matches(env=os.environ):
+    """CAUSEMATCH_DEMO_MATCHES=1 (scripts/demo.py and the preview deploy set it): signing in
+    with the demo number gives each visitor a fresh copy of the demo volunteer, and an org
+    run by a stand-in demo coordinator says yes to a like a few seconds later
+    (data.demo_accept_due). Allowed where the fakes are (development, test, a preview);
+    anywhere else it raises, so production with it set refuses to start (main.py)."""
+    if env.get("CAUSEMATCH_DEMO_MATCHES") != "1":
+        return False
+    if not fakes_allowed(env):
+        raise RuntimeError(
+            "CAUSEMATCH_DEMO_MATCHES=1 needs CAUSEMATCH_ENV=development, test or preview"
+        )
+    return True
+
+
+# The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164, and
+# the demo coordinator's address (demo_seed.COORDINATOR)
+DEMO_PHONE = "+13105550100"
+DEMO_COORDINATOR = "pat@demo.causematch.test"
+
+
+def shared_demo_phone(phone, env=os.environ):
+    """The demo number while demo_matches is on: every visitor signs in with it (each gets
+    their own copy), so per-number sign-in limits would lock the demo for everyone."""
+    return phone == DEMO_PHONE and demo_matches(env)
+
+
 def is_dev(env=os.environ):
     """Development is something you declare; an unset environment is not development."""
     return env.get("CAUSEMATCH_ENV") in ("development", "test") and not is_production(

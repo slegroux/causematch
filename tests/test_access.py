@@ -60,6 +60,8 @@ ROUTES = {
     ("POST", "/login/verify"): ("public", None),
     ("POST", "/logout"): ("volunteer", None),  # any signed-in role may sign out
     ("GET", "/org/login"): ("public", None),
+    ("POST", "/login/demo"): ("public", None),  # a demo's one tap; 403 elsewhere
+    ("POST", "/org/login/demo"): ("public", None),  # the same
     ("POST", "/org/login/send"): ("public", None),
     ("GET", "/org/login/verify"): ("public", None),
     ("POST", "/org/login/verify"): ("public", None),
@@ -67,6 +69,8 @@ ROUTES = {
     ("POST", "/org/claim"): ("public", None),
     ("GET", "/onboarding"): ("volunteer", "own-record"),
     ("POST", "/onboarding"): ("volunteer", "own-record"),
+    ("GET", "/onboarding/more"): ("volunteer", "own-record"),
+    ("POST", "/onboarding/more"): ("volunteer", "own-record"),
     ("GET", "/"): ("volunteer", None),
     ("POST", "/"): ("volunteer", None),
     ("GET", "/deck"): ("volunteer", "own-record"),
@@ -94,6 +98,7 @@ ROUTES = {
     ("GET", "/org"): ("coordinator", "own-org"),
     ("POST", "/org/details"): ("coordinator", "own-org"),
     ("GET", "/org/openings/new"): ("coordinator", "own-org"),
+    ("GET", "/org/zip"): ("coordinator", None),  # a public table lookup
     ("POST", "/org/openings/new"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("GET", "/org/openings/{opening_id}/urgent"): ("coordinator", "own-org"),
@@ -124,6 +129,7 @@ ROUTES = {
     ("POST", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
     ("GET", "/history"): ("volunteer", "own-record"),
+    ("GET", "/shifts/{shift_id}.ics"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
     ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
     ("WS", "/chat/{match_id}/ws"): ("volunteer", "own-record"),
@@ -652,6 +658,17 @@ def check_mark_shift(w):
     assert r.status_code == 303 and shifts[sid].status == "completed"
 
 
+def check_shift_ics(w):
+    """B gets 404 for A's shift's calendar file, whatever the id; A gets it."""
+    sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
+    for i in (sid, *GONE):
+        r = w.b.get(f"/shifts/{i}.ics", follow_redirects=False)
+        assert r.status_code == 404
+        no_secrets(r)
+    r = w.a.get(f"/shifts/{sid}.ics")
+    assert r.status_code == 200 and "BEGIN:VEVENT" in r.text
+
+
 def stranger_post(client, template, **body):
     def call(w, rid):
         return client(w).post(
@@ -868,6 +885,7 @@ OWNERSHIP = {
     ("POST", "/org/shifts/{shift_id}/mark"): check_mark_shift,
     ("POST", "/org/shifts/{shift_id}/cancel"): check_cancel_shift,
     ("POST", "/org/matches/{match_id}/shifts/repeat"): check_repeat_shift,
+    ("GET", "/shifts/{shift_id}.ics"): check_shift_ics,
     ("GET", "/chat/{match_id}"): chat_id_check("b", "a", "/chat", "page"),
     ("POST", "/chat/{match_id}/send"): chat_id_check("b", "a", "/chat", "send"),
     ("WS", "/chat/{match_id}/ws"): chat_id_check("b", "a", "/chat", "ws"),

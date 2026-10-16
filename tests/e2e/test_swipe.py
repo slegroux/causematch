@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from conftest import PANTRY, pantry_opening
 
@@ -60,7 +62,8 @@ def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
     coord.goto("/org/inbox")
     coord.get_by_text("Sam").wait_for()
     coord.get_by_role("button", name="Accept").click()
-    coord.wait_for_url("**/org/inbox")
+    coord.wait_for_url(re.compile(r"/org/inbox\?notice=accepted&match=\d+$"))
+    coord.get_by_role("link", name="Say hi").wait_for()
 
     page.goto("/matches")
     page.get_by_text("Accepted").wait_for()
@@ -105,7 +108,12 @@ def test_buttons_work_with_javascript_off(browser, live_url):
     page.get_by_label("Code").fill("000000")
     page.get_by_role("button", name="Sign in").click()
     (p,) = profiles(where="phone = ?", where_args=["+13105550145"])
-    profiles.update(id=p.id, display_name="Jo", onboarded_at="2026-01-01T00:00:00")
+    profiles.update(
+        id=p.id,
+        display_name="Jo",
+        onboarded_at="2026-01-01T00:00:00",
+        heard_from="skipped",
+    )
     page.goto("/deck")
     page.get_by_role("button", name="Like").click()
     page.get_by_text("Serve a weekend lunch line").wait_for()

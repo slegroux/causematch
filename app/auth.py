@@ -19,9 +19,11 @@ PUBLIC = [
     r"/login",
     r"/login/send",
     r"/login/verify",
+    r"/login/demo",  # a demo's one-tap sign-in (config.demo_matches; 403 elsewhere)
     r"/org/login",
     r"/org/login/send",
     r"/org/login/verify",
+    r"/org/login/demo",
     r"/org/claim",
     r"/privacy",
     r"/tasks/reminders",  # not signed in: the scheduler's bearer token guards it

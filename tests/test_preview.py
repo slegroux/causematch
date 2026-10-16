@@ -11,20 +11,24 @@ import re
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import pytest
-from conftest import ROOT, coordinator_for, jpeg
+from conftest import ROOT, coordinator_for, jpeg, uid_of
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
 from test_photos import key_of, upload
 
-from app import demo_seed, notify, security
+from app import data, demo_seed, notify, security
 from app.auth import session_cookie, session_secret
 from app.config import (
+    DEMO_COORDINATOR,
+    DEMO_PHONE,
     contact_email,
     demo_banner,
+    demo_matches,
     is_dev,
     is_preview,
     is_production,
@@ -33,7 +37,17 @@ from app.config import (
     require_env,
     tasks_token,
 )
-from app.db import matches, openings, orgs, profiles, urgent_calls
+from app.db import (
+    matches,
+    messages,
+    openings,
+    orgs,
+    places,
+    profiles,
+    shifts,
+    swipes,
+    urgent_calls,
+)
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
 
@@ -662,6 +676,221 @@ def test_seed_preview_only_fills_an_empty_database(preview, seed_dir):
     before = [o.name for o in orgs()]
     demo_seed.seed_preview(str(seed_dir))
     assert [o.name for o in orgs()] == before
+
+
+# --- the demo's matches (config.demo_matches) ------------------------------------------
+
+ON = {"CAUSEMATCH_DEMO_MATCHES": "1"}
+
+
+def test_production_refuses_the_demo_matches_switch(tmp_path):
+    for env in PRODUCTION:
+        with pytest.raises(RuntimeError):
+            demo_matches({**env, **ON})
+        assert not demo_matches(env)
+    assert demo_matches({**PREVIEW, **ON}) and not demo_matches(PREVIEW)
+    assert demo_matches({"CAUSEMATCH_ENV": "development", **ON})
+    real = {k: "x" for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+                             "TWILIO_VERIFY_SID", "TWILIO_FROM_NUMBER",
+                             "EMAIL_API_KEY", "EMAIL_FROM")}  # fmt: skip
+    r = _start(tmp_path, CAUSEMATCH_ENV="production", CAUSEMATCH_FAKE_SMS="",
+               CAUSEMATCH_FAKE_EMAIL="", **real, **ON)  # fmt: skip
+    assert r.returncode != 0 and "CAUSEMATCH_DEMO_MATCHES=1 needs" in r.stderr
+
+
+@pytest.fixture
+def demo(preview, monkeypatch):
+    """A preview with the demo's matches on, seeded with the invented orgs."""
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    _empty()
+    return demo_seed.seed_preview(None) or demo_seed
+
+
+def as_demo_volunteer():
+    c = TestClient(app, headers={"Authorization": basic()})
+    c.post("/login/send", data={"phone": demo_seed.ME_PHONE})
+    r = c.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.headers["location"] == "/deck"
+    (c.uid,) = [
+        p.id
+        for p in profiles(order_by="id")
+        if (p.phone or "").startswith(data.DEMO_PHONE_PREFIX)
+    ][-1:]
+    return c
+
+
+def test_each_visitor_of_the_demo_number_gets_their_own_sam(demo):
+    a, b = as_demo_volunteer(), as_demo_volunteer()
+    assert a.uid != b.uid
+    assert profiles[a.uid].display_name == profiles[b.uid].display_name == "Sam"
+    first = data.deck(a.uid, 1)[0]
+    assert first["urgent"]  # the urgent call is still the first card
+    before = [c["id"] for c in data.deck(b.uid, 50)]
+    swiped = swipes.count_where("volunteer_id = ?", [a.uid])
+    a.post("/swipe", data={"opening_id": first["id"], "liked": "0"})
+    second = data.deck(a.uid, 1)[0]["id"]
+    a.post("/swipe", data={"opening_id": second, "liked": "1"})
+    assert swipes.count_where("volunteer_id = ?", [a.uid]) == swiped + 2
+    assert [c["id"] for c in data.deck(b.uid, 50)] == before
+    assert data.deck(b.uid, 1)[0]["id"] == first["id"]  # b's urgent card is still up
+
+
+def test_a_demo_sam_has_matches_in_several_states_none_in_the_coordinators_inbox(demo):
+    uid = as_demo_volunteer().uid
+    mine = matches(where="volunteer_id = ?", where_args=[uid])
+    assert len(mine) >= 3 and len({m.status for m in mine}) >= 2
+    pat_org = data.coordinator_org_ids(
+        data.coordinator_by_email(demo_seed.COORDINATOR[0])
+    )
+    assert all(openings[m.opening_id].org_id not in pat_org for m in mine)
+    held = shifts(where=f"match_id IN ({','.join(str(m.id) for m in mine)})")
+    assert {"scheduled", "completed"} <= {s.status for s in held}
+    assert messages(where=f"match_id IN ({','.join(str(m.id) for m in mine)})")
+    # the seeded waiting like stays waiting: the demo's auto-accept leaves old likes
+    assert data.demo_accept_due(uid) == [] and "pending" in {m.status for m in mine}
+
+
+def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
+    monkeypatch.setattr(data, "DEMO_COPIES", 2)
+    (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
+    a, b, c = (as_demo_volunteer().uid for _ in range(3))
+    phones = {p.id: p.phone for p in profiles() if p.id in (a, b, c)}
+    assert set(phones) == {b, c} and phones[c] == f"{data.DEMO_PHONE_PREFIX}0000"
+    for table, col in ((matches, "volunteer_id"), (swipes, "volunteer_id"),
+                       (places, "user_id")):  # fmt: skip
+        count = lambda uid, t=table, k=col: t.count_where(f"{k} = ?", [uid])
+        assert count(a) == 0, table  # a's rows went with it
+        assert count(b) and count(seed_sam.id), table  # the others keep theirs
+
+
+def test_without_the_switch_the_demo_number_is_the_seeds_sam(preview):
+    _empty()
+    demo_seed.seed_preview(None)
+    (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
+    c = TestClient(app, headers={"Authorization": basic()})
+    c.post("/login/send", data={"phone": demo_seed.ME_PHONE})
+    c.post("/login/verify", data={"code": "000000"})
+    assert data.get_or_create_volunteer(DEMO_PHONE) == seed_sam.id
+    assert not [
+        p for p in profiles() if (p.phone or "").startswith(data.DEMO_PHONE_PREFIX)
+    ]
+    with pytest.raises(PermissionError):
+        data.new_demo_volunteer()
+    assert "Sam" in c.get("/profile").text
+
+
+def test_the_demo_buttons_sign_in_each_role_in_one_tap(demo):
+    assert demo_seed.COORDINATOR[0] == DEMO_COORDINATOR
+    browser = TestClient(app, headers={"Authorization": basic()})
+    page = browser.get("/login").text
+    for text in ("Demo: you", "Try it as a volunteer", "Try it as a nonprofit"):
+        assert text in page.replace("&#x27;", "'")
+    org_page = browser.get("/org/login").text
+    assert (
+        "Try it as a nonprofit" in org_page and "Try it as a volunteer" not in org_page
+    )
+    before = {p.id for p in profiles()}
+    r = browser.post("/login/demo", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    (copy,) = [p for p in profiles() if p.id not in before]
+    assert copy.phone.startswith(data.DEMO_PHONE_PREFIX) and copy.display_name == "Sam"
+    assert "Urgent" in browser.get("/deck").text  # signed in, on their own deck
+    pat = TestClient(app, headers={"Authorization": basic()})
+    r = pat.post("/org/login/demo", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org"
+    assert pat.get("/org/inbox").status_code == 200
+    assert pat.get("/deck", follow_redirects=False).headers["location"] == "/org"
+    # a POST from another site is refused, like any form here
+    evil = {"Authorization": basic(), "Origin": "https://evil.example"}
+    assert TestClient(app, headers=evil).post("/login/demo").status_code == 403
+
+
+def test_in_a_demo_the_coordinator_sees_demo_people_only(demo):
+    """Anyone can become the demo coordinator, so a tester who signed up with their own
+    number never shows in its inbox; a demo copy's like does."""
+    from app.auth import normalize_phone
+
+    assert {normalize_phone(p) for p in (demo_seed.ME_PHONE, demo_seed.NO_PHOTO_PHONE)}
+    assert normalize_phone(demo_seed.NO_PHOTO_PHONE) in data.DEMO_SEEDED_PHONES
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    tester = TestClient(app, headers={"Authorization": basic()})
+    tester.post("/login/send", data={"phone": "(213) 555-0188"})
+    tester.post("/login/verify", data={"code": "000000"})
+    (real,) = profiles(where="phone = ?", where_args=["+12135550188"])
+    profiles.update(id=real.id, display_name="Realtester", onboarded_at="2026-01-01",
+                    heard_from="skipped")  # fmt: skip
+    sam = as_demo_volunteer()
+    opening = demo_seed_first_opening(pat)
+    before = data.org_pending_count(opening.org_id)
+    for c, uid in ((tester, real.id), (sam, sam.uid)):
+        r = c.post("/swipe", data={"opening_id": opening.id, "liked": "1"},
+                   follow_redirects=False)  # fmt: skip
+        assert r.status_code == 303, uid
+    ids = {m.volunteer_id: m.id for m in matches(where="opening_id = ?",
+                                                  where_args=[opening.id])}  # fmt: skip
+    pending = {r["id"] for r in data.org_inbox(pat)["pending"]}
+    assert ids[sam.uid] in pending and ids[real.id] not in pending
+    pat_page = TestClient(app, headers={"Authorization": basic()})
+    pat_page.post("/org/login/demo")
+    inbox = pat_page.get("/org/inbox").text
+    assert "Realtester" not in inbox and "Sam" in inbox
+    assert data.org_pending_count(opening.org_id) == before + 1  # the copy only
+    (m,) = matches(where="volunteer_id = ?", where_args=[real.id])
+    with pytest.raises(PermissionError):  # nor accepted by id, so no chat or shift
+        data.decide(pat, m.id, True)
+
+
+def demo_seed_first_opening(coordinator):
+    org_id = data.coordinator_org_ids(coordinator)[0]
+    return openings(where="org_id = ? AND status = 'open'", where_args=[org_id],
+                    order_by="id")[0]  # fmt: skip
+
+
+def test_a_demo_makes_at_most_ten_copies_an_hour_per_address(demo):
+    browser = TestClient(
+        app, headers={"Authorization": basic()}, client=("198.51.100.80", 1)
+    )
+    codes = [browser.post("/login/demo", follow_redirects=False).status_code
+             for _ in range(11)]  # fmt: skip
+    assert codes == [303] * 10 + [429]
+    other = TestClient(
+        app, headers={"Authorization": basic()}, client=("198.51.100.81", 1)
+    )
+    assert other.post("/login/demo", follow_redirects=False).status_code == 303
+
+
+def _like_a_team_card(client, uid):
+    """Likes the first card a stand-in team runs, made long enough ago to be due."""
+    card = next(
+        c for c in data.deck(uid, 50)
+        if not c["call_id"] and data.demo_team(openings[c["id"]].org_id)
+    )  # fmt: skip
+    client.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+    (m,) = matches(
+        where="volunteer_id = ? AND opening_id = ?", where_args=[uid, card["id"]]
+    )
+    assert m.status == "pending"  # not at once: a few seconds later
+    early = (datetime.now(UTC) - data.DEMO_ACCEPT_AFTER).isoformat(timespec="seconds")
+    matches.update(id=m.id, created_at=early)
+    return m
+
+
+def test_in_a_preview_a_demo_team_says_yes_with_a_welcome(demo):
+    sam = as_demo_volunteer()
+    m = _like_a_team_card(sam, sam.uid)
+    page = sam.get("/deck").text
+    assert "It&#x27;s a match!" in page or "It's a match!" in page
+    assert f'href="/chat/{m.id}"' in page and matches[m.id].status == "accepted"
+    (hi,) = messages(where="match_id = ?", where_args=[m.id])
+    assert hi.body.startswith("Hi Sam! Thanks for signing up")
+
+
+def test_in_a_preview_an_ordinary_volunteers_like_waits(user, demo):
+    user.headers["Authorization"] = basic()
+    uid = uid_of(user)
+    m = _like_a_team_card(user, uid)
+    assert "s a match!" not in user.get("/deck").text
+    assert matches[m.id].status == "pending" and data.demo_accept_due(uid) == []
 
 
 # --- the deploy ----------------------------------------------------------------------
