@@ -374,6 +374,7 @@ def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
         "Only show, or prefer?": False,
         "How often": True,
         "What you bring": False,
+        "Last-minute calls": False,
     }
     kind = next(
         s for s in sections if s.startswith(">Kind of work") or "Kind of work<" in s

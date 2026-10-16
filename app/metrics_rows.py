@@ -1,4 +1,4 @@
-"""The queries behind the pilot metrics, over any `q(sql) -> [dict]`.
+"""The queries behind the pilot metrics, over any `q(sql, params=()) -> [dict]`.
 
 Kept apart from app.data so scripts/stats.py can read a database through a read-only
 connection without importing app.db (which creates and migrates the schema it opens).
@@ -30,9 +30,37 @@ def _empty_decks(q):
     return q("SELECT volunteer_id, today FROM deck_empty")
 
 
+def _has(q, table, column=None):
+    """The table (and column) exist: a database from before urgent calls has neither."""
+    if column is None:
+        return bool(
+            q(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                [table],
+            )
+        )
+    return bool(
+        q("SELECT name FROM pragma_table_info(?) WHERE name = ?", [table, column])
+    )
+
+
+def _urgent_calls(q):
+    """Every urgent call: status, how many it needed, when it was posted and ended."""
+    if not _has(q, "urgent_call"):
+        return []
+    return q("SELECT id, org_id, status, needed, created_at, ended_at FROM urgent_call")
+
+
 def fetch_rows(q):
+    # a like on an urgent call (Match.urgent_call_id), else NULL
+    urgent = (
+        "m.urgent_call_id AS urgent_call_id"
+        if _has(q, "match", "urgent_call_id")
+        else "NULL AS urgent_call_id"
+    )
     return {
         "empty_decks": _empty_decks(q),
+        "urgent_calls": _urgent_calls(q),
         "causes": [
             {
                 "slug": c["slug"],
@@ -64,7 +92,7 @@ def fetch_rows(q):
             q(
                 "SELECT h.match_id AS match_id, m.volunteer_id AS volunteer_id, "
                 "o.org_id AS org_id, h.starts_at AS starts_at, h.status AS status, "
-                f"{_TAG} FROM shift h JOIN match m ON m.id = h.match_id "
+                f"{urgent}, {_TAG} FROM shift h JOIN match m ON m.id = h.match_id "
                 "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
                 "JOIN profile p ON p.id = m.volunteer_id"
             )

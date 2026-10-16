@@ -319,3 +319,46 @@ def test_pass_and_like_stay_above_the_tab_bar_on_a_short_screen(browser, live_ur
         box = page.get_by_role("button", name=name).bounding_box()
         assert box["y"] + box["height"] <= bar["y"], (name, box, bar)
     ctx.close()
+
+
+@pytest.mark.parametrize("device", ["iPhone 13", "iPhone SE"])
+def test_the_home_screen_toast_never_covers_pass_like_or_filters(
+    browser, playwright, live_url, device
+):
+    """iPhone Safari in a tab shows the toast on the deck: it sits in the page's flow
+    under the header, so a tap on Like, Pass or the filter button reaches it."""
+    ctx = guard(browser.new_context(**playwright.devices[device], base_url=live_url))
+    page = ctx.new_page()
+    sign_in_page(page, "(310) 555-0166")
+    page.goto("/deck")
+    toast = page.locator("#a2hs")
+    assert toast.is_visible()  # the precondition: an iPhone in a tab sees it
+    targets = {
+        "Like": page.get_by_role("button", name="Like"),
+        "Pass": page.get_by_role("button", name="Pass"),
+        "filters": page.locator("form[action='/swipe']")
+        .locator("xpath=..")
+        .locator("summary"),
+    }
+    for y in ("0", "document.scrollingElement.scrollHeight"):
+        page.evaluate(f"window.scrollTo(0, {y})")
+        shown = toast.bounding_box()
+        for name, target in targets.items():
+            box = target.bounding_box()
+            hit = page.evaluate(
+                "([x, y]) => document.elementFromPoint(x, y)"
+                ".closest('button, summary')?.outerHTML.slice(0, 80) ?? null",
+                [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2],
+            )
+            own = target.evaluate("e => e.outerHTML.slice(0, 80)")
+            assert hit == own, (device, y, name, hit)
+            if shown:  # scrolled off the top is fine; on screen it never overlaps
+                apart = (
+                    shown["y"] + shown["height"] <= box["y"]
+                    or box["y"] + box["height"] <= shown["y"]
+                )
+                assert apart, (device, y, name, shown, box)
+    targets["Like"].click()  # and the tap counts
+    page.wait_for_load_state("networkidle")
+    assert toast.is_visible()
+    ctx.close()

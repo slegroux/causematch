@@ -13,6 +13,7 @@ from fasthtml.common import (
     Div,
     Fieldset,
     Form,
+    FtResponse,
     Hidden,
     Input,
     Label,
@@ -21,6 +22,7 @@ from fasthtml.common import (
     P,
     Redirect,
     Script,
+    Select,
     Span,
 )
 from monsterui.all import Alert, AlertT, Container
@@ -35,6 +37,7 @@ from app.choices import (
     FREQUENCY,
     GROUP,
     HORIZON,
+    HOURS,
     LANGUAGES,
     MAX_FREE_DATES,
     MAX_MINUTES,
@@ -43,6 +46,8 @@ from app.choices import (
     PARTS,
     SETTING,
     SKILLS,
+    URGENT_PER_WEEK,
+    URGENT_WINDOWS,
 )
 from app.forms import bad_request, query, str_form
 from app.geo import neighborhoods, round_point
@@ -56,8 +61,10 @@ from app.ui import (
     TITLE,
     BigButton,
     CauseChip,
+    Field,
     Icon,
     Router,
+    SimplePage,
     TextInput,
     VolunteerNav,
 )
@@ -75,6 +82,7 @@ GRID = "grid grid-cols-[2.75rem_repeat(3,minmax(0,1fr))] items-center gap-2"
 
 UNRECOGNIZED = prefs.UNRECOGNIZED
 NO_CAUSE = "Pick at least one cause you love or are open to."
+QUIET_SAME = "Quiet hours need a start and an end that differ."
 NO_PLACE = "Tell us your main place: a neighborhood, a ZIP code or your location."
 
 # A toggle chip: a visually hidden radio or checkbox, then the pill that shows its state.
@@ -282,6 +290,51 @@ def Group(title, cls, name, options, value):
                 for v, label in options
             ],
             cls=cls,
+        ),
+    )
+
+
+def Hour(name, value):
+    return Select(
+        *[Option(label, value=str(h), selected=h == value) for h, label in HOURS],
+        name=name,
+        cls="uk-select",
+    )
+
+
+def LastMinute(u):
+    """The opt-in to urgent calls: off unless turned on, and private."""
+    return Section(
+        "Last-minute calls",
+        "When a nonprofit near you is short of people in the next 48 hours and you're "
+        "free then, we can text you (or email you, without a number). Off unless you "
+        "turn it on. Nonprofits never see these settings.",
+        Hidden(name="sections", value="urgent"),
+        Chip(
+            "checkbox",
+            "urgent_on",
+            "1",
+            "Tell me about last-minute calls",
+            u["on"],
+        ),
+        Group(
+            "For shifts starting",
+            "grid grid-cols-2 gap-2",
+            "urgent_window",
+            URGENT_WINDOWS,
+            u["window"],
+        ),
+        Div(
+            Field("No texts from", Hour("urgent_quiet_from", u["quiet_from"])),
+            Field("Until", Hour("urgent_quiet_to", u["quiet_to"])),
+            cls="grid grid-cols-2 gap-2",
+        ),
+        Group(
+            "At most, a week",
+            "grid grid-cols-3 gap-2",
+            "urgent_per_week",
+            URGENT_PER_WEEK,
+            u["per_week"],
         ),
     )
 
@@ -532,6 +585,7 @@ def PrefsPage(f, error=None, saved=False):
                 "Openings that need it rank higher.",
                 Checks("skills", SKILLS, f["skills"], "flex flex-wrap gap-2"),
             ),
+            LastMinute(f["urgent"]),
             Div(BigButton("Save preferences"), cls="cm-savebar z-20 -mx-1 py-3"),
             action="/me/preferences",
             method="post",
@@ -616,6 +670,15 @@ def _sync_save(req, form):
         else saved["surprise"],
         "skills": form.getlist("skills"),
         "frequency": form.get("frequency", ""),
+        "urgent": {
+            "on": form.get("urgent_on") == "1",
+            **{
+                k: form.get(f"urgent_{k}", "")
+                for k in ("window", "quiet_from", "quiet_to", "per_week")
+            },
+        }
+        if "urgent" in form.getlist("sections")
+        else saved["urgent"],
         "place_forms": [
             {
                 k: form.get(f"place{i + 1}_{k}", "")
@@ -636,6 +699,21 @@ def _sync_save(req, form):
         pf["lat"], pf["lon"] = (
             (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
         )
+    u = f["urgent"]
+    if (
+        u["window"] not in {v for v, _ in URGENT_WINDOWS}
+        or str(u["per_week"]) not in {str(v) for v, _ in URGENT_PER_WEEK}
+        or not {str(u["quiet_from"]), str(u["quiet_to"])} <= {str(h) for h, _ in HOURS}
+        or form.get("urgent_on") not in (None, "1")
+    ):
+        f["urgent"] = saved["urgent"]  # the page shows what is saved
+        return PrefsPage(f, UNRECOGNIZED)
+    u = f["urgent"] = {
+        **u,
+        **{k: int(u[k]) for k in ("quiet_from", "quiet_to", "per_week")},
+    }
+    if u["quiet_from"] == u["quiet_to"]:
+        return PrefsPage(f, QUIET_SAME)
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
         or not set(f["availability"]) <= SLOTS
@@ -677,3 +755,54 @@ def _sync_save(req, form):
         "deck_view", None
     )  # the deck's filter sheet starts again from these
     return Redirect("/me/preferences?saved=1")
+
+
+UNSUBSCRIBE = "Stop last-minute calls"
+
+
+def _bad_unsubscribe():
+    return FtResponse(
+        SimplePage(
+            UNSUBSCRIBE,
+            P(
+                "That link isn't valid. You can turn last-minute calls off in Me, then "
+                "Preferences.",
+                cls="mt-2 text-ink",
+            ),
+        ),
+        status_code=404,
+    )
+
+
+@ar("/urgent/off/{key}", methods=["GET"])
+def urgent_off_page(key: str):
+    """An urgent email's unsubscribe link: a page that asks, so a mail scanner that
+    follows links turns nothing off; the button posts."""
+    if data.urgent_off_volunteer(key) is None:
+        return _bad_unsubscribe()
+    return SimplePage(
+        UNSUBSCRIBE,
+        P(
+            "Stop texts and emails about nonprofits near you that are short of people "
+            "at the last minute?",
+            cls="mt-2 text-ink",
+        ),
+        Form(
+            BigButton("Turn them off"), action=f"/urgent/off/{key}", method="post",
+            cls="mt-4",
+        ),
+    )  # fmt: skip
+
+
+@ar("/urgent/off/{key}", methods=["POST"])
+def urgent_off(key: str):
+    if not data.urgent_off(key):
+        return _bad_unsubscribe()
+    return SimplePage(
+        UNSUBSCRIBE,
+        P(
+            "Done: no more last-minute calls. You can turn them on again in Me, then "
+            "Preferences.",
+            cls="mt-2 text-ink",
+        ),
+    )

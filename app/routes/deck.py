@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 from fasthtml.common import (
@@ -32,6 +33,7 @@ from app.ui import (
     HEART,
     PEOPLE,
     PIN,
+    AddToHomeScreen,
     CauseChip,
     EventLink,
     Icon,
@@ -125,6 +127,17 @@ def OpeningCard(c):
     return Div(
         CardImage(c),
         Div(
+            # an urgent call: "Urgent · today 9 am · needs 2"
+            P(
+                c["urgent"],
+                cls="inline-flex rounded-full bg-red-700 px-3 py-1 text-xs "
+                "font-extrabold text-white",
+            )
+            if c.get("urgent")
+            else None,
+            P(c["booked"], cls="text-sm font-bold text-red-800")
+            if c.get("booked")
+            else None,
             Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
             H2(
                 c["title"],
@@ -167,10 +180,13 @@ def RoundButton(label, liked, icon, cls):
     )
 
 
-def SwipeButtons(opening_id, today=False):
+def SwipeButtons(opening_id, today=False, call_id=None):
+    """call_id: the urgent call the card shows, so a like just after it fills still
+    counts toward it."""
     return PlainForm(
         Hidden(name="opening_id", value=str(opening_id)),
         Hidden(name="today", value="1") if today else None,
+        Hidden(name="call_id", value=str(call_id)) if call_id else None,
         RoundButton(
             "Pass",
             "0",
@@ -392,12 +408,17 @@ def FilterSheet(uid, today, count, view):
     )
 
 
-def DeckArea(uid, today=False, view=None, notice=None):
+def DeckArea(uid, today=False, view=None, notice=None, first=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet's round button sits left of Pass and Like, clear of the picture and
     adding no height (swipe.js finds the swipe form by its action). notice: a line above
-    the card (a swipe that didn't count)."""
-    cards, count = data.deck_and_count(uid, limit=1, today=today, view=view)
+    the card (a swipe that didn't count). first: the opening an urgent call's text links
+    to, on top while the deck holds it."""
+    cards, count = data.deck_and_count(
+        uid, limit=1, today=today, view=view, first=first
+    )
+    if first and (not cards or cards[0]["id"] != first):
+        notice = notice or "That last-minute call has filled or ended."
     note = (
         P(notice, role="status", cls="mb-2 text-center text-sm font-semibold text-ink")
         if notice
@@ -424,7 +445,7 @@ def DeckArea(uid, today=False, view=None, notice=None):
                 FilterSheet(uid, today, count, view),
                 cls="pointer-events-auto",
             ),
-            SwipeButtons(c["id"], today),
+            SwipeButtons(c["id"], today, c["call_id"]),
             Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
             cls="cm-swipe-buttons pointer-events-none mt-4 flex items-center "
             "justify-center gap-6",
@@ -481,12 +502,15 @@ def dismiss_photo_nudge(req):
 @ar("/deck")
 def deck(req):
     today = query(req, "today") == "1"
+    card = query(req, "card")
+    first = int(card) if card and re.fullmatch(r"[0-9]{1,18}", card) else None
     me = data.get_profile(req.scope["uid"])
     return Container(
         VolunteerNav("openings"),
         H1("Openings near you", cls="sr-only"),  # the Openings tab says it on screen
         TodaySwitch(today),
-        DeckArea(req.scope["uid"], today, deck_view(req)),
+        AddToHomeScreen(),  # the deck only: elsewhere it would push the page's content
+        DeckArea(req.scope["uid"], today, deck_view(req), first=first),
         None if me.photo_key or me.photo_nudge_dismissed_at else PhotoNudge(),
         Script(src="/static/swipe.js", defer=True),
         cls="max-w-md pb-6",

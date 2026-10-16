@@ -65,6 +65,7 @@ from app.db import (
     seed_demo,
     shifts,
     swipes,
+    urgent_calls,
 )
 from app.match import MODE_KMH
 from app.routes import chat as chat_routes
@@ -94,6 +95,7 @@ def fresh_db():
         places,
         deck_empties,
         photos,
+        urgent_calls,
     ):
         table.delete_where()
     security.reset_buckets()

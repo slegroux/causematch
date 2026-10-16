@@ -267,8 +267,10 @@ def Pill(text, tone):
 
 
 def AddToHomeScreen():
-    """A small toast above the tab bar, hidden until static/a2hs.js decides: iPhone Safari,
-    in a tab, not dismissed. The outer box carries no display class, so `hidden` holds."""
+    """A hint at the top of the deck, under the "I'm free today" switch, hidden until
+    static/a2hs.js decides: iPhone Safari, in a tab, not dismissed. In the page's flow,
+    never fixed: fixed above the tab bar it covered Pass, Like and the filter button. The
+    outer box carries no display class, so `hidden` holds."""
     return Div(
         Div(
             P(
@@ -289,7 +291,7 @@ def AddToHomeScreen():
         ),
         id="a2hs",
         hidden=True,
-        cls="cm-toast fixed inset-x-3 z-40",
+        cls="mb-3",
     )
 
 
@@ -334,9 +336,8 @@ def TabBar(active):
 
 
 def VolunteerNav(active=None):
-    """The volunteer's header and bottom tab bar, plus the Home Screen toast on the deck
-    only (elsewhere it would cover the chat composer). The bar is fixed, so it can sit
-    anywhere in the page; static/theme.css pads the body above it."""
+    """The volunteer's header and bottom tab bar. The bar is fixed, so it can sit anywhere
+    in the page; static/theme.css pads the body above it."""
     return Div(
         Div(
             A(
@@ -346,7 +347,6 @@ def VolunteerNav(active=None):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        AddToHomeScreen() if active == "openings" else None,
         TabBar(active),
     )
 

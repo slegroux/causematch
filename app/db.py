@@ -129,6 +129,12 @@ class Profile:
     bio: str  # optional, up to choices.MAX_BIO characters
     interests: str  # JSON list of choices.INTERESTS values
     photo_nudge_dismissed_at: str  # UTC; "Not now" on the deck's "Add a photo"
+    # Last-minute calls, private (app/prefs.py urgent): off unless turned on
+    urgent_on: bool
+    urgent_window: str  # today|48h (NULL: 48h)
+    urgent_quiet_from: int  # local hour no notice is sent from (NULL: 21)
+    urgent_quiet_to: int  # ... until (NULL: 8); from > to wraps past midnight
+    urgent_per_week: int  # 1..3 (NULL: 3)
 
 
 class OrgMember:
@@ -176,6 +182,9 @@ class Match:
     decided_by: int
     withdrawn_at: str
     org_blind: bool  # liked after the org blocked this volunteer: the org never sees it
+    urgent_call_id: (
+        int  # a like on an open UrgentCall's card: it counts toward that call
+    )
 
 
 class Message:
@@ -209,7 +218,7 @@ class Shift:
 
 class Notification:
     id: int
-    kind: str  # accepted|message|likes|reminder
+    kind: str  # accepted|message|likes|reminder|urgent|auto
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
     recipient_id: int  # the volunteer's profile id; for "likes", the org id
     sent_at: str  # UTC; when this stream's last send was claimed
@@ -333,6 +342,33 @@ class Photo:
 
 
 photos = db.create(Photo, pk="key", transform=True)
+
+
+class UrgentCall:
+    """A nonprofit short of people for a shift in the next 48 hours: "need 2 more for
+    tomorrow 9 am" on one of its openings (app/data.py post_urgent_call). Likes made while
+    it is open carry its id (Match.urgent_call_id); it fills at `needed` accepted ones."""
+
+    id: int
+    opening_id: int
+    org_id: int
+    starts_at: (
+        str  # the shift, LA wall clock, naive ISO minutes (like Opening.starts_at)
+    )
+    needed: int  # how many more people
+    auto_accept: bool  # the first `needed` likes are accepted without a decision
+    status: (
+        str  # open|filled|closed (closed by the org, expired, or its opening closed)
+    )
+    created_by: int  # the coordinator
+    created_at: str  # UTC
+    ended_at: str  # UTC, when it stopped being open
+    waves: int  # notification waves sent (app/notify.py send_urgent_waves), up to 2
+    wave_at: str  # UTC, when the last wave went out
+
+
+urgent_calls = db.create(UrgentCall, pk="id", transform=True)
+urgent_calls.create_index(["org_id", "created_at"], if_not_exists=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")

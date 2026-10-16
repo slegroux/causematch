@@ -133,6 +133,7 @@ def main():
             ("o07-privacy", "/privacy"),
             ("o08-organization", "/org/organization"),
             ("o09-opening-media", f"/org/openings/{info['opening_id']}/media"),
+            ("o11-urgent-call", f"/org/openings/{info['opening_id']}/urgent"),
         ):
             o.goto(path)
             shot(o, name, full_page=name != "o06-chat")

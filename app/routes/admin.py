@@ -38,6 +38,8 @@ from app.metrics import (
     MIN_DENOM,
     MIN_GROUP_VOLUNTEERS,
     REPEAT_WINDOW_DAYS,
+    URGENT,
+    URGENT_DEFINITIONS,
     counts,
     csv_rows,
     fmt,
@@ -94,21 +96,22 @@ def cell(metric, c):
     )
 
 
-def MetricsTable(title, groups):
+def MetricsTable(title, groups, columns=METRICS):
+    """columns: {metric: label}, the pilot's METRICS or the urgent calls' URGENT."""
     return Div(
         H2(title, cls="font-display text-lg font-extrabold text-ink mt-6 mb-2"),
         Table(
             Thead(
                 Tr(
                     Th("", cls="px-3 py-2 text-left"),
-                    *[Th(name, cls="px-3 py-2 text-left") for name in METRICS.values()],
+                    *[Th(name, cls="px-3 py-2 text-left") for name in columns.values()],
                 )
             ),
             Tbody(
                 *[
                     Tr(
                         Th(name, cls="px-3 py-2 text-left"),
-                        *[cell(m, c[m]) for m in METRICS],
+                        *[cell(m, c[m]) for m in columns],
                     )
                     for name, c in groups.items()
                 ]
@@ -125,9 +128,9 @@ def Definitions():
         Dl(
             *[
                 x
-                for metric, text in DEFINITIONS.items()
+                for metric, text in {**DEFINITIONS, **URGENT_DEFINITIONS}.items()
                 for x in (
-                    Dt(METRICS[metric], cls="font-semibold"),
+                    Dt({**METRICS, **URGENT}[metric], cls="font-semibold"),
                     Dd(text, cls=TextPresets.muted_sm + " mb-2"),
                 )
             ]
@@ -194,6 +197,7 @@ def admin_metrics():
                 )
                 for kind, title in BREAKDOWNS.items()
             ],
+            MetricsTable("Last-minute calls", {"All": m["urgent"]}, URGENT),
             Definitions(),
             action=A(
                 "Download CSV",

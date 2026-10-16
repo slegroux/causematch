@@ -33,6 +33,13 @@ COMMITMENT = [
     ("recurring", "Recurring"),
     ("either", "Either"),
 ]
+# Last-minute calls (an org's urgent call, app/data.py post_urgent_call), opt-in
+URGENT_WINDOWS = [("today", "Same day only"), ("48h", "Today or tomorrow")]
+URGENT_PER_WEEK = [(1, "1"), (2, "2"), (3, "3")]  # at most 3 a week, whatever is picked
+HOURS = [
+    (h, {0: "Midnight", 12: "Noon"}.get(h, f"{h % 12} {'am' if h < 12 else 'pm'}"))
+    for h in range(24)
+]
 
 # Kind of work: optional on an opening ("" is not said, which scores neutral) and a
 # preference for a volunteer, who can also say "either" / "any".

@@ -142,7 +142,42 @@ def Meta(icon, text):
     )
 
 
-def OpeningRow(o, counts):
+def UrgentLine(o, urgent, accepted):
+    """The opening's open urgent call and a way to stop it, or a link to post one."""
+    if urgent:
+        call = urgent["call"]
+        return Div(
+            Pill(
+                data.urgent_label(call.starts_at, call.needed - urgent["found"]), "wait"
+            ),
+            P(
+                f"{urgent['found']} of {call.needed} found · "
+                + (
+                    "the first ones who say yes are in"
+                    if call.auto_accept
+                    else "you decide each one"
+                ),
+                cls="text-xs font-semibold text-ink-muted",
+            ),
+            PlainForm(
+                Button("Stop urgent call", cls=ButtonT.default),
+                action=f"/org/openings/{o.id}/urgent/close",
+                method="post",
+            ),
+            cls="space-y-2 rounded-2xl bg-cream p-3",
+        )
+    if o.status == "open" and accepted < o.slots:
+        return Div(
+            A(
+                "Short of people? Post an urgent call",
+                href=f"/org/openings/{o.id}/urgent",
+                cls=SMALL_LINK + " text-sm",
+            )
+        )
+    return None
+
+
+def OpeningRow(o, counts, urgent=None):
     status, tone = OPENING_STATUS.get(o.status, (o.status.title(), "off"))
     pending, accepted = counts.get("pending", 0), counts.get("accepted", 0)
     return Div(
@@ -181,6 +216,7 @@ def OpeningRow(o, counts):
         )
         if o.slots
         else None,
+        UrgentLine(o, urgent, accepted),
         A(
             "Photo and event link",
             href=f"/org/openings/{o.id}/media",
@@ -208,9 +244,13 @@ def org_home(req, error=""):
     profile = data.get_profile(uid)
     by_org = data.org_openings(uid)
     counts = data.opening_counts(uid)
+    urgent = data.org_urgent_calls(uid)
     sections = []
     for org, role in data.coordinator_orgs(uid):
-        rows = [OpeningRow(o, counts.get(o.id, {})) for o in by_org.get(org.id, [])]
+        rows = [
+            OpeningRow(o, counts.get(o.id, {}), urgent.get(o.id))
+            for o in by_org.get(org.id, [])
+        ]
         sections.append(
             Div(
                 Div(
@@ -610,6 +650,147 @@ def _sync_new_opening_save(req, form):
 def close(req, opening_id: int):
     try:
         data.close_opening(req.scope["uid"], opening_id)
+    except PermissionError:
+        return Refusal(403)
+    return Redirect("/org")
+
+
+URGENT_ERRORS = {
+    "not open": "This opening is filled or closed, so it can't take an urgent call.",
+    "already": "This opening already has an urgent call. Stop it first to post another.",
+    "time": "Pick a time in the next 48 hours.",
+    "limit": f"You can post {data.URGENT_PER_DAY} urgent calls a day. Try again tomorrow.",
+}
+AUTO_ACCEPT = (
+    "Accept the first ones who say yes, up to that number, without asking me "
+    "(they go straight on the schedule)"
+)
+
+
+def UrgentPage(uid, opening_id, f=None, error=None):
+    """Post "need N more for <time within 48 hours>" on an open opening."""
+    o = data.coordinator_opening(uid, opening_id)
+    spots = data.open_spots(uid, opening_id)
+    f = f or {}
+    now = datetime.now(LA)
+    soon = now + timedelta(hours=data.URGENT_HOURS)
+    # the opening's own start when it is soon enough
+    default = (
+        o.starts_at
+        if now.strftime("%Y-%m-%dT%H:%M")
+        < o.starts_at
+        <= soon.strftime("%Y-%m-%dT%H:%M")
+        else ""
+    )
+    return OrgShell(
+        "openings",
+        data.org_waiting(uid),
+        A("Back to your openings", href="/org", cls=SMALL_LINK + " mb-2 text-sm"),
+        H1("Urgent call", cls=ORG_TITLE),
+        P(o.title, cls="pb-4 font-semibold text-ink-muted"),
+        Form(
+            P(
+                "Short of people in the next 48 hours? Volunteers nearby who are free "
+                "and turned on last-minute calls see this opening first, and get a "
+                f"text or email. You can post {data.URGENT_PER_DAY} a day.",
+                cls=TextPresets.muted_sm,
+            ),
+            Field(
+                "When do you need them? (within 48 hours)",
+                TextInput(
+                    name="starts_at",
+                    type="datetime-local",
+                    value=f.get("starts_at", default),
+                    required=True,
+                ),
+            ),
+            Field(
+                f"How many more people? (up to {spots}, the open spots)",
+                TextInput(
+                    name="needed",
+                    type="number",
+                    inputmode="numeric",
+                    min="1",
+                    max=str(max(spots, 1)),
+                    value=f.get("needed", "1"),
+                    required=True,
+                ),
+            ),
+            LabelCheckboxX(
+                AUTO_ACCEPT,
+                name="auto_accept",
+                value="1",
+                checked=f.get("auto_accept") == "1",
+            ),
+            Alert(error, cls=AlertT.error) if error else None,
+            Button("Post urgent call", cls=ButtonT.primary),
+            action=f"/org/openings/{o.id}/urgent",
+            method="post",
+            cls="max-w-md space-y-4 p-5 " + CARD,
+        ),
+    )
+
+
+@ar("/org/openings/{opening_id}/urgent", methods=["GET"])
+def urgent_page(req, opening_id: int):
+    try:
+        return UrgentPage(req.scope["uid"], opening_id)
+    except PermissionError:
+        return Refusal(403)
+
+
+@ar("/org/openings/{opening_id}/urgent", methods=["POST"])
+async def urgent_save(req, opening_id: int):
+    form = await str_form(req)
+    if form is None:
+        return Refusal(400)
+    return await run_in_threadpool(_sync_urgent_save, req, opening_id, form)
+
+
+def _sync_urgent_save(req, opening_id, form):
+    uid = req.scope["uid"]
+    f = {
+        "starts_at": form.get("starts_at", "").strip(),
+        "needed": form.get("needed", "").strip(),
+        "auto_accept": form.get("auto_accept"),
+    }
+    try:
+        spots = data.open_spots(uid, opening_id)
+
+        def fail(msg):
+            return UrgentPage(uid, opening_id, f, msg)
+
+        try:
+            start = datetime.strptime(f["starts_at"], "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return fail(URGENT_ERRORS["time"])
+        local = start.replace(tzinfo=LA)
+        if local.astimezone(UTC).astimezone(LA).replace(tzinfo=None) != start:
+            return fail("That time doesn't exist (clocks skip it). Pick another time.")
+        needs = f"How many more people: a number from 1 to {spots}."
+        if not re.fullmatch(r"[0-9]{1,3}", f["needed"]):
+            return fail(needs)
+        if f["auto_accept"] not in (None, "1"):
+            return fail("Something in that form wasn't recognized. Please try again.")
+        try:
+            data.post_urgent_call(
+                uid,
+                opening_id,
+                start.isoformat(timespec="minutes"),
+                int(f["needed"]),
+                f["auto_accept"] == "1",
+            )
+        except ValueError as e:
+            return fail(URGENT_ERRORS.get(str(e), needs))
+    except PermissionError:
+        return Refusal(403)
+    return Redirect("/org")
+
+
+@ar("/org/openings/{opening_id}/urgent/close", methods=["POST"])
+def urgent_close(req, opening_id: int):
+    try:
+        data.close_urgent_call(req.scope["uid"], opening_id)
     except PermissionError:
         return Refusal(403)
     return Redirect("/org")

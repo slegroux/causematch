@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.metrics import METRICS, pilot_metrics
+from app.metrics import METRICS, URGENT, pilot_metrics
 from app.metrics_rows import fetch_rows
 
 
@@ -25,8 +25,8 @@ def main():
     con = sqlite3.connect(f"file:{Path(a.db).resolve()}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
 
-    def q(sql):
-        return [dict(r) for r in con.execute(sql)]
+    def q(sql, params=()):
+        return [dict(r) for r in con.execute(sql, params)]
 
     try:
         rows = fetch_rows(q)
@@ -43,6 +43,9 @@ def main():
     print(f"completed_pairs: {len({(s['volunteer_id'], s['org_id']) for s in shifts})}")
     for key in METRICS:
         v = overall[key]["value"]
+        print(f"{key}: {'' if v is None else round(v, 4)}")
+    for key in URGENT:
+        v = metrics["urgent"][key]["value"]
         print(f"{key}: {'' if v is None else round(v, 4)}")
     empty = metrics["empty_deck"]
     print(f"empty_deck_views: {empty['views']}")

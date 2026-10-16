@@ -350,7 +350,10 @@ def _preferences(uid):
             "sat_afternoon",
             "sun_morning",
         ],
-        free_dates=[(datetime.now(LA) + timedelta(days=10)).date().isoformat()],
+        # tomorrow too: free for the urgent call (_urgent_call)
+        free_dates=[
+            (datetime.now(LA) + timedelta(days=d)).date().isoformat() for d in (1, 10)
+        ],
         horizon_days=31,
         commitment="either",
         setting="either",
@@ -359,6 +362,9 @@ def _preferences(uid):
         languages=["es"],
         skills=["physical", "car"],
         frequency="weekly",
+        # quiet only 2 to 5 am, so a demo at any usual hour shows the wave
+        urgent={"on": True, "window": "48h", "quiet_from": 2, "quiet_to": 5,
+                "per_week": 3},
         places=[
             {"label": "Home", "lat": home[0], "lon": home[1], "area": "Sawtelle",
              "mode": "car", "max_minutes": 45},
@@ -409,7 +415,9 @@ def drawn_photo(seed=0):
 def seed(seed_file=None):
     """Orgs and openings, then people: a coordinator and an admin, volunteers who liked
     the coordinator's opening, and ME_PHONE's volunteer with an accepted match (chat,
-    upcoming and past shifts) and a pending like. Returns what a demo needs to sign in."""
+    upcoming and past shifts) and a pending like; then the coordinator's urgent call for
+    tomorrow 9 am, the first card in ME_PHONE's deck, and its first wave (the fake SMS log
+    shows ME_PHONE's text). Returns what a demo needs to sign in."""
     from app import data, photos
     from app.db import ensure_causes, matches, openings, orgs, seed_demo
 
@@ -515,12 +523,59 @@ def seed(seed_file=None):
     if pending:
         data.swipe(me, pending.id, True)
     _preferences(me)
+    urgent = _urgent_call(coord, org, first)
     return {
         "org": org.name,
         "match_id": m.id,
         "coordinator_id": coord,
         "opening_id": first.id,
+        "urgent_opening_id": urgent,
     }
+
+
+def _urgent_call(coord, org, first):
+    """An urgent call, "needs 2 for tomorrow 9 am", auto-accepting, on the coordinator's
+    other open opening (the invented seed gives the org only one, so it adds one), and
+    its first wave of texts. The opening's id."""
+    from app import data, notify
+    from app.db import openings
+
+    other = next(
+        (
+            o
+            for o in openings(order_by="id")
+            if o.org_id == org.id and o.status == "open" and o.id != first.id
+        ),
+        None,
+    )
+    oid = (
+        other.id
+        if other
+        else data.create_opening(
+            coord,
+            org.id,
+            title="Restock the community fridge",
+            about="Unload donated produce and restock the fridge outside the pantry.",
+            cause=json.loads(org.causes)[0],
+            lat=org.lat,
+            lon=org.lon,
+            neighborhood="Sawtelle",
+            starts_at=(datetime.now(LA) + timedelta(days=12)).strftime(
+                "%Y-%m-%dT10:00"
+            ),
+            recurrence="weekly",
+            slots=4,
+            orientation_required="no",
+            notes="",
+            reply_channel="email",
+        )
+    )
+    tomorrow = (datetime.now(LA) + timedelta(days=1)).strftime("%Y-%m-%dT09:00")
+    needed = min(2, data.open_spots(coord, oid))
+    if needed:  # a fully booked opening takes no call
+        data.post_urgent_call(coord, oid, tomorrow, needed, True)
+        notify.send_urgent_waves()
+    return oid
 
 
 def sign_in_link(email):

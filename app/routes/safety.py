@@ -416,8 +416,9 @@ def privacy():
             "address), how you get there and how far you'd go; how much you care about "
             "each cause; when you're usually free and specific free dates; how far ahead "
             "to look and one-time or recurring; the kind of work, languages and skills "
-            "you pick; how often you'd like to help; and which of these only show or only "
-            "rank openings.",
+            "you pick; how often you'd like to help; which of these only show or only "
+            "rank openings; and whether you want last-minute calls, for which shifts, "
+            "your quiet hours and how many a week.",
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
@@ -444,8 +445,9 @@ def privacy():
             "Only you see these: your places and your device's location, how you rated "
             "each cause, the days and times you ticked and your specific dates, how far "
             "ahead you look, one-time or recurring, the kind of work and skills you "
-            "picked, which preferences only show or only rank, and Surprise me. They "
-            "decide which openings you see and in what order.",
+            "picked, which preferences only show or only rank, Surprise me, and your "
+            "last-minute call settings. They decide which openings you see and in what "
+            "order.",
             'A nonprofit sees only what "Who sees what" lists, and only after you like '
             "one of its openings: your photo, your first name and last initial (all of your "
             "last name once it accepts you), pronouns, bio and interests, the causes you "
@@ -464,9 +466,11 @@ def privacy():
         Section(
             "Texts and email",
             "We text your sign-in code, a note when a nonprofit says yes, a reminder the "
-            "day before a shift and a note when a nonprofit sends a chat message. Reply "
-            "STOP to end texts. We email coordinators their sign-in link and a note when "
-            "volunteers like an opening.",
+            "day before a shift, a note when a nonprofit sends a chat message and, only "
+            "if you turn them on, last-minute calls (at most 3 a week, never in your "
+            "quiet hours; by email if you have no number for texts). Reply STOP to end "
+            "texts. We email coordinators their sign-in link and a note when volunteers "
+            "like an opening.",
         ),
         Section(
             "How long we keep it, and what stays after you delete",
