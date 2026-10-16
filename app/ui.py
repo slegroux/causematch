@@ -37,7 +37,10 @@ CAUSE_CHIP = {
     "homelessness-services": "bg-cause-homeless-soft text-cause-homeless-ink",
 }
 DEMO_NOTICE = "Demo: sample openings, not affiliated with these organizations"
-PREVIEW_NOTICE = "Preview · sample openings, not affiliated with these organizations"
+PREVIEW_NOTICE = (
+    "Preview · sample openings, not affiliated with these organizations · "
+    "don't enter real details"
+)
 
 
 def PrivacyFooter():

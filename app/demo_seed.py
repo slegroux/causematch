@@ -471,9 +471,14 @@ def seed_preview(seed_dir=None):
     """A preview's startup (main.py): into an empty database only, seed() from seed_dir's
     orgs.json (with logos-raw/ and photos-raw/ beside it), else the invented orgs. The
     coordinator's and the admin's sign-in links go to the log, which Cloud Run keeps;
-    /org/login shows a new one on the page in a preview."""
+    /org/login shows a new coordinator link on the page in a preview."""
+    from app.config import is_preview
     from app.db import orgs
 
+    if not is_preview():
+        raise RuntimeError(
+            "seed_preview runs in a preview only (CAUSEMATCH_ENV=preview)"
+        )
     if orgs.count:
         return
     info = seed(Path(seed_dir) / "orgs.json" if seed_dir else None)

@@ -20,6 +20,14 @@ MAX_REMINDERS_PER_SWEEP = 100  # the rest wait for the next hourly sweep
 LA = ZoneInfo("America/Los_Angeles")
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
+FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days
+
+
+def _record(sent, item):
+    """Append to a fake's .sent, dropping the oldest past FAKE_KEPT."""
+    sent.append(item)
+    if len(sent) > FAKE_KEPT:
+        del sent[0]
 
 
 class FakeVerifier:
@@ -29,7 +37,7 @@ class FakeVerifier:
         self.sent = []
 
     def send(self, phone):
-        self.sent.append((phone, FAKE_CODE))
+        _record(self.sent, (phone, FAKE_CODE))
 
     def check(self, phone, code):
         return code == FAKE_CODE and any(p == phone for p, _ in self.sent)
@@ -96,14 +104,15 @@ def check_code(phone, code):
 
 
 class FakeEmailer:
-    """Test and local-dev emailer: sends nothing, records messages, logs them."""
+    """Test, local-dev and preview emailer: sends nothing, records messages, logs them
+    (the address masked)."""
 
     def __init__(self):
         self.sent = []
 
     def send(self, to, subject, body):
-        self.sent.append((to, subject, body))
-        log.warning("FAKE EMAIL to %s: %s\n%s", to, subject, body)
+        _record(self.sent, (to, subject, body))
+        log.warning("FAKE EMAIL to %s: %s\n%s", mask_email(to), subject, body)
 
 
 class ResendEmailer:
@@ -190,14 +199,21 @@ def mask(phone):
     return "***" + phone[-4:]
 
 
+def mask_email(addr):
+    """An email address for logs: pat@demo.causematch.test -> p***@d***.test."""
+    local, _, domain = addr.partition("@")
+    host, dot, tld = domain.rpartition(".") if "." in domain else (domain, "", "")
+    return f"{local[:1]}***@{host[:1]}***{dot}{tld}"
+
+
 class FakeSMS:
-    """Test and local-dev sender: sends nothing, records (phone, text)."""
+    """Test, local-dev and preview sender: sends nothing, records (phone, text)."""
 
     def __init__(self):
         self.sent = []
 
     def send(self, phone, text):
-        self.sent.append((phone, text))
+        _record(self.sent, (phone, text))
         log.warning("FAKE SMS to %s: %s", mask(phone), text)
 
 

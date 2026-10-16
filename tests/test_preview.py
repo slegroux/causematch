@@ -238,6 +238,13 @@ def test_malformed_or_wrong_credentials_are_refused(preview, header):
     assert r.status_code == 401
 
 
+def test_checking_a_bucket_leaves_nothing_behind():
+    assert security.take_token("preview", "203.0.113.9", take=False)
+    assert ("preview", "203.0.113.9") not in security._buckets
+    assert security.take_token("preview", "203.0.113.9")
+    assert ("preview", "203.0.113.9") in security._buckets
+
+
 def test_guessing_the_password_is_slowed(preview):
     wrong = TestClient(app, headers={"Authorization": basic("g" * 20)})
     first_visit = TestClient(app)
@@ -281,7 +288,8 @@ def test_robots_txt_disallows_everything(preview):
 
 def test_every_page_shows_the_preview_banner(guest, anon):
     assert PREVIEW_NOTICE == (
-        "Preview · sample openings, not affiliated with these organizations"
+        "Preview · sample openings, not affiliated with these organizations · "
+        "don't enter real details"
     )
     for path in ("/login", "/org/login", "/privacy"):
         page = guest.get(path).text
@@ -311,6 +319,37 @@ def test_a_preview_shows_the_sign_in_link_on_the_page(guest):
     # an unknown address: the same notice, no link
     page = guest.post("/org/login/send", data={"email": "nobody@example.org"}).text
     assert "Open your sign-in link" not in page and "/org/login/verify" not in page
+
+
+def test_an_admins_sign_in_link_stays_in_the_log(guest):
+    from app import data
+
+    data.add_admin(*demo_seed.ADMIN)  # its address is in this public repo
+    page = guest.post("/org/login/send", data={"email": demo_seed.ADMIN[0]}).text
+    assert "Open your sign-in link" not in page and "token=" not in page
+    to, _, body = notify.get_emailer().sent[-1]  # sent after the response, as always
+    assert to == demo_seed.ADMIN[0] and "/org/login/verify?token=" in body
+
+
+def test_the_fakes_mask_addresses_and_keep_a_bounded_list(caplog):
+    assert notify.mask_email("pat@demo.causematch.test") == "p***@d***.test"
+    assert notify.mask_email("x@localhost") == "x***@l***"
+    emailer, sms = notify.FakeEmailer(), notify.FakeSMS()
+    with caplog.at_level("WARNING", logger="causematch"):
+        emailer.send("pat@demo.causematch.test", "Hi", "body")
+        sms.send("+13105550199", "text")
+    logged = caplog.text
+    assert "pat@" not in logged and "p***@d***.test" in logged
+    assert "5550199" not in logged and "***0199" in logged
+    verifier = notify.FakeVerifier()
+    for fake, args in (
+        (emailer, ("a@b.test", "s", "b")),
+        (sms, ("+1", "t")),
+        (verifier, ("+1",)),
+    ):
+        for _ in range(notify.FAKE_KEPT + 5):
+            fake.send(*args)
+        assert len(fake.sent) == notify.FAKE_KEPT
 
 
 def test_production_never_shows_the_sign_in_link(anon):
@@ -366,7 +405,9 @@ def _empty():
         table.delete_where()
 
 
-def test_seed_preview_loads_the_seed_dir_and_the_demos_people(seed_dir, caplog):
+def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
+    preview, seed_dir, caplog
+):
     _empty()
     caplog.set_level("INFO", logger="causematch")
     demo_seed.seed_preview(str(seed_dir))
@@ -397,7 +438,20 @@ def test_seed_preview_without_a_seed_dir_uses_the_invented_orgs(preview):
     assert any(m.status == "accepted" for m in matches())
 
 
-def test_seed_preview_only_fills_an_empty_database(seed_dir):
+def test_seed_preview_runs_in_a_preview_only(seed_dir):
+    _empty()
+    with pytest.raises(RuntimeError, match="preview only"):
+        demo_seed.seed_preview(str(seed_dir))
+    assert not orgs.count
+
+
+def test_no_route_imports_the_demo_seed():
+    routes = sorted((ROOT / "app" / "routes").rglob("*.py"))
+    assert routes
+    assert [f.name for f in routes if "demo_seed" in f.read_text()] == []
+
+
+def test_seed_preview_only_fills_an_empty_database(preview, seed_dir):
     before = [o.name for o in orgs()]
     demo_seed.seed_preview(str(seed_dir))
     assert [o.name for o in orgs()] == before

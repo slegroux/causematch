@@ -25,6 +25,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SEED="${ROOT:?}/preview-seed"
 cd "$ROOT"
 
+# PROJECT is an id anyone could have taken (causematch was): send the seed only to the
+# project named Causematch. Unreachable or unknown: refused.
+name="$(gcloud projects describe "$PROJECT" --format 'value(name)' 2>/dev/null)" || name=""
+if [ "$name" != "Causematch" ]; then
+	echo "project $PROJECT is not the one named Causematch (got '$name'): refusing" >&2
+	exit 1
+fi
+# ; separates the env vars below (gcloud's ^;^ syntax): commas and @ appear in values.
+case "$CONTACT_EMAIL" in
+*";"*)
+	echo "CONTACT_EMAIL may not contain ;" >&2
+	exit 1
+	;;
+esac
+
 for f in orgs.json logos-raw photos-raw; do
 	[ -e "$SEED_SRC/$f" ] || {
 		echo "$SEED_SRC/$f is missing" >&2
@@ -60,7 +75,7 @@ gcloud run deploy "$SERVICE" --source . \
 	--allow-unauthenticated \
 	--min-instances 0 --max-instances 1 \
 	--memory 1Gi --cpu 1 --concurrency 80 \
-	--set-env-vars "CAUSEMATCH_ENV=preview,PREVIEW_SEED_DIR=/app/preview-seed,TRUSTED_PROXY_HOPS=1,CAUSEMATCH_FAKE_SMS=1,CAUSEMATCH_FAKE_EMAIL=1,CONTACT_EMAIL=$CONTACT_EMAIL,PUBLIC_BASE_URL=${url:-https://placeholder.invalid}" \
+	--set-env-vars "^;^CAUSEMATCH_ENV=preview;PREVIEW_SEED_DIR=/app/preview-seed;TRUSTED_PROXY_HOPS=1;CAUSEMATCH_FAKE_SMS=1;CAUSEMATCH_FAKE_EMAIL=1;CONTACT_EMAIL=$CONTACT_EMAIL;PUBLIC_BASE_URL=${url:-https://placeholder.invalid}" \
 	--set-secrets "PREVIEW_PASSWORD=PREVIEW_PASSWORD:latest,SESSION_SECRET=SESSION_SECRET:latest,PHONE_HASH_KEY=PHONE_HASH_KEY:latest,TASKS_TOKEN=TASKS_TOKEN:latest"
 
 deployed="$(describe_url)"

@@ -486,6 +486,8 @@ def take_token(name, uid, now=None, take=True):
     capacity, refill = BUCKETS[name]
     now = time.monotonic() if now is None else now
     with _buckets_lock:
+        if not take and (name, uid) not in _buckets:
+            return True  # full, and a check leaves nothing behind
         tokens, last = _buckets.get((name, uid), (capacity, now))
         tokens = min(capacity, tokens + (now - last) * capacity / refill)
         if tokens < 1:

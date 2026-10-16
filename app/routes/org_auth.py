@@ -103,9 +103,12 @@ def _sync_org_login_send(req, form):
     ):
         return security.too_many()
     if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
-        # Nothing is emailed, so the page shows the link: anyone with the preview
-        # password may sign in as any coordinator, of the demo's data only.
-        return EmailForm(notice=SENT, link=_send_link(email))
+        # Nothing is emailed, so the page shows a coordinator's link: anyone with the
+        # preview password may sign in as any coordinator, of the demo's data only. An
+        # admin's link stays in the log.
+        uid = data.coordinator_by_email(email)
+        if uid and data.coordinator_org_ids(uid):
+            return EmailForm(notice=SENT, link=_send_link(email))
     return EmailForm(notice=SENT), BackgroundTask(_send_link, email)
 
 
