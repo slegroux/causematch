@@ -230,11 +230,7 @@ def _post(action, label, cls="uk-btn uk-btn-default"):
 
 
 def ReportRow(r):
-    subject = (
-        f"{r['reporter']} (volunteer) reported {r['target']}"
-        if r["by"] == "volunteer"
-        else f"{r['reporter']} (coordinator) reported {r['target']}"
-    )
+    subject = f"{r['reporter']} ({r['by']}) reported {r['target']}"
     return Div(
         P(subject, cls="font-semibold"),
         P(
@@ -281,37 +277,34 @@ def admin_reports(req):
     )
 
 
-def _resolve_with(fn):
-    def run(req, report_id):
-        try:
-            fn(req.scope["uid"], report_id)
-        except LookupError:
-            pass  # already resolved by someone else
-        except (ValueError, PermissionError):
-            return Refusal(400)
-        return Redirect("/admin/reports")
-
-    return run
+def _resolve(fn, req, report_id):
+    try:
+        fn(req.scope["uid"], report_id)
+    except LookupError:
+        pass  # already resolved by someone else
+    except (ValueError, PermissionError):
+        return Refusal(400)
+    return Redirect("/admin/reports")
 
 
 @ar("/admin/reports/{report_id}/dismiss", methods=["POST"])
 def admin_dismiss(req, report_id: int):
-    return _resolve_with(data.dismiss_report)(req, report_id)
+    return _resolve(data.dismiss_report, req, report_id)
 
 
 @ar("/admin/reports/{report_id}/suspend", methods=["POST"])
 def admin_suspend(req, report_id: int):
-    return _resolve_with(data.suspend_target)(req, report_id)
+    return _resolve(data.suspend_target, req, report_id)
 
 
 @ar("/admin/reports/{report_id}/deactivate", methods=["POST"])
 def admin_deactivate(req, report_id: int):
-    return _resolve_with(data.deactivate_target_org)(req, report_id)
+    return _resolve(data.deactivate_target_org, req, report_id)
 
 
 @ar("/admin/reports/{report_id}/remove-photo", methods=["POST"])
 def admin_remove_photo(req, report_id: int):
-    return _resolve_with(data.remove_reported_photo)(req, report_id)
+    return _resolve(data.remove_reported_photo, req, report_id)
 
 
 @ar("/admin/blocks", methods=["GET"])

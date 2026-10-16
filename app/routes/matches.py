@@ -34,13 +34,12 @@ from app.ui import (
 
 ar = Router()
 
-STATUS = {
-    "pending": "Waiting for the nonprofit",
-    "accepted": "Accepted",
-    "declined": "Not this time",
-    "withdrawn": "Withdrawn",
+STATUS = {  # status: (label, PILL tone)
+    "pending": ("Waiting for the nonprofit", "wait"),
+    "accepted": ("Accepted", "good"),
+    "declined": ("Not this time", "off"),
+    "withdrawn": ("Withdrawn", "off"),
 }
-TONE = {"pending": "wait", "accepted": "good", "declined": "off", "withdrawn": "off"}
 
 
 NOTICE = {
@@ -106,7 +105,7 @@ def _sync_swipe(req, form):
 def MatchRow(m):
     return Div(
         Div(
-            Pill(STATUS[m["status"]], TONE[m["status"]]),
+            Pill(*STATUS[m["status"]]),
             Pill("Blocked", "off") if m["blocked"] else None,
             cls="flex flex-wrap gap-1.5",
         ),

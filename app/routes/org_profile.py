@@ -246,28 +246,26 @@ def _org_page_with(uid, org_id, error):
     return OrganizationPage(uid, errors={org_id: (None, error)})
 
 
-@ar("/org/organization/{org_id}/logo", methods=["POST"])
-async def save_logo(req, org_id: int):
+async def _org_picture(req, org_id, kind):
+    """An org's logo or photo (kind), uploaded from the organization page."""
     uid = req.scope["uid"]
     return await _upload(
         req,
         partial(data.coordinator_org, uid, org_id),
-        partial(data.set_org_picture, uid, org_id, "logo"),
+        partial(data.set_org_picture, uid, org_id, kind),
         partial(_org_page_with, uid, org_id),
         "/org/organization?notice=saved",
     )
+
+
+@ar("/org/organization/{org_id}/logo", methods=["POST"])
+async def save_logo(req, org_id: int):
+    return await _org_picture(req, org_id, "logo")
 
 
 @ar("/org/organization/{org_id}/photo", methods=["POST"])
 async def save_org_photo(req, org_id: int):
-    uid = req.scope["uid"]
-    return await _upload(
-        req,
-        partial(data.coordinator_org, uid, org_id),
-        partial(data.set_org_picture, uid, org_id, "photo"),
-        partial(_org_page_with, uid, org_id),
-        "/org/organization?notice=saved",
-    )
+    return await _org_picture(req, org_id, "photo")
 
 
 # --- an opening's photo and event link ---------------------------------------------------

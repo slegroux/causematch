@@ -30,12 +30,11 @@ from app.ui import (
 
 ar = Router()
 
-SHIFT_STATUS = {
-    "scheduled": "Not marked yet",
-    "completed": "Attended",
-    "no_show": "No-show",
+SHIFT_STATUS = {  # status: (label, PILL tone)
+    "scheduled": ("Not marked yet", "wait"),
+    "completed": ("Attended", "good"),
+    "no_show": ("No-show", "off"),
 }
-SHIFT_TONE = {"scheduled": "wait", "completed": "good", "no_show": "off"}
 NOTICE = {
     "unavailable": (
         "That didn't go through. A shift can be marked once it has started, corrected "
@@ -49,7 +48,9 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
     """for_org=True: a coordinator's card, naming the volunteer; else the org's name.
     status and tone override the pill's text and color (PILL in app/ui.py)."""
     return Div(
-        Pill(status or SHIFT_STATUS[s["status"]], tone or SHIFT_TONE[s["status"]]),
+        Pill(
+            status or SHIFT_STATUS[s["status"]][0], tone or SHIFT_STATUS[s["status"]][1]
+        ),
         P(s["title"], cls="font-bold leading-snug text-ink"),
         VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
         P(
@@ -167,11 +168,10 @@ async def mark(req, shift_id: int):
     result = form.get("result") if form else None
     if result not in ("attended", "no_show"):
         return Refusal(400)
-    return await run_in_threadpool(_sync_mark, req, form, shift_id)
+    return await run_in_threadpool(_sync_mark, req, result, shift_id)
 
 
-def _sync_mark(req, form, shift_id: int):
-    result = form.get("result") if form else None
+def _sync_mark(req, result, shift_id: int):
     try:
         data.complete_shift(req.scope["uid"], shift_id, result == "attended")
     except PermissionError:
