@@ -12,7 +12,7 @@ from fasthtml.common import (
     to_xml,
 )
 from fasthtml.common import Form as PlainForm
-from monsterui.all import Container, TextPresets
+from monsterui.all import TextPresets
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
@@ -20,16 +20,16 @@ from app import data, notify, security
 from app.auth import ws_session_user
 from app.forms import bad_request, query, str_form
 from app.ui import (
-    BACK,
     SEND,
     SMALL_LINK,
+    BackLink,
     Icon,
     OrgShell,
     Refusal,
     Router,
     TextInput,
     VolunteerHeader,
-    VolunteerNav,
+    VolunteerShell,
 )
 
 ar = Router()
@@ -121,13 +121,7 @@ def ChatPage(uid, match_id, role, notice=""):
         ws_connect=f"{base}/{match_id}/ws" if head["writable"] else None,
     )
     content = (
-        A(
-            Icon(BACK, size=18),
-            f"Back to {back[1].lower()}",
-            href=back[0],
-            cls="-ml-1 inline-flex min-h-11 items-center gap-1 text-sm font-semibold "
-            "text-ink-muted hover:text-ink",
-        ),
+        BackLink(back[0], f"Back to {back[1].lower()}"),
         Div(
             H1(
                 head["title"],
@@ -162,7 +156,7 @@ def ChatPage(uid, match_id, role, notice=""):
     )
     if role == "coordinator":  # the nonprofit's own top nav, from the inbox
         return OrgShell("inbox", data.org_waiting(uid), Div(*content, cls="max-w-md"))
-    return Container(VolunteerNav("matches"), *content, cls="max-w-md pb-8")
+    return VolunteerShell("matches", *content)
 
 
 def _chat_page(req, match_id, role, notice):

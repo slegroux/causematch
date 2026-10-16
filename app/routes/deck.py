@@ -28,25 +28,25 @@ from app.forms import bad_request, query, str_form
 from app.routes.prefs import Chip
 from app.ui import (
     CALENDAR,
+    CARD,
     CAUSE_CHIP,
     CROSS,
     HEART,
+    ORG_SECTION,
     PEOPLE,
     PIN,
+    SMALL_LINK,
     AddToHomeScreen,
     CauseChip,
     EventLink,
     Icon,
     LogoBadge,
+    Meta,
     Router,
     VolunteerNav,
 )
 
 ar = Router()
-
-
-def when(starts_at):
-    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
 
 
 def place_line(c):
@@ -55,14 +55,6 @@ def place_line(c):
     if c["distance"]:
         return f"{c['neighborhood']} · about {c['distance']} away"
     return c["neighborhood"]
-
-
-def Meta(icon, text):
-    return P(
-        Icon(icon, size=16, cls="text-ink-muted"),
-        Span(text),
-        cls="flex items-center gap-2 text-sm text-ink",
-    )
 
 
 def CauseArt(slug):
@@ -160,8 +152,9 @@ def OpeningCard(c):
         # classes, not style attributes: the CSP forbids them (static/swipe.js sets styles
         # from script, which it allows)
         # cm-urgent (static/theme.css): an urgent call's lines take the picture's room
-        cls="w-full select-none touch-pan-y overflow-hidden rounded-3xl border "
-        "border-line bg-white shadow-warm" + (" cm-urgent" if c.get("urgent") else ""),
+        cls="w-full select-none touch-pan-y overflow-hidden "
+        + CARD
+        + (" cm-urgent" if c.get("urgent") else ""),
         data_swipe_card="1",
     )
 
@@ -243,8 +236,7 @@ def EmptyDeck(today=False, relax=None):
             href="/matches",
             cls="uk-btn mt-2 px-6 " + ("uk-btn-default" if relax else "uk-btn-primary"),
         ),
-        cls="space-y-3 rounded-3xl border border-line bg-white px-6 py-10 text-center "
-        "shadow-warm",
+        cls="space-y-3 px-6 py-10 text-center " + CARD,
     )
 
 
@@ -327,7 +319,7 @@ def FilterSheet(uid, today, count, view):
         PlainForm(
             Hidden(name="today", value="1") if today else None,
             Div(
-                H2("Filters", cls="font-display text-lg font-extrabold text-ink"),
+                H2("Filters", cls=ORG_SECTION),
                 # static/swipe.js closes the <details>; without script, Show closes it
                 Button(
                     Icon(CROSS, size=20),
@@ -402,8 +394,7 @@ def FilterSheet(uid, today, count, view):
             # fixed above the tab bar (cm-filter-sheet in static/theme.css), never
             # taller than the screen above it; a short screen scrolls it
             cls="cm-filter-sheet fixed inset-x-4 z-40 mx-auto max-w-[22rem] "
-            "space-y-4 overflow-y-auto rounded-3xl border border-line bg-white p-5 "
-            "shadow-warm",
+            "space-y-4 overflow-y-auto p-5 " + CARD,
         ),
         cls="relative z-20",
     )
@@ -482,15 +473,14 @@ def PhotoNudge():
                 Button(
                     "Not now",
                     type="submit",
-                    cls="inline-flex min-h-11 items-center px-2 text-sm font-semibold "
-                    "text-ink-muted underline underline-offset-4 hover:text-ink",
+                    cls=SMALL_LINK + " px-2 text-sm",
                 ),
                 action="/deck/photo-nudge/dismiss",
                 method="post",
             ),
             cls="flex items-center gap-4",
         ),
-        cls="mt-6 space-y-3 rounded-3xl border border-line bg-white p-4 shadow-warm",
+        cls="mt-6 space-y-3 p-4 " + CARD,
     )
 
 

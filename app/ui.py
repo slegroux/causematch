@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fasthtml.common import (
     H1,
     A,
@@ -156,13 +158,13 @@ def Router():
     return APIRouter(body_wrap=body_wrap)
 
 
-def Checks(name, options, checked=()):
+def Checks(name, options, checked=(), cls="space-y-1"):
     return Div(
         *[
             LabelCheckboxX(label, name=name, value=value, checked=value in checked)
             for value, label in options
         ],
-        cls="space-y-1",
+        cls=cls,
     )
 
 
@@ -246,6 +248,29 @@ def Icon(paths, size=24, filled=False, cls=""):
         stroke_linejoin="round",
         aria_hidden="true",
         cls=f"shrink-0 {cls}".strip(),
+    )
+
+
+def Meta(icon, text):
+    """One fact of an opening (when, where, how many), after its icon."""
+    return P(
+        Icon(icon, size=16, cls="text-ink-muted"),
+        Span(text),
+        cls="flex items-center gap-2 text-sm text-ink",
+    )
+
+
+def when(starts_at):
+    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
+
+
+def BackLink(href, text):
+    return A(
+        Icon(BACK, size=18),
+        text,
+        href=href,
+        cls="-ml-1 inline-flex min-h-11 items-center gap-1 text-sm font-semibold "
+        "text-ink-muted hover:text-ink",
     )
 
 
@@ -341,6 +366,11 @@ def VolunteerNav(active=None):
         ),
         TabBar(active),
     )
+
+
+def VolunteerShell(active, *content):
+    """A volunteer page: the header and tab bar, then the content in one narrow column."""
+    return Container(VolunteerNav(active), *content, cls="max-w-md pb-8")
 
 
 # a page's H1 and a section's H2 on the staff pages (nonprofit, admin)

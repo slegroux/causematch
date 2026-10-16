@@ -25,7 +25,7 @@ from fasthtml.common import (
     Select,
     Span,
 )
-from monsterui.all import Alert, AlertT, Container
+from monsterui.all import Alert, AlertT
 from starlette.concurrency import run_in_threadpool
 
 from app import data, prefs
@@ -49,12 +49,13 @@ from app.choices import (
     URGENT_PER_WEEK,
     URGENT_WINDOWS,
 )
-from app.forms import bad_request, query, str_form
-from app.geo import neighborhoods, round_point
+from app.forms import bad_request, query, shown_point, str_form
+from app.geo import neighborhoods
 from app.ui import (
     BACK,
     CARD,
     HEART,
+    ORG_SECTION,
     PEOPLE,
     PIN,
     SHIELD,
@@ -66,7 +67,7 @@ from app.ui import (
     Router,
     SimplePage,
     TextInput,
-    VolunteerNav,
+    VolunteerShell,
 )
 
 ar = Router()
@@ -80,7 +81,6 @@ SLOTS = {f"{d}_{p}" for d, _ in DAYS for p, _ in PARTS}
 CHECK = ("M5 12.5 10 17.5 19.5 7",)
 GRID = "grid grid-cols-[2.75rem_repeat(3,minmax(0,1fr))] items-center gap-2"
 
-UNRECOGNIZED = prefs.UNRECOGNIZED
 NO_CAUSE = "Pick at least one cause you love or are open to."
 QUIET_SAME = "Quiet hours need a start and an end that differ."
 NO_PLACE = "Tell us your main place: a neighborhood, a ZIP code or your location."
@@ -160,7 +160,7 @@ def SharedNote(detail=""):
 def Section(title, hint, *content, shared=None):
     """shared: None for a private section, else the detail its SharedNote adds."""
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink"),
+        H2(title, cls=ORG_SECTION),
         P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
         SharedNote(shared) if shared is not None else None,
         *content,
@@ -398,35 +398,23 @@ def PlaceFields(slot, pf, named=True):
             P(id=f"{n}_status", aria_live="polite", cls="text-sm text-ink-muted"),
             cls="space-y-1.5",
         ),
-        Fieldset(
-            Legend("Getting there", cls="uk-form-label mb-1.5"),
-            Div(
-                *[
-                    Chip("radio", f"{n}_mode", v, label, pf["mode"] == v)
-                    for v, label in MODES
-                ],
-                cls="grid grid-cols-4 gap-2",
-            ),
+        Group(
+            "Getting there", "grid grid-cols-4 gap-2", f"{n}_mode", MODES, pf["mode"]
         ),
-        Fieldset(
-            Legend("Up to (minutes)", cls="uk-form-label mb-1.5"),
-            Div(
-                *[
-                    Chip(
-                        "radio", f"{n}_minutes", str(v), label, pf["minutes"] == str(v)
-                    )
-                    for v, label in MAX_MINUTES
-                ],
-                cls="grid grid-cols-5 gap-1.5",
-            ),
+        Group(
+            "Up to (minutes)",
+            "grid grid-cols-5 gap-1.5",
+            f"{n}_minutes",
+            MAX_MINUTES,
+            pf["minutes"],
         ),
         cls="space-y-3 rounded-2xl bg-cream p-4",
     )
 
 
 def PrefsPage(f, error=None, saved=False):
-    return Container(
-        VolunteerNav("me"),
+    return VolunteerShell(
+        "me",
         A(
             Icon(BACK, size=18),
             "Me",
@@ -592,7 +580,6 @@ def PrefsPage(f, error=None, saved=False):
             cls="space-y-4",
         ),
         Script(src="/static/geo.js", defer=True),
-        cls="max-w-md pb-8",
     )
 
 
@@ -695,10 +682,7 @@ def _sync_save(req, form):
     # resolved from what was posted; an error page shows at most the rounded point
     posted = [dict(pf) for pf in f["place_forms"]]
     for pf in f["place_forms"]:
-        point = round_point(pf["lat"], pf["lon"]) if pf["lat"] or pf["lon"] else None
-        pf["lat"], pf["lon"] = (
-            (f"{point[0]:.2f}", f"{point[1]:.2f}") if point else ("", "")
-        )
+        pf["lat"], pf["lon"] = shown_point(pf["lat"], pf["lon"])
     u = f["urgent"]
     if (
         u["window"] not in {v for v, _ in URGENT_WINDOWS}
@@ -707,7 +691,7 @@ def _sync_save(req, form):
         or form.get("urgent_on") not in (None, "1")
     ):
         f["urgent"] = saved["urgent"]  # the page shows what is saved
-        return PrefsPage(f, UNRECOGNIZED)
+        return PrefsPage(f, prefs.UNRECOGNIZED)
     u = f["urgent"] = {
         **u,
         **{k: int(u[k]) for k in ("quiet_from", "quiet_to", "per_week")},
@@ -730,7 +714,7 @@ def _sync_save(req, form):
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
-        return PrefsPage(f, UNRECOGNIZED)
+        return PrefsPage(f, prefs.UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
         return PrefsPage(f, NO_CAUSE)
     if date_error:

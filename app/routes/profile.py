@@ -11,7 +11,6 @@ import json
 from fasthtml.common import (
     H1,
     H2,
-    A,
     Datalist,
     Div,
     FtResponse,
@@ -28,9 +27,7 @@ from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
     AlertT,
-    Container,
     FormLabel,
-    LabelCheckboxX,
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
@@ -40,16 +37,18 @@ from app import data, photos
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
 from app.forms import HIDDEN_CHARS_MESSAGE, bad_request, hidden_chars, query, str_form
 from app.ui import (
-    BACK,
     CARD,
+    ORG_SECTION,
+    SMALL_LINK,
     TITLE,
     Avatar,
+    BackLink,
     BigButton,
+    Checks,
     Field,
-    Icon,
     Router,
     TextInput,
-    VolunteerNav,
+    VolunteerShell,
 )
 
 ar = Router()
@@ -115,7 +114,7 @@ def DetailsForm(p, f=None):
         "interests": json.loads(p.interests or "[]"),
     }
     return PlainForm(
-        H2("About you", cls="font-display text-lg font-extrabold text-ink"),
+        H2("About you", cls=ORG_SECTION),
         P(
             "Nonprofits see these after you like one of their openings: your first "
             "name and last initial (your full last name once they say yes), pronouns, "
@@ -173,14 +172,11 @@ def DetailsForm(p, f=None):
         ),
         Field(
             f"Interests (up to {MAX_INTERESTS})",
-            Div(
-                *[
-                    LabelCheckboxX(
-                        label, name="interests", value=v, checked=v in f["interests"]
-                    )
-                    for v, label in INTERESTS
-                ],
-                cls="grid grid-cols-1 gap-y-1 sm:grid-cols-2 sm:gap-x-4",
+            Checks(
+                "interests",
+                INTERESTS,
+                f["interests"],
+                "grid grid-cols-1 gap-y-1 sm:grid-cols-2 sm:gap-x-4",
             ),
         ),
         BigButton("Save profile"),
@@ -192,15 +188,9 @@ def DetailsForm(p, f=None):
 
 def ProfilePage(uid, error=None, notice=None, f=None):
     p = data.get_profile(uid)
-    return Container(
-        VolunteerNav("me"),
-        A(
-            Icon(BACK, size=18),
-            "Back to me",
-            href="/profile",
-            cls="-ml-1 inline-flex min-h-11 items-center gap-1 text-sm font-semibold "
-            "text-ink-muted hover:text-ink",
-        ),
+    return VolunteerShell(
+        "me",
+        BackLink("/profile", "Back to me"),
         H1("Your profile", cls=TITLE),
         Alert(error, cls=AlertT.error + " mb-4") if error else None,
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
@@ -219,7 +209,7 @@ def ProfilePage(uid, error=None, notice=None, f=None):
                     Span(
                         " ".join(n for n in (p.display_name, p.last_name) if n)
                         or "Your profile",
-                        cls="font-display text-lg font-extrabold text-ink",
+                        cls=ORG_SECTION,
                     ),
                     P(p.pronouns, cls="text-sm text-ink-muted") if p.pronouns else None,
                     P(
@@ -239,8 +229,7 @@ def ProfilePage(uid, error=None, notice=None, f=None):
                 PlainButton(
                     "Remove photo",
                     type="submit",
-                    cls="inline-flex min-h-11 items-center text-sm font-semibold "
-                    "text-ink-muted underline underline-offset-4 hover:text-ink",
+                    cls=SMALL_LINK + " text-sm",
                 ),
                 action="/me/profile/photo/remove",
                 method="post",
@@ -252,7 +241,6 @@ def ProfilePage(uid, error=None, notice=None, f=None):
         ),
         Div(DetailsForm(p, f), cls="mt-4"),
         Script(src="/static/photo.js", defer=True),
-        cls="max-w-md pb-8",
     )
 
 

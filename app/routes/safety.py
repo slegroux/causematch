@@ -21,7 +21,6 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
-    Container,
     LabelCheckboxX,
     TextPresets,
 )
@@ -36,6 +35,7 @@ from app.ui import (
     CLOCK,
     HEART,
     NEXT,
+    ORG_SECTION,
     ORG_TITLE,
     PERSON,
     SHIELD,
@@ -51,7 +51,7 @@ from app.ui import (
     Refusal,
     Router,
     SimplePage,
-    VolunteerNav,
+    VolunteerShell,
 )
 
 ar = Router()
@@ -70,7 +70,7 @@ def Shell(uid, back, title, *content, error=None):
     )
     if org:
         return OrgShell("inbox", data.org_waiting(uid), Div(*body, cls="max-w-md"))
-    return Container(VolunteerNav("matches"), *body, cls="max-w-md pb-8")
+    return VolunteerShell("matches", *body)
 
 
 def ReportPage(uid, action, back, target, error=None, f=None):
@@ -313,8 +313,8 @@ def HubRow(icon, label, href=None, danger=False):
 def profile_page(req):
     me = data.get_profile(req.scope["uid"])
     name = (me.display_name or "").strip()
-    return Container(
-        VolunteerNav("me"),
+    return VolunteerShell(
+        "me",
         H1("Me", cls=TITLE),
         Div(
             Avatar(name, me.photo_key),
@@ -340,14 +340,13 @@ def profile_page(req):
             "withdraws your matches.",
             cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
-        cls="max-w-md pb-8",
     )
 
 
 @ar("/profile/delete", methods=["GET"])
 def delete_confirm():
-    return Container(
-        VolunteerNav("me"),
+    return VolunteerShell(
+        "me",
         H1("Delete your account?", cls=TITLE),
         Div(
             Ul(
@@ -368,7 +367,6 @@ def delete_confirm():
             ),
             cls="space-y-3 p-5 " + CARD,
         ),
-        cls="max-w-md pb-8",
     )
 
 
@@ -389,7 +387,7 @@ EFFECTIVE = "October 15, 2026"
 
 def Section(title, *paras):
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink mt-6"),
+        H2(title, cls=ORG_SECTION + " mt-6"),
         *[P(p, cls="mt-2 leading-relaxed") for p in paras],
     )
 
@@ -507,7 +505,7 @@ def privacy():
             "change when your browser sends a Do Not Track signal.",
         ),
         Div(
-            H2("Questions", cls="font-display text-lg font-extrabold text-ink mt-6"),
+            H2("Questions", cls=ORG_SECTION + " mt-6"),
             P(
                 "Write to ",
                 A(contact, href=f"mailto:{contact}", cls=AT.muted),
