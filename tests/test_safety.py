@@ -932,7 +932,7 @@ def test_env_example_lists_the_new_variables():
     text = (ROOT / ".env.example").read_text()
     for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY="):
         assert name in text
-        assert name.rstrip("=") in (ROOT / "README.md").read_text()
+        assert name.rstrip("=") in (ROOT / "docs" / "OPERATIONS.md").read_text()
 
 
 # S3: no data call on the event loop
