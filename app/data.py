@@ -7,7 +7,6 @@ import json
 import secrets
 import threading
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import apsw
 from apswutils.db import NotFoundError
@@ -25,6 +24,7 @@ from app.choices import (
 )
 from app.config import phone_hash_key
 from app.forms import BIDI, hidden_chars
+from app.match import LA
 from app.metrics_rows import fetch_rows
 
 
@@ -40,12 +40,12 @@ def _is_id(n):
     return isinstance(n, int) and not isinstance(n, bool) and 0 < n < 2**63
 
 
-LA = ZoneInfo("America/Los_Angeles")
+_LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 
 
 def _local_now():
     """Wall clock in Los Angeles, the zone openings' starts_at are stored in."""
-    return datetime.now(LA).strftime("%Y-%m-%dT%H:%M")
+    return datetime.now(LA).strftime(_LOCAL_FORMAT)
 
 
 def local_today():
@@ -64,6 +64,22 @@ TRAVEL_PHRASE = {
 }
 
 
+def _with_minutes(place, minutes):
+    """The place with this travel time, and the reach and distance scale it gives."""
+    reach = _match.reach_km(place["mode"], minutes)
+    return {
+        **place,
+        "max_minutes": minutes,
+        "reach_km": reach,
+        "scale_km": reach or ANY_DISTANCE_KM,
+    }
+
+
+def _widening(key):
+    """(place index, minutes) of a "widen:<i>:<minutes>" relaxation key."""
+    return map(int, key.split(":")[1:])
+
+
 def _places(me):
     """The volunteer's places, as match.best_place takes them; scale_km scales the distance
     score. A profile with no saved place has one, Home: its sign-up ZIP by car, reaching
@@ -71,13 +87,13 @@ def _places(me):
     rows = _db.places(where="user_id = ?", where_args=[me.id], order_by="id")
     if rows:
         return [
-            {
-                **{k: getattr(p, k) for k in ("id", "label", "lat", "lon", "area")},
-                "mode": p.mode,
-                "max_minutes": p.max_minutes,
-                "reach_km": (reach := _match.reach_km(p.mode, p.max_minutes)),
-                "scale_km": reach or ANY_DISTANCE_KM,
-            }
+            _with_minutes(
+                {
+                    k: getattr(p, k)
+                    for k in ("id", "label", "lat", "lon", "area", "mode")
+                },
+                p.max_minutes,
+            )
             for p in rows
         ]
     if None in (me.lat, me.lon):
@@ -151,7 +167,7 @@ def _deck_openings(uid, today=False, p=None, calls=None):
         places = [{**pl, "reach_km": None} for pl in places]
     start = datetime.now(LA)
     days = TODAY_HOURS / 24 if today else p["horizon_days"]
-    until = (start + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M") if days else None
+    until = (start + timedelta(days=days)).strftime(_LOCAL_FORMAT) if days else None
     # Only verified, active orgs the volunteer has not blocked. An org that blocked the
     # volunteer stays visible: hiding it would tell them.
     shown = {
@@ -241,18 +257,9 @@ def _relaxed(p, key):
     if key == "horizon":
         q["horizon_days"] = 0
     elif key.startswith("widen:"):
-        i, to = map(int, key.split(":")[1:])
-        reach = _match.reach_km(p["places"][i]["mode"], to)
+        i, to = _widening(key)
         q["places"] = [
-            {
-                **pl,
-                "max_minutes": to,
-                "reach_km": reach,
-                "scale_km": reach or ANY_DISTANCE_KM,
-            }
-            if j == i
-            else pl
-            for j, pl in enumerate(p["places"])
+            _with_minutes(pl, to) if j == i else pl for j, pl in enumerate(p["places"])
         ]
     return q
 
@@ -344,7 +351,7 @@ def apply_relaxation(uid, key):
         raise ValueError("not a relaxation on offer")
     with _db.db.conn:
         if key.startswith("widen:"):
-            i, to = map(int, key.split(":")[1:])
+            i, to = _widening(key)
             _db.places.update(id=_saved_places(uid)[i].id, max_minutes=to)
         elif key == "horizon":
             _db.profiles.update(id=uid, horizon_days=0)
@@ -371,16 +378,7 @@ def _viewed(p, view):
         q["horizon_days"] = 7
     minutes = view.get("max_minutes")
     if minutes is not None and p["places"] and "distance" in p["dealbreakers"]:
-        reach = _match.reach_km(p["places"][0]["mode"], minutes)
-        q["places"] = [
-            {
-                **p["places"][0],
-                "max_minutes": minutes,
-                "reach_km": reach,
-                "scale_km": reach or ANY_DISTANCE_KM,
-            },
-            *p["places"][1:],
-        ]
+        q["places"] = [_with_minutes(p["places"][0], minutes), *p["places"][1:]]
     return q
 
 
@@ -424,6 +422,11 @@ def _work_of(o):
 SURPRISE_EVERY = 8  # "Surprise me": about one card in this many is from outside love
 
 
+def _travel(near):
+    """ "25 min by car from Home": the travel estimate to the nearest place."""
+    return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} from {near[0]['label']}"
+
+
 def deck(uid, limit=20, today=False, view=None, first=None):
     """deck_and_count()'s cards."""
     return deck_and_count(uid, limit, today, view, first)[0]
@@ -446,8 +449,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     loved = {s for s, v in rated.items() if v == _prefs.LOVE}
     skills = json.loads(me.skills or "[]")
     spoken = _prefs.languages(me)
-    org_names = {o.id: o.name for o in _db.orgs()}
-    org_media = {o.id: (o.photo_key, o.logo_key) for o in _db.orgs()}
+    orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
     calls = _open_calls()
@@ -479,11 +481,12 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 pick, odd = outside[0], True
         o, cause_labels, slugs, near = pool.pop(pick)
         call = calls.get(o.id)
+        org = orgs.get(o.org_id)
         cards.append(
             {
                 "id": o.id,
                 "title": o.title,
-                "org": org_names.get(o.org_id, ""),
+                "org": org.name if org else "",
                 "causes": cause_labels,
                 # the same active causes as slugs, in the same order (art and chips)
                 "slugs": slugs,
@@ -492,9 +495,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "slots": o.slots,
                 "remote": bool(o.remote),
                 "distance": _distance_label(near and near[1]),
-                "travel": near
-                and f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} "
-                f"from {near[0]['label']}",
+                "travel": near and _travel(near),
                 "surprise": odd,
                 # an urgent card says more up top: fewer reasons, so it still fits
                 "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd)[
@@ -502,8 +503,8 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 ],
                 # the card's picture: the opening's photo, else the org's; its logo
                 # as a badge
-                "photo": o.photo_key or org_media.get(o.org_id, (None, None))[0],
-                "logo": org_media.get(o.org_id, (None, None))[1],
+                "photo": o.photo_key or (org and org.photo_key),
+                "logo": org and org.logo_key,
                 "event_url": o.event_url,
                 "urgent": call
                 and urgent_label(call.starts_at, call.needed - _urgent_found(call.id)),
@@ -570,9 +571,7 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
     if surprise:
         more.append("Surprise pick")
     if near:
-        more.append(
-            f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} from {near[0]['label']}"
-        )
+        more.append(_travel(near))
     elif o.remote:
         more.append("Remote")
     if o.starts_at[:10] in p["free_dates"]:
@@ -707,13 +706,17 @@ def _auto_accept(m, call):
         return
     _sync_fill(m.opening_id)
     _sync_urgent(call.id)
-    _db.shifts.insert(
+    _new_shift(m.id, call.starts_at, "accept", call.created_by)
+
+
+def _new_shift(match_id, starts_at, kind, by):
+    return _db.shifts.insert(
         _db.Shift(
-            match_id=m.id,
-            starts_at=call.starts_at,
+            match_id=match_id,
+            starts_at=starts_at,
             status="scheduled",
-            kind="accept",
-            created_by=call.created_by,
+            kind=kind,
+            created_by=by,
             created_at=_now(),
         )
     )
@@ -735,20 +738,22 @@ def swipe_created(uid, opening_id, liked, today=False, view=None, call_id=None):
     return match if created and not match.org_blind else None
 
 
+def _like_starts_at(m, o):
+    """When match m on opening o is for: a like on an urgent call is for the call's shift."""
+    return (
+        _db.urgent_calls[m.urgent_call_id].starts_at
+        if m.urgent_call_id
+        else o.starts_at
+    )
+
+
 def decide(coordinator_uid, match_id, accept):
     """Accept or decline a pending match. PermissionError unless a member of the org.
 
     ValueError when the match is not pending or no slot is left to accept into.
     """
-    if not _is_id(match_id):
-        raise PermissionError("no such match")
-    try:
-        m = _db.matches[match_id]
-        o = _db.openings[m.opening_id]
-    except NotFoundError:
-        raise PermissionError("no such match") from None
-    if o.org_id not in coordinator_org_ids(coordinator_uid):
-        raise PermissionError("not a member of this org")
+    m, o = _match_and_opening(match_id)
+    _member_of(coordinator_uid, o.org_id)
     if _db.orgs[o.org_id].deactivated_at or _org_blocked_volunteer(
         m.volunteer_id, o.org_id
     ):
@@ -772,34 +777,15 @@ def decide(coordinator_uid, match_id, accept):
         if accept:
             _sync_fill(o.id)
             _sync_urgent(m.urgent_call_id)
-            # a like on an urgent call is for the call's shift
-            starts_at = (
-                _db.urgent_calls[m.urgent_call_id].starts_at
-                if m.urgent_call_id
-                else o.starts_at
-            )
+            starts_at = _like_starts_at(m, o)
             # An opening that already started gets no shift: the coordinator schedules one.
             if starts_at > _local_now():
-                _db.shifts.insert(
-                    _db.Shift(
-                        match_id=match_id,
-                        starts_at=starts_at,
-                        status="scheduled",
-                        kind="accept",
-                        created_by=coordinator_uid,
-                        created_at=_now(),
-                    )
-                )
+                _new_shift(match_id, starts_at, "accept", coordinator_uid)
 
 
 def _own_match(uid, match_id):
     """The volunteer's own match row; PermissionError for any other id."""
-    if not _is_id(match_id):
-        raise PermissionError("no such match")
-    try:
-        m = _db.matches[match_id]
-    except NotFoundError:
-        raise PermissionError("no such match") from None
+    m, _ = _match_and_opening(match_id)
     if m.volunteer_id != uid:
         raise PermissionError("not your match")
     return m
@@ -823,13 +809,7 @@ def withdraw(uid, match_id):
         m = _own_match(uid, match_id)
         if m.status not in ("pending", "accepted"):
             raise ValueError("already " + m.status)
-        _db.matches.update(id=match_id, status="withdrawn", withdrawn_at=_now())
-        _db.db.execute(
-            "UPDATE shift SET status = 'cancelled' "
-            "WHERE match_id = ? AND status = 'scheduled' AND starts_at > ?",
-            [match_id, _local_now()],
-        )
-        _sync_fill(m.opening_id)
+        _end_match(m, uid, "withdrawn")
 
 
 def my_matches(uid):
@@ -847,10 +827,7 @@ def my_matches(uid):
                 "status": m.status,
                 "title": o.title,
                 "org": org_names.get(o.org_id, ""),
-                # a like on an urgent call is for the call's shift
-                "starts_at": _db.urgent_calls[m.urgent_call_id].starts_at
-                if m.urgent_call_id
-                else o.starts_at,
+                "starts_at": _like_starts_at(m, o),
                 "neighborhood": o.neighborhood,
                 "event_url": o.event_url,
             }
@@ -886,10 +863,7 @@ def org_inbox(coordinator_uid):
         "AND coalesce(m.org_blind, 0) = 0 "
         "AND (m.status IN ('pending', 'accepted', 'declined') "
         "OR (m.status = 'withdrawn' AND m.decided_at IS NOT NULL)) "
-        "AND (m.status = 'withdrawn' OR (NOT EXISTS (SELECT 1 FROM block b "
-        "WHERE b.blocked_user_id = p.id AND b.blocked_org_id = o.org_id) "
-        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = p.id "
-        "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id))) "
+        "AND (m.status = 'withdrawn' OR NOT " + _BLOCKED + ") "
         "ORDER BY m.id DESC",
         [coordinator_uid],
     )
@@ -946,7 +920,6 @@ def org_inbox(coordinator_uid):
 
 MAX_SHIFT_AHEAD = timedelta(days=366)
 CORRECTION_WINDOW = timedelta(days=7)
-_LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 
 
 def _member_of(coordinator_uid, org_id):
@@ -996,13 +969,7 @@ def add_shift(coordinator_uid, match_id, starts_at):
     and starts_at ("YYYY-MM-DDTHH:MM", LA time) is real, in the future, within 366 days,
     and not already a shift of this match.
     """
-    if not _is_id(match_id):
-        raise PermissionError("no such match")
-    try:
-        m = _db.matches[match_id]
-        o = _db.openings[m.opening_id]
-    except NotFoundError:
-        raise PermissionError("no such match") from None
+    m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
     if _db.orgs[o.org_id].deactivated_at:
         raise PermissionError("this org is deactivated")
@@ -1015,19 +982,11 @@ def add_shift(coordinator_uid, match_id, starts_at):
     if start > now + MAX_SHIFT_AHEAD:
         raise ValueError("the shift must be within the next 12 months")
     try:
-        shift = _db.shifts.insert(
-            _db.Shift(
-                match_id=match_id,
-                starts_at=start.strftime(_LOCAL_FORMAT),
-                status="scheduled",
-                kind="added",
-                created_by=coordinator_uid,
-                created_at=_now(),
-            )
+        return _new_shift(
+            match_id, start.strftime(_LOCAL_FORMAT), "added", coordinator_uid
         )
     except apsw.ConstraintError:
         raise ValueError("that shift is already scheduled") from None
-    return shift
 
 
 def repeat_shift(coordinator_uid, match_id):
@@ -1036,12 +995,7 @@ def repeat_shift(coordinator_uid, match_id):
     Only for a weekly opening. Same errors as add_shift, plus ValueError when the
     opening is not weekly or the match has no shift to repeat.
     """
-    if not _is_id(match_id):
-        raise PermissionError("no such match")
-    try:
-        o = _db.openings[_db.matches[match_id].opening_id]
-    except NotFoundError:
-        raise PermissionError("no such match") from None
+    _, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
     if _db.orgs[o.org_id].deactivated_at:
         raise PermissionError("this org is deactivated")
@@ -1206,13 +1160,7 @@ def chat_access(uid, match_id, write=False):
     declined, or withdrawn before it was accepted). With write=True the match must be
     accepted: once it is withdrawn the history is read-only for both sides.
     """
-    if not _is_id(match_id):
-        raise PermissionError("no such match")
-    try:
-        m = _db.matches[match_id]
-        o = _db.openings[m.opening_id]
-    except NotFoundError:
-        raise PermissionError("no such match") from None
+    m, o = _match_and_opening(match_id)
     if m.volunteer_id == uid:
         role = "volunteer"
     elif o.org_id in coordinator_org_ids(uid):
@@ -1224,8 +1172,7 @@ def chat_access(uid, match_id, write=False):
             raise PermissionError("this chat is read-only")
         if write and (
             _db.orgs[o.org_id].deactivated_at
-            or _org_blocked_volunteer(m.volunteer_id, o.org_id)
-            or _volunteer_blocked_org(m.volunteer_id, o.org_id)
+            or _blocked_either(m.volunteer_id, o.org_id)
         ):
             raise PermissionError("this chat is read-only")
         return role
@@ -1311,10 +1258,7 @@ def list_messages(uid, match_id, limit=200):
 
 def _match_blocked(m):
     """True when a block stands either way between a match's volunteer and its org."""
-    org_id = _db.openings[m.opening_id].org_id
-    return _org_blocked_volunteer(m.volunteer_id, org_id) or _volunteer_blocked_org(
-        m.volunteer_id, org_id
-    )
+    return _blocked_either(m.volunteer_id, _db.openings[m.opening_id].org_id)
 
 
 def chat_header(uid, match_id):
@@ -1336,10 +1280,7 @@ def chat_header(uid, match_id):
         volunteer = get_profile(m.volunteer_id)
         # what photo_for hides hides the last name too, and so does a block with the
         # org of this match (photo_for looks at all of the coordinator's orgs)
-        blocked = bool(volunteer) and (
-            _org_blocked_volunteer(volunteer.id, o.org_id)
-            or _volunteer_blocked_org(volunteer.id, o.org_id)
-        )
+        blocked = bool(volunteer) and _blocked_either(volunteer.id, o.org_id)
         seen = (
             bool(volunteer)
             and not blocked
@@ -1385,7 +1326,7 @@ def get_or_create_volunteer(phone):
                     role="volunteer",
                     phone=phone,
                     session_version=1,
-                    created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                    created_at=_now(),
                     suspended_at=_now() if kept and kept[0].suspended else None,
                 )
             ).id
@@ -1470,7 +1411,7 @@ def save_onboarding(
             skills=json.dumps(list(skills)),
             frequency=frequency,
             heard_from=heard_from,
-            onboarded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            onboarded_at=_now(),
         )
 
 
@@ -1557,9 +1498,7 @@ def save_profile_details(
 ):
     """A volunteer's own name, pronouns, bio, interests and, unless None, the neighborhood
     nonprofits see (checked by the caller)."""
-    p = get_profile(uid)
-    if p is None or p.role != "volunteer":
-        raise PermissionError("not a volunteer")
+    _volunteer(uid)
     _db.profiles.update(
         id=uid,
         display_name=first_name,
@@ -1632,11 +1571,7 @@ def set_coordinator_details(uid, name, phone=""):
 
 
 def coordinator_by_email(email):
-    found = _db.profiles(
-        where="role = 'coordinator' AND lower(email) = ? AND deleted_at IS NULL",
-        where_args=[email.strip().lower()],
-    )
-    return found[0].id if found else None
+    return _staff(email, "coordinator")
 
 
 def coordinator_org_ids(uid):
@@ -1763,8 +1698,7 @@ def create_opening(
 
     ValueError without coordinates: an in-person opening needs a place to be ranked.
     """
-    if org_id not in coordinator_org_ids(coordinator_uid):
-        raise PermissionError("not a member of this org")
+    _member_of(coordinator_uid, org_id)
     if lat is None or lon is None:
         raise ValueError("an opening needs coordinates")
     if _db.orgs[org_id].deactivated_at:
@@ -1821,10 +1755,7 @@ def opening_counts(coordinator_uid):
         "WHERE m.opening_id = o.id AND m.status = 'pending' "
         "AND p.deleted_at IS NULL AND p.suspended_at IS NULL "
         "AND coalesce(m.org_blind, 0) = 0 "
-        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocked_user_id = p.id "
-        "AND b.blocked_org_id = o.org_id) "
-        "AND NOT EXISTS (SELECT 1 FROM block b WHERE b.blocker_id = p.id "
-        "AND b.blocked_user_id IS NULL AND b.blocked_org_id = o.org_id)) AS pending, "
+        "AND NOT " + _BLOCKED + ") AS pending, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
         "AND a.status = 'accepted') AS accepted "
         "FROM opening o "
@@ -1841,14 +1772,7 @@ def org_waiting(coordinator_uid):
 
 
 def close_opening(coordinator_uid, opening_id):
-    if not _is_id(opening_id):
-        raise PermissionError("no such opening")
-    try:
-        o = _db.openings[opening_id]
-    except NotFoundError:
-        raise PermissionError("no such opening") from None
-    if o.org_id not in coordinator_org_ids(coordinator_uid):
-        raise PermissionError("not a member of this org")
+    coordinator_opening(coordinator_uid, opening_id)
     with _db.db.conn:
         _db.openings.update(id=opening_id, status="closed")
         _end_urgent(opening_id, "closed")
@@ -1942,8 +1866,8 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
     if o.id in calls:
         raise ValueError("already")
     now = datetime.now(LA)
-    latest = (now + timedelta(hours=URGENT_HOURS)).strftime("%Y-%m-%dT%H:%M")
-    if not now.strftime("%Y-%m-%dT%H:%M") < starts_at <= latest:
+    latest = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
+    if not now.strftime(_LOCAL_FORMAT) < starts_at <= latest:
         raise ValueError("time")
     if not 1 <= needed <= o.slots - _accepted(o.id):
         raise ValueError("needed")
@@ -2088,8 +2012,8 @@ def urgent_recipients(call_id, limit, at):
             "SELECT m.volunteer_id FROM shift h JOIN match m ON m.id = h.match_id "
             "WHERE h.status = 'scheduled' AND h.starts_at > ? AND h.starts_at < ?",
             [
-                (start - URGENT_BUSY).strftime("%Y-%m-%dT%H:%M"),
-                (start + URGENT_BUSY).strftime("%Y-%m-%dT%H:%M"),
+                (start - URGENT_BUSY).strftime(_LOCAL_FORMAT),
+                (start + URGENT_BUSY).strftime(_LOCAL_FORMAT),
             ],
         )
     }
@@ -2397,6 +2321,13 @@ def _volunteer_blocked_org(volunteer_id, org_id):
     )
 
 
+def _blocked_either(volunteer_id, org_id):
+    """True when a block stands either way between the volunteer and the org."""
+    return _org_blocked_volunteer(volunteer_id, org_id) or _volunteer_blocked_org(
+        volunteer_id, org_id
+    )
+
+
 def _match_and_opening(match_id):
     if not _is_id(match_id):
         raise PermissionError("no such match")
@@ -2515,6 +2446,16 @@ def _add_block(**cols):
         pass  # already blocked
 
 
+def _end_matches_at_org(volunteer_id, org_id, by, pending_to):
+    """_end_match on each of the volunteer's pending and accepted matches at this org."""
+    for m in _db.matches(
+        where="volunteer_id = ? AND status IN ('pending', 'accepted') "
+        "AND opening_id IN (SELECT id FROM opening WHERE org_id = ?)",
+        where_args=[volunteer_id, org_id],
+    ):
+        _end_match(m, by, pending_to)
+
+
 def block_org(uid, match_id):
     """A volunteer blocks the org of their own match: its openings leave their deck, their
     pending and accepted matches with it are withdrawn and their future shifts cancelled,
@@ -2524,12 +2465,7 @@ def block_org(uid, match_id):
         if m.volunteer_id != uid:
             raise PermissionError("not your match")
         _add_block(blocker_id=uid, blocked_org_id=o.org_id)
-        for mine in _db.matches(
-            where="volunteer_id = ? AND status IN ('pending', 'accepted') "
-            "AND opening_id IN (SELECT id FROM opening WHERE org_id = ?)",
-            where_args=[uid, o.org_id],
-        ):
-            _end_match(mine, uid, "withdrawn")
+        _end_matches_at_org(uid, o.org_id, uid, "withdrawn")
 
 
 def block_volunteer(coordinator_uid, match_id):
@@ -2543,18 +2479,21 @@ def block_volunteer(coordinator_uid, match_id):
             blocked_user_id=m.volunteer_id,
             blocked_org_id=o.org_id,
         )
-        for theirs in _db.matches(
-            where="volunteer_id = ? AND status IN ('pending', 'accepted') "
-            "AND opening_id IN (SELECT id FROM opening WHERE org_id = ?)",
-            where_args=[m.volunteer_id, o.org_id],
-        ):
-            _end_match(theirs, coordinator_uid, "declined")
+        _end_matches_at_org(m.volunteer_id, o.org_id, coordinator_uid, "declined")
 
 
 def _admin(uid):
     p = get_profile(uid)
     if not p or p.role != "admin":
         raise PermissionError("admins only")
+
+
+def _volunteer(uid):
+    """The volunteer's own profile; PermissionError for anyone else."""
+    p = get_profile(uid)
+    if p is None or p.role != "volunteer":
+        raise PermissionError("not a volunteer")
+    return p
 
 
 def admin_blocks(admin_uid):
@@ -2736,14 +2675,18 @@ def admin_orgs(admin_uid):
     ]
 
 
+def _check_ein(ein):
+    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
+        raise ValueError("an EIN is nine digits")
+
+
 def verify_org(org_id, ein):
     """Mark an org verified under this EIN (nine digits). Admin-only entry point, used by the
     admin page and scripts/verify_org.py. LookupError for an unknown org; ValueError for a
     malformed EIN or one another org already carries."""
     if not _is_id(org_id) or not org_exists(org_id):
         raise LookupError(f"no org {org_id}")
-    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
-        raise ValueError("an EIN is nine digits")
+    _check_ein(ein)
     try:
         _db.db.execute(
             "UPDATE org SET ein = ?, verified_at = ? WHERE id = ?",
@@ -2761,8 +2704,7 @@ def upsert_imported_org(ein, name, city, zip_code, ntee_code, cause, lat, lon):
     place): its cause, intro, about and verification stay as an admin left them.
     ValueError for a malformed EIN or an unknown cause.
     """
-    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
-        raise ValueError("an EIN is nine digits")
+    _check_ein(ein)
     if not (isinstance(name, str) and name.strip()):
         raise ValueError("a name")
     if not _db.causes(where="slug = ?", where_args=[cause]):
@@ -2799,8 +2741,7 @@ def submit_claim(ein, org_name, name, email, phone=""):
     and nothing is reported back, so the page can't reveal which EINs exist or are claimed.
     A repeat of a pending request (same EIN and email) is dropped. ValueError for a
     malformed EIN or an over-long or empty field (the route has checked them already)."""
-    if not (isinstance(ein, str) and len(ein) == 9 and ein.isascii() and ein.isdigit()):
-        raise ValueError("an EIN is nine digits")
+    _check_ein(ein)
     fields = {"org_name": org_name, "name": name, "email": email.strip().lower()}
     for key, limit in CLAIM_LIMITS.items():
         if not 0 < len(fields[key]) <= limit:
@@ -3138,9 +3079,7 @@ def _drop_photo(key):
 def set_volunteer_photo(uid, processed):
     """The volunteer's photo becomes this one, under a new key; the old one is deleted."""
     with _db.db.conn:
-        p = get_profile(uid)
-        if p is None or p.role != "volunteer":
-            raise PermissionError("not a volunteer")
+        p = _volunteer(uid)
         key = store_photo("volunteer", uid, processed)
         _db.profiles.update(id=uid, photo_key=key)
         _drop_photo(p.photo_key)
@@ -3149,30 +3088,24 @@ def set_volunteer_photo(uid, processed):
 
 def remove_volunteer_photo(uid):
     with _db.db.conn:
-        p = get_profile(uid)
-        if p is None or p.role != "volunteer":
-            raise PermissionError("not a volunteer")
+        p = _volunteer(uid)
         _drop_photo(p.photo_key)
         _db.profiles.update(id=uid, photo_key=None)
 
 
-def _coordinated_org(coordinator_uid, org_id):
+def coordinator_org(coordinator_uid, org_id):
+    """An org this coordinator belongs to; PermissionError for any other id."""
     if not _is_id(org_id):
         raise PermissionError("no such org")
     _member_of(coordinator_uid, org_id)
     return _db.orgs[org_id]
 
 
-def coordinator_org(coordinator_uid, org_id):
-    """An org this coordinator belongs to; PermissionError for any other id."""
-    return _coordinated_org(coordinator_uid, org_id)
-
-
 def set_org_picture(coordinator_uid, org_id, which, processed):
     """The org's logo or photo (which: logo | photo) becomes this one; the old one goes."""
     column = {"logo": "logo_key", "photo": "photo_key"}[which]
     with _db.db.conn:
-        org = _coordinated_org(coordinator_uid, org_id)
+        org = coordinator_org(coordinator_uid, org_id)
         key = store_photo(f"org_{which}", org_id, processed)
         _db.orgs.update(id=org_id, **{column: key})
         _drop_photo(getattr(org, column))
@@ -3182,7 +3115,7 @@ def set_org_picture(coordinator_uid, org_id, which, processed):
 def set_org_details(coordinator_uid, org_id, about, website):
     """About text and website (https, or None) of an org this coordinator belongs to."""
     with _db.db.conn:
-        _coordinated_org(coordinator_uid, org_id)
+        coordinator_org(coordinator_uid, org_id)
         _db.orgs.update(id=org_id, about=about, website=website)
 
 

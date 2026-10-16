@@ -1,11 +1,11 @@
 import json
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from fastlite import database
 
 from app import migrations
 from app.config import db_path, is_dev
+from app.match import LA
 
 DB_PATH = db_path()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -403,8 +403,6 @@ CAUSES = [
     Cause("animal-shelters", "Animal shelters", "paw-print", 3, True),
     Cause("homelessness-services", "Homelessness services", "house", 4, True),
 ]
-
-LA = ZoneInfo("America/Los_Angeles")
 
 
 def _soon(days, hhmm):
