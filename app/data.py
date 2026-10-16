@@ -115,7 +115,7 @@ def _places(me):
     ]
 
 
-TODAY_HOURS = 48  # "I'm free today": shifts starting this soon
+TODAY_HOURS = 48  # "Free in the next 48h": shifts starting this soon
 
 
 def _deck_prefs(me):
@@ -230,7 +230,7 @@ def _when_ok(p, o):
 
 def record_empty_deck(uid, today=False):
     """Log an empty deck, once per volunteer and mode per hour: refreshing doesn't
-    inflate it, and the "I'm free today" split stays whole."""
+    inflate it, and the "Free in the next 48h" split stays whole."""
     hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
     if not _db.deck_empties.count_where(
         "volunteer_id = ? AND coalesce(today, 0) = ? AND at > ?",
@@ -643,14 +643,26 @@ def _accepted(opening_id):
     )
 
 
+def _filling():
+    """(SQL, args) for the accepted matches that fill an opening: all of them, except in a
+    demo, where a copy's don't count, so visitors keep finding the same openings open."""
+    if not demo_matches():
+        return "", []
+    return (
+        " AND volunteer_id NOT IN (SELECT id FROM profile WHERE phone LIKE ?)",
+        [DEMO_PHONE_PREFIX + "%"],
+    )
+
+
 def _sync_fill(opening_id):
     """open <-> filled from accepted count vs slots; a closed opening stays closed."""
+    skip, args = _filling()
     _db.db.execute(
         "UPDATE opening SET status = CASE WHEN "
-        "(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted') "
+        f"(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
         ">= slots THEN 'filled' ELSE 'open' END "
         "WHERE id = ? AND status IN ('open', 'filled')",
-        [opening_id, opening_id],
+        [opening_id, *args, opening_id],
     )
 
 
@@ -810,15 +822,16 @@ def decide(coordinator_uid, match_id, accept):
     ):
         raise PermissionError("no such match")
     status = "accepted" if accept else "declined"
+    skip, args = _filling()
     with _db.db.conn:
         # One statement, so two coordinators can't both take the last slot.
         _db.db.execute(
             "UPDATE match SET status = ?, decided_at = ?, decided_by = ? "
             "WHERE id = ? AND status = 'pending' AND (? = 0 OR "
-            "(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted') "
+            f"(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
             "< (SELECT slots FROM opening WHERE id = ?))",
             [status, _now(), coordinator_uid, match_id, int(bool(accept)),
-             o.id, o.id],
+             o.id, *args, o.id],
         )  # fmt: skip
         if _db.db.conn.changes() != 1:
             now_status = _db.matches[match_id].status

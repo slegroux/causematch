@@ -508,11 +508,10 @@ MATCH_KINDS = ("calendar", "waiting", "message", "done")
 
 
 def _matches(uid, coordinator_org_id, kinds=MATCH_KINDS):
-    """One match per kind, each from another org a stand-in team runs and, while it can, in
-    another cause; logos first, and the openings with the most room, so copies spread out.
-    The coordinator's org gets none (its inbox shows the seed's people, not every copy),
-    and an opening in the next 48 hours only when nothing else is left: those are the
-    "I'm free today" cards."""
+    """One match per kind for the seed's own Sam, each from another org a stand-in team
+    runs and, while it can, in another cause; logos first, and the openings with the most
+    room. The coordinator's org gets none, and an opening in the next 48 hours only when
+    nothing else is left: those are the "Free in the next 48h" cards."""
     from app import data
     from app.db import Shift, matches, now, openings, shifts
 
@@ -569,8 +568,8 @@ def _matches(uid, coordinator_org_id, kinds=MATCH_KINDS):
 
 def demo_volunteer(phone):
     """Signing in with ME_PHONE while config.demo_matches is on (the auth route's hook,
-    set by main.py): a fresh Sam for this visitor alone, with their preferences, photo,
-    matches, chat and shifts, and a full deck whose first card is the urgent call. Its
+    set by main.py): a fresh Sam for this visitor alone, with their preferences and photo,
+    no matches yet, and a full deck whose first card is the urgent call. Its
     profile id; None for any other number."""
     from app import data
     from app.config import DEMO_PHONE  # ME_PHONE, in E.164
@@ -579,14 +578,12 @@ def demo_volunteer(phone):
         return None
     uid = _sam(data.new_demo_volunteer())
     _preferences(uid)
-    coord = data.coordinator_by_email(COORDINATOR[0])
-    _matches(uid, data.coordinator_org_ids(coord)[0] if coord else None)
     return uid
 
 
 def _soon_shifts(me, coordinator_org_id):
     """Moves up to len(SOON_TIMES) openings of the volunteer's deck to tomorrow, one per
-    cause, so "I'm free today" (shifts in the next 48 hours) has cards: first_start() puts
+    cause, so "Free in the next 48h" (shifts in the next 48 hours) has cards: first_start() puts
     every opening at least 2 days out. The coordinator's org is skipped: its openings hold
     the match and the urgent call. The moved ids."""
     from app import data

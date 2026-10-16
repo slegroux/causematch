@@ -288,8 +288,8 @@ def EmptyDeck(today=False, relax=None):
             cls="font-display text-xl font-extrabold text-ink",
         ),
         P(
-            "No shift you could reach starts that soon. Turn off “I'm free today” to "
-            "see everything."
+            "No shift you could reach starts that soon. Turn off “Free in the next "
+            "48h” to see everything."
             if today
             else "You have seen every opening for now. Check back soon.",
             cls="mx-auto max-w-xs text-ink-muted",
@@ -307,17 +307,21 @@ def EmptyDeck(today=False, relax=None):
         )
         if relax
         else None,
+        A("Show everything", href="/deck", cls="uk-btn uk-btn-primary mt-2 px-6")
+        if today
+        else None,
         A(
             "See your matches",
             href="/matches",
-            cls="uk-btn mt-2 px-6 " + ("uk-btn-default" if relax else "uk-btn-primary"),
+            cls="uk-btn mt-2 px-6 "
+            + ("uk-btn-default" if relax or today else "uk-btn-primary"),
         ),
         cls="space-y-3 px-6 py-10 text-center " + CARD,
     )
 
 
 def TodaySwitch(today):
-    """ "I'm free today": only shifts starting in the next 48 hours, soonest first. A plain
+    """ "Free in the next 48h": only shifts starting in the next 48 hours, soonest first. A plain
     GET form, so it works without script; the button says whether it is on."""
     return PlainForm(
         Hidden(name="today", value="0" if today else "1"),
@@ -331,7 +335,7 @@ def TodaySwitch(today):
                 + ("bg-brand" if today else "bg-gray-500"),
                 aria_hidden="true",
             ),
-            Span("I'm free today"),
+            Span("Free in the next 48h"),
             type="submit",
             aria_pressed="true" if today else "false",
             cls="flex min-h-11 items-center gap-2.5 rounded-full px-1 text-sm font-bold "
@@ -517,6 +521,13 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
     c = cards[0]
     return Div(
         note,
+        P(
+            f"{count} shift{'' if count == 1 else 's'} in the next 48 hours",
+            role="status",
+            cls="mb-2 text-center text-sm font-semibold text-ink-muted",
+        )
+        if today
+        else None,
         OpeningCard(c),
         DetailsSheet(c),
         # cm-swipe-buttons (static/theme.css): a tall card scrolls under this row, so Pass

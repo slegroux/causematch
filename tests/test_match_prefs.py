@@ -354,6 +354,15 @@ def test_when_free_today_shows_the_next_48_hours_soonest_first(bare):
     assert 'aria-pressed="false"' in bare.get("/deck").text
 
 
+def test_when_free_today_says_how_many_shifts_it_found(bare):
+    save(bare, when_form())
+    add("in 5 hours", DOWNTOWN, starts_at=ahead(hours=5))
+    assert "1 shift in the next 48 hours" in bare.get("/deck?today=1").text
+    add("in 20 hours", DOWNTOWN, starts_at=ahead(hours=20))
+    assert "2 shifts in the next 48 hours" in bare.get("/deck?today=1").text
+    assert "in the next 48 hours" not in bare.get("/deck").text
+
+
 def test_when_free_today_survives_a_swipe(bare):
     save(bare, when_form())
     first = add("in 2 hours", DOWNTOWN, starts_at=ahead(hours=2))
@@ -374,7 +383,9 @@ def test_when_free_today_survives_a_swipe(bare):
 def test_when_free_today_with_nothing_soon_says_so(bare):
     save(bare, when_form())
     add("in 4 days", DOWNTOWN, starts_at=ahead(days=4))
-    assert "Nothing in the next 48 hours" in bare.get("/deck?today=1").text
+    page = bare.get("/deck?today=1").text
+    assert "Nothing in the next 48 hours" in page
+    assert 'href="/deck"' in page and "Show everything" in page  # one tap, switch off
 
 
 def test_when_commitment_one_time_ranks_a_one_off_above_a_weekly(bare):

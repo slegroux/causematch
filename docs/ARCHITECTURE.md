@@ -37,7 +37,7 @@ Volunteers see a bottom tab bar with **Openings** (`/deck`), **Matches** (`/matc
 | Preferences | Kept private. Up to 2 places (each with mode and max travel time), the three-state cause ratings, a 7×3 day grid plus up to 10 specific free dates, how far ahead to look, one-time or recurring, kind of work (setting, effort, group size, first-timer friendly), whether a separate orientation is OK, spoken languages, skills, frequency, "Surprise me", and last-minute call settings. | `GET/POST /me/preferences` | `app/routes/prefs.py`, `app/prefs.py` |
 | Dealbreakers ("Only show, or prefer?") | For each of causes, distance, when and kind of work, the volunteer picks whether it only ranks openings or also hides those that don't fit. Distance hides by default. "Not for me" causes always hide. | part of `/me/preferences` | `app/choices.py` (`DEALBREAKERS`), `app/data.py` |
 | Swipe deck | One card at a time. Each card shows a photo, title, org, causes, time, neighborhood, a rounded distance and travel estimate, and 1 to 4 "why" chips. Like or Pass by button or by dragging sideways. Swipes are sent by htmx. | `GET /deck`, `POST /swipe` | `app/routes/deck.py`, `app/routes/matches.py`, `app/data.py`, `app/match.py`, `static/swipe.js` |
-| "I'm free today" | A switch that limits the deck to shifts starting in the next 48 hours, sorted soonest then nearest. | `GET /deck?today=1` | `app/routes/deck.py` |
+| "Free in the next 48h" | A switch that limits the deck to shifts starting in the next 48 hours, sorted soonest then nearest. | `GET /deck?today=1` | `app/routes/deck.py` |
 | Filter sheet | Temporary filters for this visit, stored in the session and never in saved preferences: the main place's travel time, causes to hide, and this week only. | `POST /deck/filters` | `app/routes/deck.py` |
 | Empty-deck help | When nothing is left, the app offers the one change that would add the most cards (widen a travel time, look further ahead, drop a dealbreaker, or clear filters). | `POST /deck/relax` | `app/routes/deck.py`, `app/data.py` |
 | Matches | Lists likes and their status: waiting, accepted, not this time, withdrawn. The volunteer can withdraw a pending or accepted match, which cancels future shifts. | `GET /matches`, `GET/POST /matches/{id}/withdraw` | `app/routes/matches.py` |
@@ -923,7 +923,7 @@ flowchart LR
 | **Place** | Where a volunteer helps from (max 2), with a travel mode and max minutes. It is never an address. |
 | **Fit score** | The weighted 0 to 1 score that orders the deck and urgent recipients (section 7). |
 | **Why-chip** | A short reason on a card ("♥ Animal shelters", "12 min by bike from Home"). |
-| **"I'm free today"** | Deck mode limited to shifts starting within 48 hours, sorted soonest first. |
+| **"Free in the next 48h"** | Deck mode limited to shifts starting within 48 hours, sorted soonest first. |
 | **Surprise me** | About one card in 8 comes from outside the volunteer's loved causes. |
 | **Filter sheet / view** | Temporary deck filters kept in the session, separate from saved preferences. |
 | **Coordinator / owner** | A nonprofit staff member with membership in an org. The owner is the first approved claimant. |

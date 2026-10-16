@@ -306,7 +306,7 @@ class DeckEmpty:
 
     id: int
     volunteer_id: int
-    today: bool  # with "I'm free today" on
+    today: bool  # with "Free in the next 48h" on
     at: str  # UTC
 
 
