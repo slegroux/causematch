@@ -131,10 +131,7 @@ FORM = {
     "place1_where": "90012",  # Home: Chinatown's ZIP, by car within 30 minutes
     "place1_mode": "car",
     "place1_minutes": "30",
-    "neighborhood": "Chinatown",
     "cause_food-insecurity": "love",
-    "availability": ["sat_morning", "sun_morning"],
-    "heard_from": "public",
     "consent": "1",
 }
 
@@ -184,7 +181,16 @@ def user(new_user, request):
     r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
     assert r.headers["location"] == "/deck"
     uid = data.get_or_create_volunteer(new_user.phone)
-    profiles.update(id=uid, radius_km=60, skills='["car"]', frequency="weekly")
+    profiles.update(
+        id=uid,
+        radius_km=60,
+        skills='["car"]',
+        frequency="weekly",
+        heard_from="skipped",
+        # set in Me since onboarding no longer asks
+        neighborhood="Chinatown",
+        availability='["sat_morning", "sun_morning"]',
+    )
     if kind == "home place":
         places.update(id=places(where="user_id = ?", where_args=[uid])[0].id,
                       max_minutes=0)  # fmt: skip
@@ -256,7 +262,12 @@ def volunteer(name="Sam"):
     c = TestClient(app)
     sign_in(c)
     c.uid = data.get_or_create_volunteer(c.phone)
-    profiles.update(id=c.uid, display_name=name, onboarded_at="2026-01-01T00:00:00")
+    profiles.update(
+        id=c.uid,
+        display_name=name,
+        onboarded_at="2026-01-01T00:00:00",
+        heard_from="skipped",  # the after-first-like card has been answered
+    )
     return c
 
 

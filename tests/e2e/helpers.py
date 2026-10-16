@@ -49,7 +49,12 @@ def _sign_in(page, phone):
 
 def sign_in_page(page, phone):
     p = _sign_in(page, phone)
-    profiles.update(id=p.id, display_name="Sam", onboarded_at="2026-01-01T00:00:00")
+    profiles.update(
+        id=p.id,
+        display_name="Sam",
+        onboarded_at="2026-01-01T00:00:00",
+        heard_from="skipped",
+    )
     return p
 
 
@@ -62,9 +67,7 @@ def onboard_page(page, phone, where="90012"):
     page.get_by_label("Neighborhood or ZIP").fill(where)
     for slug in ("food-insecurity", "environment-parks", "animal-shelters"):
         page.locator(f"label:has(input[name='cause_{slug}'][value=love])").click()
-    page.locator("label:has(input[name=availability][value=sat_morning])").click()
-    page.locator("select[name=heard_from]").select_option("public")
-    page.get_by_text("I agree", exact=True).click()
+    page.get_by_text("I agree to the").click()
     page.get_by_role("button", name="Start swiping").click()
     page.wait_for_url("**/deck")
     return p

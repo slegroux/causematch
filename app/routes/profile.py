@@ -35,7 +35,14 @@ from starlette.datastructures import UploadFile
 
 from app import data, photos
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
-from app.forms import HIDDEN_CHARS_MESSAGE, bad_request, hidden_chars, query, str_form
+from app.forms import (
+    EMAIL,
+    HIDDEN_CHARS_MESSAGE,
+    bad_request,
+    hidden_chars,
+    query,
+    str_form,
+)
 from app.ui import (
     CARD,
     ORG_SECTION,
@@ -63,7 +70,9 @@ NOTICE = {
     "details": "Profile saved.",
 }
 MAX_NAME = 80
-MAX_NEIGHBORHOOD = 80  # as onboarding (LIMITS)
+MAX_NEIGHBORHOOD = 80
+MAX_EMAIL = 254
+MAX_OTHER_CAUSES = 300
 # The types a phone's picker offers; the server decides what it accepts (photos.FORMATS)
 ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif"
 
@@ -111,6 +120,8 @@ def DetailsForm(p, f=None):
         "pronouns": p.pronouns or "",
         "bio": p.bio or "",
         "neighborhood": p.neighborhood or "",
+        "email": p.email or "",
+        "other_causes": p.other_causes or "",
         "interests": json.loads(p.interests or "[]"),
     }
     return PlainForm(
@@ -168,6 +179,24 @@ def DetailsForm(p, f=None):
                 name="neighborhood",
                 value=f["neighborhood"],
                 maxlength=str(MAX_NEIGHBORHOOD),
+            ),
+        ),
+        Field(
+            "Email (optional; only we see it, for last-minute calls when you have no texts)",
+            TextInput(
+                name="email",
+                type="email",
+                value=f["email"],
+                maxlength=str(MAX_EMAIL),
+                autocomplete="email",
+            ),
+        ),
+        Field(
+            "Any other cause you'd like to see here? (optional)",
+            TextInput(
+                name="other_causes",
+                value=f["other_causes"],
+                maxlength=str(MAX_OTHER_CAUSES),
             ),
         ),
         Field(
@@ -305,6 +334,10 @@ def details_error(f):
         return f"Keep your bio to {MAX_BIO} characters."
     if len(f["neighborhood"]) > MAX_NEIGHBORHOOD:
         return f"Keep your neighborhood to {MAX_NEIGHBORHOOD} characters."
+    if len(f["email"]) > MAX_EMAIL or (f["email"] and not EMAIL.fullmatch(f["email"])):
+        return "That email doesn't look right. Leave it blank to skip."
+    if len(f["other_causes"]) > MAX_OTHER_CAUSES:
+        return f"Keep other causes to {MAX_OTHER_CAUSES} characters."
     picked = set(f["interests"])
     if not picked <= {v for v, _ in INTERESTS} or len(picked) > MAX_INTERESTS:
         return f"Pick up to {MAX_INTERESTS} interests from the list."
@@ -318,7 +351,15 @@ async def save_details(req):
         return bad_request()
     f = {
         k: form.get(k, "").strip()
-        for k in ("first_name", "last_name", "pronouns", "bio", "neighborhood")
+        for k in (
+            "first_name",
+            "last_name",
+            "pronouns",
+            "bio",
+            "neighborhood",
+            "email",
+            "other_causes",
+        )
     }
     f["interests"] = list(dict.fromkeys(form.getlist("interests")))
     return await run_in_threadpool(_sync_save_details, req.scope["uid"], f)

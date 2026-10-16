@@ -102,7 +102,7 @@ FREQUENCY = [
     ("weekly", "About weekly"),
 ]
 
-# What a nonprofit sees of a volunteer after a like. The onboarding consent says exactly
+# What a nonprofit sees of a volunteer after a like. The privacy page says exactly
 # this and org_inbox returns exactly these fields; tests/test_match.py keeps them equal.
 SHARED_WITH_NONPROFIT = (
     "Causematch shares your photo, your first name and last initial (your full last "

@@ -97,6 +97,10 @@ def _sync_swipe(req, form):
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
             notify.on_new_like(m.id)
+            if not data.get_profile(uid).heard_from:  # the one optional card, once
+                if req.headers.get("HX-Request"):
+                    return Response(headers={"HX-Redirect": "/onboarding/more"})
+                return Redirect("/onboarding/more")
     if req.headers.get("HX-Request"):
         return DeckArea(uid, today, view, notice)
     return Redirect("/deck?today=1" if today else "/deck")

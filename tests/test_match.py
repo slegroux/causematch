@@ -470,7 +470,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
     from app.choices import SHARED_WITH_NONPROFIT
 
     user = new_user
-    onboarding = unescape(user.get("/onboarding").text)
+    onboarding = unescape(user.get("/privacy").text)  # the full wording lives there
     user.post("/onboarding", data=FORM)
     # the consent promises exactly these things ...
     assert SHARED_WITH_NONPROFIT in onboarding

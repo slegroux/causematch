@@ -105,7 +105,12 @@ def test_buttons_work_with_javascript_off(browser, live_url):
     page.get_by_label("Code").fill("000000")
     page.get_by_role("button", name="Sign in").click()
     (p,) = profiles(where="phone = ?", where_args=["+13105550145"])
-    profiles.update(id=p.id, display_name="Jo", onboarded_at="2026-01-01T00:00:00")
+    profiles.update(
+        id=p.id,
+        display_name="Jo",
+        onboarded_at="2026-01-01T00:00:00",
+        heard_from="skipped",
+    )
     page.goto("/deck")
     page.get_by_role("button", name="Like").click()
     page.get_by_text("Serve a weekend lunch line").wait_for()

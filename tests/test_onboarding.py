@@ -29,12 +29,11 @@ def test_completed_onboarding_stores_profile_and_reaches_deck(new_user):
     r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     p = profile_of(new_user)
-    assert p.neighborhood == "Chinatown"
     assert p.display_name == "Sam"
     assert p.radius_km == 16
     assert json.loads(p.causes) == ["food-insecurity"]
     assert 33.9 < p.lat < 34.2 and -118.4 < p.lon < -118.1
-    assert p.adult_attested and p.onboarded_at and p.heard_from == "public"
+    assert p.adult_attested and p.onboarded_at and p.heard_from == ""
     assert new_user.get("/deck").status_code == 200
 
 
@@ -110,37 +109,6 @@ def test_onboarded_user_login_goes_to_deck(user):
     )
 
 
-def test_email_is_optional_and_stored_when_given(new_user):
-    new_user.post("/onboarding", data={**FORM, "email": "sam@example.com"})
-    assert profile_of(new_user).email == "sam@example.com"
-
-
-def test_onboarding_without_email_succeeds(new_user):
-    r = new_user.post("/onboarding", data=FORM, follow_redirects=False)
-    assert r.headers["location"] == "/deck"
-    assert not profile_of(new_user).email
-
-
-def test_malformed_email_rejected(new_user):
-    r = new_user.post(
-        "/onboarding", data={**FORM, "email": "nope"}, follow_redirects=False
-    )
-    assert r.status_code == 200 and "email" in r.text
-    assert not profile_of(new_user).onboarded_at
-
-
-def test_a_day_grid_slot_is_accepted_and_shown(new_user):
-    page = new_user.get("/onboarding").text
-    assert 'name="availability" value="sat_evening"' in page and "Evening" in page
-    r = new_user.post(
-        "/onboarding",
-        data={**FORM, "availability": ["sat_evening"]},
-        follow_redirects=False,
-    )
-    assert r.status_code == 303
-    assert json.loads(profile_of(new_user).availability) == ["sat_evening"]
-
-
 def test_onboarding_saves_home_ratings_and_days(new_user):
     r = new_user.post(
         "/onboarding",
@@ -155,7 +123,7 @@ def test_onboarding_saves_home_ratings_and_days(new_user):
         "animal-shelters": "no",
     }
     assert json.loads(p.causes) == ["food-insecurity", "environment-parks"]
-    assert json.loads(p.availability) == ["sat_morning", "sun_morning"]
+    assert json.loads(p.availability) == []  # set later in Me
     (home,) = places(where="user_id = ?", where_args=[p.id])
     assert (home.label, home.area, home.mode, home.max_minutes) == (
         "Home",
@@ -260,8 +228,6 @@ def test_onboarding_once_done_cannot_be_posted_again(user):
     [
         ("first_name", "Sa\u200bm"),  # zero-width space
         ("first_name", "\u3164"),  # Hangul filler: looks blank
-        ("neighborhood", "Echo\u202ePark"),  # right-to-left override
-        ("other_causes", "owls\u0007"),  # a control character
         ("place1_where", "Mar\u2028Vista"),  # line separator
         ("first_name", "Sam\u0301\u0301\u0301\u0301"),  # 4 combining marks in a row
         ("first_name", "Sa\u200dm"),  # a zero-width joiner, in a one-line answer
@@ -366,3 +332,55 @@ def test_odd_places_get_a_clear_message(new_user, where, message):
         "/onboarding", data={**FORM, "place1_where": where}, follow_redirects=False
     )
     assert r.status_code == 200 and message in r.text
+
+
+def two_cards(client):
+    return [c["id"] for c in data.deck(profile_of(client).id, 2)]
+
+
+def test_the_short_form_has_only_what_the_first_card_needs(new_user):
+    page = new_user.get("/onboarding").text
+    for gone in ("last_name", "email", "neighborhood", "availability", "heard_from",
+                 "volunteered_last_year", "other_causes"):  # fmt: skip
+        assert f'name="{gone}"' not in page
+    assert 'name="adult"' in page and 'name="consent"' in page
+    assert 'href="/privacy"' in page and "I agree to the" in page
+
+
+def test_the_short_form_saves_and_the_deck_has_a_card_without_availability(new_user):
+    new_user.post("/onboarding", data=FORM)
+    p = profile_of(new_user)
+    assert json.loads(p.availability) == [] and p.heard_from == ""
+    assert new_user.get("/deck").text.count("data-swipe-card") >= 1
+
+
+def test_the_after_first_like_card_shows_once_and_can_be_skipped(new_user):
+    new_user.post("/onboarding", data=FORM)
+    like = {"opening_id": two_cards(new_user)[0], "liked": "1"}
+    r = new_user.post("/swipe", data=like, follow_redirects=False)
+    assert r.headers["location"] == "/onboarding/more"
+    assert "How did you hear" in new_user.get("/onboarding/more").text
+    r = new_user.post("/onboarding/more", data={"skip": "1"}, follow_redirects=False)
+    assert r.headers["location"] == "/deck"
+    assert profile_of(new_user).heard_from == "skipped"
+    r = new_user.post(
+        "/swipe",
+        data={**like, "opening_id": two_cards(new_user)[1]},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/deck"  # not asked again
+    assert new_user.get("/onboarding/more", follow_redirects=False).status_code == 303
+
+
+def test_the_after_first_like_card_saves_its_answers(new_user):
+    new_user.post("/onboarding", data=FORM)
+    new_user.post("/swipe", data={"opening_id": two_cards(new_user)[1], "liked": "1"})
+    new_user.post(
+        "/onboarding/more",
+        data={"heard_from": "public", "volunteered_last_year": "yes"},
+    )
+    p = profile_of(new_user)
+    assert (p.heard_from, p.volunteered_last_year) == ("public", "yes")
+    assert (
+        new_user.post("/onboarding/more", data={"heard_from": "x"}).status_code == 200
+    )
