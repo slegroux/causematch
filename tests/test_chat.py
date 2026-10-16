@@ -1,13 +1,17 @@
 import json
+import re
 import threading
 import time
 from contextlib import ExitStack, contextmanager
+from datetime import datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import anyio.from_thread
 import pytest
 from conftest import (
     coordinator,
+    png,
     volunteer,
 )
 from starlette.testclient import TestClient
@@ -607,3 +611,35 @@ def test_a_message_with_a_bidi_control_is_refused():
     """A right-to-left override can make a message read as something else (review 4)."""
     with pytest.raises(ValueError, match="can't show"):
         data.send_message(1, 1, "pay at \u202emoc.live")
+
+
+def test_matches_row_shows_the_org_logo_else_its_initial(chat):
+    org = orgs[chat.opening.org_id]
+    assert not (org.logo_key or org.photo_key or chat.opening.photo_key)
+    page = chat.vol.get("/matches").text
+    assert "/photos/" not in page
+    assert re.search(rf'aria-hidden="true" class="h-12 w-12[^"]*">{org.name[0]}<', page)
+    r = chat.coord.post(
+        f"/org/organization/{org.id}/logo",
+        files={"photo": ("p", png(), "image/png")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    src = f"/photos/thumb/{orgs[org.id].logo_key}.jpg"
+    for page in (chat.vol.get("/matches").text, chat.vol.get(f"/chat/{chat.id}").text):
+        assert f'src="{src}"' in page and 'loading="lazy"' in page
+    assert chat.vol.get(src).status_code == 200  # the logo is served to the volunteer
+
+
+def test_notes_and_calendar_show_once_accepted_only(chat):
+    openings.update(id=chat.opening.id, notes="Closed-toe shoes, park on 5th")
+    pending = volunteer("Bianca")
+    data.swipe(pending.uid, chat.opening.id, True)
+    assert "Closed-toe shoes" not in pending.get("/matches").text
+    soon = datetime.now(ZoneInfo("America/Los_Angeles")) + timedelta(days=3)
+    data.add_shift(chat.coord.uid, chat.id, soon.strftime("%Y-%m-%dT%H:%M"))
+    shift = data.my_matches(chat.vol.uid)[0]["shift"]
+    for page in (chat.vol.get("/matches").text, chat.vol.get(f"/chat/{chat.id}").text):
+        assert "Closed-toe shoes, park on 5th" in page
+        assert f'href="/shifts/{shift["id"]}.ics"' in page
+        assert "https://calendar.google.com/calendar/render?action=TEMPLATE" in page

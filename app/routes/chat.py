@@ -22,8 +22,11 @@ from app.forms import bad_request, query, str_form
 from app.ui import (
     SEND,
     SMALL_LINK,
+    AddToCalendar,
     BackLink,
     Icon,
+    Notes,
+    OrgFace,
     OrgShell,
     Refusal,
     Router,
@@ -123,9 +126,15 @@ def ChatPage(uid, match_id, role, notice=""):
     content = (
         BackLink(back[0], f"Back to {back[1].lower()}"),
         Div(
-            H1(
-                head["title"],
-                cls="font-display text-xl font-extrabold leading-snug text-ink",
+            Div(
+                None
+                if role == "coordinator"
+                else OrgFace(head["org"], head["logo"], head["photo"], head["slug"]),
+                H1(
+                    head["title"],
+                    cls="font-display text-xl font-extrabold leading-snug text-ink",
+                ),
+                cls="flex items-center gap-3",
             ),
             VolunteerHeader(head["other"], head["photo_key"])
             if role == "coordinator"
@@ -136,7 +145,11 @@ def ChatPage(uid, match_id, role, notice=""):
                 else f"{head['org']} - {head['other']}",
                 cls=TextPresets.muted_sm,
             ),
-            cls="border-b border-line pb-3",
+            Notes(head["notes"]) if role == "volunteer" else None,
+            AddToCalendar(head["shift"])
+            if role == "volunteer" and head["shift"]
+            else None,
+            cls="space-y-1 border-b border-line pb-3",
         ),
         P(
             "You're in! Your shift is booked. Say hi to the team here.",

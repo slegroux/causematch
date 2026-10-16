@@ -1,4 +1,7 @@
-from fasthtml.common import H1, H2, A, Div, P, Redirect
+import re
+from datetime import UTC, datetime
+
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Response
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -11,6 +14,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data
+from app.config import public_base_url
 from app.forms import query, str_form
 from app.ui import (
     CARD,
@@ -19,6 +23,7 @@ from app.ui import (
     SMALL_LINK,
     TITLE,
     Field,
+    OrgFace,
     OrgShell,
     Pill,
     Refusal,
@@ -26,6 +31,7 @@ from app.ui import (
     TextInput,
     VolunteerHeader,
     VolunteerShell,
+    calendar_event,
     when,
 )
 
@@ -52,11 +58,18 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
         Pill(
             status or SHIFT_STATUS[s["status"]][0], tone or SHIFT_STATUS[s["status"]][1]
         ),
-        P(s["title"], cls="font-bold leading-snug text-ink"),
-        VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
-        P(
-            f"{when(s['starts_at'])}" + ("" if for_org else f" - {s['org']}"),
-            cls=TextPresets.muted_sm,
+        Div(
+            None if for_org else OrgFace(s["org"], s["logo"], s["photo"], s["slug"]),
+            Div(
+                P(s["title"], cls="font-bold leading-snug text-ink"),
+                VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
+                P(
+                    f"{when(s['starts_at'])}" + ("" if for_org else f" - {s['org']}"),
+                    cls=TextPresets.muted_sm,
+                ),
+                cls="min-w-0 space-y-2",
+            ),
+            cls="flex items-center gap-3",
         ),
         *actions,
         cls="w-full space-y-2 p-4 " + CARD,
@@ -307,4 +320,88 @@ def history(req):
             ],
             "Nothing yet.",
         ),
+    )
+
+
+# GET /shifts/{id}.ics: one VEVENT, written by hand (RFC 5545). The start is wall clock
+# with a TZID and the zone's own VTIMEZONE (US rules since 2007), which iPhone Calendar
+# imports as Los Angeles time.
+VTIMEZONE = (
+    "BEGIN:VTIMEZONE",
+    "TZID:America/Los_Angeles",
+    "BEGIN:DAYLIGHT",
+    "TZOFFSETFROM:-0800",
+    "TZOFFSETTO:-0700",
+    "TZNAME:PDT",
+    "DTSTART:19700308T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+    "END:DAYLIGHT",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:-0700",
+    "TZOFFSETTO:-0800",
+    "TZNAME:PST",
+    "DTSTART:19701101T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+    "END:STANDARD",
+    "END:VTIMEZONE",
+)
+
+
+def ics_text(value):
+    """A TEXT value: backslash, semicolon, comma and newline escaped (RFC 5545 3.3.11)."""
+    value = value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return re.sub(r"\r\n|\r|\n", r"\\n", value)
+
+
+def ics_fold(line):
+    """Lines of at most 75 octets, continued with CRLF and a space; never inside a
+    UTF-8 character."""
+    out, part = [], ""
+    for ch in line:
+        if len((part + ch).encode()) > (75 if not out else 74):
+            out.append(part)
+            part = ""
+        part += ch
+    return "\r\n ".join([*out, part])
+
+
+def ics(s):
+    e = calendar_event(s)
+    host = public_base_url().split("://", 1)[1]
+    lines = (
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Causematch//Shifts//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        *VTIMEZONE,
+        "BEGIN:VEVENT",
+        f"UID:shift-{s['id']}@{host}",
+        "DTSTAMP:" + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
+        f"DTSTART;TZID=America/Los_Angeles:{e['start']}",
+        f"DTEND;TZID=America/Los_Angeles:{e['end']}",
+        "SUMMARY:" + ics_text(e["title"]),
+        "LOCATION:" + ics_text(e["place"]),
+        "DESCRIPTION:" + ics_text(e["details"]),
+        "END:VEVENT",
+        "END:VCALENDAR",
+    )
+    return "".join(ics_fold(line) + "\r\n" for line in lines)
+
+
+@ar("/shifts/{shift_id}.ics", methods=["GET"])
+def shift_ics(req, shift_id: int):
+    """Only the volunteer on the shift's match, while it is upcoming; 404 for anyone else,
+    and for a cancelled or past shift."""
+    try:
+        s = data.shift_event(req.scope["uid"], shift_id)
+    except PermissionError:
+        return Response("Not found", status_code=404)
+    return Response(
+        ics(s),
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="shift-{s["id"]}.ics"',
+            "Cache-Control": "private, no-store",
+        },
     )

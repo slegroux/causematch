@@ -39,6 +39,7 @@ NOT_PAGES = {
     "/admin/metrics.csv",
     "/photos/{key}.jpg",
     "/photos/thumb/{key}.jpg",
+    "/shifts/{shift_id}.ics",
 }
 
 
