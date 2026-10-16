@@ -496,7 +496,10 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 and f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]} "
                 f"from {near[0]['label']}",
                 "surprise": odd,
-                "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd),
+                # an urgent card says more up top: fewer reasons, so it still fits
+                "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd)[
+                    : URGENT_WHY if o.id in calls else MAX_WHY
+                ],
                 # the card's picture: the opening's photo, else the org's; its logo
                 # as a badge
                 "photo": o.photo_key or org_media.get(o.org_id, (None, None))[0],
@@ -536,6 +539,7 @@ def _fit(p, rated, skills, spoken, o, slugs, near, rates):
 
 
 MAX_WHY = 4
+URGENT_WHY = 2  # an urgent card's reasons: its badge and "booked" line come first
 WORK_WORDS = {
     ("setting", "indoor"): "Indoors",
     ("setting", "outdoor"): "Outdoors",

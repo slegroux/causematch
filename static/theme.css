@@ -264,8 +264,31 @@ body:has(.cm-tabbar) .cm-savebar {
    reach. */
 .cm-swipe-buttons {
   position: sticky;
-  bottom: calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
+  bottom: calc(4rem + 1px + env(safe-area-inset-bottom));
   z-index: 10;
+  /* a solid strip of the page's color, the width of the screen: a card taller than the
+     space scrolls cleanly under it, never half-hidden behind the round buttons */
+  margin-inline: -1rem;
+  padding: 0.5rem 1rem 0.75rem;
+  background-color: hsl(var(--cm-cream));
+  box-shadow: 0 -10px 12px -10px rgb(43 30 22 / 0.18);
+}
+/* The card's picture band (app/routes/deck.py CardImage) gives its room to an urgent
+   call's badge and "booked" line, and to the Home Screen hint while it shows, so the
+   tallest card still fits above Pass and Like on a phone. */
+.cm-urgent .cm-pic,
+body:has(#a2hs:not([hidden])) .cm-pic {
+  height: 5rem;
+}
+body:has(#a2hs:not([hidden])) .cm-urgent .cm-pic {
+  height: 3.5rem;
+}
+.cm-urgent .cm-logo,
+body:has(#a2hs:not([hidden])) .cm-logo {
+  width: 2.75rem;
+  height: 2.75rem;
+  bottom: 0.375rem;
+  left: 0.75rem;
 }
 /* The deck's open filter sheet (app/routes/deck.py FilterSheet): just above the tab bar,
    whatever the card's height, and never taller than the screen above it. */

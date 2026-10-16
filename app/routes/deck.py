@@ -74,7 +74,7 @@ def CauseArt(slug):
         alt="",
         draggable="false",  # a mouse drag moves the card, not a ghost of the image
         # shorter on a short phone, so the buttons stay above the tab bar
-        cls="pointer-events-none block h-36 w-full object-cover "
+        cls="cm-pic pointer-events-none block h-36 w-full object-cover "
         "[@media(max-height:740px)]:h-24",
     )
 
@@ -105,18 +105,18 @@ def CardImage(c):
                 alt="",
                 draggable="false",
                 # short enough that Pass and Like stay above the tab bar on a small phone
-                cls="pointer-events-none block h-36 w-full object-cover "
+                cls="cm-pic pointer-events-none block h-36 w-full object-cover "
                 "[@media(max-height:740px)]:h-28",
             ),
-            LogoBadge(c["logo"], "absolute bottom-3 left-3 h-16 w-16")
+            LogoBadge(c["logo"], "cm-logo absolute bottom-3 left-3 h-16 w-16")
             if c.get("logo")
             else None,
             cls="relative",
         )
     if c.get("logo"):
         return Div(
-            LogoBadge(c["logo"], "h-24 w-24"),
-            cls="grid h-36 place-items-center [@media(max-height:740px)]:h-24 "
+            LogoBadge(c["logo"], "cm-logo h-24 w-24"),
+            cls="cm-pic grid h-36 place-items-center [@media(max-height:740px)]:h-24 "
             + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
         )
     return CauseArt(slug) if slug else None
@@ -159,8 +159,9 @@ def OpeningCard(c):
         ),
         # classes, not style attributes: the CSP forbids them (static/swipe.js sets styles
         # from script, which it allows)
+        # cm-urgent (static/theme.css): an urgent call's lines take the picture's room
         cls="w-full select-none touch-pan-y overflow-hidden rounded-3xl border "
-        "border-line bg-white shadow-warm",
+        "border-line bg-white shadow-warm" + (" cm-urgent" if c.get("urgent") else ""),
         data_swipe_card="1",
     )
 
@@ -447,7 +448,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
             ),
             SwipeButtons(c["id"], today, c["call_id"]),
             Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
-            cls="cm-swipe-buttons pointer-events-none mt-4 flex items-center "
+            cls="cm-swipe-buttons pointer-events-none mt-2 flex items-center "
             "justify-center gap-6",
         ),
         P(

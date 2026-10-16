@@ -271,15 +271,17 @@ def Pill(text, tone):
 
 
 def AddToHomeScreen():
-    """A hint at the top of the deck, under the "I'm free today" switch, hidden until
-    static/a2hs.js decides: iPhone Safari, in a tab, not dismissed. In the page's flow,
-    never fixed: fixed above the tab bar it covered Pass, Like and the filter button. The
-    outer box carries no display class, so `hidden` holds."""
+    """A one-line hint at the top of the deck, under the "I'm free today" switch, hidden
+    until static/a2hs.js decides: iPhone Safari, in a tab, not dismissed. In the page's
+    flow, never fixed: fixed above the tab bar it covered Pass, Like and the filter
+    button. Slim, and while it shows the card's picture band is shorter (static/theme.css),
+    so the card still fits above them. The outer box carries no display class, so
+    `hidden` holds."""
     return Div(
         Div(
             P(
-                "Add Causematch to your Home Screen: tap Share, then Add to Home Screen.",
-                cls="text-sm font-semibold leading-snug",
+                "Tip: tap Share, then Add to Home Screen",
+                cls="min-w-0 truncate text-xs font-semibold",
             ),
             Button(
                 Icon(CROSS, size=20),
@@ -290,12 +292,12 @@ def AddToHomeScreen():
                 "hover:bg-white/10 focus-visible:outline focus-visible:outline-2 "
                 "focus-visible:outline-cream",
             ),
-            cls="mx-auto flex max-w-md items-center gap-2 rounded-2xl bg-ink py-1.5 "
-            "pl-4 pr-1.5 text-cream shadow-warm",
+            cls="mx-auto flex max-w-md items-center justify-between gap-2 "
+            "rounded-full bg-ink pl-4 text-cream shadow-warm",
         ),
         id="a2hs",
         hidden=True,
-        cls="mb-3",
+        cls="mb-2",
     )
 
 
