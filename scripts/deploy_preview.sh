@@ -90,4 +90,6 @@ fi
 
 echo "Preview: $deployed  (open this URL: forms only work on the origin in PUBLIC_BASE_URL)"
 echo "Password: gcloud secrets versions access latest --secret PREVIEW_PASSWORD --project $PROJECT"
+echo "  (make one with: python -c 'import secrets; print(secrets.token_urlsafe(24))', URL-safe)"
+echo "Link to send, by direct message (not a channel that unfurls links): $deployed/?access=<password>"
 echo "Sign-in links: in the service's logs at startup, or /org/login with pat@demo.causematch.test"
