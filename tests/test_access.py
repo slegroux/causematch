@@ -67,6 +67,8 @@ ROUTES = {
     ("POST", "/org/claim"): ("public", None),
     ("GET", "/onboarding"): ("volunteer", "own-record"),
     ("POST", "/onboarding"): ("volunteer", "own-record"),
+    ("GET", "/onboarding/more"): ("volunteer", "own-record"),
+    ("POST", "/onboarding/more"): ("volunteer", "own-record"),
     ("GET", "/"): ("volunteer", None),
     ("POST", "/"): ("volunteer", None),
     ("GET", "/deck"): ("volunteer", "own-record"),

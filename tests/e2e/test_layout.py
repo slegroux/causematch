@@ -247,14 +247,43 @@ def test_onboarding_fills_and_submits_on_a_small_phone(phone):
     phone.get_by_text("I'm 18 or older").click()
     phone.get_by_label("Neighborhood or ZIP").fill("90012")
     phone.locator("label:has(input[name='cause_food-insecurity'][value=love])").click()
-    phone.locator("label:has(input[name=availability][value=sat_morning])").click()
-    phone.locator("select[name=heard_from]").select_option("public")
-    phone.get_by_text("I agree", exact=True).click()
+    phone.get_by_text("I agree to the").click()
     start = phone.get_by_role("button", name="Start swiping")
     box = start.bounding_box()
     assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
     start.click()
     phone.wait_for_url("**/deck")
+
+
+def test_a_new_volunteer_reaches_the_first_card_in_nine_taps_or_fewer(phone):
+    """Taps count every click or field focus, from the sign-in screen (the UX audit's count)."""
+    taps = 0
+
+    def tap(locator, text=None):
+        nonlocal taps
+        taps += 1
+        locator.click()
+        if text is not None:
+            locator.fill(text)
+
+    phone.goto("/login")
+    tap(phone.get_by_label("Mobile number"), "(310) 555-0167")
+    tap(phone.get_by_role("button", name="Text me a code"))
+    tap(phone.get_by_label("Code"), "000000")
+    tap(phone.get_by_role("button", name="Sign in"))
+    phone.wait_for_url("**/onboarding")
+    assert phone.locator("input[name=first_name]").evaluate(
+        "e => e === document.activeElement"
+    )
+    phone.keyboard.type("Sam")  # autofocus: no tap needed
+    tap(phone.get_by_text("I'm 18 or older"))
+    tap(phone.get_by_label("Neighborhood or ZIP"), "90012")
+    tap(phone.locator("label:has(input[name='cause_food-insecurity'][value=love])"))
+    tap(phone.get_by_text("I agree to the"))
+    tap(phone.get_by_role("button", name="Start swiping"))
+    phone.wait_for_url("**/deck")
+    assert phone.locator("[data-swipe-card]").count() == 1
+    assert taps <= 9, taps
 
 
 def test_pass_and_like_stay_above_the_tab_bar_on_a_short_screen(browser, live_url):

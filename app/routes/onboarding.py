@@ -1,19 +1,29 @@
-from fasthtml.common import H1, A, Datalist, Div, Form, Option, P, Redirect, Script
-from monsterui.all import AT, Alert, AlertT, Container, LabelCheckboxX
+from fasthtml.common import (
+    H1,
+    A,
+    Datalist,
+    Div,
+    Form,
+    Option,
+    P,
+    Redirect,
+    Script,
+    Span,
+)
+from monsterui.all import AT, Alert, AlertT, Button, ButtonT, Container, LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 
 from app import data, match, prefs
-from app.choices import ANY_DISTANCE_KM, SHARED_WITH_NONPROFIT
+from app.choices import ANY_DISTANCE_KM
 from app.forms import (
-    EMAIL,
     HIDDEN_CHARS_MESSAGE,
     bad_request,
     hidden_chars,
     str_form,
 )
 from app.geo import neighborhoods, shown_point, zip_latlon
-from app.routes.prefs import SLOTS, CauseRow, DayGrid, PlaceFields, Section
-from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput
+from app.routes.prefs import CauseRow, PlaceFields, Section
+from app.ui import TITLE, BigButton, Choice, Field, Router, TextInput, VolunteerShell
 
 ar = Router()
 
@@ -25,27 +35,17 @@ NO_PLACE = (
 
 VOLUNTEERED = [("yes", "Yes"), ("no", "No")]
 # Longest accepted value per free-text field.
-LIMITS = {
-    "first_name": 80,
-    "last_name": 80,
-    "email": 254,
-    "neighborhood": 80,
-    "other_causes": 300,
-}
+LIMITS = {"first_name": 80}
 HEARD_FROM = [
     ("personal", "I know the founders personally"),
     ("second_degree", "A friend sent it to me"),
     ("public", "Social media, a group or a flyer"),
     ("other", "Other"),
 ]
-CONSENT = (
-    "I agree to the privacy policy. Causematch uses my answers to match me with "
-    f"openings. {SHARED_WITH_NONPROFIT} I can delete my account at any time."
-)
 INTRO = (
     "Tell us what you care about, where and when, then swipe through openings near "
-    "you. When you like one and the nonprofit says yes too, you're matched. The rest "
-    "(skills, kind of work, a second place) you can set later in Me."
+    "you. When you like one and the nonprofit says yes too, you're matched. Your free "
+    "times, email and the rest you can set later in Me."
 )
 # The Home place as onboarding starts it: by car, within 30 minutes
 HOME = {
@@ -74,16 +74,8 @@ def OnboardingForm(f=None, error=None):
                         name="first_name",
                         value=f.get("first_name", ""),
                         autocomplete="given-name",
+                        autofocus=True,  # typing starts at once: no tap to focus it
                         required=True,
-                    ),
-                ),
-                Field(
-                    "Last name (optional; a nonprofit sees only its first letter until "
-                    "it says yes)",
-                    TextInput(
-                        name="last_name",
-                        value=f.get("last_name", ""),
-                        autocomplete="family-name",
                     ),
                 ),
                 LabelCheckboxX(
@@ -92,25 +84,12 @@ def OnboardingForm(f=None, error=None):
                     value="1",
                     checked=bool(f.get("adult")),
                 ),
-                Field(
-                    "Email (optional)",
-                    TextInput(
-                        name="email",
-                        type="email",
-                        value=f.get("email", ""),
-                        autocomplete="email",
-                    ),
-                ),
             ),
             Section(
                 "Where",
                 "Where you'll help from, and how far you'd go. Only you see it.",
                 PlaceFields(0, f.get("place", HOME), named=False),
                 Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
-                Field(
-                    "Neighborhood nonprofits see (optional, e.g. Silver Lake)",
-                    TextInput(name="neighborhood", value=f.get("neighborhood", "")),
-                ),
             ),
             Section(
                 "What",
@@ -119,47 +98,15 @@ def OnboardingForm(f=None, error=None):
                     CauseRow(c, f.get("causes", {}).get(c.slug))
                     for c in data.active_causes()
                 ],
-                Field(
-                    "Any other cause you'd like to see here? (optional)",
-                    TextInput(name="other_causes", value=f.get("other_causes", "")),
-                ),
             ),
-            Section(
-                "When",
-                "Tick the times you're usually free (optional).",
-                DayGrid(f.get("availability", ())),
-            ),
-            Section(
-                "A little more",
-                None,
-                Field(
-                    "Have you volunteered in the last 12 months?",
-                    Choice(
-                        "volunteered_last_year",
-                        VOLUNTEERED,
-                        f.get("volunteered_last_year", ""),
-                    ),
+            LabelCheckboxX(
+                Span(
+                    "I agree to the ",
+                    A("privacy policy", href="/privacy", cls=AT.muted),
                 ),
-                Field(
-                    "How did you hear about Causematch?",
-                    Choice("heard_from", HEARD_FROM, f.get("heard_from", "")),
-                ),
-                Div(
-                    LabelCheckboxX(
-                        "I agree",
-                        name="consent",
-                        value="1",
-                        checked=bool(f.get("consent")),
-                    ),
-                    P(
-                        CONSENT,
-                        " ",
-                        A("Read the privacy policy", href="/privacy", cls=AT.muted),
-                        ".",
-                        cls="text-sm text-ink-muted",
-                    ),
-                    cls="space-y-1",
-                ),
+                name="consent",
+                value="1",
+                checked=bool(f.get("consent")),
             ),
             Div(BigButton("Start swiping"), cls="cm-savebar z-20 -mx-1 py-3"),
             action="/onboarding",
@@ -198,9 +145,6 @@ def _sync_onboarding_save(req, form):
         "adult": form.get("adult"),
         "place": {**HOME, **posted, "lat": shown_lat, "lon": shown_lon},
         "causes": {s: form.get(f"cause_{s}") for s in active if form.get(f"cause_{s}")},
-        "availability": form.getlist("availability"),
-        "volunteered_last_year": form.get("volunteered_last_year", ""),
-        "heard_from": form.get("heard_from", ""),
         "consent": form.get("consent"),
     }
 
@@ -215,8 +159,6 @@ def _sync_onboarding_save(req, form):
         return fail(HIDDEN_CHARS_MESSAGE)
     if not f["first_name"]:
         return fail("Please enter your first name.")
-    if f["email"] and not EMAIL.fullmatch(f["email"]):
-        return fail("That email doesn't look right. Leave it blank to skip.")
     where = " ".join(posted["where"].split())
     if not where:
         return fail(NO_PLACE)
@@ -232,31 +174,79 @@ def _sync_onboarding_save(req, form):
         return fail(prefs.UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(f["causes"].values()):
         return fail("Please pick at least one cause you love or are open to.")
-    if not set(f["availability"]) <= SLOTS:
-        return fail(prefs.UNRECOGNIZED)
-    if f["volunteered_last_year"] not in {v for v, _ in VOLUNTEERED} | {""}:
-        return fail(prefs.UNRECOGNIZED)
-    if f["heard_from"] not in {v for v, _ in HEARD_FROM}:
-        return fail("Please tell us how you heard about Causematch.")
     if not f["consent"]:
         return fail("Please agree to the privacy policy to continue.")
     reach = match.reach_km(place["mode"], place["max_minutes"])
     data.save_onboarding(
         req.scope["uid"],
         display_name=f["first_name"],
-        last_name=f["last_name"],
-        email=f["email"],
-        neighborhood=f["neighborhood"],
-        volunteered_last_year=f["volunteered_last_year"],
         # the Home place, also as the profile's point and radius (metrics, old readers)
         lat=place["lat"],
         lon=place["lon"],
         radius_km=round(reach) if reach else ANY_DISTANCE_KM,
         causes=prefs.picked(f["causes"]),
         cause_prefs=f["causes"],
-        other_causes=f["other_causes"],
-        availability=match.day_slots(f["availability"]),
-        heard_from=f["heard_from"],
         place=place,
     )
+    return Redirect("/deck")
+
+
+# --- the one optional card after the first Like ---------------------------------------------
+
+SKIPPED = "skipped"  # asked and passed on: metrics count it as unknown, and we don't ask again
+
+
+def MoreCard(error=None):
+    return VolunteerShell(
+        "deck",
+        H1("Liked! Two quick questions", cls=TITLE),
+        P(
+            "Both optional. They help us see who Causematch reaches.",
+            cls="-mt-2 text-sm text-ink-muted",
+        ),
+        Alert(error, cls=AlertT.error + " mb-4") if error else None,
+        Form(
+            Field(
+                "Have you volunteered in the last 12 months?",
+                Choice("volunteered_last_year", VOLUNTEERED),
+            ),
+            Field(
+                "How did you hear about Causematch?", Choice("heard_from", HEARD_FROM)
+            ),
+            BigButton("Save"),
+            Button("Skip", name="skip", value="1", cls=ButtonT.ghost + " w-full"),
+            action="/onboarding/more",
+            method="post",
+            cls="space-y-4",
+        ),
+    )
+
+
+@ar("/onboarding/more", methods=["GET"])
+def more_page(req):
+    if data.get_profile(req.scope["uid"]).heard_from:
+        return Redirect("/deck")
+    return MoreCard()
+
+
+@ar("/onboarding/more", methods=["POST"])
+async def more_save(req):
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    return await run_in_threadpool(_sync_more_save, req.scope["uid"], form)
+
+
+def _sync_more_save(uid, form):
+    heard, volunteered = (
+        form.get("heard_from", ""),
+        form.get("volunteered_last_year", ""),
+    )
+    if form.get("skip"):
+        heard = volunteered = ""
+    elif heard not in {v for v, _ in HEARD_FROM} | {""} or volunteered not in {
+        v for v, _ in VOLUNTEERED
+    } | {""}:
+        return MoreCard(prefs.UNRECOGNIZED)
+    data.save_about(uid, heard or SKIPPED, volunteered)
     return Redirect("/deck")

@@ -1378,7 +1378,7 @@ def save_onboarding(
     skills=(),
     volunteered_last_year="",
     frequency="",
-    heard_from,
+    heard_from="",
     cause_prefs=None,
     place=None,
     last_name="",
@@ -1413,6 +1413,15 @@ def save_onboarding(
             heard_from=heard_from,
             onboarded_at=_now(),
         )
+
+
+def save_about(uid, heard_from, volunteered_last_year=""):
+    """The answers of the one optional card after the first Like; heard_from is never
+    blank here, so the card is asked once."""
+    _volunteer(uid)
+    _db.profiles.update(
+        id=uid, heard_from=heard_from, volunteered_last_year=volunteered_last_year
+    )
 
 
 def preferences(uid):
@@ -1494,10 +1503,19 @@ def save_preferences(
 
 
 def save_profile_details(
-    uid, *, first_name, last_name, pronouns, bio, interests, neighborhood=None
+    uid,
+    *,
+    first_name,
+    last_name,
+    pronouns,
+    bio,
+    interests,
+    neighborhood=None,
+    email=None,
+    other_causes=None,
 ):
     """A volunteer's own name, pronouns, bio, interests and, unless None, the neighborhood
-    nonprofits see (checked by the caller)."""
+    nonprofits see, the email and the other causes they asked for (checked by the caller)."""
     _volunteer(uid)
     _db.profiles.update(
         id=uid,
@@ -1507,6 +1525,8 @@ def save_profile_details(
         bio=bio or None,
         interests=json.dumps(list(interests)),
         **({} if neighborhood is None else {"neighborhood": neighborhood}),
+        **({} if email is None else {"email": email}),
+        **({} if other_causes is None else {"other_causes": other_causes}),
     )
 
 

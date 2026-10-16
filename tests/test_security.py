@@ -88,12 +88,10 @@ def test_volunteer_coordinates_never_reach_html(user):
 
 @pytest.mark.parametrize(
     "field,limit",
-    [("first_name", 80), ("neighborhood", 80), ("other_causes", 300), ("email", 254)],
+    [("first_name", 80)],
 )
 def test_over_long_text_rejected(new_user, field, limit):
     value = "a" * (limit + 1)
-    if field == "email":
-        value = "a" * (limit - 5) + "@ex.com"  # valid shape, too long
     r = new_user.post(
         "/onboarding", data={**FORM, field: value}, follow_redirects=False
     )
@@ -109,24 +107,6 @@ def test_file_upload_in_text_field_is_400_not_500(new_user):
         files={"first_name": ("x.txt", b"hello")},
     )
     assert r.status_code == 400
-
-
-def test_extra_onboarding_fields_are_stored(new_user):
-    new_user.post(
-        "/onboarding",
-        data={
-            **FORM,
-            "other_causes": "rescue owls",
-            "volunteered_last_year": "yes",
-        },
-    )
-    (p,) = profiles(where="phone = ?", where_args=[new_user.phone])
-    assert p.other_causes == "rescue owls" and p.volunteered_last_year == "yes"
-
-
-def test_bad_volunteered_value_rejected(new_user):
-    r = new_user.post("/onboarding", data={**FORM, "volunteered_last_year": "maybe"})
-    assert r.status_code == 200 and "wasn't recognized" in r.text
 
 
 def test_la_zip_list_is_county_only():
