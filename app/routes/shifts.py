@@ -14,6 +14,7 @@ from app import data
 from app.forms import query, str_form
 from app.ui import (
     CARD,
+    ORG_SECTION,
     ORG_TITLE,
     SMALL_LINK,
     TITLE,
@@ -100,7 +101,7 @@ def repeat_of(s):
 
 def Section(title, rows, empty):
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink"),
+        H2(title, cls=ORG_SECTION),
         *(rows or [P(empty, cls=TextPresets.muted_sm)]),
         cls="flex flex-col gap-3 pb-6",
     )

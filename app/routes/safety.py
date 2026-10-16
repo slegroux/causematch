@@ -35,6 +35,7 @@ from app.ui import (
     CLOCK,
     HEART,
     NEXT,
+    ORG_SECTION,
     ORG_TITLE,
     PERSON,
     SHIELD,
@@ -386,7 +387,7 @@ EFFECTIVE = "October 15, 2026"
 
 def Section(title, *paras):
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink mt-6"),
+        H2(title, cls=ORG_SECTION + " mt-6"),
         *[P(p, cls="mt-2 leading-relaxed") for p in paras],
     )
 
@@ -504,7 +505,7 @@ def privacy():
             "change when your browser sends a Do Not Track signal.",
         ),
         Div(
-            H2("Questions", cls="font-display text-lg font-extrabold text-ink mt-6"),
+            H2("Questions", cls=ORG_SECTION + " mt-6"),
             P(
                 "Write to ",
                 A(contact, href=f"mailto:{contact}", cls=AT.muted),

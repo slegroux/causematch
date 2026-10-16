@@ -87,7 +87,7 @@ def reply_options(has_phone):
 
 def DetailsForm(profile, error=None):
     return Form(
-        H2("Your details", cls="font-display text-lg font-extrabold text-ink"),
+        H2("Your details", cls=ORG_SECTION),
         P("Volunteers see your name and role.", cls=TextPresets.muted_sm),
         Field(
             'Your name and role, e.g. "Maria Lopez, volunteer coordinator"',

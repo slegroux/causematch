@@ -55,6 +55,7 @@ from app.ui import (
     BACK,
     CARD,
     HEART,
+    ORG_SECTION,
     PEOPLE,
     PIN,
     SHIELD,
@@ -159,7 +160,7 @@ def SharedNote(detail=""):
 def Section(title, hint, *content, shared=None):
     """shared: None for a private section, else the detail its SharedNote adds."""
     return Div(
-        H2(title, cls="font-display text-lg font-extrabold text-ink"),
+        H2(title, cls=ORG_SECTION),
         P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
         SharedNote(shared) if shared is not None else None,
         *content,

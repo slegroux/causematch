@@ -158,13 +158,13 @@ def Router():
     return APIRouter(body_wrap=body_wrap)
 
 
-def Checks(name, options, checked=()):
+def Checks(name, options, checked=(), cls="space-y-1"):
     return Div(
         *[
             LabelCheckboxX(label, name=name, value=value, checked=value in checked)
             for value, label in options
         ],
-        cls="space-y-1",
+        cls=cls,
     )
 
 
