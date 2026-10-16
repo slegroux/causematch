@@ -721,9 +721,12 @@ def test_delete_account_scrubs_pii(w):
 
 
 def test_delete_account_through_onboarding_form_data(new_user):
-    new_user.post("/onboarding", data={**FORM, "email": "a@b.co"})
+    new_user.post("/onboarding", data=FORM)
     uid = uid_of(new_user)
-    assert profiles[uid].email == "a@b.co"
+    # the email moved from onboarding to the profile (UX item 3)
+    data.save_profile_details(uid, first_name="Sam", last_name="Quinn", pronouns="",
+                              bio="", interests=[], email="a@b.co")  # fmt: skip
+    assert profiles[uid].email == "a@b.co" and profiles[uid].onboarded_at
     data.delete_account(uid)
     p = profiles[uid]
     assert all(getattr(p, c) is None for c in PII)
@@ -765,7 +768,7 @@ def test_privacy_is_linked_from_consent_login_pages_and_footer(anon, new_user):
     assert 'href="/privacy"' in anon.get("/login").text
     assert 'href="/privacy"' in anon.get("/org/login").text
     assert 'href="/privacy"' in new_user.get("/onboarding").text
-    assert "Read the privacy policy" in new_user.get("/onboarding").text
+    assert "I agree to the" in new_user.get("/onboarding").text  # the consent's link
 
 
 def test_contact_email_is_required_in_production():

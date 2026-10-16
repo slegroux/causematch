@@ -467,7 +467,10 @@ def OpeningForm(uid, f=None, error=None):
         ),
         reply_field,
         Details(
-            Summary("More details (optional)", cls="cursor-pointer font-bold text-ink"),
+            Summary(
+                "More details (optional)",
+                cls="cursor-pointer py-3 font-bold text-ink",  # a 44 px tap target
+            ),
             Div(
                 H2("Kind of work", cls=ORG_SECTION),
                 *KindOfWork(f),
