@@ -379,6 +379,22 @@ def test_a_post_with_the_key_is_neither_let_in_nor_counted(preview):
     assert not notify.get_verifier().sent and not counted()
 
 
+def test_a_valid_cookie_gets_in_past_the_limit(preview):
+    """Someone else at the same address (an office) used up its guesses: a visitor who
+    already has the cookie isn't locked out, one without it is."""
+    wrong = TestClient(app, headers={"Authorization": basic("g" * 20)})
+    for _ in range(security.BUCKETS["preview"][0]):
+        assert wrong.get("/login").status_code == 401
+    assert wrong.get("/login").status_code == 429
+    inside = TestClient(app, headers={"Cookie": f"{COOKIE}={access_cookie()}"})
+    assert inside.get("/login").status_code == 200
+    r = inside.get("/login?access=wrong", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+    stale = TestClient(app, headers={"Cookie": f"{COOKIE}={access_cookie('o' * 20)}"})
+    assert stale.get("/login").status_code == 429
+    assert TestClient(app).get(f"/login?access={PASSWORD}").status_code == 429
+
+
 @pytest.mark.parametrize("key", [PASSWORD, "wrong"])
 def test_with_the_cookie_the_key_is_only_taken_out(preview, key):
     c = TestClient(app, headers={"Cookie": f"{COOKIE}={access_cookie()}"})

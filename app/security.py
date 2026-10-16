@@ -389,7 +389,8 @@ class PreviewGate:
     no WWW-Authenticate, so browsers show no password dialog; websockets are closed with
     1008. Only /robots.txt is answered without it, from here, with Disallow everything.
     Wrong keys, cookies and passwords are counted per client address: past the "preview"
-    bucket, 429 without checking. Outside a preview it passes through."""
+    bucket, 429 without checking, except for a valid cookie. Outside a preview it passes
+    through."""
 
     def __init__(self, app):
         self.app = app
@@ -407,10 +408,14 @@ class PreviewGate:
         )
         keys = [v for k, v in pairs if k == "access"]
         link = scope["type"] == "http" and scope["method"] in ("GET", "HEAD") and keys
+        # A valid cookie can't be made without SESSION_SECRET, so it confirms no guess:
+        # it gets in before the limit, and with a link the key isn't even compared.
+        if _cookie_ok(cookie):
+            if link:
+                return await _without_key(scope, pairs, False)(scope, receive, send)
+            return await self.app(scope, receive, send)
         if not take_token("preview", subject, take=False):
             refused = too_many(retry_after=BUCKETS["preview"][1])
-        elif link and _cookie_ok(cookie):  # in already: the key isn't even compared
-            return await _without_key(scope, pairs, cookie=False)(scope, receive, send)
         elif link and not _navigation(headers):  # never weighed, so never counted
             refused = HTMLResponse(PRIVATE_PAGE, 401)
         elif link:
@@ -418,15 +423,13 @@ class PreviewGate:
                 return await _without_key(scope, pairs)(scope, receive, send)
             take_token("preview", subject)
             refused = HTMLResponse(PRIVATE_PAGE, 401)
-        elif _cookie_ok(cookie) or preview_password_ok(headers):
+        elif preview_password_ok(headers):
             return await self.app(scope, receive, send)
         else:
             refused = HTMLResponse(PRIVATE_PAGE, 401)
             if cookie is not None or "authorization" in headers:
                 take_token("preview", subject)  # a guess; a first visit sends neither
-            if (
-                cookie is not None
-            ):  # expired or an old password's: dropped, counted once
+            if cookie is not None:  # expired or another password's: dropped
                 refused.delete_cookie(
                     PREVIEW_COOKIE, path="/", secure=True, httponly=True, samesite="lax"
                 )
