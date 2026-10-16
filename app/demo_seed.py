@@ -28,6 +28,7 @@ ME_PHONE = "(310) 555-0199"  # the volunteer with a match, a chat and shifts
 NO_PHOTO_PHONE = "(310) 555-0102"  # Priya, who has no photo yet
 COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
+SOON_TIMES = ("10:00", "13:00", "16:00", "18:30")  # tomorrow's shifts (_soon_shifts)
 # the seed file's words -> the opening form's values (app/routes/org.py)
 RECURRENCE = {
     "one-time": "one_time",
@@ -459,6 +460,7 @@ def seed(seed_file=None):
     if pending:
         data.swipe(me, pending.id, True)
     _preferences(me)
+    soon = _soon_shifts(me, org.id)
     urgent = _urgent_call(coord, org, first, sample=bool(seed_file))
     return {
         "org": org.name,
@@ -466,7 +468,31 @@ def seed(seed_file=None):
         "coordinator_id": coord,
         "opening_id": first.id,
         "urgent_opening_id": urgent,
+        "soon_opening_ids": soon,
     }
+
+
+def _soon_shifts(me, coordinator_org_id):
+    """Moves up to len(SOON_TIMES) openings of the volunteer's deck to tomorrow, one per
+    cause, so "I'm free today" (shifts in the next 48 hours) has cards: first_start() puts
+    every opening at least 2 days out. The coordinator's org is skipped: its openings hold
+    the match and the urgent call. The moved ids."""
+    from app import data
+    from app.db import openings
+
+    tomorrow = (datetime.now(LA) + timedelta(days=1)).date()
+    causes, moved = set(), []
+    for card in data.deck(me, 200):
+        o = openings[card["id"]]
+        cause = json.loads(o.causes or "[]")[:1]
+        if o.org_id == coordinator_org_id or not cause or cause[0] in causes:
+            continue
+        causes.add(cause[0])
+        openings.update(id=o.id, starts_at=f"{tomorrow}T{SOON_TIMES[len(moved)]}")
+        moved.append(o.id)
+        if len(moved) == len(SOON_TIMES):
+            break
+    return moved
 
 
 def _urgent_call(coord, org, first, sample=False):

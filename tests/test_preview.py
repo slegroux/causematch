@@ -435,6 +435,22 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
         )
 
 
+def test_seed_gives_the_free_today_switch_cards_in_several_causes(preview):
+    """first_start() puts openings 2+ days out: the seed moves some to tomorrow, so the
+    demo volunteer's "I'm free today" deck isn't just the urgent call."""
+    from app import data
+
+    _empty()
+    demo_seed.seed_preview(None)
+    (sam,) = [p for p in profiles() if p.display_name == "Sam"]
+    cards = data.deck(sam.id, 50, today=True)
+    soon = [c for c in cards if not c.get("urgent")]
+    assert len(soon) >= 3
+    causes = {json.loads(openings[c["id"]].causes)[0] for c in soon}
+    assert len(causes) == len(soon)  # one per cause
+    assert len(soon) <= len(demo_seed.SOON_TIMES)  # the rest stay 2+ days out
+
+
 def test_seed_preview_without_a_seed_dir_uses_the_invented_orgs(preview):
     _empty()
     demo_seed.seed_preview(None)
