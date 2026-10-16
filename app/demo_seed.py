@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -115,6 +115,18 @@ WORK_BY_CAUSE = {
 }
 
 
+def _sample_work(cause, i):
+    """The sample work fields of the i-th opening, whose cause is `cause`."""
+    setting, effort, group = WORK_BY_CAUSE.get(cause, ("", "", ""))
+    return {
+        "setting": setting,
+        "effort": effort,
+        "group_size": group,
+        "first_timer_ok": i % 2 == 0,
+        "languages": json.dumps(["es"] if i % 3 == 0 else []),
+    }
+
+
 def picture(folder, name, kind):
     """photos.process of folder/name (one of the seed's downloaded files), or None.
 
@@ -175,7 +187,6 @@ def load_orgs(orgs, media=None):
                 if p := picture(folder, name, kind):
                     key = data.store_photo(owner, org.id, p)
                     org_table.update(id=org.id, **{column: key})
-            setting, effort, group = WORK_BY_CAUSE.get(o["cause"], ("", "", ""))
             for x in o.get("openings", []):
                 p = picture(shots, x.get("photo_file"), "card")
                 opening = openings.insert(
@@ -198,11 +209,7 @@ def load_orgs(orgs, media=None):
                         reply_channel="email",
                         adult_confirmed=True,
                         created_at=now(),
-                        setting=setting,
-                        effort=effort,
-                        group_size=group,
-                        first_timer_ok=i % 2 == 0,
-                        languages=json.dumps(["es"] if i % 3 == 0 else []),
+                        **_sample_work(o["cause"], i),
                         event_url=https_url(x.get("source_url"))
                         or https_url(o.get("volunteer_url")),
                     )
@@ -250,14 +257,9 @@ def _fill_invented_openings():
 
     for i, o in enumerate(openings(order_by="id")):
         cause = (json.loads(o.causes or "[]") or [""])[0]
-        setting, effort, group = WORK_BY_CAUSE.get(cause, ("", "", ""))
         openings.update(
             id=o.id,
-            setting=setting,
-            effort=effort,
-            group_size=group,
-            first_timer_ok=i % 2 == 0,
-            languages=json.dumps(["es"] if i % 3 == 0 else []),
+            **_sample_work(cause, i),
             event_url=f"https://example.org/volunteer/{o.id}",
         )
 
@@ -322,9 +324,7 @@ def _past_shift(match_id, coordinator, days_ago, status):
             kind="added",
             created_by=coordinator,
             created_at=now(),
-            marked_at=datetime.now(UTC).isoformat(timespec="seconds")
-            if marked
-            else None,
+            marked_at=now() if marked else None,
             marked_by=coordinator if marked else None,
         )
     )

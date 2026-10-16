@@ -95,7 +95,6 @@ def serve(port):
 
 
 def main(argv=None):
-    refuse_production()
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--port", type=int, default=5077)
     p.add_argument(
