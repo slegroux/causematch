@@ -572,8 +572,9 @@ def _urgent_call(coord, org, first):
     )
     tomorrow = (datetime.now(LA) + timedelta(days=1)).strftime("%Y-%m-%dT09:00")
     needed = min(2, data.open_spots(coord, oid))
-    data.post_urgent_call(coord, oid, tomorrow, needed, True)
-    notify.send_urgent_waves()
+    if needed:  # a fully booked opening takes no call
+        data.post_urgent_call(coord, oid, tomorrow, needed, True)
+        notify.send_urgent_waves()
     return oid
 
 

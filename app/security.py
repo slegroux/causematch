@@ -356,6 +356,16 @@ def sms_all():
     return (("sms-all-hour", hour, 3600), ("sms-all-day", day, 24 * 3600))
 
 
+def sms_urgent():
+    """Urgent calls' own ceiling, half of each of sms_all's, subject "urgent": waves never
+    take the whole budget, so sign-in codes always have room."""
+    hour, day = sms_ceilings()
+    return (
+        ("sms-urgent-hour", max(1, hour // 2), 3600),
+        ("sms-urgent-day", max(1, day // 2), 24 * 3600),
+    )
+
+
 def _key(name, subject):
     """The stored key: the limit's name and a keyed hash, never the phone, email or IP."""
     mac = hmac.new(phone_hash_key().encode(), str(subject).encode(), hashlib.sha256)

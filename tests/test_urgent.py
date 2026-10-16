@@ -18,6 +18,7 @@ from app.db import (
     orgs,
     profiles,
     shifts,
+    swipes,
     urgent_calls,
 )
 from main import app
@@ -60,6 +61,22 @@ def post_call(c, starts_at=None, needed="2", auto=False, opening=None):
 
 def uid_of(user):
     return data.get_or_create_volunteer(user.phone)
+
+
+def like_call(uid, shelter):
+    """A like on the urgent card (drawn while the call was open): the form carries the
+    call's id."""
+    call = urgent_calls(
+        where="opening_id = ?", where_args=[shelter.opening.id], order_by="id DESC"
+    )[0]
+    return data.swipe(uid, shelter.opening.id, True, call_id=call.id)
+
+
+def card_like(shelter, **extra):
+    """/swipe's form for a like on the shelter's urgent card."""
+    call = data._open_calls()[shelter.opening.id]
+    return {"opening_id": str(shelter.opening.id), "liked": "1",
+            "call_id": str(call.id), **extra}  # fmt: skip
 
 
 def test_post_puts_the_call_first_in_the_deck_with_its_badge(shelter, user):
@@ -110,10 +127,43 @@ def test_deck_shows_a_call_on_an_opening_whose_first_shift_passed(shelter, user)
 
 def test_deck_like_on_an_urgent_card_counts_toward_the_call(shelter, user):
     post_call(shelter)
-    r = user.post("/swipe", data={"opening_id": str(shelter.opening.id), "liked": "1"})
+    r = user.post("/swipe", data=card_like(shelter))
     assert r.status_code == 200
     (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
     assert m.urgent_call_id == urgent_calls()[0].id and m.status == "pending"
+
+
+@pytest.mark.parametrize("auto", [False, True])
+def test_deck_like_on_a_card_drawn_before_the_call_shows_the_call_first(
+    shelter, user, auto
+):
+    """The card said the opening's own date; the call is for tomorrow. Nothing is
+    recorded: the deck shows the call's card, with a notice, before a yes counts."""
+    post_call(shelter, auto=auto)
+    form = {"opening_id": str(shelter.opening.id), "liked": "1"}  # no call_id
+    r = user.post("/swipe", data=form, headers={"HX-Request": "true"})
+    assert r.status_code == 200
+    assert "This opening now needs people tomorrow 9 am." in r.text
+    assert DOGS in r.text.split("Pass")[0] and "Urgent · tomorrow 9 am" in r.text
+    assert not matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert not swipes(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert not shifts()
+    r = user.post("/swipe", data=form, follow_redirects=False)  # without script
+    assert r.headers["location"] == f"/deck?card={shelter.opening.id}"
+    stale = {**form, "call_id": str(urgent_calls()[0].id + 7)}  # another call's id
+    user.post("/swipe", data=stale)
+    assert not matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    user.post("/swipe", data=card_like(shelter))  # now from the call's card
+    (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert m.urgent_call_id == urgent_calls()[0].id
+    assert m.status == ("accepted" if auto else "pending")
+
+
+def test_deck_a_pass_on_an_older_card_still_counts(shelter, user):
+    post_call(shelter)
+    form = {"opening_id": str(shelter.opening.id), "liked": "0"}
+    assert user.post("/swipe", data=form).status_code == 200
+    assert swipes(where="opening_id = ?", where_args=[shelter.opening.id])
 
 
 def test_deck_like_without_a_call_carries_none(shelter, user):
@@ -216,14 +266,17 @@ def test_close_when_its_time_passes(shelter, user):
     post_call(shelter)
     urgent_calls.update(id=urgent_calls()[0].id, starts_at=in_hours(-1))
     assert not any(c["urgent"] for c in data.deck(uid_of(user), 50))
-    assert urgent_calls()[0].status == "closed"
     assert "Stop urgent call" not in shelter.get("/org").text
+    assert urgent_calls()[0].status == "open"  # reads write nothing
+    data.urgent_waves_due(datetime.now(UTC))  # the task's sweep stamps it
+    call = urgent_calls()[0]
+    assert call.status == "closed" and call.ended_at
 
 
 def test_close_when_filled_books_the_call_time(shelter, user):
     post_call(shelter, needed="1")
     uid = uid_of(user)
-    m = data.swipe(uid, shelter.opening.id, True)
+    m = like_call(uid, shelter)
     data.decide(shelter.uid, m.id, True)
     call = urgent_calls()[0]
     assert call.status == "filled" and call.ended_at
@@ -243,7 +296,8 @@ def test_close_when_its_opening_fills(shelter):
     post_call(shelter, needed="1")
     openings.update(id=shelter.opening.id, status="filled")
     assert data.org_urgent_calls(shelter.uid) == {}
-    assert urgent_calls()[0].status == "filled"
+    data._sync_urgent(None)  # what decide runs after an accept fills the opening
+    assert urgent_calls()[0].status == "filled" and urgent_calls()[0].ended_at
 
 
 def test_deck_demo_seeds_an_urgent_call_first_in_the_deck(user):
@@ -523,7 +577,7 @@ def test_wave_two_skipped_once_filled(shelter, sweep):
     vols = [opted_in() for _ in range(5)]
     call_on(shelter, needed=1)
     sweep()
-    m = data.swipe(vols[0], shelter.opening.id, True)
+    m = like_call(vols[0], shelter)
     data.decide(shelter.uid, m.id, True)
     sweep.when += timedelta(minutes=40)
     assert sweep().text == "sent 0" and urgent_calls()[0].status == "filled"
@@ -531,9 +585,12 @@ def test_wave_two_skipped_once_filled(shelter, sweep):
 
 def test_wave_due_is_claimed_once(shelter, sweep):
     """Two sweeps at once (a scheduler retry) never send the same wave twice."""
-    call_on(shelter)
-    assert len(data.urgent_waves_due(sweep.when)) == 1
-    assert data.urgent_waves_due(sweep.when) == []
+    call = call_on(shelter)
+    ((cid, done, _),) = data.urgent_waves_due(sweep.when)
+    assert (cid, done) == (call.id, 0)
+    assert data.urgent_claim_wave(cid, done, sweep.when)
+    assert not data.urgent_claim_wave(cid, done, sweep.when)
+    assert data.urgent_waves_due(sweep.when) == []  # wave 2 waits 30 minutes
 
 
 def block_org(uid, org_id):
@@ -590,39 +647,57 @@ def test_wave_same_day_only_is_notified_on_the_day(shelter, sweep):
     assert notified() == {vol}
 
 
-def test_wave_weekly_cap(shelter, sweep):
-    """At most what they picked, and never more than 3 in 7 days."""
-    one = opted_in(urgent_per_week=1)
-    three = opted_in(urgent_per_week=3)
-    for uid, n in ((one, 1), (three, 3)):
-        for i in range(n):
-            notifications.insert(
-                kind="urgent",
-                key=f"urgent:0:{uid}:{i}",
-                recipient_id=uid,
-                sent_at=(sweep.when - timedelta(days=6)).isoformat(timespec="seconds"),
-                status="sent",
-                attempts=1,
-            )
-    fresh = opted_in()
-    call_on(shelter, needed=2)
-    sweep()
-    assert notified() - {one, three} == {fresh}
-
-
-def test_wave_weekly_cap_frees_up_after_7_days(shelter, sweep):
-    vol = opted_in(urgent_per_week=1)
-    notifications.insert(
-        kind="urgent",
-        key=f"urgent:0:{vol}",
-        recipient_id=vol,
-        sent_at=(sweep.when - timedelta(days=7, minutes=1)).isoformat(),
-        status="sent",
-        attempts=1,
+def this_call(call):
+    """The volunteers a notice for this call was sent to."""
+    rows = notifications(
+        where="key LIKE ? AND status = 'sent'", where_args=[f"urgent:{call.id}:%"]
     )
-    call_on(shelter)
+    return {r.recipient_id for r in rows}
+
+
+@pytest.mark.parametrize(
+    "per_week, before, ago, status, asked",
+    [
+        (1, 0, None, "sent", True),
+        (1, 1, timedelta(days=6), "sent", False),
+        (3, 2, timedelta(days=6), "sent", True),
+        (3, 3, timedelta(days=6), "sent", False),
+        (5, 2, timedelta(days=6), "sent", True),  # what they picked, up to 3
+        (5, 3, timedelta(days=6), "sent", False),  # never more than 3
+        (1, 1, timedelta(days=6, hours=23), "sent", False),
+        (1, 1, timedelta(days=7, minutes=1), "sent", True),  # a week on
+        (1, 1, timedelta(days=1), "unknown", False),  # may have been delivered
+        (1, 1, timedelta(days=1), "deferred", True),  # never went out
+        (1, 1, timedelta(days=1), "failed", True),
+    ],
+)
+def test_wave_weekly_cap(shelter, sweep, per_week, before, ago, status, asked):
+    """At most what they picked, never more than 3, in any 7 days."""
+    vol = opted_in(urgent_per_week=per_week)
+    for i in range(before):
+        notifications.insert(
+            kind="urgent",
+            key=f"urgent:0:{vol}:{i}",
+            recipient_id=vol,
+            sent_at=(sweep.when - ago).isoformat(timespec="seconds"),
+            status=status,
+            attempts=1,
+        )
+    other = opted_in()  # the control: always asked
+    call = call_on(shelter, needed=2)
     sweep()
-    assert vol in notified()
+    assert this_call(call) == ({vol, other} if asked else {other})
+
+
+def test_wave_weekly_cap_counts_only_urgent_notices(shelter, sweep):
+    vol = opted_in(urgent_per_week=1)
+    for i, kind in enumerate(("reminder", "accepted", "message")):
+        notifications.insert(kind=kind, key=f"{kind}:{i}:{vol}", recipient_id=vol,
+                             sent_at=sweep.when.isoformat(timespec="seconds"),
+                             status="sent", attempts=1)  # fmt: skip
+    call = call_on(shelter)
+    sweep()
+    assert this_call(call) == {vol}
 
 
 def test_wave_after_stop_goes_by_email(shelter, sweep):
@@ -633,7 +708,14 @@ def test_wave_after_stop_goes_by_email(shelter, sweep):
     ((to, subject, body),) = notify.get_emailer().sent
     assert to == "vol@example.org" and vol in notified()
     assert subject == "Last minute: Eastside Paws Rescue needs 1 more person today 1 pm"
-    assert f"/deck?card={shelter.opening.id}" in body and "Preferences" in body
+    assert f"/deck?card={shelter.opening.id}" in body
+    off = f"https://causematch.test/urgent/off/{data.urgent_off_key(vol)}"
+    assert f"To stop them: {off}" in body
+    assert notify.get_emailer().with_headers[-1] == (
+        "vol@example.org",
+        subject,
+        {"List-Unsubscribe": f"<{off}>"},
+    )
 
 
 def test_wave_twilio_stop_reply_marks_the_number(shelter, sweep, monkeypatch):
@@ -698,11 +780,7 @@ def test_auto_accept_like_is_in_booked_and_opens_the_chat(shelter, user):
     call = call_on(shelter, needed=2, starts_at=tomorrow())
     urgent_calls.update(id=call.id, auto_accept=True)
     notify.get_emailer().sent.clear()
-    r = user.post(
-        "/swipe",
-        data={"opening_id": str(shelter.opening.id), "liked": "1"},
-        headers={"HX-Request": "true"},
-    )
+    r = user.post("/swipe", data=card_like(shelter), headers={"HX-Request": "true"})
     (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
     assert r.headers["HX-Redirect"] == f"/chat/{m.id}?notice=in"
     assert (m.status, m.decided_by, m.urgent_call_id) == (
@@ -729,11 +807,7 @@ def test_auto_accept_like_is_in_booked_and_opens_the_chat(shelter, user):
 def test_auto_accept_without_script_redirects_to_the_chat(shelter, user):
     call = call_on(shelter, needed=1)
     urgent_calls.update(id=call.id, auto_accept=True)
-    r = user.post(
-        "/swipe",
-        data={"opening_id": str(shelter.opening.id), "liked": "1"},
-        follow_redirects=False,
-    )
+    r = user.post("/swipe", data=card_like(shelter), follow_redirects=False)
     (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
     assert r.status_code == 303 and r.headers["location"] == f"/chat/{m.id}?notice=in"
     assert urgent_calls()[0].status == "filled"
@@ -773,7 +847,7 @@ def test_auto_accept_the_statement_alone_never_overfills(shelter):
     call = call_on(shelter, needed=1)
     urgent_calls.update(id=call.id, auto_accept=True)
     a, b = opted_in(), opted_in()
-    data.swipe(a, shelter.opening.id, True)
+    like_call(a, shelter)
     late = matches.insert(
         opening_id=shelter.opening.id, volunteer_id=b, status="pending",
         created_at=data._now(), urgent_call_id=call.id,
@@ -788,7 +862,7 @@ def test_auto_accept_past_n_likes_wait_for_the_org(shelter):
     call = call_on(shelter, needed=2)
     urgent_calls.update(id=call.id, auto_accept=True)
     vols = [opted_in() for _ in range(3)]
-    ms = [data.swipe(v, shelter.opening.id, True) for v in vols]
+    ms = [like_call(v, shelter) for v in vols]
     assert [m.status for m in ms] == ["accepted", "accepted", "pending"]
     assert "Vol" in shelter.get("/org/inbox").text
     data.decide(shelter.uid, ms[2].id, True)  # the org still may take a third
@@ -797,7 +871,7 @@ def test_auto_accept_past_n_likes_wait_for_the_org(shelter):
 
 def test_auto_accept_off_leaves_every_like_pending(shelter):
     call_on(shelter, needed=2)
-    ms = [data.swipe(opted_in(), shelter.opening.id, True) for _ in range(2)]
+    ms = [like_call(opted_in(), shelter) for _ in range(2)]
     assert [m.status for m in ms] == ["pending", "pending"] and not shifts()
 
 
@@ -807,16 +881,16 @@ def test_auto_accept_never_takes_a_like_the_org_cannot_see(shelter):
     urgent_calls.update(id=call.id, auto_accept=True)
     blocked, ok = opted_in(), opted_in()
     block_volunteer(blocked, shelter.opening.org_id)
-    m = data.swipe(blocked, shelter.opening.id, True)
+    m = like_call(blocked, shelter)
     assert (m.status, m.org_blind) == ("pending", 1)
-    assert data.swipe(ok, shelter.opening.id, True).status == "accepted"
+    assert like_call(ok, shelter).status == "accepted"
 
 
 def test_auto_accept_stops_at_the_opening_slots(shelter):
     call = call_on(shelter, needed=3)
     urgent_calls.update(id=call.id, auto_accept=True)
     openings.update(id=shelter.opening.id, slots=1)
-    first = data.swipe(opted_in(), shelter.opening.id, True)
+    first = like_call(opted_in(), shelter)
     assert first.status == "accepted"
     assert openings[shelter.opening.id].status == "filled"
     assert urgent_calls()[0].status == "filled"
@@ -834,7 +908,7 @@ def test_auto_accept_a_like_just_after_it_filled_still_counts_toward_it(shelter)
     """The card showed the call: the like is for the call's time, pending for the org."""
     call = call_on(shelter, needed=1, starts_at=tomorrow())
     urgent_calls.update(id=call.id, auto_accept=True)
-    data.swipe(opted_in(), shelter.opening.id, True)
+    like_call(opted_in(), shelter)
     assert urgent_calls()[0].status == "filled"
     late = data.swipe(opted_in(), shelter.opening.id, True, call_id=call.id)
     assert (late.status, late.urgent_call_id) == ("pending", call.id)
@@ -853,9 +927,154 @@ def test_auto_accept_card_carries_its_call(shelter, user):
     assert f'value="{call.id}" name="call_id"' in page
     r = user.post(
         "/swipe",
-        data={"opening_id": str(shelter.opening.id), "liked": "1",
-              "call_id": "x" * 30},
-    )  # fmt: skip
-    assert r.status_code == 200
+        data=card_like(shelter, call_id="x" * 30),
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200 and "now needs people" in r.text  # not its card
+    assert not matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    user.post("/swipe", data=card_like(shelter))
     (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
-    assert m.urgent_call_id == call.id  # the open call, whatever the form said
+    assert m.urgent_call_id == call.id
+
+
+# --- review fixes -----------------------------------------------------------------------
+
+
+def test_wave_waits_out_quiet_hours_instead_of_spending_itself(shelter, sweep):
+    """Posted at 10 pm for tomorrow 1 pm: everyone is in their quiet hours (9 pm to
+    8 am), so no wave is spent at 10 pm or 10:30 pm; wave 1 goes at 8:10 am."""
+    vol = opted_in()  # default quiet hours
+    call = call_on(shelter)
+    sweep.when = at(22, call_day() - timedelta(days=1))
+    assert sweep().text == "sent 0"
+    sweep.when += timedelta(minutes=30)
+    assert sweep().text == "sent 0"
+    assert urgent_calls[call.id].waves is None  # nothing spent
+    sweep.when = at(8, call_day()) + timedelta(minutes=10)
+    assert sweep().text == "sent 1" and this_call(call) == {vol}
+    assert urgent_calls[call.id].waves == 1
+
+
+def test_wave_urgent_texts_leave_half_the_sms_budget_to_sign_in_codes(
+    shelter, sweep, monkeypatch
+):
+    monkeypatch.setenv("SMS_MAX_PER_HOUR", "2")
+    vols = [opted_in() for _ in range(3)]
+    call = call_on(shelter, needed=1)
+    assert sweep().text == "sent 1"  # urgent texts may take 1 of the 2
+    statuses = sorted(n.status for n in notifications(where="kind = 'urgent'"))
+    assert statuses == ["deferred", "deferred", "sent"] and this_call(call) < set(vols)
+    verifier = notify.get_verifier()
+    before = len(verifier.sent)
+    r = TestClient(app).post("/login/send", data={"phone": "(213) 555-0177"})
+    assert (
+        r.status_code == 200 and len(verifier.sent) == before + 1
+    )  # a code still goes
+
+
+def test_wave_unsubscribe_link_turns_calls_off_signed_out(shelter, sweep):
+    vol = opted_in(sms_opted_out=True, email="vol@example.org")
+    call_on(shelter)
+    sweep()
+    path = f"/urgent/off/{data.urgent_off_key(vol)}"
+    anon = TestClient(app)
+    page = anon.get(path)
+    assert page.status_code == 200 and "Turn them off" in page.text
+    assert profiles[vol].urgent_on  # a GET (a mail scanner) changes nothing
+    r = anon.post(path, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403 and profiles[vol].urgent_on
+    r = anon.post(path)
+    assert r.status_code == 200 and "no more last-minute calls" in r.text
+    assert not profiles[vol].urgent_on
+
+
+def test_deck_auto_accept_card_says_a_like_books_you(shelter, user):
+    call = call_on(shelter, starts_at=tomorrow())
+    page = user.get("/deck").text
+    assert "Like and you're booked" not in page  # the org decides each one
+    urgent_calls.update(id=call.id, auto_accept=True)
+    line = (
+        "Like and you're booked for tomorrow 9 am. Eastside Paws Rescue then sees "
+        "your full name."
+    )
+    assert line in user.get("/deck").text
+    assert data.deck(uid_of(user), 1)[0]["booked"] == line
+
+
+def test_auto_accept_count_clause_alone_never_overfills(shelter):
+    """The call still marked open (no status flag to stop it) with its `needed` already
+    accepted: the count clause refuses."""
+    call = call_on(shelter, needed=1)
+    urgent_calls.update(id=call.id, auto_accept=True)
+    assert like_call(opted_in(), shelter).status == "accepted"
+    urgent_calls.update(id=call.id, status="open")
+    late = matches.insert(
+        opening_id=shelter.opening.id, volunteer_id=opted_in(), status="pending",
+        created_at=data._now(), urgent_call_id=call.id,
+    )  # fmt: skip
+    data._auto_accept(late, urgent_calls[call.id])
+    assert matches[late.id].status == "pending"
+
+
+def test_auto_accept_call_id_is_bound_to_its_opening(shelter):
+    """A filled call on the shelter's other opening, named on a like for the dogs: the
+    like is a plain one."""
+    cats = openings(where="org_id = ? AND id != ?",
+                    where_args=[shelter.opening.org_id, shelter.opening.id])[0]  # fmt: skip
+    r = post_call(shelter, needed="1", opening=cats)
+    assert r.status_code == 303
+    (cat_call,) = urgent_calls(where="opening_id = ?", where_args=[cats.id])
+    urgent_calls.update(id=cat_call.id, auto_accept=True)
+    first = data.swipe(opted_in(), cats.id, True, call_id=cat_call.id)
+    assert first.status == "accepted" and urgent_calls[cat_call.id].status == "filled"
+    plain = data.swipe(opted_in(), shelter.opening.id, True, call_id=cat_call.id)
+    assert (plain.urgent_call_id, plain.status) == (None, "pending")
+    assert not shifts(where="match_id = ?", where_args=[plain.id])
+
+
+def booked_at(uid, starts_at):
+    o = openings(where="status = 'open'")[0]
+    m = matches.insert(
+        opening_id=o.id, volunteer_id=uid, status="accepted", created_at=data._now()
+    )
+    shifts.insert(match_id=m.id, starts_at=starts_at, status="scheduled",
+                  created_at=data._now())  # fmt: skip
+
+
+@pytest.mark.parametrize("hours, asked", [(-1.5, False), (1, False), (3, True)])
+def test_wave_skips_volunteers_booked_near_the_call(shelter, sweep, hours, asked):
+    vol = opted_in()
+    start = datetime.fromisoformat(call_start()) + timedelta(hours=hours)
+    booked_at(vol, start.strftime("%Y-%m-%dT%H:%M"))
+    control = opted_in()
+    call = call_on(shelter, needed=2)
+    sweep()
+    assert this_call(call) == ({vol, control} if asked else {control})
+
+
+def test_wave_text_quotes_no_web_address_and_no_emoji(shelter, sweep):
+    opted_in()
+    openings.update(
+        id=shelter.opening.id,
+        title="🐶 Walk dogs, sign up at evil.example/x or https://evil.example "
+        "www.evil.example, and help us all through the long busy weekend please",
+    )
+    call_on(shelter)
+    sweep()
+    ((_, text),) = notify.get_sms().sent
+    quoted = text.split(" for ", 1)[1].split(". Interested?")[0]
+    assert "evil" not in text and "🐶" not in text
+    assert quoted.startswith("Walk dogs, sign up at or") and len(quoted) <= 60
+    assert quoted.endswith("...")
+    assert notify.sms_safe("🐶🐱") == "an opening"
+
+
+def test_deck_demo_skips_a_call_on_a_fully_booked_opening():
+    from test_ui import _demo
+
+    coord, _ = coordinator_for(0)
+    org = orgs()[0]
+    first, full = openings(where="org_id = ?", where_args=[org.id], order_by="id")[:2]
+    openings.update(id=full.id, status="open", slots=0)  # the closed holiday drive
+    assert _demo()._urgent_call(coord, org, first) == full.id
+    assert not urgent_calls()

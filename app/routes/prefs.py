@@ -13,6 +13,7 @@ from fasthtml.common import (
     Div,
     Fieldset,
     Form,
+    FtResponse,
     Hidden,
     Input,
     Label,
@@ -63,6 +64,7 @@ from app.ui import (
     Field,
     Icon,
     Router,
+    SimplePage,
     TextInput,
     VolunteerNav,
 )
@@ -753,3 +755,54 @@ def _sync_save(req, form):
         "deck_view", None
     )  # the deck's filter sheet starts again from these
     return Redirect("/me/preferences?saved=1")
+
+
+UNSUBSCRIBE = "Stop last-minute calls"
+
+
+def _bad_unsubscribe():
+    return FtResponse(
+        SimplePage(
+            UNSUBSCRIBE,
+            P(
+                "That link isn't valid. You can turn last-minute calls off in Me, then "
+                "Preferences.",
+                cls="mt-2 text-ink",
+            ),
+        ),
+        status_code=404,
+    )
+
+
+@ar("/urgent/off/{key}", methods=["GET"])
+def urgent_off_page(key: str):
+    """An urgent email's unsubscribe link: a page that asks, so a mail scanner that
+    follows links turns nothing off; the button posts."""
+    if data.urgent_off_volunteer(key) is None:
+        return _bad_unsubscribe()
+    return SimplePage(
+        UNSUBSCRIBE,
+        P(
+            "Stop texts and emails about nonprofits near you that are short of people "
+            "at the last minute?",
+            cls="mt-2 text-ink",
+        ),
+        Form(
+            BigButton("Turn them off"), action=f"/urgent/off/{key}", method="post",
+            cls="mt-4",
+        ),
+    )  # fmt: skip
+
+
+@ar("/urgent/off/{key}", methods=["POST"])
+def urgent_off(key: str):
+    if not data.urgent_off(key):
+        return _bad_unsubscribe()
+    return SimplePage(
+        UNSUBSCRIBE,
+        P(
+            "Done: no more last-minute calls. You can turn them on again in Me, then "
+            "Preferences.",
+            cls="mt-2 text-ink",
+        ),
+    )

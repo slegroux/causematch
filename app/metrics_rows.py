@@ -1,4 +1,4 @@
-"""The queries behind the pilot metrics, over any `q(sql) -> [dict]`.
+"""The queries behind the pilot metrics, over any `q(sql, params=()) -> [dict]`.
 
 Kept apart from app.data so scripts/stats.py can read a database through a read-only
 connection without importing app.db (which creates and migrates the schema it opens).
@@ -33,12 +33,15 @@ def _empty_decks(q):
 def _has(q, table, column=None):
     """The table (and column) exist: a database from before urgent calls has neither."""
     if column is None:
-        sql = (
-            f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{table}'"
+        return bool(
+            q(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                [table],
+            )
         )
-    else:
-        sql = f"SELECT name FROM pragma_table_info('{table}') WHERE name = '{column}'"
-    return bool(q(sql))
+    return bool(
+        q("SELECT name FROM pragma_table_info(?) WHERE name = ?", [table, column])
+    )
 
 
 def _urgent_calls(q):

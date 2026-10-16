@@ -85,6 +85,7 @@ def pages(anon, user, coord):
         (anon, "/org/login/verify"),
         (anon, "/org/claim"),
         (anon, "/privacy"),
+        (anon, f"/urgent/off/{data.urgent_off_key(uid)}"),
         (newcomer, "/onboarding"),
         (user, "/deck"),
         (user, "/matches"),

@@ -26,6 +26,7 @@ PUBLIC = [
     r"/privacy",
     r"/tasks/reminders",  # not signed in: the scheduler's bearer token guards it
     r"/tasks/urgent",  # the same
+    r"/urgent/off/[^/]+",  # an urgent email's unsubscribe link: signed, works signed out
     r"/favicon\.ico",
     r"/static/.*",
 ]

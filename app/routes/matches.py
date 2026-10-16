@@ -74,6 +74,18 @@ def _sync_swipe(req, form):
             view,
             int(call) if re.fullmatch(r"[0-9]{1,18}", call) else None,
         )
+    except data.CallPosted as e:
+        # an urgent call went up since the card was drawn: show its card, record nothing
+        if not req.headers.get("HX-Request"):
+            return Redirect(f"/deck?card={e.call.opening_id}")
+        return DeckArea(
+            uid,
+            today,
+            view,
+            f"This opening now needs people {data.urgent_when(e.call.starts_at)}. "
+            "Have a look before you say yes.",
+            first=e.call.opening_id,
+        )
     except LookupError:
         # closed or gone since the card was drawn: say so, and show what's next
         notice = "That opening isn't available any more."

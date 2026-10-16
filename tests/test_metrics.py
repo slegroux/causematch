@@ -4,19 +4,18 @@ import csv
 import hashlib
 import io
 import re
-import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+import apsw
 import pytest
 from conftest import coordinator_for, org_sign_in, sign_in
 from starlette.testclient import TestClient
 
 from app import data, metrics, notify
 from app.db import (
-    DB_PATH,
     Match,
     Profile,
     Shift,
@@ -28,6 +27,11 @@ from app.db import (
     shifts,
     swipes,
 )
+
+# Copies of the database are written through the app's own connection (VACUUM INTO) and
+# opened with apsw, the app's SQLite: a second SQLite library in this process (sqlite3)
+# shares the file's POSIX locks with it and can read stale pages, or corrupt the file.
+from app.db import db as app_db
 from app.metrics import METRICS, OTHER, csv_rows, fmt, pilot_metrics
 from app.routes import admin as admin_routes
 from main import app
@@ -530,11 +534,7 @@ def run_stats(path):
 
 def test_stats_script_prints_parseable_lines_and_leaves_the_file_alone(pilot, tmp_path):
     copy = tmp_path / "copy.db"
-    src = sqlite3.connect(DB_PATH)
-    dst = sqlite3.connect(copy)
-    src.backup(dst)
-    dst.close()
-    src.close()
+    app_db.execute("VACUUM INTO ?", [str(copy)])
     before = hashlib.sha256(copy.read_bytes()).hexdigest()
     out = run_stats(copy)
     assert out.returncode == 0, out.stderr
@@ -550,7 +550,9 @@ def test_stats_script_prints_parseable_lines_and_leaves_the_file_alone(pilot, tm
 def test_stats_script_will_not_create_or_migrate_a_database(tmp_path):
     assert run_stats(tmp_path / "missing.db").returncode != 0
     other = tmp_path / "other.db"
-    sqlite3.connect(other).execute("CREATE TABLE t (x)").connection.close()
+    c = apsw.Connection(str(other))
+    c.execute("CREATE TABLE t (x)")
+    c.close()
     before = other.read_bytes()
     assert run_stats(other).returncode != 0
     assert other.read_bytes() == before
@@ -672,19 +674,15 @@ def test_urgent_on_the_admin_page_csv_and_stats(tmp_path):
     assert urgent["urgent_filled_rate"][3:] == ["11", "8", "11", "0.7273"]
     assert urgent["urgent_median_fill_min"][4:] == ["", "", ""]  # too few: withheld
     copy = tmp_path / "copy.db"
-    # the app's own connection writes the copy: it sees what this test wrote
-    from app.db import db
-
-    db.execute("VACUUM INTO ?", [str(copy)])
+    app_db.execute("VACUUM INTO ?", [str(copy)])
     out = run_stats(copy)
     assert out.returncode == 0, out.stderr
     got = dict(line.split(": ", 1) for line in out.stdout.splitlines())
     assert got["urgent_posted"] == "12" and got["urgent_filled_rate"] == "0.7273"
     # a database from before urgent calls: no table, no column
-    dst = sqlite3.connect(copy)
+    dst = apsw.Connection(str(copy))
     dst.execute("DROP TABLE urgent_call")
     dst.execute("ALTER TABLE match DROP COLUMN urgent_call_id")
-    dst.commit()
     dst.close()
     out = run_stats(copy)
     assert out.returncode == 0, out.stderr

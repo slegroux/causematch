@@ -25,8 +25,8 @@ def main():
     con = sqlite3.connect(f"file:{Path(a.db).resolve()}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
 
-    def q(sql):
-        return [dict(r) for r in con.execute(sql)]
+    def q(sql, params=()):
+        return [dict(r) for r in con.execute(sql, params)]
 
     try:
         rows = fetch_rows(q)

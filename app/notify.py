@@ -1,5 +1,7 @@
 import logging
 import os
+import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -100,9 +102,12 @@ class FakeEmailer:
 
     def __init__(self):
         self.sent = []
+        self.with_headers = []  # (to, subject, headers) of messages that had any
 
-    def send(self, to, subject, body):
+    def send(self, to, subject, body, headers=None):
         self.sent.append((to, subject, body))
+        if headers:
+            self.with_headers.append((to, subject, headers))
         log.warning("FAKE EMAIL to %s: %s\n%s", to, subject, body)
 
 
@@ -115,11 +120,11 @@ class ResendEmailer:
             timeout=10,
         )
 
-    def send(self, to, subject, body):
-        self.client.post(
-            "/emails",
-            json={"from": self.sender, "to": [to], "subject": subject, "text": body},
-        ).raise_for_status()
+    def send(self, to, subject, body, headers=None):
+        message = {"from": self.sender, "to": [to], "subject": subject, "text": body}
+        if headers:
+            message["headers"] = headers
+        self.client.post("/emails", json=message).raise_for_status()
 
 
 def make_emailer(env=os.environ):
@@ -304,10 +309,14 @@ def _deliver(kind, key, recipient_id, send, window=None, opt_out=None, gate=None
     return status == "sent"
 
 
-def _text(kind, key, uid, body, window=None):
+def _text(kind, key, uid, body, window=None, urgent=False):
+    """urgent: also under the urgent calls' own ceiling (security.sms_urgent)."""
     phone = data.sms_number(uid)
     if phone is None:
         return False
+    limits = [(security.sms_all(), "all")]
+    if urgent:
+        limits.append((security.sms_urgent(), "urgent"))
     return _deliver(
         kind,
         key,
@@ -315,7 +324,7 @@ def _text(kind, key, uid, body, window=None):
         lambda: get_sms().send(phone, body),
         window,
         opt_out=lambda: data.sms_opted_out(uid),
-        gate=lambda: security.allow((security.sms_all(), "all")),
+        gate=lambda: security.allow(*limits),
     )
 
 
@@ -456,44 +465,72 @@ def send_due_reminders():
 def send_urgent_waves():
     """Cloud Scheduler calls /tasks/urgent every 10 minutes: send each urgent call's due
     wave (data.urgent_waves_due) to the volunteers data.urgent_recipients picks, once per
-    volunteer and call. A text counts against the SMS ceiling; one over it is recorded
-    `deferred` and not retried by the hourly sweep (the call may be over by then), though
-    wave 2 may try that volunteer again. How many were sent."""
+    volunteer and call. A wave is claimed only once it has someone to reach, so one that
+    falls in everyone's quiet hours waits. A text counts against the SMS ceiling and the
+    urgent calls' own half of it; one over either is recorded `deferred` and not retried
+    by the hourly sweep (the call may be over by then), though wave 2 may try that
+    volunteer again. An email carries a signed unsubscribe link and List-Unsubscribe.
+    How many were sent."""
     at = now()
     sent = 0
-    for call_id, _, size in data.urgent_waves_due(at):
+    for call_id, done, size in data.urgent_waves_due(at):
         info = data.urgent_notice(call_id, at)
-        if not info:
+        recipients = data.urgent_recipients(call_id, size, at) if info else []
+        # a wave that would reach no one (all in quiet hours, say) isn't spent
+        if not recipients or not data.urgent_claim_wave(call_id, done, at):
             continue
         link = f"{public_base_url()}/deck?card={info['opening_id']}"
         people = "1 more person" if info["left"] == 1 else f"{info['left']} more people"
         text = (
-            f"Causematch: {info['org']} needs {people} {info['when']} for "
-            f"{info['opening']}. Interested? {link} (Turn these off in Preferences. "
-            "Reply STOP to end all texts.)"
+            f"Causematch: {sms_safe(info['org'])} needs {people} {info['when']} for "
+            f"{sms_safe(info['opening'])}. Interested? {link} (Turn these off in "
+            "Preferences. Reply STOP to end all texts.)"
         )
         subject = f"Last minute: {info['org']} needs {people} {info['when']}"
-        body = (
-            f"{info['org']} is short of people for {info['opening']}, {info['when']}, "
-            f"and needs {people}.\n\nInterested? Have a look: {link}\n\nYou get these "
-            "because you turned on last-minute calls. Turn them off any time in Me, "
-            "then Preferences."
-        )
-        for uid, channel in data.urgent_recipients(call_id, size, at):
+        for uid, channel in recipients:
             key = f"urgent:{call_id}:{uid}"
             if channel == "sms":
-                sent += bool(_text("urgent", key, uid, text))
+                sent += bool(_text("urgent", key, uid, text, urgent=True))
                 continue
             email = data.urgent_email(uid)
-            if email:
-                sent += bool(
-                    _deliver(
-                        "urgent",
-                        key,
-                        uid,
-                        lambda to=email, subject=subject, body=body: get_emailer().send(
-                            to, subject, body
-                        ),
-                    )
+            if not email:
+                continue
+            off = f"{public_base_url()}/urgent/off/{data.urgent_off_key(uid)}"
+            body = (
+                f"{info['org']} is short of people for {info['opening']}, "
+                f"{info['when']}, and needs {people}.\n\nInterested? Have a look: "
+                f"{link}\n\nYou get these because you turned on last-minute calls. "
+                f"To stop them: {off}"
+            )
+            sent += bool(
+                _deliver(
+                    "urgent",
+                    key,
+                    uid,
+                    lambda to=email, s=subject, b=body, off=off: get_emailer().send(
+                        to, s, b, {"List-Unsubscribe": f"<{off}>"}
+                    ),
                 )
+            )
     return sent
+
+
+SMS_TITLE_MAX = 60
+# a web address in an org's own words: a text must carry only our link
+_URLISH = re.compile(
+    r"\S*(?:://|www\.)\S*|\S*\b[\w-]+\.(?:[a-z]{2,24})\b(?:/\S*)?", re.IGNORECASE
+)
+
+
+def sms_safe(text):
+    """An org's name or title as a text quotes it: no web addresses, no emoji (they turn
+    the whole text into UCS-2, 2 to 3 times the segments), at most SMS_TITLE_MAX
+    characters."""
+    text = _URLISH.sub("", text)
+    text = "".join(
+        c for c in text if ord(c) <= 0xFFFF and unicodedata.category(c) != "So"
+    )
+    text = " ".join(text.split())
+    if len(text) > SMS_TITLE_MAX:
+        text = text[: SMS_TITLE_MAX - 3].rstrip() + "..."  # "…" isn't GSM-7
+    return text or "an opening"

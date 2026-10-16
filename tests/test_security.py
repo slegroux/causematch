@@ -1,13 +1,13 @@
 import logging
 import os
 import re
-import sqlite3
 import subprocess
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import apsw
 import pytest
 from conftest import FORM, ORIGIN, coordinator_for, sign_in
 from starlette.testclient import TestClient
@@ -842,8 +842,9 @@ def v1_copy(tmp_path):
     # through the app's own connection: a second SQLite library (sqlite3) on the live file
     # can miss what is still in its WAL
     app_db.execute("VACUUM INTO ?", [str(db)])
-    with sqlite3.connect(db) as c:
-        c.execute("DROP TABLE schema_migrations")
+    c = apsw.Connection(str(db))  # the app's SQLite, never a second one in this process
+    c.execute("DROP TABLE schema_migrations")
+    c.close()
     return db
 
 
@@ -854,22 +855,25 @@ def test_migrations_apply_pending_steps_then_none(tmp_path):
     assert first.stdout.startswith(f"applied {len(migrations.available())} migration")
     second = run_migrations(db)
     assert second.returncode == 0 and second.stdout.startswith("applied 0 migration")
-    with sqlite3.connect(db) as c:
-        assert [v for (v,) in c.execute("SELECT version FROM schema_migrations")] == [
-            v for v, _ in migrations.available()
-        ]
-        assert c.execute("SELECT count(*) FROM profile").fetchone() is not None
+    c = apsw.Connection(str(db))
+    assert [v for (v,) in c.execute("SELECT version FROM schema_migrations")] == [
+        v for v, _ in migrations.available()
+    ]
+    assert c.execute("SELECT count(*) FROM profile").fetchone() is not None
+    c.close()
 
 
 def test_migration_2_turns_homelessness_services_on(tmp_path):
     db = v1_copy(tmp_path)
-    with sqlite3.connect(db) as c:
-        c.execute("UPDATE cause SET active = 0 WHERE slug = 'homelessness-services'")
+    c = apsw.Connection(str(db))
+    c.execute("UPDATE cause SET active = 0 WHERE slug = 'homelessness-services'")
+    c.close()
     assert run_migrations(db).returncode == 0
-    with sqlite3.connect(db) as c:
-        row = c.execute(
-            "SELECT active FROM cause WHERE slug = 'homelessness-services'"
-        ).fetchone()
+    c = apsw.Connection(str(db))
+    row = c.execute(
+        "SELECT active FROM cause WHERE slug = 'homelessness-services'"
+    ).fetchone()
+    c.close()
     assert row == (1,)
 
 

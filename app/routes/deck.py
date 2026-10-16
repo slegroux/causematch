@@ -134,6 +134,9 @@ def OpeningCard(c):
             )
             if c.get("urgent")
             else None,
+            P(c["booked"], cls="text-sm font-bold text-red-800")
+            if c.get("booked")
+            else None,
             Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
             H2(
                 c["title"],

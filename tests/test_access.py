@@ -128,6 +128,9 @@ ROUTES = {
         None,
     ),  # the scheduler's bearer token guards it
     ("POST", "/tasks/urgent"): ("public", None),  # the same
+    # an urgent email's unsubscribe link: the signed key is the credential
+    ("GET", "/urgent/off/{key}"): ("public", "own-record"),
+    ("POST", "/urgent/off/{key}"): ("public", "own-record"),
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
     ("GET", "/me/profile"): ("volunteer", "own-record"),
@@ -443,6 +446,30 @@ def urgent_check(method, suffix):
         for oid in (w.opening.id, *GONE):
             assert_refused(call_as_org1(oid))
         assert [(c.id, c.status) for c in urgent_calls()] == [(call.id, "open")]
+
+    return check
+
+
+def urgent_off_check(method):
+    """A key signed for B, with A's id in it, or a garbled one: refused, and A's
+    last-minute calls stay on; B's own key works (the control)."""
+
+    def check(w):
+        profiles.update(id=w.a.uid, urgent_on=True)
+        profiles.update(id=w.b.uid, urgent_on=True)
+        b_key = data.urgent_off_key(w.b.uid)
+        forged = f"{w.a.uid}-{b_key.split('-')[1]}"
+        for key in (forged, f"{w.a.uid}-", "A" * 22, f"{w.a.uid}-{'0' * 32}", "-"):
+            for who in (w.anon, w.b):
+                r = (who.get if method == "GET" else who.post)(
+                    f"/urgent/off/{key}", follow_redirects=False
+                )
+                assert r.status_code == 404, (key, r.status_code)
+                no_secrets(r)
+        assert profiles[w.a.uid].urgent_on
+        r = (w.anon.get if method == "GET" else w.anon.post)(f"/urgent/off/{b_key}")
+        assert r.status_code == 200
+        assert bool(profiles[w.b.uid].urgent_on) == (method == "GET")
 
     return check
 
@@ -840,6 +867,8 @@ OWNERSHIP = {
     ("POST", "/org/openings/{opening_id}/urgent"): urgent_check("POST", ""),
     ("POST", "/org/openings/{opening_id}/urgent/close"): urgent_check("POST", "/close"),
     ("POST", "/org/openings/new"): check_create_opening,
+    ("GET", "/urgent/off/{key}"): urgent_off_check("GET"),
+    ("POST", "/urgent/off/{key}"): urgent_off_check("POST"),
     ("POST", "/swipe"): check_swipe,
     ("GET", "/org/matches/{match_id}/shifts/new"): shift_match_check("page"),
     ("POST", "/org/matches/{match_id}/shifts/new"): shift_match_check("save"),
