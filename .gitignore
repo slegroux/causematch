@@ -5,6 +5,11 @@ data/
 .env
 .env.*
 !.env.example
+# scripts/screenshots.py's output can show real nonprofits (--seed-file)
+screens*/
+screenshots/
+# scripts/deploy_preview.sh copies the real nonprofits here for the image, then removes it
+preview-seed/
 
 # Python
 __pycache__/
@@ -18,3 +23,6 @@ __pycache__/
 .DS_Store
 node_modules/
 package-lock.json
+.sesskey
+CLAUDE.md
+.claude/

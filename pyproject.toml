@@ -1,0 +1,32 @@
+[project]
+name = "causematch"
+version = "0.1.0"
+description = "Phone-first web app matching volunteers with Los Angeles nonprofits"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = [
+    "fastlite>=0.2.4",
+    "httpx>=0.28.1",
+    "monsterui>=1.0.47",
+    "pillow>=12.3.0",
+    "python-fasthtml>=0.14.13",
+]
+
+[dependency-groups]
+dev = [
+    "playwright>=1.64.0",
+    "pytest>=9.1.1",
+    "pytest-playwright>=0.10.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.17.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+timeout = 300
+markers = [
+    "e2e: drives a real browser against a live server",
+    "perf: asserts a time budget; still runs in the normal suite",
+]

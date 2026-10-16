@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the secret scan reads the whole history
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        run: |
+          uv sync --frozen
+          uv run playwright install --with-deps chromium
+
+      - name: Lint
+        run: |
+          uv run ruff check
+          uv run ruff format --check
+
+      - name: Secret scan
+        env:
+          GITLEAKS_VERSION: 8.21.2
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$tarball" "$base/$tarball"
+          curl -fsSL -o checksums.txt "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $tarball\$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
+          sudo mv gitleaks /usr/local/bin/
+          rm -f "$tarball" checksums.txt
+          scripts/secret_scan.sh
+
+      - name: Tests
+        run: uv run pytest -q -rs
+
+      # On macOS these tests skip (RLIMIT_AS isn't enforced there); Linux is where production
+      # runs, so here it must have run and passed, not skipped.
+      - name: Photo worker memory cap ran on Linux
+        run: |
+          uv run pytest -q -rs -s tests/test_photos.py -k "test_the_childs_memory_is_capped or test_the_production_cap" | tee cap.log
+          grep -q "2 passed" cap.log
+          ! grep -qi "skipped" cap.log

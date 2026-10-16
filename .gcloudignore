@@ -1,0 +1,10 @@
+# What `gcloud run deploy --source .` (scripts/deploy_preview.sh) sends to Cloud Build:
+# everything git ignores, except preview-seed/ (the real nonprofits the preview shows,
+# never in git), and nothing the image doesn't need.
+#!include:.gitignore
+!preview-seed/
+.git/
+.github/
+.venv/
+tests/
+data/

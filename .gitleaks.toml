@@ -1,0 +1,18 @@
+# gitleaks configuration: scripts/secret_scan.sh runs it (CI, item 14) over the git history.
+title = "causematch"
+
+[extend]
+useDefault = true  # gitleaks' own rules for API keys, tokens and private keys
+
+[allowlist]
+description = "Values that are public by design"
+regexes = [
+  # development-only fallbacks, refused in production (app/auth.py, app/config.py)
+  '''dev-only-secret-do-not-use-in-production''',
+  '''dev-only-phone-hash-key''',
+]
+paths = [
+  '''uv\.lock''',  # package hashes
+  '''static/vendor/''',  # third-party files, copied as published
+  '''tests/fixtures/''',  # recorded public ProPublica responses
+]
