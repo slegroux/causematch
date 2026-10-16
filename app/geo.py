@@ -3,13 +3,16 @@ from functools import cache
 from pathlib import Path
 
 
+def _rows(filename):
+    """The rows of a CSV file in app/, skipping its # comment lines."""
+    lines = (ln for ln in (Path(__file__).parent / filename).open() if ln[0] != "#")
+    return csv.DictReader(lines)
+
+
 @cache
 def _zips():
     """{zip: (lat, lon)} for every ZIP in app/la_zips.csv."""
-    lines = (
-        ln for ln in (Path(__file__).parent / "la_zips.csv").open() if ln[0] != "#"
-    )
-    return {r["zip"]: (float(r["lat"]), float(r["lon"])) for r in csv.DictReader(lines)}
+    return {r["zip"]: (float(r["lat"]), float(r["lon"])) for r in _rows("la_zips.csv")}
 
 
 def zip_latlon(zip_code):
@@ -20,14 +23,9 @@ def zip_latlon(zip_code):
 
 @cache
 def _neighborhoods():
-    lines = (
-        ln
-        for ln in (Path(__file__).parent / "la_neighborhoods.csv").open()
-        if ln[0] != "#"
-    )
     return {
         r["name"].casefold(): (r["name"], (float(r["lat"]), float(r["lon"])))
-        for r in csv.DictReader(lines)
+        for r in _rows("la_neighborhoods.csv")
     }
 
 
