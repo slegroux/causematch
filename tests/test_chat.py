@@ -2,6 +2,7 @@ import json
 import threading
 import time
 from contextlib import ExitStack, contextmanager
+from types import SimpleNamespace
 
 import anyio.from_thread
 import pytest
@@ -9,7 +10,7 @@ from conftest import coordinator_for, org_sign_in, sign_in
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import data, notify
+from app import data, notify, security
 from app.db import matches, messages, openings, orgs, profiles
 from main import app
 
@@ -596,7 +597,12 @@ def test_the_same_origin_socket_is_accepted(chat):
         assert "hello" in bubble(wv)
 
 
-def test_too_many_frames_close_the_socket_with_1013(chat):
+def test_too_many_frames_close_the_socket_with_1013(chat, monkeypatch):
+    # a stopped clock for the bucket: on a slow machine a token refilled between frames, the
+    # 21st was delivered, and the receive loop below waited for a close that never came
+    monkeypatch.setattr(
+        security, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=time.time)
+    )
     with chat.vol.websocket_connect(chat.vol_ws) as wv:
         registered(chat.id)
         for i in range(20):

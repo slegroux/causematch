@@ -406,7 +406,11 @@ def test_swipes_are_throttled_per_user(user, monkeypatch):
     assert codes == [200] * 30 + [429]
 
 
-def test_chat_posts_are_throttled_per_user(user):
+def test_chat_posts_are_throttled_per_user(user, monkeypatch):
+    # a stopped clock, as in the swipe test: no token refills between the 21 requests
+    monkeypatch.setattr(
+        security, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=time.time)
+    )
     codes = [
         user.post(
             "/chat/1/send", data={"msg": "hi"}, follow_redirects=False

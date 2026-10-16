@@ -16,10 +16,11 @@ def test_data_layer_survives_concurrent_threads():
     def work(n):
         try:
             barrier.wait()
-            # 60 rounds of 16 threads is plenty to interleave every call; the deck
-            # ranks every opening, and each round adds 16, so more rounds only add time
-            # that a loaded machine can push past the join below (it timed out once).
-            for i in range(60):
+            # 15 rounds of 16 threads still interleave every call (the barrier starts them
+            # together). The deck ranks every opening and each round adds 16, so the cost
+            # grows with the square of the rounds: 60 rounds took 12 s idle and, on a
+            # loaded machine, past the join below.
+            for i in range(15):
                 data.get_profile(uid)
                 data.org_openings(uid)
                 data.deck(uid)
