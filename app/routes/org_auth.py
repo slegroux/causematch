@@ -6,9 +6,17 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
-from app.config import is_preview
+from app.config import DEMO_COORDINATOR, demo_matches, is_preview
 from app.forms import EMAIL, query, str_form
-from app.ui import BigButton, Field, Router, SignInPage, TextInput
+from app.ui import (
+    BigButton,
+    DemoSignIn,
+    Field,
+    Refusal,
+    Router,
+    SignInPage,
+    TextInput,
+)
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -21,6 +29,7 @@ BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one
 def EmailForm(email="", error=None, notice=None, link=None):
     return SignInPage(
         "Nonprofit sign in",
+        DemoSignIn(volunteer=False),
         P(
             A("Open your sign-in link", href=link, cls="text-brand font-bold"),
             " (a preview sends no email)",
@@ -102,6 +111,25 @@ def _sync_org_login_send(req, form):
         if uid and data.coordinator_org_ids(uid):
             return EmailForm(notice=SENT, link=_send_link(email))
     return EmailForm(notice=SENT), BackgroundTask(_send_link, email)
+
+
+@ar("/org/login/demo", methods=["POST"])
+def demo_sign_in(req, sess):
+    """ "Try it as a nonprofit" (config.demo_matches only; production answers 403): the
+    demo coordinator, with a normal coordinator session. Counted against the address's
+    sign-in link limit."""
+    if not demo_matches():
+        return Refusal(403)
+    if not security.allow((security.LINK_PER_IP, security.ip_subject(req))):
+        return security.too_many()
+    uid = data.coordinator_by_email(DEMO_COORDINATOR)
+    profile = data.get_profile(uid) if uid else None
+    if not (profile and data.coordinator_org_ids(uid)):
+        return Refusal(403)  # a demo without its coordinator
+    sess.clear()
+    sess["uid"] = uid
+    sess["sv"] = profile.session_version or 1
+    return Redirect("/org")
 
 
 @ar("/org/login/verify", methods=["GET"])

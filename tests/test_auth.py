@@ -269,3 +269,19 @@ def test_a_new_send_replaces_the_pending_number(anon):
     anon.post("/login/send", data={"phone": "3105550163"})
     anon.post("/login/send", data={"phone": "3105550164"})
     assert session_of(anon)["pending_phone"] == "+13105550164"
+
+
+@pytest.mark.parametrize("env", [{}, {"CAUSEMATCH_ENV": "production"}])
+def test_outside_a_demo_there_are_no_demo_buttons_and_their_posts_are_refused(
+    anon, monkeypatch, env
+):
+    """Without config.demo_matches (production can't have it: it refuses to start)."""
+    secret = "s" * 32
+    for k, v in {**env, "PHONE_HASH_KEY": secret, "TASKS_TOKEN": secret,
+                 "CONTACT_EMAIL": "x@causematch.test"}.items():  # fmt: skip
+        monkeypatch.setenv(k, v)
+    for page in ("/login", "/org/login"):
+        assert "Try it as" not in anon.get(page).text
+    for path in ("/login/demo", "/org/login/demo"):
+        r = anon.post(path, follow_redirects=False)
+        assert r.status_code == 403 and "uid" not in session_of(anon), path

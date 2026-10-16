@@ -24,6 +24,7 @@ from test_photos import key_of, upload
 from app import data, demo_seed, notify, security
 from app.auth import session_cookie, session_secret
 from app.config import (
+    DEMO_COORDINATOR,
     DEMO_PHONE,
     contact_email,
     demo_banner,
@@ -776,6 +777,32 @@ def test_without_the_switch_the_demo_number_is_the_seeds_sam(preview):
     with pytest.raises(PermissionError):
         data.new_demo_volunteer()
     assert "Sam" in c.get("/profile").text
+
+
+def test_the_demo_buttons_sign_in_each_role_in_one_tap(demo):
+    assert demo_seed.COORDINATOR[0] == DEMO_COORDINATOR
+    browser = TestClient(app, headers={"Authorization": basic()})
+    page = browser.get("/login").text
+    for text in ("Demo: you", "Try it as a volunteer", "Try it as a nonprofit"):
+        assert text in page.replace("&#x27;", "'")
+    org_page = browser.get("/org/login").text
+    assert (
+        "Try it as a nonprofit" in org_page and "Try it as a volunteer" not in org_page
+    )
+    before = {p.id for p in profiles()}
+    r = browser.post("/login/demo", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    (copy,) = [p for p in profiles() if p.id not in before]
+    assert copy.phone.startswith(data.DEMO_PHONE_PREFIX) and copy.display_name == "Sam"
+    assert "Urgent" in browser.get("/deck").text  # signed in, on their own deck
+    pat = TestClient(app, headers={"Authorization": basic()})
+    r = pat.post("/org/login/demo", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org"
+    assert pat.get("/org/inbox").status_code == 200
+    assert pat.get("/deck", follow_redirects=False).headers["location"] == "/org"
+    # a POST from another site is refused, like any form here
+    evil = {"Authorization": basic(), "Origin": "https://evil.example"}
+    assert TestClient(app, headers=evil).post("/login/demo").status_code == 403
 
 
 def _like_a_team_card(client, uid):

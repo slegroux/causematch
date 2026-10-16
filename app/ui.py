@@ -29,7 +29,7 @@ from monsterui.all import (
 )
 
 from app import data
-from app.config import demo_banner, is_preview, public_base_url
+from app.config import demo_banner, demo_matches, is_preview, public_base_url
 from app.forms import domain
 
 # Each cause's chip: its soft tint with its ink (static/theme.css). Literal class strings,
@@ -86,6 +86,29 @@ def BigButton(text):
     """The one main action of a short form: full width and easy to hit with a thumb."""
     return Button(
         text, type="submit", cls="uk-btn uk-btn-primary w-full h-12 text-lg shadow-warm"
+    )
+
+
+def DemoSignIn(volunteer=True):
+    """One tap into a demo (config.demo_matches, never production): a fresh copy of the
+    demo volunteer, and the demo coordinator. POSTs, so the same-origin check applies."""
+    if not demo_matches():
+        return None
+    return Div(
+        P("Demo: you'll get your own sample account.", cls="text-sm text-ink-muted"),
+        Form(BigButton("Try it as a volunteer"), action="/login/demo", method="post")
+        if volunteer
+        else None,
+        Form(
+            Button(
+                "Try it as a nonprofit",
+                type="submit",
+                cls="uk-btn uk-btn-default h-12 w-full",
+            ),
+            action="/org/login/demo",
+            method="post",
+        ),
+        cls="space-y-3 border-b border-line pb-6",
     )
 
 

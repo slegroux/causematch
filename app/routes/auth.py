@@ -8,9 +8,18 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
-from app.config import demo_matches
+from app.config import DEMO_PHONE, demo_matches
 from app.forms import bad_request, str_form
-from app.ui import BigButton, CauseChip, Field, Router, SignInPage, TextInput
+from app.ui import (
+    BigButton,
+    CauseChip,
+    DemoSignIn,
+    Field,
+    Refusal,
+    Router,
+    SignInPage,
+    TextInput,
+)
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -24,6 +33,7 @@ INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 def PhoneForm(phone="", error=None):
     return SignInPage(
         "Sign in",
+        DemoSignIn(),
         Form(
             Field(
                 "Mobile number",
@@ -160,6 +170,25 @@ def _sync_verify(form, sess):
     sess["uid"] = uid
     sess["sv"] = profile.session_version or 1
     return Redirect("/deck" if profile.onboarded_at else "/onboarding")
+
+
+@ar("/login/demo", methods=["POST"])
+def demo_sign_in(req, sess):
+    """ "Try it as a volunteer" (config.demo_matches only; production answers 403): a fresh
+    copy of the demo volunteer, as signing in with the demo number gives. Counted against
+    the address's sign-in limits, so it can't make copies in a loop."""
+    if not (demo_matches() and demo_volunteer):
+        return Refusal(403)
+    if not security.allow(
+        (security.SMS_PER_IP, security.ip_subject(req)),
+        (security.SMS_PER_NET, security.ip_subject(req, 48)),
+    ):
+        return security.too_many()
+    uid = demo_volunteer(DEMO_PHONE)
+    sess.clear()
+    sess["uid"] = uid
+    sess["sv"] = data.get_profile(uid).session_version or 1
+    return Redirect("/deck")
 
 
 @ar("/logout", methods=["POST"])

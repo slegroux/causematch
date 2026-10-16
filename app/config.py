@@ -54,8 +54,10 @@ def demo_matches(env=os.environ):
     return True
 
 
-# The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164
+# The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164, and
+# the demo coordinator's address (demo_seed.COORDINATOR)
 DEMO_PHONE = "+13105550100"
+DEMO_COORDINATOR = "pat@demo.causematch.test"
 
 
 def shared_demo_phone(phone, env=os.environ):

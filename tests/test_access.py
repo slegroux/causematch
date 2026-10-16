@@ -60,6 +60,8 @@ ROUTES = {
     ("POST", "/login/verify"): ("public", None),
     ("POST", "/logout"): ("volunteer", None),  # any signed-in role may sign out
     ("GET", "/org/login"): ("public", None),
+    ("POST", "/login/demo"): ("public", None),  # a demo's one tap; 403 elsewhere
+    ("POST", "/org/login/demo"): ("public", None),  # the same
     ("POST", "/org/login/send"): ("public", None),
     ("GET", "/org/login/verify"): ("public", None),
     ("POST", "/org/login/verify"): ("public", None),

@@ -51,7 +51,7 @@ uv run playwright install chromium  # once, for the browser tests
 uv run pytest                     # the test suite
 ```
 
-The demo prints how to sign in as a volunteer, a coordinator and an admin. As a volunteer, sign in with `(310) 555-0100` and the code `000000`: each sign-in gets its own copy of Sam, with matches, a chat and shifts, and nonprofits that say yes to a like a few seconds later. Any other US mobile number works too and starts at onboarding. It never runs in production, and `scripts/screenshots.py --out DIR` screenshots every page of it.
+The demo prints how to sign in as a volunteer, a coordinator and an admin. As a volunteer, tap "Try it as a volunteer" on `/login` (or sign in with `(310) 555-0100` and the code `000000`): each sign-in gets its own copy of Sam, with matches, a chat and shifts, and nonprofits that say yes to a like a few seconds later. "Try it as a nonprofit" signs in the demo coordinator. Any other US mobile number works too and starts at onboarding. It never runs in production, and `scripts/screenshots.py --out DIR` screenshots every page of it.
 
 ## How it works
 
