@@ -67,6 +67,7 @@ ROUTES = {
     ("POST", "/org/login/verify"): ("public", None),
     ("GET", "/org/claim"): ("public", None),
     ("POST", "/org/claim"): ("public", None),
+    ("GET", "/org/claim/search"): ("public", None),  # IRS records only, rate-limited
     ("GET", "/onboarding"): ("volunteer", "own-record"),
     ("POST", "/onboarding"): ("volunteer", "own-record"),
     ("GET", "/onboarding/more"): ("volunteer", "own-record"),
@@ -124,7 +125,6 @@ ROUTES = {
     ("GET", "/admin/claims"): ("admin", None),
     ("POST", "/admin/claims/{claim_id}/approve"): ("admin", "own-record"),
     ("POST", "/admin/claims/{claim_id}/reject"): ("admin", "own-record"),
-    ("POST", "/admin/claims/{claim_id}/import"): ("admin", "own-record"),
     ("GET", "/admin/orgs"): ("admin", None),
     ("POST", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
@@ -768,8 +768,6 @@ def check_admin_claim(action):
                 ), (r.status_code, r.headers.get("location"))
                 no_secrets(r)
         assert claim_requests[cid].status == "pending" and org_members.count == members
-        if action == "import":
-            return  # the admin's own import calls ProPublica: test_claim.py covers it
         r = w.admin.post(f"/admin/claims/{cid}/{action}", follow_redirects=False)
         assert r.status_code == 303 and claim_requests[cid].status != "pending"
 
@@ -929,7 +927,6 @@ OWNERSHIP = {
     ("POST", "/admin/blocks/{block_id}/unblock"): check_admin_unblock,
     ("POST", "/admin/claims/{claim_id}/approve"): check_admin_claim("approve"),
     ("POST", "/admin/claims/{claim_id}/reject"): check_admin_claim("reject"),
-    ("POST", "/admin/claims/{claim_id}/import"): check_admin_claim("import"),
     ("POST", "/admin/orgs/{org_id}/lookup"): check_admin_org("POST", "lookup"),
     ("POST", "/admin/orgs/{org_id}/verify"): check_admin_org("POST", "verify"),
 }

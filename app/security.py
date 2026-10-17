@@ -509,11 +509,16 @@ CLAIM_PER_EMAIL = (("claim-email", 3, 24 * 3600),)
 PROPUBLICA = (
     ("propublica", 30, 3600),
 )  # admin lookups and imports, all admins together
+# The claim page's name search (static/claim.js): per address, and every visitor together
+# so the app stays polite to ProPublica. Apart from PROPUBLICA, so the public can't spend
+# the admins' budget for imports.
+CLAIM_SEARCH_PER_IP = (("claim-search-ip", 60, 3600),)
+CLAIM_SEARCH_ALL = (("claim-search-all", 300, 3600),)
 assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
     + (VERIFY_PER_PHONE, LINK_PER_EMAIL, LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL)
-    + (PROPUBLICA,)
+    + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL)
     for _, _, w in rules
 )
 
