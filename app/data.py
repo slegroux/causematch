@@ -967,8 +967,10 @@ MAX_CANCEL_REASON = 300  # characters of "why", passed on to the org's coordinat
 def cancel_my_shift(uid, shift_id, reason=""):
     """ "Can't make this one": the volunteer's own upcoming shift is cancelled and the
     match stays accepted. PermissionError as shift_event; ValueError for a reason over
-    MAX_CANCEL_REASON characters or holding hidden characters. {"reason": the reason
-    trimmed}.
+    MAX_CANCEL_REASON characters or holding hidden characters.
+
+    A shift starting within URGENT_HOURS refills itself (_refill). {"reason": the reason
+    trimmed, "late": whether it was that close, "call": the UrgentCall posted, or None}.
     """
     reason = reason.strip() if isinstance(reason, str) else ""
     if len(reason) > MAX_CANCEL_REASON or hidden_chars(reason, multiline=True):
@@ -978,7 +980,11 @@ def cancel_my_shift(uid, shift_id, reason=""):
         _db.shifts.update(
             id=s["id"], status="cancelled", cancelled_at=_now(), cancelled_by=uid
         )
-    return {"reason": reason}
+        now = datetime.strptime(_local_now(), _LOCAL_FORMAT)
+        soon = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
+        late = s["starts_at"] <= soon
+        call = _refill(_db.matches[s["match_id"]], s["starts_at"]) if late else None
+    return {"reason": reason, "late": late, "call": call}
 
 
 def my_matches(uid):
@@ -2067,6 +2073,11 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
     o = coordinator_opening(coordinator_uid, opening_id)
     if _db.orgs[o.org_id].deactivated_at:
         raise PermissionError("no such opening")
+    return _post_call(o, starts_at, needed, auto_accept, coordinator_uid)
+
+
+def _post_call(o, starts_at, needed, auto_accept, by):
+    """post_urgent_call's rules and insert, for opening o, posted by `by`."""
     _urgent_sweep()
     calls = _open_calls()
     if o.status != "open":
@@ -2096,10 +2107,32 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
                 needed=needed,
                 auto_accept=bool(auto_accept),
                 status="open",
-                created_by=coordinator_uid,
+                created_by=by,
                 created_at=_now(),
             )
         ).id
+
+
+def _refill(m, starts_at):
+    """A late cancel's urgent call: 1 person on match m's opening at starts_at, posted
+    for the coordinator who accepted m under post_urgent_call's rules, auto-accepting when
+    the org's last call did (else not). Once per opening and time: none when a call was
+    ever posted for them, so cancelling again can't send more texts. The UrgentCall, or
+    None when the rules say no (no open spot, another open call, the daily limit) or the
+    org is deactivated."""
+    o = _db.openings[m.opening_id]
+    if _db.orgs[o.org_id].deactivated_at or _db.urgent_calls.count_where(
+        "opening_id = ? AND starts_at = ?", [o.id, starts_at]
+    ):
+        return None
+    last = _db.urgent_calls(
+        where="org_id = ?", where_args=[o.org_id], order_by="id DESC", limit=1
+    )
+    auto = bool(last and last[0].auto_accept)
+    try:
+        return _db.urgent_calls[_post_call(o, starts_at, 1, auto, m.decided_by)]
+    except ValueError:
+        return None
 
 
 def close_urgent_call(coordinator_uid, opening_id):

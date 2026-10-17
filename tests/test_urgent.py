@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in, uid_of
+from conftest import coordinator_for, org_sign_in, uid_of, volunteer
 from starlette.testclient import TestClient
 
 from app import data, notify
@@ -1072,3 +1072,68 @@ def test_deck_demo_skips_a_call_on_a_fully_booked_opening():
     openings.update(id=full.id, status="open", slots=0)  # the closed holiday drive
     assert demo_seed._urgent_call(coord, org, first) == full.id
     assert not urgent_calls()
+
+
+# --- a volunteer's late cancel refills itself ---------------------------------------------
+
+
+def booked(shelter, starts_at):
+    """A signed-in volunteer accepted on the shelter's opening, with a shift at starts_at."""
+    v = volunteer("Wren")
+    m = matches.insert(
+        matches.cls(
+            opening_id=shelter.opening.id,
+            volunteer_id=v.uid,
+            status="accepted",
+            created_at="2026-01-01T00:00:00+00:00",
+            decided_at="2026-01-01T00:00:00+00:00",
+            decided_by=shelter.uid,
+        )
+    )
+    return v, data.add_shift(shelter.uid, m.id, starts_at)
+
+
+def cancel_email():
+    [body] = [b for _, s, b in notify.get_emailer().sent if "can't make" in s]
+    return body
+
+
+def test_late_cancel_posts_a_call_for_one_whose_wave_texts_once(shelter, sweep):
+    vol = opted_in()
+    v, s = booked(shelter, call_start())
+    assert v.post(f"/shifts/{s.id}/cancel", follow_redirects=False).status_code == 303
+    (call,) = urgent_calls()
+    assert (call.opening_id, call.starts_at, call.needed, call.auto_accept) == (
+        shelter.opening.id,
+        call_start(),
+        1,
+        False,  # the org never posted a call: off
+    )
+    assert "posted an urgent call for 1 person" in cancel_email()
+    assert "you decide who joins" in cancel_email()
+    assert sweep().text == "sent 1"
+    ((to, text),) = notify.get_sms().sent
+    assert to == phone(vol) and "needs 1 more person today 1 pm" in text
+    # once per opening and time: booked again and cancelled again, no second call
+    data.close_urgent_call(shelter.uid, shelter.opening.id)
+    again = data.add_shift(shelter.uid, s.match_id, call_start())
+    assert (
+        v.post(f"/shifts/{again.id}/cancel", follow_redirects=False).status_code == 303
+    )
+    assert urgent_calls.count == 1
+
+
+def test_a_cancel_days_ahead_posts_no_call(shelter):
+    v, s = booked(shelter, local(datetime.now(LA) + timedelta(days=5)))
+    assert v.post(f"/shifts/{s.id}/cancel", follow_redirects=False).status_code == 303
+    assert not urgent_calls() and "urgent" not in cancel_email()
+
+
+def test_late_cancel_auto_accepts_when_the_orgs_last_call_did(shelter):
+    assert post_call(shelter, starts_at=tomorrow("09:00"), auto=True).status_code == 303
+    data.close_urgent_call(shelter.uid, shelter.opening.id)
+    v, s = booked(shelter, call_start())
+    v.post(f"/shifts/{s.id}/cancel")
+    refill = urgent_calls(where="starts_at = ?", where_args=[call_start()])
+    assert [(c.auto_accept, c.status) for c in refill] == [(True, "open")]
+    assert "booked automatically" in cancel_email()

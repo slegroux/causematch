@@ -455,8 +455,8 @@ def _email_org(kind, key, info, subject, body):
 
 def on_shift_cancelled(shift_id, done):
     """Called after a volunteer cancelled one shift (data.cancel_my_shift's `done`):
-    emails the org's coordinators, with the reason given. No name: the chat link shows
-    who."""
+    emails the org's coordinators, with the reason given and whether an urgent call went
+    out. No name: the chat link shows who."""
     info = data.shift_notice(shift_id)
     if not info:
         return
@@ -470,6 +470,22 @@ def on_shift_cancelled(shift_id, done):
     ]
     if done["reason"]:
         lines.append(f"Their reason: {done['reason']}")
+    call = done["call"]
+    if call:
+        how = (
+            "the first one to say yes is booked automatically"
+            if call.auto_accept
+            else "you decide who joins"
+        )
+        lines.append(
+            "It was less than 48 hours away, so we posted an urgent call for 1 person "
+            f"at that time to volunteers nearby ({how}). Follow it: {base}/org"
+        )
+    elif done["late"]:
+        lines.append(
+            "It's less than 48 hours away. Short of people? Post an urgent call: "
+            f"{base}/org"
+        )
     lines.append(f"Who, and a way to reply: {base}/org/chat/{info['match_id']}")
     _email_org(
         "cancel",
