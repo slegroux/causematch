@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from fasthtml.common import (
     H1,
@@ -74,6 +75,11 @@ def ChatError(text="", oob=False):
         cls="text-sm text-red-600",
         hx_swap_oob="true" if oob else None,
     )
+
+
+def shift_day(s):
+    """ "Sat Oct 18": the day of a shift (data's _EVENT_SELECT row)."""
+    return datetime.fromisoformat(s["starts_at"]).strftime("%a %b %-d")
 
 
 def ChatPage(uid, match_id, role, notice=""):
@@ -161,9 +167,18 @@ def ChatPage(uid, match_id, role, notice=""):
         else None,
         box,
         Div(
+            # the next shift's way out, down here: a taller header would push the
+            # composer under the tab bar on a short phone
+            A(
+                f"Can't make {shift_day(head['shift'])}?",
+                href=f"/shifts/{head['shift']['id']}/cancel",
+                cls=SMALL_LINK,
+            )
+            if role == "volunteer" and head["shift"]
+            else None,
             A("Report", href=f"{rbase}/{match_id}/report", cls=SMALL_LINK),
             A("Block", href=f"{rbase}/{match_id}/block", cls=SMALL_LINK),
-            cls="flex gap-x-5 pt-2 text-sm",
+            cls="flex flex-wrap gap-x-5 pt-2 text-sm",
         ),
         Script(src="/static/chat.js", defer=True),
     )

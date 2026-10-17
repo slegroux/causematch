@@ -28,6 +28,7 @@ from app.ui import (
     Icon,
     MatchesDot,
     Meta,
+    NextShift,
     Notes,
     OrgFace,
     Pill,
@@ -50,6 +51,9 @@ STATUS = {  # status: (label, PILL tone)
 NOTICE = {
     "reported": "Thanks. We read every report.",
     "blocked": "Blocked. Their openings won't show up again.",
+    "cancelled": "That shift is cancelled and the nonprofit knows. You're still matched.",
+    "gave_up": "Your spot is given up and the nonprofit knows.",
+    "confirmed": "Thanks! The nonprofit can see you're coming.",
 }
 
 
@@ -157,6 +161,7 @@ def MatchRow(m):
             cls="relative z-10 space-y-1.5",
         ),
         Div(
+            NextShift(m["shift"]) if m["shift"] else None,
             AddToCalendar(m["shift"]) if m["shift"] else None,
             EventLink(m.get("event_url")),
             cls="relative z-10 space-y-1.5",
@@ -259,9 +264,10 @@ def withdraw_confirm(req, match_id: int):
 @ar("/matches/{match_id}/withdraw", methods=["POST"])
 def withdraw(req, match_id: int):
     try:
-        data.withdraw(req.scope["uid"], match_id)
+        was = data.withdraw(req.scope["uid"], match_id)
     except PermissionError:
         return Refusal(403)
     except ValueError:
-        pass  # already withdrawn or declined: nothing to do
+        return Redirect("/matches")  # already withdrawn or declined: nothing to do
+    notify.on_withdrawn(match_id, was)
     return Redirect("/matches")

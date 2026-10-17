@@ -432,6 +432,100 @@ def on_auto_accepted(match_id):
     _deliver("auto", f"auto:{match_id}", info["org_id"], send)
 
 
+def _when(starts_at):
+    """ "Sat Oct 18, 9:00 AM" for an LA wall-clock "YYYY-MM-DDTHH:MM"."""
+    return datetime.strptime(starts_at, _LOCAL_FORMAT).strftime("%a %b %-d, %-I:%M %p")
+
+
+def _email_org(kind, key, info, subject, body):
+    """Email the org of `info` (a match_notice) at once, once per `key`; nothing for a
+    silent match (blind or a deactivated org)."""
+    if not info or info["silent"]:
+        return
+    emails = data.org_coordinator_emails(info["org_id"])
+    if not emails:
+        return
+
+    def send():
+        for to in emails:
+            get_emailer().send(to, subject, body)
+
+    _deliver(kind, key, info["org_id"], send)
+
+
+def on_shift_cancelled(shift_id, done):
+    """Called after a volunteer cancelled one shift (data.cancel_my_shift's `done`):
+    emails the org's coordinators, with the reason given and whether an urgent call went
+    out. No name: the chat link shows who."""
+    info = data.shift_notice(shift_id)
+    if not info:
+        return
+    base = public_base_url()
+    when = _when(info["starts_at"])
+    lines = [
+        f"A volunteer can't make their {when} shift for {info['opening']}. "
+        + (
+            "It was their only shift, so they gave up their spot: it's open again."
+            if done["ended"]
+            else f"They're still matched with {info['org']}; only this shift is "
+            "cancelled."
+        )
+    ]
+    if done["reason"]:
+        lines.append(f"Their reason: {done['reason']}")
+    call = done["call"]
+    if call:
+        how = (
+            "the first one to say yes is booked automatically"
+            if call.auto_accept
+            else "you decide who joins"
+        )
+        lines.append(
+            "It was less than 48 hours away, so we posted an urgent call for 1 person "
+            f"at that time to volunteers nearby ({how}). Follow it: {base}/org"
+        )
+    elif done["can_call"]:
+        lines.append(
+            "It's less than 48 hours away. Short of people? Post an urgent call: "
+            f"{base}/org"
+        )
+    elif done["late"] and not done["ended"]:
+        lines.append(
+            "It's less than 48 hours away. Reply to them in chat to arrange cover."
+        )
+    chat = f"{base}/org/chat/{info['match_id']}"
+    lines.append(
+        f"Who: {chat}" if done["ended"] else f"Who, and a way to reply: {chat}"
+    )
+    _email_org(
+        "cancel",
+        f"cancel:{shift_id}",
+        info,
+        f"A volunteer can't make {info['opening']}, {when}",
+        "\n\n".join(lines),
+    )
+
+
+def on_withdrawn(match_id, was):
+    """Called after a volunteer withdrew from a match that was `was`: emails the org's
+    coordinators, once per match, when it was accepted (a pending like the inbox drops
+    quietly). No name: the inbox shows who."""
+    info = data.match_notice(match_id)
+    if was != "accepted" or not info or info["status"] != "withdrawn":
+        return
+    text = (
+        f"A volunteer withdrew from {info['opening']}. Their upcoming shifts are "
+        "cancelled and their spot is open again."
+    )
+    _email_org(
+        "withdrawn",
+        f"withdrawn:{match_id}",
+        info,
+        f"A volunteer withdrew from {info['opening']}",
+        f"{text}\n\nWho: {public_base_url()}/org/inbox",
+    )
+
+
 def send_due_reminders():
     """Text the volunteer of every scheduled shift starting 23 to 25 hours from now, once
     per shift, and retry failed "you're matched" texts and texts the SMS ceiling deferred.
@@ -463,13 +557,13 @@ def send_due_reminders():
         info = data.shift_notice(shift_id)
         if not info:
             continue
-        start = datetime.strptime(info["starts_at"], _LOCAL_FORMAT)
         if _text(
             "reminder",
             f"reminder:{shift_id}",
             volunteer_id,
             f"Reminder: {info['opening']} with {info['org']} is on "
-            f"{start.strftime('%a %b %-d, %-I:%M %p')}. Details: {public_base_url()}/matches",
+            f"{_when(info['starts_at'])}. Still coming? "
+            f"{public_base_url()}/shifts/{shift_id}/confirm",
         ):
             reminded.add(volunteer_id)
     return sent + len(reminded)

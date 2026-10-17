@@ -136,6 +136,8 @@ class Profile:
     urgent_quiet_from: int  # local hour no notice is sent from (NULL: 21)
     urgent_quiet_to: int  # ... until (NULL: 8); from > to wraps past midnight
     urgent_per_week: int  # 1..3 (NULL: 3)
+    # Up to this many shifts a week (app/prefs.py weekly_limit), 1..5; NULL or 0: off
+    weekly_limit: int
 
 
 class OrgMember:
@@ -210,18 +212,17 @@ class Shift:
     marked_by: int
     corrected_at: str  # UTC; the one correction allowed within 7 days of marked_at
     corrected_by: int
-    cancelled_at: (
-        str  # UTC; set when a coordinator cancels it (a withdraw leaves it null)
-    )
-    cancelled_by: int
+    cancelled_at: str  # UTC; set when a coordinator or the volunteer cancels it (a withdraw leaves it null)
+    cancelled_by: int  # the coordinator, or the volunteer ("Can't make this one")
     created_at: str
+    confirmed_at: str  # UTC; the volunteer answered "Still coming?" with yes
 
 
 class Notification:
     id: int
-    kind: str  # accepted|message|likes|reminder|urgent|auto
+    kind: str  # accepted|message|likes|reminder|urgent|auto|cancel|withdrawn
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
-    recipient_id: int  # the volunteer's profile id; for "likes", the org id
+    recipient_id: int  # the volunteer's profile id; for "likes", "auto", "cancel" and "withdrawn", the org id
     sent_at: str  # UTC; when this stream's last send was claimed
     status: str  # pending|sent|failed|skipped|cancelled|deferred (the SMS ceiling)|unknown (a timeout: may have been delivered)
     attempts: (
@@ -369,6 +370,9 @@ class UrgentCall:
     ended_at: str  # UTC, when it stopped being open
     waves: int  # notification waves sent (app/notify.py send_urgent_waves), up to 2
     wave_at: str  # UTC, when the last wave went out
+    refill: (
+        bool  # posted by a volunteer's late cancel (app/data.py _refill), not the org
+    )
 
 
 urgent_calls = db.create(UrgentCall, pk="id", transform=True)

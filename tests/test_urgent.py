@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in, uid_of
+from conftest import coordinator_for, org_sign_in, uid_of, volunteer
 from starlette.testclient import TestClient
 
 from app import data, notify
@@ -622,6 +622,10 @@ EXCLUDED = {
     "passed on it": lambda s: (v := opted_in(), data.swipe(v, s.opening.id, False))[0],
     "suspended": lambda s: opted_in(suspended_at="2026-01-01T00:00:00+00:00"),
     "not onboarded": lambda s: opted_in(onboarded_at=None),
+    "week full": lambda s: (  # a limit of 1, booked later that day: not busy, full
+        v := opted_in(weekly_limit=1),
+        booked_at(v, f"{call_day()}T17:00"),
+    )[0],
 }
 
 
@@ -1072,3 +1076,109 @@ def test_deck_demo_skips_a_call_on_a_fully_booked_opening():
     openings.update(id=full.id, status="open", slots=0)  # the closed holiday drive
     assert demo_seed._urgent_call(coord, org, first) == full.id
     assert not urgent_calls()
+
+
+# --- a late cancel that gives up a one-time spot refills itself --------------------------
+
+
+def booked(shelter, starts_at):
+    """A signed-in volunteer accepted on the shelter's opening, with a shift at starts_at."""
+    v = volunteer("Wren")
+    m = matches.insert(
+        matches.cls(
+            opening_id=shelter.opening.id,
+            volunteer_id=v.uid,
+            status="accepted",
+            created_at="2026-01-01T00:00:00+00:00",
+            decided_at="2026-01-01T00:00:00+00:00",
+            decided_by=shelter.uid,
+        )
+    )
+    return v, data.add_shift(shelter.uid, m.id, starts_at)
+
+
+def cancel_email():
+    """The body of the last "can't make" email to the coordinators."""
+    return [b for _, s, b in notify.get_emailer().sent if "can't make" in s][-1]
+
+
+def full(shelter, recurrence):
+    """The shelter's opening as `recurrence`, every slot taken by the next booked()."""
+    openings.update(
+        id=shelter.opening.id, recurrence=recurrence, slots=1, status="filled"
+    )
+
+
+def test_late_cancel_on_a_full_one_time_opening_frees_the_spot_and_calls(
+    shelter, sweep
+):
+    vol = opted_in()
+    full(shelter, "one_time")
+    v, s = booked(shelter, call_start())
+    r = v.post(f"/shifts/{s.id}/cancel", follow_redirects=False)
+    assert r.headers["location"] == "/matches?notice=gave_up"
+    assert matches[s.match_id].status == "withdrawn"
+    assert openings[shelter.opening.id].status == "open"
+    (call,) = urgent_calls()
+    assert (call.opening_id, call.starts_at, call.needed, call.auto_accept) == (
+        shelter.opening.id,
+        call_start(),
+        1,
+        False,  # the org never posted a call: off
+    )
+    assert "spot: it's open again" in cancel_email()
+    assert "posted an urgent call for 1 person" in cancel_email()
+    assert sweep().text == "sent 1"
+    ((to, text),) = notify.get_sms().sent
+    assert to == phone(vol) and "needs 1 more person today 1 pm" in text
+    # once per opening and time: the next one booked then cancels too, no second call
+    data.close_urgent_call(shelter.uid, shelter.opening.id)
+    full(shelter, "one_time")
+    w, t = booked(shelter, call_start())
+    assert w.post(f"/shifts/{t.id}/cancel", follow_redirects=False).status_code == 303
+    assert urgent_calls.count == 1
+
+
+def test_late_cancel_on_a_recurring_opening_keeps_the_match_and_calls_no_one(
+    shelter,
+):
+    full(shelter, "weekly")
+    v, s = booked(shelter, call_start())
+    page = v.get(f"/shifts/{s.id}/cancel").text
+    assert "you stay matched" in page and "gives up your spot" not in page
+    r = v.post(f"/shifts/{s.id}/cancel", follow_redirects=False)
+    assert r.headers["location"] == "/matches?notice=cancelled"
+    assert matches[s.match_id].status == "accepted" and not urgent_calls()
+    assert "Reply to them in chat to arrange cover" in cancel_email()  # full: no call
+
+
+def test_refill_waits_for_48_hours_and_auto_accepts_as_the_orgs_last_call(shelter):
+    assert post_call(shelter, starts_at=tomorrow("09:00"), auto=True).status_code == 303
+    data.close_urgent_call(shelter.uid, shelter.opening.id)
+    full(shelter, "one_time")
+    v, s = booked(shelter, local(datetime.now(LA) + timedelta(days=5)))
+    assert "gives up your spot" in v.get(f"/shifts/{s.id}/cancel").text
+    v.post(f"/shifts/{s.id}/cancel")
+    assert len(urgent_calls()) == 1 and "urgent" not in cancel_email()  # days out
+    full(shelter, "one_time")
+    w, t = booked(shelter, call_start())
+    w.post(f"/shifts/{t.id}/cancel")
+    refill = urgent_calls(where="starts_at = ?", where_args=[call_start()])
+    assert [(c.auto_accept, c.status) for c in refill] == [(True, "open")]
+    assert "booked automatically" in cancel_email()
+
+
+def test_late_cancel_by_a_volunteer_an_urgent_call_booked_still_refills(shelter, user):
+    """The call that booked them is no refill: their cancel posts one."""
+    openings.update(id=shelter.opening.id, recurrence="one_time", slots=1)
+    booking = call_on(shelter, starts_at=call_start())
+    urgent_calls.update(id=booking.id, auto_accept=True)
+    user.post("/swipe", data=card_like(shelter))
+    (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert m.status == "accepted" and openings[shelter.opening.id].status == "filled"
+    (s,) = shifts(where="match_id = ?", where_args=[m.id])
+    user.post(f"/shifts/{s.id}/cancel")
+    refill = urgent_calls(where="refill = 1")
+    assert [(c.starts_at, c.needed, c.status) for c in refill] == [
+        (call_start(), 1, "open")
+    ]

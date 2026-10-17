@@ -6,7 +6,7 @@ import inspect
 import json
 import secrets
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import apsw
 from apswutils.db import NotFoundError
@@ -439,6 +439,32 @@ def _travel_short(near):
     return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]}"
 
 
+def _week(starts_at):
+    """The Monday (ISO date) of the Los Angeles week, Monday to Sunday, a local start is in."""
+    d = date.fromisoformat(starts_at[:10])
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def _full_weeks(me):
+    """The weeks (_week) in which the volunteer already has as many shifts booked (not
+    cancelled) as their weekly limit; none without a limit."""
+    limit = _prefs.weekly_limit(me)
+    if not limit:
+        return set()
+    booked = {}
+    for r in _db.db.query(
+        "SELECT h.starts_at FROM shift h JOIN match m ON m.id = h.match_id "
+        "WHERE m.volunteer_id = ? AND h.status != 'cancelled' AND h.starts_at >= ?",
+        [me.id, _week(_local_now())],
+    ):
+        week = _week(r["starts_at"])
+        booked[week] = booked.get(week, 0) + 1
+    return {w for w, n in booked.items() if n >= limit}
+
+
+WEEK_FULL = {"text": "Your week is full", "slug": None}
+
+
 def deck(uid, limit=20, today=False, view=None, first=None):
     """deck_and_count()'s cards."""
     return deck_and_count(uid, limit, today, view, first)[0]
@@ -464,7 +490,12 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
+    booked = [  # read once: a card within CLASH_HOURS of one of these clashes
+        (datetime.fromisoformat(sh["starts_at"]), sh["org"])
+        for sh in my_shifts(uid)["upcoming"]
+    ]
     calls = _open_calls()
+    full = _full_weeks(me)
     drawn = _deck_openings(uid, today, p, calls)
     for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
@@ -473,10 +504,13 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
             key = (-round(fit, 6), o.starts_at, o.id)
-        # urgent calls first
-        ranked.append((o.id not in calls, *key, o, cause_labels, slugs, near))
-    ranked.sort(key=lambda r: r[:4])
-    pool = [r[4:] for r in ranked]
+        # a week already full last, then urgent calls first
+        ranked.append(
+            (_week(o.starts_at) in full, o.id not in calls, *key)
+            + (o, cause_labels, slugs, near)
+        )
+    ranked.sort(key=lambda r: r[:5])
+    pool = [r[5:] for r in ranked]
     pool.sort(key=lambda r: r[0].id != first)  # stable: the rest keep their order
     seen = _db.swipes.count_where("volunteer_id = ?", [uid])
     surprise = bool(me.surprise) and bool(loved) and not today
@@ -493,6 +527,12 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 pick, odd = outside[0], True
         o, cause_labels, slugs, near = pool.pop(pick)
         call = calls.get(o.id)
+        # an urgent card says more up top: fewer reasons, so it still fits
+        cap = URGENT_WHY if o.id in calls else MAX_WHY
+        week_full = _week(o.starts_at) in full
+        why, clash = _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)
+        # the clash and a full week go after the cut: on an urgent card one Like books it
+        why = why[: cap - week_full - len(clash)] + clash + [WEEK_FULL] * week_full
         org = orgs.get(o.org_id)
         cards.append(
             {
@@ -514,10 +554,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "notes": o.notes,
                 "orientation": o.orientation_required,
                 "surprise": odd,
-                # an urgent card says more up top: fewer reasons, so it still fits
-                "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd)[
-                    : URGENT_WHY if o.id in calls else MAX_WHY
-                ],
+                "why": why,
                 # the card's picture: the opening's photo, else the org's; its logo
                 # as a badge
                 "photo": o.photo_key or (org and org.photo_key),
@@ -570,9 +607,16 @@ WORK_WORDS = {
 }
 
 
-def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
-    """1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on a
-    cause chip (drawn in its color). Its causes always come first, so there is at least one.
+# Openings have no end time yet: two starts less than this apart clash (a 3 h shift
+# plus a 1 h buffer).
+CLASH_HOURS = 4
+
+
+def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
+    """(1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on
+    a cause chip (drawn in its color); its causes always come first, so there is at least
+    one. Then the clash chip in a list, [] when no booked shift is within CLASH_HOURS:
+    the caller keeps it past any cut.)
     """
     order = {_prefs.LOVE: 0, _prefs.OPEN: 1}
     why = [
@@ -585,6 +629,11 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
         )
     ][:2]
     more = []
+    start = datetime.fromisoformat(o.starts_at)
+    clash = next(
+        (org for at, org in booked if abs(start - at) < timedelta(hours=CLASH_HOURS)),
+        None,
+    )
     if surprise:
         more.append("Surprise pick")
     if o.remote and not near:
@@ -604,7 +653,11 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
         more.append(f"{LANGUAGE_NAMES[min(helps)]} helps")
     if o.first_timer_ok and not wanted:  # a fact about it, after what matches
         more.append("First-timer friendly")
-    return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
+    chip = [{"text": f"You're booked at {clash} then", "slug": None}] if clash else []
+    return (
+        why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)],
+        chip,
+    )
 
 
 def has_match_news(uid):
@@ -907,12 +960,13 @@ def my_match(uid, match_id):
 
 
 def withdraw(uid, match_id):
-    """The volunteer's own pending or accepted match becomes withdrawn."""
+    """The volunteer's own pending or accepted match becomes withdrawn; the status it had."""
     with _db.db.conn:
         m = _own_match(uid, match_id)
         if m.status not in ("pending", "accepted"):
             raise ValueError("already " + m.status)
         _end_match(m, uid, "withdrawn")
+        return m.status
 
 
 def _face(org, o):
@@ -928,8 +982,8 @@ def _face(org, o):
 
 # An upcoming shift for a calendar: ui.AddToCalendar and GET /shifts/{id}.ics read it.
 _EVENT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, o.title, g.name AS org, o.neighborhood "
-    "FROM shift s JOIN match m ON m.id = s.match_id "
+    "SELECT s.id, s.match_id, s.starts_at, s.confirmed_at, o.title, g.name AS org, "
+    "o.neighborhood FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "WHERE m.status = 'accepted' AND s.status = 'scheduled' AND s.starts_at > ? "
 )
@@ -946,9 +1000,10 @@ def _next_shift(match_id):
 
 
 def shift_event(uid, shift_id):
-    """{"id", "match_id", "starts_at", "title", "org", "neighborhood"} of this volunteer's
-    own upcoming shift on an accepted match. PermissionError for anything else (another
-    volunteer's shift, a cancelled or past one, an unknown id), so the caller answers 404."""
+    """{"id", "match_id", "starts_at", "confirmed_at", "title", "org", "neighborhood"} of
+    this volunteer's own upcoming shift on an accepted match. PermissionError for anything
+    else (another volunteer's shift, a cancelled or past one, an unknown id), so the caller
+    answers 404."""
     if not _is_id(shift_id):
         raise PermissionError("no such shift")
     rows = _db.db.q(
@@ -958,6 +1013,80 @@ def shift_event(uid, shift_id):
     if not rows:
         raise PermissionError("no such shift")
     return rows[0]
+
+
+MAX_CANCEL_REASON = 300  # characters of "why", passed on to the org's coordinators
+
+
+def _gives_up_spot(s):
+    """True when cancelling shift s (shift_event's row) ends its match: the only upcoming
+    shift of a one-time opening that is open or filled (a closed one has no spot to free),
+    so there is nothing left to keep."""
+    m = _db.matches[s["match_id"]]
+    o = _db.openings[m.opening_id]
+    if o.recurrence != "one_time" or o.status not in ("open", "filled"):
+        return False
+    return not _db.shifts.count_where(
+        "match_id = ? AND id != ? AND status = 'scheduled' AND starts_at > ?",
+        [m.id, s["id"], _local_now()],
+    )
+
+
+def shift_to_cancel(uid, shift_id):
+    """shift_event's row, plus "gives_up_spot" (_gives_up_spot), for the cancel page."""
+    s = shift_event(uid, shift_id)
+    return {**s, "gives_up_spot": _gives_up_spot(s)}
+
+
+def cancel_my_shift(uid, shift_id, reason=""):
+    """ "Can't make this one": the volunteer's own upcoming shift is cancelled.
+    PermissionError as shift_event; ValueError for a reason over MAX_CANCEL_REASON
+    characters or holding hidden characters.
+
+    On a recurring or flexible opening the match stays accepted. On a one-time opening
+    whose only upcoming shift this is, the match ends as a withdrawal does (_end_match):
+    the spot frees up, and when the shift starts within URGENT_HOURS, it refills itself
+    (_refill). {"reason": the reason trimmed, "late": whether it was that close,
+    "ended": whether the match ended, "call": the UrgentCall posted, or None, "can_call":
+    whether, with no call posted, the org could post one for that time now}.
+    """
+    reason = reason.strip() if isinstance(reason, str) else ""
+    if len(reason) > MAX_CANCEL_REASON or hidden_chars(reason, multiline=True):
+        raise ValueError("reason")
+    with _db.db.conn:
+        s = shift_event(uid, shift_id)
+        ended = _gives_up_spot(s)
+        _db.shifts.update(
+            id=s["id"], status="cancelled", cancelled_at=_now(), cancelled_by=uid
+        )
+        m = _db.matches[s["match_id"]]
+        if ended:
+            _end_match(m, uid, "withdrawn")
+        now = datetime.strptime(_local_now(), _LOCAL_FORMAT)
+        soon = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
+        late = s["starts_at"] <= soon
+        call = _refill(m, s["starts_at"]) if late and ended else None
+        can_call = (
+            late
+            and not call
+            and not _call_refused(_db.openings[m.opening_id], s["starts_at"], 1)
+        )
+    return {
+        "reason": reason,
+        "late": late,
+        "ended": ended,
+        "call": call,
+        "can_call": can_call,
+    }
+
+
+def confirm_my_shift(uid, shift_id):
+    """ "Yes, I'll be there": stamps the volunteer's own upcoming shift's confirmed_at,
+    once. PermissionError as shift_event."""
+    with _db.db.conn:
+        s = shift_event(uid, shift_id)
+        if not s["confirmed_at"]:
+            _db.shifts.update(id=s["id"], confirmed_at=_now())
 
 
 def my_matches(uid):
@@ -1233,7 +1362,8 @@ _BLOCKED = (
 )
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "o.title, o.recurrence, g.name AS org, p.display_name, p.last_name, p.photo_key, "
+    "s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
+    "p.last_name, p.photo_key, "
     "m.status AS match_status, " + _BLOCKED + " AS blocked, "
     "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
     "o.causes "
@@ -1273,7 +1403,8 @@ def org_shifts(coordinator_uid):
 
     to_mark: started and not yet marked. marked: marked within 7 days and still open to
     their one correction. Rows carry the volunteer's name as volunteer_name gives it
-    (BLOCKED_NAME under a block) and photo, whether the opening repeats weekly, and "latest" when the row is its match's latest live shift (set only
+    (BLOCKED_NAME under a block) and photo, whether the opening repeats weekly, whether the
+    volunteer confirmed they're coming ("confirmed"), and "latest" when the row is its match's latest live shift (set only
     on rows in these lists; an old corrected shift can be the latest but is not listed).
     """
     now = _local_now()
@@ -1299,6 +1430,7 @@ def org_shifts(coordinator_uid):
         )
         row["photo_key"] = None if r["blocked"] else r["photo_key"]
         row["weekly"] = r["recurrence"] == "weekly"
+        row["confirmed"] = bool(r["confirmed_at"])
         if r["status"] == "scheduled":
             out["upcoming" if r["starts_at"] > now else "to_mark"].append(row)
         elif not r["corrected_at"] and datetime.fromisoformat(r["marked_at"]) >= cutoff:
@@ -1607,6 +1739,7 @@ def preferences(uid):
         "frequency": p.frequency or "",
         "places": _places(p),
         "urgent": _prefs.urgent(p),
+        "weekly_limit": _prefs.weekly_limit(p),
     }
 
 
@@ -1630,11 +1763,13 @@ def save_preferences(
     dealbreakers=DEFAULT_DEALBREAKERS,
     surprise=False,
     urgent=None,
+    weekly_limit=None,
 ):
     """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
     (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
     ones. The profile's own point follows the first place. urgent: last-minute calls as
-    prefs.urgent() reads them; None keeps the saved ones."""
+    prefs.urgent() reads them; None keeps the saved ones. weekly_limit: 0 (off) to 5; None
+    keeps the saved one."""
     with _db.db.conn:
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         for p in places:
@@ -1664,6 +1799,7 @@ def save_preferences(
                 if urgent is not None
                 else {}
             ),
+            **({} if weekly_limit is None else {"weekly_limit": weekly_limit}),
         )
 
 
@@ -2046,27 +2182,38 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
     o = coordinator_opening(coordinator_uid, opening_id)
     if _db.orgs[o.org_id].deactivated_at:
         raise PermissionError("no such opening")
+    return _post_call(o, starts_at, needed, auto_accept, coordinator_uid)
+
+
+def _call_refused(o, starts_at, needed):
+    """Why post_urgent_call would refuse this call on opening o (its ValueError message),
+    or None when it may go up."""
     _urgent_sweep()
-    calls = _open_calls()
     if o.status != "open":
-        raise ValueError("not open")
-    if o.id in calls:
-        raise ValueError("already")
+        return "not open"
+    if o.id in _open_calls():
+        return "already"
     now = datetime.now(LA)
     latest = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
     if not now.strftime(_LOCAL_FORMAT) < starts_at <= latest:
-        raise ValueError("time")
+        return "time"
     if not 1 <= needed <= o.slots - _accepted(o.id):
-        raise ValueError("needed")
+        return "needed"
     since = (datetime.now(UTC) - timedelta(days=1)).isoformat(timespec="seconds")
+    if (
+        _db.urgent_calls.count_where("org_id = ? AND created_at > ?", [o.org_id, since])
+        >= URGENT_PER_DAY
+    ):
+        return "limit"
+    return None
+
+
+def _post_call(o, starts_at, needed, auto_accept, by, refill=False):
+    """post_urgent_call's rules and insert, for opening o, posted by `by`."""
     with _db.db.conn:
-        if (
-            _db.urgent_calls.count_where(
-                "org_id = ? AND created_at > ?", [o.org_id, since]
-            )
-            >= URGENT_PER_DAY
-        ):
-            raise ValueError("limit")
+        refused = _call_refused(o, starts_at, needed)
+        if refused:
+            raise ValueError(refused)
         return _db.urgent_calls.insert(
             _db.UrgentCall(
                 opening_id=o.id,
@@ -2075,10 +2222,36 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
                 needed=needed,
                 auto_accept=bool(auto_accept),
                 status="open",
-                created_by=coordinator_uid,
+                created_by=by,
                 created_at=_now(),
+                refill=refill,
             )
         ).id
+
+
+def _refill(m, starts_at):
+    """A late cancel's urgent call: 1 person on match m's opening at starts_at, posted
+    for the coordinator who accepted m under post_urgent_call's rules, auto-accepting when
+    the org's last call did (else not). It counts toward the org's URGENT_PER_DAY. Once
+    per opening and time: none when a refill was posted for them before, so a refill's
+    own volunteer cancelling again can't send more texts (the org's own calls don't
+    count). The UrgentCall, or None when the rules say no (no open spot, another open
+    call, the daily limit) or the org is deactivated."""
+    o = _db.openings[m.opening_id]
+    if _db.orgs[o.org_id].deactivated_at or _db.urgent_calls.count_where(
+        "opening_id = ? AND starts_at = ? AND refill = 1", [o.id, starts_at]
+    ):
+        return None
+    last = _db.urgent_calls(
+        where="org_id = ?", where_args=[o.org_id], order_by="id DESC", limit=1
+    )
+    auto = bool(last and last[0].auto_accept)
+    try:
+        return _db.urgent_calls[
+            _post_call(o, starts_at, 1, auto, m.decided_by, refill=True)
+        ]
+    except ValueError:
+        return None
 
 
 def close_urgent_call(coordinator_uid, opening_id):
@@ -2167,7 +2340,8 @@ def urgent_recipients(call_id, limit, at):
     blocked them; within their travel minutes of a place; free then (a ticked slot or a
     free date); the window they picked; outside their quiet hours; under their weekly
     cap; not already notified about this call; no shift of theirs within
-    URGENT_BUSY of it; a number that never replied STOP, else an email.
+    URGENT_BUSY of it; their weekly limit of shifts not reached in the call's week; a
+    number that never replied STOP, else an email.
     """
     calls = _open_calls()  # read once for every volunteer's deck below
     call = _db.urgent_calls[call_id]
@@ -2226,6 +2400,7 @@ def urgent_recipients(call_id, limit, at):
             or me.id in blocked_by_org
             or this_week.get(me.id, 0) >= min(u["per_week"], URGENT_WEEK_MAX)
             or _prefs.quiet_now(u, local.hour)
+            or _week(call.starts_at) in _full_weeks(me)
             or (
                 u["window"] == "today"
                 and call.starts_at[:10] != local.date().isoformat()
@@ -2467,13 +2642,13 @@ def due_reminders(first, last):
 
 
 def shift_notice(shift_id):
-    """{"volunteer_id", "org", "opening", "starts_at"} of a shift, or None."""
+    """match_notice's keys and the shift's "match_id" and "starts_at", or None."""
     try:
         sh = _db.shifts[shift_id]
     except NotFoundError:
         return None
     info = match_notice(sh.match_id)
-    return info and {**info, "starts_at": sh.starts_at}
+    return info and {**info, "match_id": sh.match_id, "starts_at": sh.starts_at}
 
 
 # --- trust and safety: reports, blocks, suspension, org verification, deletion ---------------

@@ -193,3 +193,38 @@ def test_new_matches_show_in_one_sheet_once(user):
     html = user.get("/deck").text
     assert html.count("<dialog") == 1 and f'href="/chat/{later}"' in html
     assert "Match 4" in html and "Match 1" not in html and "Match 3" not in html
+
+
+def test_a_card_near_a_booked_shift_warns_and_the_other_does_not(user):
+    close_all_openings()
+    sat = datetime.now(LA) + timedelta(days=(5 - datetime.now(LA).weekday()) % 7 + 14)
+    day = sat.strftime("%Y-%m-%d")
+    booked = add_opening("Booked one", ["food-insecurity"], f"{day}T09:00")
+    m = data.swipe(uid_of(user), booked.id, True)
+    data.decide(coordinator_for(0)[0], m.id, True)
+    add_opening("Near one", ["food-insecurity"], f"{day}T10:00")
+    add_opening("Far one", ["food-insecurity"], f"{day}T14:00")
+    cards = {c["title"]: c for c in data.deck(uid_of(user))}
+    texts = lambda t: [w["text"] for w in cards[t]["why"]]
+    assert any(w.startswith("You're booked at ") for w in texts("Near one"))
+    assert not any("booked" in w for w in texts("Far one"))
+
+
+def test_an_urgent_card_keeps_its_clash_chip_past_the_cap_and_a_full_week(user):
+    close_all_openings()
+    day = (datetime.now(LA) + timedelta(days=1)).strftime("%Y-%m-%d")
+    coord = coordinator_for(0)[0]
+    booked = add_opening("Booked one", ["food-insecurity"], f"{day}T09:00")
+    data.decide(coord, data.swipe(uid_of(user), booked.id, True).id, True)
+    call = add_opening("Call one", ["food-insecurity", "environment-parks"])
+    data.post_urgent_call(coord, call.id, f"{day}T10:00", 1, True)
+
+    def chips():
+        [card] = [c for c in data.deck(uid_of(user)) if c["title"] == "Call one"]
+        return [w["text"] for w in card["why"]]
+
+    assert len(chips()) == data.URGENT_WHY
+    assert chips()[-1].startswith("You're booked at ")  # 2 causes, still shown
+    profiles.update(id=uid_of(user), weekly_limit=1)  # that one shift fills the week
+    *_, clash, week = chips()
+    assert clash.startswith("You're booked at ") and week == data.WEEK_FULL["text"]
