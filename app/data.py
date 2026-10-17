@@ -3075,11 +3075,13 @@ def reject_claim(admin_uid, claim_id):
     return c.email
 
 
-def pending_claim_ein(admin_uid, claim_id):
-    """The EIN a pending claim names, for the admin's "Import this EIN". LookupError when
-    the claim is not pending."""
+def claim_ein_to_import(admin_uid, claim_id):
+    """The EIN a pending claim names when no org has it yet, else None: approving imports
+    that org from ProPublica first (app/org_import.py, outside the data lock). LookupError
+    when the claim is not pending."""
     _admin(admin_uid)
-    return _pending_claim(claim_id).ein
+    ein = _pending_claim(claim_id).ein
+    return None if _claim_org(ein) else ein
 
 
 CLAIM_KEEP_DAYS = 90

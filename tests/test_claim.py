@@ -89,15 +89,18 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
         "Test Claimant",
         "claimant@foodbank.example",
         "Los Angeles Food Bank",
-        "Los Angeles",
-        "NTEE K31",
-        "not verified",
+        "Los Angeles · EIN 86-1620575",
     ):
         assert shown in page
     assert "Already claimed" not in page
 
     r = approve(admin, c.id)
-    assert r.status_code == 303 and r.headers["location"] == "/admin/claims"
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin/claims?done=approved"
+    assert (
+        "Approved. We emailed them a link to sign in."
+        in admin.get(r.headers["location"]).text
+    )
     c = the_claim()
     assert (c.status, c.org_id, c.decided_by) == (
         "approved",
@@ -111,9 +114,9 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     to, subject, body = notify.get_emailer().sent[-1]
     assert to == "claimant@foodbank.example" and "approved" in subject
     assert body.startswith(
-        "Your request to manage Los Angeles Food Bank on Causematch was approved."
+        "You're approved to manage Los Angeles Food Bank on Causematch."
     )
-    assert "https://causematch.test/org/login" in body
+    assert "Sign in here: https://causematch.test/org/login\n" in body
     assert "token=" not in body and "ignore" not in body  # nothing to expire or ignore
     claimant = TestClient(app)
     org_sign_in(
@@ -216,27 +219,13 @@ def test_a_deleted_owner_does_not_count_as_claiming(admin):
     assert approve(admin, the_claim().id).status_code == 303
 
 
-def test_an_ein_no_org_has_cannot_be_approved(admin):
-    claim(ein="12-3456789")
-    cid = the_claim().id
-    page = admin.get("/admin/claims").text
-    assert (
-        "No org here has EIN 123456789" in page
-        and f"/admin/claims/{cid}/approve" not in page
-    )
-    r = approve(admin, cid)
-    assert r.status_code == 200 and "no org has that EIN" in r.text
-    assert the_claim().status == "pending" and not data.coordinator_by_email(
-        the_claim().email
-    )
-    assert not org_members.count
-
-
 def test_a_deactivated_org_cannot_be_claimed(admin):
     org = imported()
     orgs.update(id=org.id, deactivated_at="2026-01-01T00:00:00+00:00")
     claim()
-    assert "DEACTIVATED" in admin.get("/admin/claims").text
+    page = admin.get("/admin/claims").text
+    assert "deactivated: it can't be approved" in page
+    assert f"/admin/claims/{the_claim().id}/approve" not in page
     r = approve(admin, the_claim().id)
     assert r.status_code == 200 and "deactivated" in r.text and not org_members.count
 
@@ -493,63 +482,66 @@ def propublica_says(monkeypatch, handler):
     )
 
 
-def test_a_claim_for_an_org_not_yet_here_can_import_it_then_be_approved(
+def test_approving_a_claim_for_an_org_not_yet_here_adds_it_in_one_step(
     admin, monkeypatch
 ):
     propublica_says(monkeypatch, serve_org)
     claim()
     cid = the_claim().id
     page = admin.get("/admin/claims").text
-    assert (
-        f"/admin/claims/{cid}/import" in page
-        and f"/admin/claims/{cid}/approve" not in page
-    )
-    r = admin.post(f"/admin/claims/{cid}/import", follow_redirects=False)
+    assert "New to Causematch" in page and f"/admin/claims/{cid}/approve" in page
+    r = approve(admin, cid)
     assert r.status_code == 303
+    assert r.headers["location"] == "/admin/claims?done=approved"
     org = orgs(where="ein = ?", where_args=[EIN])[0]
     assert (org.name, org.zip, org.intro) == ("Los Angeles Food Bank", "90019", "cold")
-    assert not org.verified_at and the_claim().status == "pending"
-    page = admin.get("/admin/claims").text
-    assert (
-        f"/admin/claims/{cid}/import" not in page
-        and f"/admin/claims/{cid}/approve" in page
-    )
-    assert approve(admin, cid).status_code == 303 and orgs[org.id].verified_at
+    assert org.verified_at
+    assert (the_claim().status, the_claim().org_id) == ("approved", org.id)
+    (member,) = org_members(where="org_id = ?", where_args=[org.id])
+    assert member.role == "owner"
+    assert profiles[member.user_id].email == "claimant@foodbank.example"
+    assert notify.get_emailer().sent[-1][0] == "claimant@foodbank.example"
 
 
 @pytest.mark.parametrize(
     "handler,message",
     [
         (lambda r: httpx.Response(404, json={}), "no nonprofit with that EIN"),
-        (lambda r: httpx.Response(500), "did not answer"),
+        (lambda r: httpx.Response(500), "couldn't reach the IRS records"),
+        (lambda r: httpx.Response(429), "couldn't reach the IRS records"),
         (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "94103", "ntee_code": "K31"}}), "not a Los Angeles County ZIP"),
         (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90019", "ntee_code": "K03"}}), "maps to no cause"),
     ],
 )  # fmt: skip
-def test_an_import_that_cannot_happen_says_why_and_changes_nothing(
+def test_an_approval_that_cannot_add_the_org_says_why_and_can_be_retried(
     admin, monkeypatch, handler, message
 ):
     propublica_says(monkeypatch, handler)
     claim()
+    cid = the_claim().id
     before = orgs.count
-    r = admin.post(f"/admin/claims/{the_claim().id}/import", follow_redirects=False)
-    assert r.status_code == 200 and "Not imported" in r.text and message in r.text
+    r = approve(admin, cid)
+    assert r.status_code == 200 and message in r.text.replace("&#x27;", "'")
+    assert f"/admin/claims/{cid}/approve" in r.text  # the retry
     assert orgs.count == before and the_claim().status == "pending"
+    assert not org_members.count
+    propublica_says(monkeypatch, serve_org)  # ProPublica answers again
+    assert approve(admin, cid).status_code == 303
+    assert the_claim().status == "approved"
 
 
-def test_only_an_admin_can_import_and_nothing_is_fetched(monkeypatch):
+def test_only_an_admin_can_approve_and_nothing_is_fetched(monkeypatch):
     def boom(request):
         raise AssertionError("no request expected")
 
     propublica_says(monkeypatch, boom)
     claim()
     for who, caller in outsiders().items():
-        r = caller.post(
-            f"/admin/claims/{the_claim().id}/import", follow_redirects=False
-        )
+        r = approve(caller, the_claim().id, confirm="1")
         assert r.status_code in (302, 303, 403), who
-        assert r.headers.get("location") != "/admin/claims"
+        assert not r.headers.get("location", "").startswith("/admin/claims")
     assert not orgs(where="ein = ?", where_args=[EIN])
+    assert the_claim().status == "pending"
 
 
 # find your organization by name (IRS records through ProPublica)
@@ -692,7 +684,7 @@ def test_the_data_layer_refuses_a_caller_who_is_not_an_admin():
             (data.admin_claims, ()),
             (data.approve_claim, (cid, True)),
             (data.reject_claim, (cid,)),
-            (data.pending_claim_ein, (cid,)),
+            (data.claim_ein_to_import, (cid,)),
         ):
             with pytest.raises(PermissionError):
                 fn(uid, *args)
