@@ -3548,6 +3548,35 @@ def demo_accept_due(uid):
     return accepted
 
 
+DEMO_REPLY = "Thanks, {}! We're looking forward to it. See you there."
+
+
+def demo_reply(uid, match_id):
+    """Demo only: a demo copy's first message in a chat with a stand-in org gets one
+    friendly reply from that org's stand-in coordinator (never Pat's org, a real
+    volunteer, or production). The message sent, else None; once per match: it answers
+    only while the team has said nothing since the volunteer's first message."""
+    if not demo_matches() or not is_demo_volunteer(uid):
+        return None
+    m = _db.matches[match_id]
+    team = demo_team(_db.openings[m.opening_id].org_id)
+    if team is None or m.volunteer_id != uid:
+        return None
+    first = _db.messages(
+        where="match_id = ? AND sender_id = ?",
+        where_args=[match_id, uid],
+        order_by="id",
+        limit=1,
+    )
+    if not first or _db.messages.count_where(
+        "match_id = ? AND sender_id = ? AND id > ?", [match_id, team, first[0].id]
+    ):
+        return None
+    return send_message(
+        team, match_id, DEMO_REPLY.format(_first_name(_db.profiles[uid].display_name))
+    )
+
+
 # One apsw connection is shared by every request and websocket thread; apsw
 # raises ThreadingViolationError when two threads use it at once. SQLite allows a single
 # writer anyway, so every public function here runs under one re-entrant lock.

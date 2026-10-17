@@ -254,6 +254,9 @@ async def _deliver(uid, match_id, text):
     PermissionError for a bad caller. Every data call runs off the event loop."""
     m = await run_in_threadpool(data.send_message, uid, match_id, text)
     await _broadcast(match_id, m)
+    reply = await run_in_threadpool(data.demo_reply, uid, match_id)  # a demo's stand-in
+    if reply:
+        await _broadcast(match_id, reply)
     try:
         await run_in_threadpool(notify.on_new_message, match_id, uid)
     except Exception as e:  # noqa: BLE001  the message is saved and delivered either way
