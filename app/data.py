@@ -464,6 +464,10 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
     ranked = []
+    booked = [  # read once: a card within CLASH_HOURS of one of these clashes
+        (datetime.fromisoformat(sh["starts_at"]), sh["org"])
+        for sh in my_shifts(uid)["upcoming"]
+    ]
     calls = _open_calls()
     drawn = _deck_openings(uid, today, p, calls)
     for o, cause_labels, km, near in drawn:
@@ -515,9 +519,9 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "orientation": o.orientation_required,
                 "surprise": odd,
                 # an urgent card says more up top: fewer reasons, so it still fits
-                "why": _why(p, rated, spoken, o, cause_labels, slugs, near, odd)[
-                    : URGENT_WHY if o.id in calls else MAX_WHY
-                ],
+                "why": _why(
+                    p, rated, spoken, o, cause_labels, slugs, near, odd, booked
+                )[: URGENT_WHY if o.id in calls else MAX_WHY],
                 # the card's picture: the opening's photo, else the org's; its logo
                 # as a badge
                 "photo": o.photo_key or (org and org.photo_key),
@@ -557,6 +561,9 @@ def _fit(p, rated, skills, spoken, o, slugs, near, rates):
 
 
 MAX_WHY = 4
+# Openings have no end time yet: a shift counts as 3 h plus a 1 h travel buffer each side,
+# so two starts less than 4 h apart clash.
+CLASH_HOURS = 4
 URGENT_WHY = 2  # an urgent card's reasons: its badge and "booked" line come first
 WORK_WORDS = {
     ("setting", "indoor"): "Indoors",
@@ -570,7 +577,7 @@ WORK_WORDS = {
 }
 
 
-def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
+def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
     """1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on a
     cause chip (drawn in its color). Its causes always come first, so there is at least one.
     """
@@ -585,6 +592,13 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise):
         )
     ][:2]
     more = []
+    start = datetime.fromisoformat(o.starts_at)
+    clash = next(
+        (org for at, org in booked if abs(start - at) < timedelta(hours=CLASH_HOURS)),
+        None,
+    )
+    if clash:  # first, so it replaces the last chip rather than adding a line
+        more.append(f"You're booked at {clash} then")
     if surprise:
         more.append("Surprise pick")
     if o.remote and not near:
