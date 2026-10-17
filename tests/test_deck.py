@@ -167,3 +167,29 @@ def test_one_nudge_at_a_time_photo_first_then_home_screen(user):
     data.dismiss_photo_nudge(uid)
     html = user.get("/deck").text
     assert 'id="a2hs"' in html and "Add a photo so nonprofits" not in html
+
+
+def _accepted(user, title, at):
+    """A like of `title` the org said yes to at `at` (a UTC ISO time)."""
+    m = data.swipe(uid_of(user), add_opening(title, ["food-insecurity"]).id, True)
+    data.decide(coordinator_for(0)[0], m.id, True)
+    matches.update(id=m.id, decided_at=at)
+    return m.id
+
+
+def test_new_matches_show_in_one_sheet_once(user):
+    close_all_openings()
+    ids = [
+        _accepted(user, f"Match {n}", f"2030-01-01T00:00:0{n}+00:00") for n in (1, 2, 3)
+    ]
+    for page in ("/matches", "/deck"):
+        profiles.update(id=uid_of(user), match_moment_seen_at=None)
+        html = user.get(page).text
+        assert html.count("<dialog") == 1 and "s a match!" in html
+        for n, i in enumerate(ids, 1):
+            assert f'href="/chat/{i}"' in html and f"Match {n}" in html
+        assert "<dialog" not in user.get(page).text  # a reload: seen
+    later = _accepted(user, "Match 4", "2030-01-02T00:00:00+00:00")
+    html = user.get("/deck").text
+    assert html.count("<dialog") == 1 and f'href="/chat/{later}"' in html
+    assert "Match 4" in html and "Match 1" not in html and "Match 3" not in html

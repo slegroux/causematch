@@ -625,6 +625,40 @@ def saw_matches(uid):
     _db.profiles.update(id=uid, matches_seen_at=_now())
 
 
+def new_matches(uid):
+    """[{"id", "org", "title", "logo", "photo", "slug", "decided_at"}] of the matches
+    accepted since the volunteer last saw a match sheet (never: since their last look at
+    Matches), oldest first: the demo's auto-accepts and a coordinator's alike."""
+    p = _db.profiles[uid]
+    seen = p.match_moment_seen_at or p.matches_seen_at or ""
+    out = []
+    for m in _db.matches(
+        where="volunteer_id = ? AND status = 'accepted' AND decided_at > ?",
+        where_args=[uid, seen],
+        order_by="decided_at, id",
+    ):
+        o = _db.openings[m.opening_id]
+        org = _db.orgs[o.org_id]
+        out.append(
+            {
+                "id": m.id,
+                "org": org.name,
+                "title": o.title,
+                "decided_at": m.decided_at,
+                **_face(org, o),
+            }
+        )
+    return out
+
+
+def saw_new_matches(uid, rows):
+    """The sheet showed these (new_matches' rows): they are not new any more."""
+    if rows:
+        _db.profiles.update(
+            id=uid, match_moment_seen_at=max(r["decided_at"] for r in rows)
+        )
+
+
 def org_name_of(opening_id):
     return _db.orgs[_db.openings[opening_id].org_id].name
 
