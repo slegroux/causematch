@@ -12,8 +12,10 @@ from app.db import (
     causes,
     db,
     deck_empties,
+    matches,
     places,
     profiles,
+    shifts,
 )
 from app.metrics import pilot_metrics
 
@@ -398,6 +400,32 @@ def test_when_commitment_one_time_ranks_a_one_off_above_a_weekly(bare):
     assert not match.commitment_fits("recurring", "one_time")
     assert match.commitment_fits("one_time", "flexible")
     assert match.commitment_fits("either", "weekly")
+
+
+def test_when_a_full_week_ranks_after_next_week_with_a_chip(bare):
+    """A limit of 1 and one shift booked that week (Monday to Sunday, Los Angeles)."""
+    today = datetime.now(LA).date()
+    monday = today + timedelta(days=7 - today.weekday())
+
+    def thursday(weeks):
+        return f"{monday + timedelta(days=3 + 7 * weeks)}T10:00"
+
+    booked = add("booked", DOWNTOWN, starts_at=thursday(0), status="filled")
+    mid = matches.insert(opening_id=booked, volunteer_id=uid_of(bare),
+                         status="accepted", created_at=data._now()).id  # fmt: skip
+    shifts.insert(match_id=mid, starts_at=f"{monday + timedelta(days=1)}T09:00",
+                  status="scheduled", created_at=data._now())  # fmt: skip
+    add("that week", DOWNTOWN, starts_at=thursday(0))
+    add("next week", DOWNTOWN, starts_at=thursday(1))
+    save(bare, when_form(availability=["thu_morning"]))
+    assert list(cards(bare)) == ["that week", "next week"]  # no limit: soonest first
+    r = save(bare, when_form(availability=["thu_morning"], weekly_limit="1"))
+    assert r.status_code == 303
+    assert data.preferences(uid_of(bare))["weekly_limit"] == 1
+    ranked = cards(bare)
+    assert list(ranked) == ["next week", "that week"]
+    assert ranked["that week"]["why"][-1]["text"] == "Your week is full"
+    assert "Your week is full" not in [w["text"] for w in ranked["next week"]["why"]]
 
 
 def test_when_free_dates_are_future_only_and_at_most_ten(bare):

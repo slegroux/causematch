@@ -6,7 +6,7 @@ import inspect
 import json
 import secrets
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import apsw
 from apswutils.db import NotFoundError
@@ -439,6 +439,32 @@ def _travel_short(near):
     return f"{near[2]} min {TRAVEL_PHRASE[near[0]['mode']]}"
 
 
+def _week(starts_at):
+    """The Monday (ISO date) of the Los Angeles week, Monday to Sunday, a local start is in."""
+    d = date.fromisoformat(starts_at[:10])
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def _full_weeks(me):
+    """The weeks (_week) in which the volunteer already has as many shifts booked (not
+    cancelled) as their weekly limit; none without a limit."""
+    limit = _prefs.weekly_limit(me)
+    if not limit:
+        return set()
+    booked = {}
+    for r in _db.db.query(
+        "SELECT h.starts_at FROM shift h JOIN match m ON m.id = h.match_id "
+        "WHERE m.volunteer_id = ? AND h.status != 'cancelled' AND h.starts_at >= ?",
+        [me.id, _week(_local_now())],
+    ):
+        week = _week(r["starts_at"])
+        booked[week] = booked.get(week, 0) + 1
+    return {w for w, n in booked.items() if n >= limit}
+
+
+WEEK_FULL = {"text": "Your week is full", "slug": None}
+
+
 def deck(uid, limit=20, today=False, view=None, first=None):
     """deck_and_count()'s cards."""
     return deck_and_count(uid, limit, today, view, first)[0]
@@ -469,6 +495,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
         for sh in my_shifts(uid)["upcoming"]
     ]
     calls = _open_calls()
+    full = _full_weeks(me)
     drawn = _deck_openings(uid, today, p, calls)
     for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
@@ -477,10 +504,13 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
             key = (-round(fit, 6), o.starts_at, o.id)
-        # urgent calls first
-        ranked.append((o.id not in calls, *key, o, cause_labels, slugs, near))
-    ranked.sort(key=lambda r: r[:4])
-    pool = [r[4:] for r in ranked]
+        # a week already full last, then urgent calls first
+        ranked.append(
+            (_week(o.starts_at) in full, o.id not in calls, *key)
+            + (o, cause_labels, slugs, near)
+        )
+    ranked.sort(key=lambda r: r[:5])
+    pool = [r[5:] for r in ranked]
     pool.sort(key=lambda r: r[0].id != first)  # stable: the rest keep their order
     seen = _db.swipes.count_where("volunteer_id = ?", [uid])
     surprise = bool(me.surprise) and bool(loved) and not today
@@ -497,6 +527,15 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 pick, odd = outside[0], True
         o, cause_labels, slugs, near = pool.pop(pick)
         call = calls.get(o.id)
+        # an urgent card says more up top: fewer reasons, so it still fits
+        cap = URGENT_WHY if o.id in calls else MAX_WHY
+        week_full = _week(o.starts_at) in full
+        why = (
+            _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)[
+                : cap - week_full
+            ]
+            + [WEEK_FULL] * week_full
+        )
         org = orgs.get(o.org_id)
         cards.append(
             {
@@ -519,9 +558,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "orientation": o.orientation_required,
                 "surprise": odd,
                 # an urgent card says more up top: fewer reasons, so it still fits
-                "why": _why(
-                    p, rated, spoken, o, cause_labels, slugs, near, odd, booked
-                )[: URGENT_WHY if o.id in calls else MAX_WHY],
+                "why": why,
                 # the card's picture: the opening's photo, else the org's; its logo
                 # as a badge
                 "photo": o.photo_key or (org and org.photo_key),
@@ -1661,6 +1698,7 @@ def preferences(uid):
         "frequency": p.frequency or "",
         "places": _places(p),
         "urgent": _prefs.urgent(p),
+        "weekly_limit": _prefs.weekly_limit(p),
     }
 
 
@@ -1684,11 +1722,13 @@ def save_preferences(
     dealbreakers=DEFAULT_DEALBREAKERS,
     surprise=False,
     urgent=None,
+    weekly_limit=None,
 ):
     """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
     (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
     ones. The profile's own point follows the first place. urgent: last-minute calls as
-    prefs.urgent() reads them; None keeps the saved ones."""
+    prefs.urgent() reads them; None keeps the saved ones. weekly_limit: 0 (off) to 5; None
+    keeps the saved one."""
     with _db.db.conn:
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         for p in places:
@@ -1718,6 +1758,7 @@ def save_preferences(
                 if urgent is not None
                 else {}
             ),
+            **({} if weekly_limit is None else {"weekly_limit": weekly_limit}),
         )
 
 
@@ -2248,7 +2289,8 @@ def urgent_recipients(call_id, limit, at):
     blocked them; within their travel minutes of a place; free then (a ticked slot or a
     free date); the window they picked; outside their quiet hours; under their weekly
     cap; not already notified about this call; no shift of theirs within
-    URGENT_BUSY of it; a number that never replied STOP, else an email.
+    URGENT_BUSY of it; their weekly limit of shifts not reached in the call's week; a
+    number that never replied STOP, else an email.
     """
     calls = _open_calls()  # read once for every volunteer's deck below
     call = _db.urgent_calls[call_id]
@@ -2307,6 +2349,7 @@ def urgent_recipients(call_id, limit, at):
             or me.id in blocked_by_org
             or this_week.get(me.id, 0) >= min(u["per_week"], URGENT_WEEK_MAX)
             or _prefs.quiet_now(u, local.hour)
+            or _week(call.starts_at) in _full_weeks(me)
             or (
                 u["window"] == "today"
                 and call.starts_at[:10] != local.date().isoformat()
