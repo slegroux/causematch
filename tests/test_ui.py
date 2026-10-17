@@ -24,7 +24,7 @@ from starlette.testclient import TestClient
 
 from app import data, demo_seed
 from app.config import demo_banner
-from app.db import blocks, now, openings, org_members, orgs, profiles
+from app.db import blocks, now, openings, org_members, orgs, profiles, shifts
 from app.ui import DEMO_NOTICE
 from main import app
 
@@ -89,6 +89,7 @@ def pages(anon, user, coord):
     liker = volunteer("Lee")  # liked once, not yet asked the after-first-like card
     profiles.update(id=liker.uid, heard_from="")
     admin = admin_client()
+    (shift,) = shifts(where="match_id = ? AND status = 'scheduled'", where_args=[m.id])
     return [
         (anon, "/login"),
         (anon, "/org/login"),
@@ -109,6 +110,8 @@ def pages(anon, user, coord):
         (user, f"/matches/{m.id}/withdraw"),
         (user, f"/matches/{m.id}/report"),
         (user, f"/matches/{m.id}/block"),
+        (user, f"/shifts/{shift.id}/cancel"),
+        (user, f"/shifts/{shift.id}/confirm"),
         (coord, "/org"),
         (coord, "/org/inbox"),
         (coord, "/org/openings/new"),
