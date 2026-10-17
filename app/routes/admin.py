@@ -1,6 +1,7 @@
 import csv
 import io
 import logging
+import re
 from datetime import UTC, datetime
 
 from fasthtml.common import (
@@ -30,7 +31,7 @@ from monsterui.all import Alert, AlertT, Container, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, propublica, security
-from app.forms import str_form
+from app.forms import query, str_form
 from app.metrics import (
     BREAKDOWNS,
     DEFINITIONS,
@@ -458,33 +459,35 @@ def _sync_org_verify(uid, org_id, ein):
     return Redirect("/admin/orgs")
 
 
-def ClaimRow(c, error=None):
+def ClaimCard(c, error=None):
+    """One pending claim for a non-technical admin: the org, the person, Approve, Decline."""
     org = c["org"]
-    if org is None:
-        record = Div(
-            P(f"No org here has EIN {c['ein']}.", cls="text-red-600"),
-            _post(f"/admin/claims/{c['id']}/import", "Import this EIN"),
-        )
-    else:
-        record = P(
-            f"ProPublica record: {org['name']}, {org['city'] or 'no city'}, "
-            f"NTEE {org['ntee'] or 'none'}"
-            + (" - verified" if org["verified"] else " - not verified")
-            + (" - DEACTIVATED" if org["deactivated"] else ""),
-        )
+    ein = f"EIN {c['ein'][:2]}-{c['ein'][2:]}"
     members = ", ".join(f"{m['name']} ({m['role']})" for m in c["members"])
+    mismatch = org is not None and not _names_match(org["name"], c["org_name"])
+    if org is None:
+        note = P("New to Causematch: approving adds it from IRS records.")
+    elif org["deactivated"]:
+        note = P("This organization is deactivated: it can't be approved.")
+    else:
+        note = None
     return Div(
-        P(f"{c['name']} <{c['email']}>", cls="font-semibold"),
+        P(org["name"] if org else c["org_name"], cls=ORG_SECTION),
+        P(f"{org['city']} · {ein}" if org and org["city"] else ein, cls="text-ink"),
         P(
-            f"{c['phone'] or 'no phone'} - asked {c['created_at']} - "
-            f"typed: {c['org_name']}, EIN {c['ein']}",
-            cls=TextPresets.muted_sm,
+            f"{c['name']} · {c['email']}" + (f" · {c['phone']}" if c["phone"] else ""),
+            cls="text-ink break-words",
         ),
-        record,
+        P(f"They typed: {c['org_name']}", cls=TextPresets.muted_sm)
+        if mismatch
+        else None,
+        note,
         P(f"Already claimed by {members}.", cls="font-semibold") if members else None,
         Alert(error, cls=AlertT.error) if error else None,
         Div(
-            Form(
+            None
+            if org and org["deactivated"]
+            else Form(
                 LabelCheckboxX(
                     "Yes, add them too (the people above can already sign in)",
                     name="confirm",
@@ -492,29 +495,45 @@ def ClaimRow(c, error=None):
                 )
                 if members
                 else None,
+                LabelCheckboxX(
+                    f"Yes, approve for {org['name']}", name="name_checked", value="1"
+                )
+                if mismatch
+                else None,
                 PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
                 action=f"/admin/claims/{c['id']}/approve",
                 method="post",
-                cls="flex gap-3 items-center",
-            )
-            if org and not org["deactivated"]
-            else None,
-            _post(f"/admin/claims/{c['id']}/reject", "Reject"),
-            cls="flex gap-3 pt-2",
+                cls="flex flex-wrap gap-3 items-center",
+            ),
+            _post(f"/admin/claims/{c['id']}/reject", "Decline"),
+            cls="flex flex-wrap gap-3 pt-2",
         ),
-        cls=BOX,
+        cls=BOX + " space-y-1",
     )
 
 
-def ClaimsPage(uid, only=None, error=None):
+# ?done= after a decision: the one-line confirmation (no name or address in the URL)
+DONE = {
+    "approved": "Approved. We emailed them a link to sign in.",
+    "approved-unsent": "Approved, but the email didn't send: they can sign in at "
+    "/org/login with their email address.",
+    "declined": "Declined. We let them know by email.",
+    "declined-unsent": "Declined, but the email to them didn't send.",
+}
+
+
+def ClaimsPage(uid, only=None, error=None, done=None):
     rows = data.admin_claims(uid)
     return (
         AdminPage(
             "claims",
             "Claim requests",
+            Alert(DONE[done], cls=AlertT.success + " mb-4 max-w-2xl")
+            if done in DONE
+            else None,
             Div(
                 *(
-                    [ClaimRow(c, error if c["id"] == only else None) for c in rows]
+                    [ClaimCard(c, error if c["id"] == only else None) for c in rows]
                     or [P("No pending requests.")]
                 ),
                 cls="flex flex-col gap-3 max-w-2xl",
@@ -526,14 +545,17 @@ def ClaimsPage(uid, only=None, error=None):
 
 @ar("/admin/claims", methods=["GET"])
 def admin_claims(req):
-    return ClaimsPage(req.scope["uid"])
+    return ClaimsPage(req.scope["uid"], done=query(req, "done"))
 
 
 def _tell(send, *args):
+    """Send a claim notice; False when it failed. The decision stands either way."""
     try:
         send(*args)
-    except Exception as e:  # noqa: BLE001  the decision stands; a failed notice is not an error for the admin
+    except Exception as e:  # noqa: BLE001  a failed notice is not an error for the admin
         log.warning("sending a claim notice failed: %s", type(e).__name__)
+        return False
+    return True
 
 
 @ar("/admin/claims/{claim_id}/approve", methods=["POST"])
@@ -544,18 +566,66 @@ async def admin_claim_approve(req, claim_id: int):
     return await run_in_threadpool(_sync_admin_claim_approve, req, form, claim_id)
 
 
+def _same_name(name):
+    """A name for comparing: casefolded, punctuation and whitespace runs as one space."""
+    return re.sub(r"[\W_]+", " ", (name or "").casefold()).strip()
+
+
+def _names_match(irs_name, typed):
+    """The typed name is the IRS one, give or take case and punctuation (never empty)."""
+    return bool(_same_name(irs_name)) and _same_name(irs_name) == _same_name(typed)
+
+
 def _sync_admin_claim_approve(req, form, claim_id: int):
+    """One tap: an org no one has added yet is imported from ProPublica (network first,
+    as scripts/import_orgs.py --ein does), then the claim is approved."""
     uid = req.scope["uid"]
+    try:
+        ein, typed, org = data.claim_for_approval(uid, claim_id)
+    except LookupError:
+        return Redirect("/admin/claims")  # already decided
+    if org is None:
+        if not security.allow((security.PROPUBLICA, "all")):
+            return ClaimsPage(
+                uid, claim_id, "Too many IRS lookups this hour. Try again later."
+            )
+        try:
+            org = import_ein(ein)
+        except propublica.LookupFailed:
+            return ClaimsPage(
+                uid,
+                claim_id,
+                "We couldn't reach the IRS records (ProPublica), so nothing changed. "
+                "Tap Approve again in a minute.",
+            )
+        except ValueError as e:  # NotImportable: worded for an admin
+            return ClaimsPage(
+                uid,
+                claim_id,
+                f"Can't add this organization: {e}. Decline it, or ask for help "
+                "adding it.",
+            )
+    if not _names_match(org["name"], typed) and form.get("name_checked") != "1":
+        # someone could type a harmless name beside a real nonprofit's EIN: approving
+        # needs the box the card shows beside the IRS name (a double tap or a stale tab
+        # never had it)
+        where = ", ".join(x for x in (org["name"], org["city"]) if x)
+        return ClaimsPage(
+            uid,
+            claim_id,
+            f"IRS records name this EIN '{where}', not what they typed. Check it's "
+            f'right, tick "Yes, approve for {org["name"]}", then tap Approve again.',
+        )
     try:
         _, email, org_name = data.approve_claim(
             uid, claim_id, form.get("confirm") == "1"
         )
     except LookupError:
-        return Redirect("/admin/claims")  # already decided
+        return Redirect("/admin/claims")
     except ValueError as e:
         return ClaimsPage(uid, claim_id, str(e))
-    _tell(notify.send_claim_approved, email, org_name)
-    return Redirect("/admin/claims")
+    sent = _tell(notify.send_claim_approved, email, org_name)
+    return Redirect(f"/admin/claims?done={'approved' if sent else 'approved-unsent'}")
 
 
 @ar("/admin/claims/{claim_id}/reject", methods=["POST"])
@@ -568,26 +638,5 @@ def _sync_admin_claim_reject(req, claim_id: int):
         email = data.reject_claim(req.scope["uid"], claim_id)
     except LookupError:
         return Redirect("/admin/claims")
-    _tell(notify.send_claim_rejected, email)
-    return Redirect("/admin/claims")
-
-
-@ar("/admin/claims/{claim_id}/import", methods=["POST"])
-async def admin_claim_import(req, claim_id: int):
-    """Add the org a claim names from its ProPublica record, by the import's own rules."""
-    return await run_in_threadpool(_sync_admin_claim_import, req, claim_id)
-
-
-def _sync_admin_claim_import(req, claim_id: int):
-    uid = req.scope["uid"]
-    try:
-        ein = data.pending_claim_ein(uid, claim_id)
-    except LookupError:
-        return Redirect("/admin/claims")
-    if not security.allow((security.PROPUBLICA, "all")):
-        return security.too_many()
-    try:
-        import_ein(ein)
-    except (ValueError, propublica.LookupFailed) as e:
-        return ClaimsPage(uid, claim_id, f"Not imported: {e}")
-    return Redirect("/admin/claims")
+    sent = _tell(notify.send_claim_rejected, email)
+    return Redirect(f"/admin/claims?done={'declined' if sent else 'declined-unsent'}")

@@ -16,7 +16,7 @@ from conftest import (
 )
 from starlette.testclient import TestClient
 
-from app import data, notify, propublica
+from app import data, notify, propublica, security
 from app.db import claim_requests, org_members, orgs, profiles
 from main import app
 
@@ -89,15 +89,18 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
         "Test Claimant",
         "claimant@foodbank.example",
         "Los Angeles Food Bank",
-        "Los Angeles",
-        "NTEE K31",
-        "not verified",
+        "Los Angeles · EIN 86-1620575",
     ):
         assert shown in page
     assert "Already claimed" not in page
 
     r = approve(admin, c.id)
-    assert r.status_code == 303 and r.headers["location"] == "/admin/claims"
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin/claims?done=approved"
+    assert (
+        "Approved. We emailed them a link to sign in."
+        in admin.get(r.headers["location"]).text
+    )
     c = the_claim()
     assert (c.status, c.org_id, c.decided_by) == (
         "approved",
@@ -111,9 +114,9 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     to, subject, body = notify.get_emailer().sent[-1]
     assert to == "claimant@foodbank.example" and "approved" in subject
     assert body.startswith(
-        "Your request to manage Los Angeles Food Bank on Causematch was approved."
+        "You're approved to manage Los Angeles Food Bank on Causematch."
     )
-    assert "https://causematch.test/org/login" in body
+    assert "Sign in here: https://causematch.test/org/login\n" in body
     assert "token=" not in body and "ignore" not in body  # nothing to expire or ignore
     claimant = TestClient(app)
     org_sign_in(
@@ -216,27 +219,13 @@ def test_a_deleted_owner_does_not_count_as_claiming(admin):
     assert approve(admin, the_claim().id).status_code == 303
 
 
-def test_an_ein_no_org_has_cannot_be_approved(admin):
-    claim(ein="12-3456789")
-    cid = the_claim().id
-    page = admin.get("/admin/claims").text
-    assert (
-        "No org here has EIN 123456789" in page
-        and f"/admin/claims/{cid}/approve" not in page
-    )
-    r = approve(admin, cid)
-    assert r.status_code == 200 and "no org has that EIN" in r.text
-    assert the_claim().status == "pending" and not data.coordinator_by_email(
-        the_claim().email
-    )
-    assert not org_members.count
-
-
 def test_a_deactivated_org_cannot_be_claimed(admin):
     org = imported()
     orgs.update(id=org.id, deactivated_at="2026-01-01T00:00:00+00:00")
     claim()
-    assert "DEACTIVATED" in admin.get("/admin/claims").text
+    page = admin.get("/admin/claims").text
+    assert "deactivated: it can't be approved" in page
+    assert f"/admin/claims/{the_claim().id}/approve" not in page
     r = approve(admin, the_claim().id)
     assert r.status_code == 200 and "deactivated" in r.text and not org_members.count
 
@@ -271,6 +260,7 @@ def test_a_failing_email_does_not_undo_the_approval(admin, monkeypatch):
     monkeypatch.setattr(notify, "send_claim_approved", boom)
     r = approve(admin, the_claim().id)
     assert r.status_code == 303 and the_claim().status == "approved"
+    assert r.headers["location"] == "/admin/claims?done=approved-unsent"
     # the claimant can still ask for a link themselves
     monkeypatch.undo()
     TestClient(app).post("/org/login/send", data={"email": the_claim().email})
@@ -493,63 +483,215 @@ def propublica_says(monkeypatch, handler):
     )
 
 
-def test_a_claim_for_an_org_not_yet_here_can_import_it_then_be_approved(
+def test_approving_a_claim_for_an_org_not_yet_here_adds_it_in_one_step(
     admin, monkeypatch
 ):
     propublica_says(monkeypatch, serve_org)
     claim()
     cid = the_claim().id
     page = admin.get("/admin/claims").text
-    assert (
-        f"/admin/claims/{cid}/import" in page
-        and f"/admin/claims/{cid}/approve" not in page
-    )
-    r = admin.post(f"/admin/claims/{cid}/import", follow_redirects=False)
+    assert "New to Causematch" in page and f"/admin/claims/{cid}/approve" in page
+    r = approve(admin, cid)
     assert r.status_code == 303
+    assert r.headers["location"] == "/admin/claims?done=approved"
     org = orgs(where="ein = ?", where_args=[EIN])[0]
     assert (org.name, org.zip, org.intro) == ("Los Angeles Food Bank", "90019", "cold")
-    assert not org.verified_at and the_claim().status == "pending"
-    page = admin.get("/admin/claims").text
-    assert (
-        f"/admin/claims/{cid}/import" not in page
-        and f"/admin/claims/{cid}/approve" in page
-    )
-    assert approve(admin, cid).status_code == 303 and orgs[org.id].verified_at
+    assert org.verified_at
+    assert (the_claim().status, the_claim().org_id) == ("approved", org.id)
+    (member,) = org_members(where="org_id = ?", where_args=[org.id])
+    assert member.role == "owner"
+    assert profiles[member.user_id].email == "claimant@foodbank.example"
+    assert notify.get_emailer().sent[-1][0] == "claimant@foodbank.example"
 
 
 @pytest.mark.parametrize(
     "handler,message",
     [
-        (lambda r: httpx.Response(404, json={}), "no nonprofit with that EIN"),
-        (lambda r: httpx.Response(500), "did not answer"),
-        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "94103", "ntee_code": "K31"}}), "not a Los Angeles County ZIP"),
-        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90019", "ntee_code": "K03"}}), "maps to no cause"),
+        (lambda r: httpx.Response(500), "Tap Approve again in a minute"),
+        (lambda r: httpx.Response(429), "Tap Approve again in a minute"),
+        (lambda r: httpx.Response(404, json={}), "no nonprofit with that EIN. Decline it"),
+        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "94103", "ntee_code": "K31"}}), "not a Los Angeles County ZIP. Decline it"),
+        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90019", "ntee_code": "K03"}}), "maps to no cause. Decline it"),
     ],
 )  # fmt: skip
-def test_an_import_that_cannot_happen_says_why_and_changes_nothing(
+def test_an_approval_that_cannot_add_the_org_says_why_and_changes_nothing(
     admin, monkeypatch, handler, message
 ):
     propublica_says(monkeypatch, handler)
     claim()
+    cid = the_claim().id
     before = orgs.count
-    r = admin.post(f"/admin/claims/{the_claim().id}/import", follow_redirects=False)
-    assert r.status_code == 200 and "Not imported" in r.text and message in r.text
+    r = approve(admin, cid)
+    text = r.text.replace("&#x27;", "'")
+    assert r.status_code == 200 and message in text
+    assert ("Approve again" in text) == ("in a minute" in message)
     assert orgs.count == before and the_claim().status == "pending"
+    assert not org_members.count
+    if "in a minute" in message:  # ProPublica answers again: the same tap now works
+        propublica_says(monkeypatch, serve_org)
+        assert approve(admin, cid).status_code == 303
+        assert the_claim().status == "approved"
 
 
-def test_only_an_admin_can_import_and_nothing_is_fetched(monkeypatch):
+def test_a_typed_name_unlike_the_irs_name_needs_a_second_look(admin, monkeypatch):
+    """Someone could type a harmless name beside a real nonprofit's EIN."""
+    propublica_says(monkeypatch, serve_org)
+    claim(org_name="Friendly Neighborhood Club")
+    cid = the_claim().id
+    r = approve(admin, cid)
+    text = r.text.replace("&#x27;", "'")
+    assert r.status_code == 200
+    assert "IRS records name this EIN 'Los Angeles Food Bank, Los Angeles'" in text
+    assert "They typed: Friendly Neighborhood Club" in text
+    assert the_claim().status == "pending" and not org_members.count
+    org = orgs(where="ein = ?", where_args=[EIN])[0]  # imported, not yet verified
+    assert not org.verified_at
+
+    def boom(request):
+        raise AssertionError("no second import expected")
+
+    propublica_says(monkeypatch, boom)
+    assert (
+        'name="name_checked"' in text
+        and "Yes, approve for Los Angeles Food Bank" in text
+    )
+    r = approve(admin, cid)  # a double tap, or a stale tab: no box ticked
+    assert r.status_code == 200 and "IRS records name this EIN" in r.text
+    assert the_claim().status == "pending" and not org_members.count
+    assert approve(admin, cid, name_checked="1").status_code == 303  # the admin looked
+    assert the_claim().status == "approved" and orgs[org.id].verified_at
+
+
+def test_a_name_with_no_letters_never_matches(admin):
+    imported(name="...")
+    claim(org_name="---")
+    r = approve(admin, the_claim().id)
+    assert r.status_code == 200 and the_claim().status == "pending"
+
+
+def test_a_name_that_differs_only_in_case_and_punctuation_is_the_same(
+    admin, monkeypatch
+):
+    propublica_says(monkeypatch, serve_org)
+    claim(org_name="  los angeles food-bank. ")
+    assert approve(admin, the_claim().id).status_code == 303
+
+
+def test_only_an_admin_can_approve_and_nothing_is_fetched(monkeypatch):
     def boom(request):
         raise AssertionError("no request expected")
 
     propublica_says(monkeypatch, boom)
     claim()
     for who, caller in outsiders().items():
-        r = caller.post(
-            f"/admin/claims/{the_claim().id}/import", follow_redirects=False
-        )
+        r = approve(caller, the_claim().id, confirm="1")
         assert r.status_code in (302, 303, 403), who
-        assert r.headers.get("location") != "/admin/claims"
+        assert not r.headers.get("location", "").startswith("/admin/claims")
     assert not orgs(where="ein = ?", where_args=[EIN])
+    assert the_claim().status == "pending"
+
+
+# find your organization by name (IRS records through ProPublica)
+
+SEARCH_FIXTURE = json.loads((FIXTURES / "search_food_bank.json").read_text())
+
+
+def serve_search(request):
+    assert request.url.path.endswith("/search.json")
+    return httpx.Response(200, json=SEARCH_FIXTURE)
+
+
+def search(q="food bank", client=None):
+    return (client or TestClient(app)).get("/org/claim/search", params={"q": q})
+
+
+def test_the_name_search_never_says_whether_an_org_is_on_causematch(monkeypatch):
+    asked = []
+    propublica_says(monkeypatch, lambda r: asked.append(r.url) or serve_search(r))
+    nowhere = search()  # no org on Causematch yet
+    # 86-1620575 is on Causematch and claimed; 23-7111782 is in IRS records only
+    owned = imported()
+    data.add_coordinator("olive@example.org", owned.id, "owner", name="Olive Owner")
+    claim()
+    known = search()
+    assert (known.status_code, known.text) == (nowhere.status_code, nowhere.text)
+    results = {r["ein"]: r for r in known.json()["results"]}
+    assert results["86-1620575"] == {
+        "ein": "86-1620575",
+        "name": "Los Angeles Food Bank",
+        "city": "Los Angeles",
+        "state": "CA",
+        "outside_la": False,
+    }
+    assert results["23-7111782"].keys() == results["86-1620575"].keys()
+    # Los Angeles County first; Yolo Food Bank (Woodland) is marked and comes after
+    flags = [r["outside_la"] for r in known.json()["results"]]
+    assert results["23-7111782"]["outside_la"] and flags == sorted(flags)
+    assert not re.search(r"(?i)causematch|claim|olive|verified", known.text)
+    params = asked[0].params
+    assert (params["q"], params["state[id]"], params["c_code[id]"]) == (
+        "food bank",
+        "CA",
+        "3",
+    )
+    assert "ntee[id]" not in params
+
+
+def test_the_name_search_is_rate_limited_and_its_failure_leaves_the_ein(monkeypatch):
+    asked = []
+    propublica_says(monkeypatch, lambda r: asked.append(r) or serve_search(r))
+    monkeypatch.setattr(
+        security, "CLAIM_SEARCH_PER_IP", (("claim-search-ip", 2, 3600),)
+    )
+    monkeypatch.setattr(security, "PROPUBLICA", (("propublica", 2, 3600),))
+    visitor = TestClient(app, client=("198.51.100.30", 1))
+    assert search("fo", visitor).json() == {"results": []}  # too short: spends nothing
+    assert [search(client=visitor).status_code for _ in range(3)] == [200, 200, 429]
+    assert len(asked) == 2
+    # the admins' ProPublica budget is not spent by the public
+    assert security.allow((security.PROPUBLICA, "all"), record=False)
+    propublica_says(monkeypatch, lambda r: httpx.Response(500))
+    assert search().status_code == 503
+    page = TestClient(app).get("/org/claim").text
+    assert 'name="ein"' in page and 'src="/static/claim.js"' in page
+
+
+def test_a_search_with_no_match_is_empty_not_a_failure(monkeypatch):
+    propublica_says(monkeypatch, lambda r: httpx.Response(404))  # ProPublica's "none"
+    r = search("zzzz no such nonprofit")
+    assert (r.status_code, r.json()) == (200, {"results": []})
+
+
+def test_another_sites_request_spends_nothing(monkeypatch):
+    def boom(request):
+        raise AssertionError("no request expected")
+
+    propublica_says(monkeypatch, boom)
+    monkeypatch.setattr(
+        security, "CLAIM_SEARCH_PER_IP", (("claim-search-ip", 1, 3600),)
+    )
+    visitor = TestClient(app, client=("198.51.100.31", 1))
+    for site in ("cross-site", "same-site", "none"):
+        r = visitor.get(
+            "/org/claim/search",
+            params={"q": "food bank"},
+            headers={"Sec-Fetch-Site": site},
+        )
+        assert (r.status_code, r.json()) == (403, {"results": []}), site
+    propublica_says(monkeypatch, serve_search)
+    ours = {"Sec-Fetch-Site": "same-origin"}
+    r = visitor.get("/org/claim/search", params={"q": "food bank"}, headers=ours)
+    assert r.status_code == 200 and r.json()["results"]  # the budget of 1 was intact
+
+
+def test_a_picked_result_posts_a_valid_claim(monkeypatch):
+    propublica_says(monkeypatch, serve_search)
+    results = search("los angeles food bank").json()["results"]
+    hit = next(h for h in results if h["name"] == "Los Angeles Food Bank")
+    r = claim(ein=hit["ein"], org_name=hit["name"])
+    assert r.status_code == 200 and RECEIVED in r.text
+    c = the_claim()
+    assert (c.ein, c.org_name, c.status) == (EIN, "Los Angeles Food Bank", "pending")
 
 
 # how long a claim keeps its contact details
@@ -621,7 +763,7 @@ def test_the_data_layer_refuses_a_caller_who_is_not_an_admin():
             (data.admin_claims, ()),
             (data.approve_claim, (cid, True)),
             (data.reject_claim, (cid,)),
-            (data.pending_claim_ein, (cid,)),
+            (data.claim_for_approval, (cid,)),
         ):
             with pytest.raises(PermissionError):
                 fn(uid, *args)
