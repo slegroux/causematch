@@ -1062,3 +1062,31 @@ def test_no_stand_in_reply_outside_demo_mode(demo, monkeypatch):
     monkeypatch.delenv("CAUSEMATCH_DEMO_MATCHES")
     sam.post(f"/chat/{m.id}/send", data={"msg": "Hi"})
     assert _chat_bodies(m.id)[-1] == "Hi" and len(_chat_bodies(m.id)) == 2
+
+
+def test_a_real_volunteer_gets_no_stand_in_reply_in_demo_mode(user, demo):
+    user.headers["Authorization"] = basic()
+    o = next(
+        o for o in openings(where="status = 'open'", order_by="id")
+        if data.demo_team(o.org_id)
+    )  # fmt: skip
+    m = matches.insert(
+        volunteer_id=uid_of(user), opening_id=o.id, status="accepted",
+        created_at="2030-01-01T00:00:00+00:00",
+    )  # fmt: skip
+    data.send_message(uid_of(user), m.id, "Hello")
+    assert data.demo_reply(uid_of(user), m.id) is None
+    assert _chat_bodies(m.id) == ["Hello"]
+
+
+def test_a_failing_stand_in_reply_leaves_the_message_delivered(demo, monkeypatch):
+    sam = as_demo_volunteer()
+    m = _like_a_team_card(sam, sam.uid)
+    sam.get("/deck")
+
+    def boom(*a):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(data, "demo_reply", boom)
+    r = sam.post(f"/chat/{m.id}/send", data={"msg": "Hi"}, follow_redirects=False)
+    assert r.status_code == 303 and _chat_bodies(m.id)[-1] == "Hi"

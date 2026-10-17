@@ -29,3 +29,13 @@ def test_the_card_leaves_withdraw_clickable(phone):
     phone.get_by_role("button", name="Withdraw").click()
     phone.wait_for_url("**/matches")
     assert matches[match_id].status == "withdrawn"
+
+
+def test_the_match_sheet_is_modal_and_escape_closes_it(phone):
+    p = sign_in_page(phone, "(310) 555-0182")
+    accepted_match(p.id)
+    phone.goto("/deck")
+    sheet = phone.locator("dialog.cm-moment")
+    assert sheet.evaluate("d => d.matches(':modal')")
+    phone.keyboard.press("Escape")
+    assert sheet.evaluate("d => !d.open")

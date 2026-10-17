@@ -285,7 +285,8 @@ dialog.cm-sheet:not([open]),
 dialog.cm-moment:not([open]) {
   display: none;
 }
-dialog.cm-sheet::backdrop {
+dialog.cm-sheet::backdrop,
+dialog.cm-moment::backdrop {
   background-color: rgb(43 30 22 / 0.4);
 }
 /* The tallest card (an urgent call, or the Home Screen hint above it) gives its "what you'll

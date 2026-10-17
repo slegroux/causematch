@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Span
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Script, Span
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -151,8 +151,11 @@ def MatchRow(m):
             cls="flex flex-wrap gap-1.5",
         ),
         head,
-        Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
-        Notes(m["notes"]),
+        Div(  # above the stretched link
+            Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
+            Notes(m["notes"]),
+            cls="relative z-10 space-y-1.5",
+        ),
         Div(
             AddToCalendar(m["shift"]) if m["shift"] else None,
             EventLink(m.get("event_url")),
@@ -212,6 +215,7 @@ def matches_page(req):
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
         sheet,
+        Script(src="/static/sheet.js", defer=True) if sheet else None,
         Div(
             *([MatchRow(m) for m in rows] or [NoMatches()]),
             cls="flex flex-col gap-4 pb-8",

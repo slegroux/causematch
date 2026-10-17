@@ -530,8 +530,8 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet's round button sits left of Pass and Like, clear of the picture and
     adding no height (swipe.js finds the swipe form by its action). notice: a line above
-    the card (a swipe that didn't count). sheet: MatchSheet's. first: the opening an urgent call's text links
-    to, on top while the deck holds it."""
+    the card (a swipe that didn't count). sheet: MatchSheet(uid), the new-match dialog, or None. first: the opening an
+    urgent call's text links to, on top while the deck holds it."""
     cards, count = data.deck_and_count(
         uid, limit=1, today=today, view=view, first=first
     )
@@ -643,6 +643,7 @@ def deck(req):
         DeckArea(uid, today, deck_view(req), first=first, sheet=MatchSheet(uid)),
         PhotoNudge() if nudge else None,
         Script(src="/static/swipe.js", defer=True),
+        Script(src="/static/sheet.js", defer=True),
         cls="max-w-md pb-6",
     )
 
