@@ -1018,3 +1018,75 @@ def test_the_preview_seed_stays_out_of_git_but_goes_to_cloud_build():
     assert tracked.stdout == ""
     rules = (ROOT / ".gcloudignore").read_text().splitlines()
     assert rules.index("#!include:.gitignore") < rules.index("!preview-seed/")
+
+
+def _chat_bodies(match_id):
+    return [
+        m.body
+        for m in messages(where="match_id = ?", where_args=[match_id], order_by="id")
+    ]
+
+
+def test_a_stand_in_org_answers_a_demo_copys_first_message_once(demo):
+    sam = as_demo_volunteer()
+    m = _like_a_team_card(sam, sam.uid)
+    sam.get("/deck")  # the demo team says yes, with its welcome
+    assert len(_chat_bodies(m.id)) == 1
+    sam.post(f"/chat/{m.id}/send", data={"msg": "Can I bring a friend?"})
+    first = data._first_name(profiles[sam.uid].display_name)
+    assert _chat_bodies(m.id)[1:] == [
+        "Can I bring a friend?",
+        f"Thanks, {first}! We're looking forward to it. See you there.",
+    ]
+    sam.post(f"/chat/{m.id}/send", data={"msg": "Thanks!"})
+    assert _chat_bodies(m.id)[-1] == "Thanks!" and len(_chat_bodies(m.id)) == 4
+
+
+def test_pats_org_and_real_volunteers_get_no_stand_in_reply(demo):
+    sam = as_demo_volunteer()
+    pat = data.coordinator_by_email(demo_seed.COORDINATOR[0])
+    o = next(
+        o for o in openings(where="status = 'open'", order_by="id")
+        if not data.demo_team(o.org_id)
+    )  # fmt: skip
+    m = data.swipe(sam.uid, o.id, True)
+    data.decide(pat, m.id, True)
+    sam.post(f"/chat/{m.id}/send", data={"msg": "Hello"})
+    assert _chat_bodies(m.id) == ["Hello"]
+
+
+def test_no_stand_in_reply_outside_demo_mode(demo, monkeypatch):
+    sam = as_demo_volunteer()
+    m = _like_a_team_card(sam, sam.uid)
+    sam.get("/deck")
+    monkeypatch.delenv("CAUSEMATCH_DEMO_MATCHES")
+    sam.post(f"/chat/{m.id}/send", data={"msg": "Hi"})
+    assert _chat_bodies(m.id)[-1] == "Hi" and len(_chat_bodies(m.id)) == 2
+
+
+def test_a_real_volunteer_gets_no_stand_in_reply_in_demo_mode(user, demo):
+    user.headers["Authorization"] = basic()
+    o = next(
+        o for o in openings(where="status = 'open'", order_by="id")
+        if data.demo_team(o.org_id)
+    )  # fmt: skip
+    m = matches.insert(
+        volunteer_id=uid_of(user), opening_id=o.id, status="accepted",
+        created_at="2030-01-01T00:00:00+00:00",
+    )  # fmt: skip
+    data.send_message(uid_of(user), m.id, "Hello")
+    assert data.demo_reply(uid_of(user), m.id) is None
+    assert _chat_bodies(m.id) == ["Hello"]
+
+
+def test_a_failing_stand_in_reply_leaves_the_message_delivered(demo, monkeypatch):
+    sam = as_demo_volunteer()
+    m = _like_a_team_card(sam, sam.uid)
+    sam.get("/deck")
+
+    def boom(*a):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(data, "demo_reply", boom)
+    r = sam.post(f"/chat/{m.id}/send", data={"msg": "Hi"}, follow_redirects=False)
+    assert r.status_code == 303 and _chat_bodies(m.id)[-1] == "Hi"

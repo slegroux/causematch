@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Span
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Script, Span
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -14,7 +14,7 @@ from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, MatchNotice, deck_view
+from app.routes.deck import DeckArea, MatchSheet, deck_view
 from app.ui import (
     CALENDAR,
     CARD,
@@ -97,6 +97,9 @@ def _sync_swipe(req, form):
     else:
         if m and m.status == "accepted":  # an urgent call took them: off to the chat
             notify.on_auto_accepted(m.id)
+            fresh = data.new_matches(uid)
+            if [r["id"] for r in fresh] == [m.id]:  # the chat is its moment: no sheet
+                data.saw_new_matches(uid, fresh)
             if req.headers.get("HX-Request"):
                 return Response(headers={"HX-Redirect": f"/chat/{m.id}?notice=in"})
             return Redirect(f"/chat/{m.id}?notice=in")
@@ -113,44 +116,58 @@ def _sync_swipe(req, form):
                 if req.headers.get("HX-Request"):
                     return Response(headers={"HX-Redirect": more})
                 return Redirect(more)
-    notice = MatchNotice(data.demo_accept_due(uid)) or notice  # a demo's live match
     if req.headers.get("HX-Request"):
-        return DeckArea(uid, today, view, notice), MatchesDot(
+        return DeckArea(uid, today, view, notice, sheet=MatchSheet(uid)), MatchesDot(
             data.has_match_news(uid), oob=True
         )
     return Redirect("/deck?today=1" if today else "/deck")
 
 
 def MatchRow(m):
+    accepted = m["status"] == "accepted"
+    # an accepted card opens its chat (the link's ::after covers the card, the links
+    # below sit above it at z-10); a pending one has no dead tap
+    face = (
+        OrgFace(m["org"], m["logo"], m["photo"], m["slug"]),
+        Div(
+            H2(
+                m["title"],
+                cls="font-display text-lg font-extrabold leading-snug text-ink",
+            ),
+            P(m["org"], cls="text-sm font-semibold text-ink-muted"),
+            cls="min-w-0",
+        ),
+    )
+    row = "flex min-h-12 items-center gap-3"
+    head = (
+        A(*face, href=f"/chat/{m['id']}", cls=row + " after:absolute after:inset-0")
+        if accepted
+        else Div(*face, cls=row)
+    )
     return Div(
         Div(
             Pill(*STATUS[m["status"]]),
             Pill("Blocked", "off") if m["blocked"] else None,
             cls="flex flex-wrap gap-1.5",
         ),
-        Div(
-            OrgFace(m["org"], m["logo"], m["photo"], m["slug"]),
-            Div(
-                H2(
-                    m["title"],
-                    cls="font-display text-lg font-extrabold leading-snug text-ink",
-                ),
-                P(m["org"], cls="text-sm font-semibold text-ink-muted"),
-                cls="min-w-0",
-            ),
-            cls="flex items-center gap-3",
+        head,
+        Div(  # above the stretched link
+            Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
+            Notes(m["notes"]),
+            cls="relative z-10 space-y-1.5",
         ),
-        Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
-        Notes(m["notes"]),
-        AddToCalendar(m["shift"]) if m["shift"] else None,
-        EventLink(m.get("event_url")),
+        Div(
+            AddToCalendar(m["shift"]) if m["shift"] else None,
+            EventLink(m.get("event_url")),
+            cls="relative z-10 space-y-1.5",
+        ),
         A(
             Icon(CHAT, size=18),
             "Chat",
             href=f"/chat/{m['id']}",
-            cls="uk-btn uk-btn-primary mt-2 w-full gap-2",
+            cls="uk-btn uk-btn-primary relative z-10 mt-2 w-full gap-2",
         )
-        if m["status"] == "accepted"
+        if accepted
         else None,
         Div(
             A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
@@ -160,9 +177,10 @@ def MatchRow(m):
             None
             if m["blocked"]
             else A("Block", href=f"/matches/{m['id']}/block", cls=SMALL_LINK),
-            cls="mt-1 flex flex-wrap gap-x-5 border-t border-line pt-1 text-sm",
+            cls="relative z-10 mt-1 flex flex-wrap gap-x-5 border-t border-line pt-1 "
+            "text-sm",
         ),
-        cls="w-full space-y-1.5 p-4 " + CARD,
+        cls="relative w-full space-y-1.5 p-4 " + CARD,
     )
 
 
@@ -182,7 +200,7 @@ def NoMatches():
 @ar("/matches", methods=["GET"])
 def matches_page(req):
     uid = req.scope["uid"]
-    matched = MatchNotice(data.demo_accept_due(uid))  # a demo's live match
+    sheet = MatchSheet(uid)  # before saw_matches: it falls back on that look
     data.saw_matches(
         uid
     )  # before the tab bar draws: no dot on the page that shows it all
@@ -196,7 +214,8 @@ def matches_page(req):
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
-        Alert(matched, cls=AlertT.success + " mb-4") if matched else None,
+        sheet,
+        Script(src="/static/sheet.js", defer=True) if sheet else None,
         Div(
             *([MatchRow(m) for m in rows] or [NoMatches()]),
             cls="flex flex-col gap-4 pb-8",

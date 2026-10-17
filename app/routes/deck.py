@@ -43,6 +43,7 @@ from app.ui import (
     Icon,
     LogoBadge,
     Meta,
+    OrgFace,
     Router,
     VolunteerNav,
 )
@@ -483,24 +484,54 @@ def FilterSheet(uid, today, count, view):
     )
 
 
-def MatchNotice(matched):
-    """The demo's "It's a match!" for the likes data.demo_accept_due just accepted (none
-    outside a demo), with the newest one's chat."""
-    if not matched:
+def MatchSheet(uid):
+    """The "It's a match!" sheet: one row per nonprofit that said yes since the volunteer
+    last saw it (data.new_matches; the demo's auto-accepts land first), or None. Drawing
+    it marks them seen. An open <dialog>, closed by its own method=dialog form: no script."""
+    data.demo_accept_due(uid)
+    rows = data.new_matches(uid)
+    if not rows:
         return None
-    m = matched[-1]
-    return Span(
-        f"It's a match! {m['org']} said yes. ",
-        A("Say hi", href=f"/chat/{m['id']}", cls="underline"),
+    data.saw_new_matches(uid, rows)
+    return Dialog(
+        H2("It's a match!", cls=ORG_SECTION),
+        *[
+            Div(
+                OrgFace(r["org"], r["logo"], r["photo"], r["slug"]),
+                Div(
+                    P(r["org"], cls="font-semibold leading-snug text-ink"),
+                    P(r["title"], cls="text-sm leading-snug text-ink-muted"),
+                    cls="min-w-0 flex-1",
+                ),
+                A(
+                    "Say hi",
+                    href=f"/chat/{r['id']}",
+                    cls="uk-btn uk-btn-primary h-11 shrink-0 px-4",
+                ),
+                cls="flex items-center gap-3",
+            )
+            for r in rows
+        ],
+        PlainForm(
+            Button(
+                "Close",
+                data_close_sheet="1",
+                cls="uk-btn uk-btn-default h-11 w-full",
+            ),
+            method="dialog",
+        ),
+        open=True,
+        cls="cm-moment z-50 space-y-3 " + CARD,
+        aria_label="It's a match!",
     )
 
 
-def DeckArea(uid, today=False, view=None, notice=None, first=None):
+def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
     """The top card with its buttons, or the empty state; the unit /swipe swaps. The
     filter sheet's round button sits left of Pass and Like, clear of the picture and
     adding no height (swipe.js finds the swipe form by its action). notice: a line above
-    the card (a swipe that didn't count). first: the opening an urgent call's text links
-    to, on top while the deck holds it."""
+    the card (a swipe that didn't count). sheet: MatchSheet(uid), the new-match dialog, or None. first: the opening an
+    urgent call's text links to, on top while the deck holds it."""
     cards, count = data.deck_and_count(
         uid, limit=1, today=today, view=view, first=first
     )
@@ -516,6 +547,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
         relax = data.relaxations(uid, today, view)
         return Div(
             note,
+            sheet,
             EmptyDeck(today, relax),
             Div(FilterSheet(uid, today, count, view), cls="mt-3 flex justify-center"),
             id="deck-area",
@@ -524,6 +556,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None):
     c = cards[0]
     return Div(
         note,
+        sheet,
         P(
             f"{count} shift{'' if count == 1 else 's'} in the next 48 hours",
             cls="mb-2 text-center text-sm font-semibold text-ink-muted",
@@ -607,11 +640,10 @@ def deck(req):
         # one nudge at a time: the photo prompt first, the Home Screen tip after it. On the
         # deck only: elsewhere it would push the page's content
         None if nudge else AddToHomeScreen(),
-        DeckArea(
-            uid, today, deck_view(req), MatchNotice(data.demo_accept_due(uid)), first
-        ),
+        DeckArea(uid, today, deck_view(req), first=first, sheet=MatchSheet(uid)),
         PhotoNudge() if nudge else None,
         Script(src="/static/swipe.js", defer=True),
+        Script(src="/static/sheet.js", defer=True),
         cls="max-w-md pb-6",
     )
 

@@ -129,6 +129,7 @@ class Profile:
     interests: str  # JSON list of choices.INTERESTS values
     photo_nudge_dismissed_at: str  # UTC; "Not now" on the deck's "Add a photo"
     matches_seen_at: str  # UTC; their last look at Matches (the tab's dot: news since)
+    match_moment_seen_at: str  # UTC; decided_at of the newest match its sheet showed
     # Last-minute calls, private (app/prefs.py urgent): off unless turned on
     urgent_on: bool
     urgent_window: str  # today|48h (NULL: 48h)

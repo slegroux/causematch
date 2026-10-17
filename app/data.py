@@ -625,6 +625,40 @@ def saw_matches(uid):
     _db.profiles.update(id=uid, matches_seen_at=_now())
 
 
+def new_matches(uid):
+    """[{"id", "org", "title", "logo", "photo", "slug", "decided_at"}] of the matches
+    accepted since the volunteer last saw a match sheet (never: since their last look at
+    Matches), oldest first: the demo's auto-accepts and a coordinator's alike."""
+    p = _db.profiles[uid]
+    seen = p.match_moment_seen_at or p.matches_seen_at or ""
+    out = []
+    for m in _db.matches(
+        where="volunteer_id = ? AND status = 'accepted' AND decided_at > ?",
+        where_args=[uid, seen],
+        order_by="decided_at, id",
+    ):
+        o = _db.openings[m.opening_id]
+        org = _db.orgs[o.org_id]
+        out.append(
+            {
+                "id": m.id,
+                "org": org.name,
+                "title": o.title,
+                "decided_at": m.decided_at,
+                **_face(org, o),
+            }
+        )
+    return out
+
+
+def saw_new_matches(uid, rows):
+    """The sheet showed these (new_matches' rows): they are not new any more."""
+    if rows:
+        _db.profiles.update(
+            id=uid, match_moment_seen_at=max(r["decided_at"] for r in rows)
+        )
+
+
 def org_name_of(opening_id):
     return _db.orgs[_db.openings[opening_id].org_id].name
 
@@ -3512,6 +3546,35 @@ def demo_accept_due(uid):
         send_message(team, m.id, DEMO_WELCOME.format(first))
         accepted.append({"id": m.id, "org": _db.orgs[org_id].name})
     return accepted
+
+
+DEMO_REPLY = "Thanks, {}! We're looking forward to it. See you there."
+
+
+def demo_reply(uid, match_id):
+    """Demo only: a demo copy's first message in a chat with a stand-in org gets one
+    friendly reply from that org's stand-in coordinator (never Pat's org, a real
+    volunteer, or production). The message sent, else None; once per match: it answers
+    only while the team has said nothing since the volunteer's first message."""
+    if not demo_matches() or not is_demo_volunteer(uid):
+        return None
+    m = _db.matches[match_id]
+    team = demo_team(_db.openings[m.opening_id].org_id)
+    if team is None or m.volunteer_id != uid:
+        return None
+    first = _db.messages(
+        where="match_id = ? AND sender_id = ?",
+        where_args=[match_id, uid],
+        order_by="id",
+        limit=1,
+    )
+    if not first or _db.messages.count_where(
+        "match_id = ? AND sender_id = ? AND id > ?", [match_id, team, first[0].id]
+    ):
+        return None
+    return send_message(
+        team, match_id, DEMO_REPLY.format(_first_name(_db.profiles[uid].display_name))
+    )
 
 
 # One apsw connection is shared by every request and websocket thread; apsw
