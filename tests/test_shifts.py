@@ -608,3 +608,9 @@ def test_still_coming_yes_is_recorded_and_the_coordinator_sees_confirmed(
     assert r.headers["location"] == "/matches?notice=confirmed"
     assert shifts[s.id].confirmed_at and shifts[s.id].status == "scheduled"
     assert "Confirmed" in accepted.org0.get("/org/shifts").text
+
+
+def test_a_pending_withdrawal_emails_no_one(world):
+    world.a.post(f"/matches/{world.match.id}/withdraw")
+    assert matches[world.match.id].status == "withdrawn"
+    assert not org_emails("A volunteer withdrew from")

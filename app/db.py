@@ -370,6 +370,9 @@ class UrgentCall:
     ended_at: str  # UTC, when it stopped being open
     waves: int  # notification waves sent (app/notify.py send_urgent_waves), up to 2
     wave_at: str  # UTC, when the last wave went out
+    refill: (
+        bool  # posted by a volunteer's late cancel (app/data.py _refill), not the org
+    )
 
 
 urgent_calls = db.create(UrgentCall, pk="id", transform=True)

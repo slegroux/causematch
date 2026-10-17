@@ -355,7 +355,8 @@ def CancelShiftPage(uid, s, error=None, reason=""):
         s,
         f"Can't make {s['title']}?",
         P(
-            f"This gives up your spot at {s['org']}. They'll be told right away."
+            f"This gives up your spot at {s['org']}. They'll be told right away. You "
+            "won't be able to like this opening again."
             if s["gives_up_spot"]
             else f"Only this shift is cancelled: you stay matched, and {s['org']} hears "
             "from us right away.",

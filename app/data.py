@@ -530,12 +530,9 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
         # an urgent card says more up top: fewer reasons, so it still fits
         cap = URGENT_WHY if o.id in calls else MAX_WHY
         week_full = _week(o.starts_at) in full
-        why = (
-            _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)[
-                : cap - week_full
-            ]
-            + [WEEK_FULL] * week_full
-        )
+        why, clash = _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)
+        # the clash and a full week go after the cut: on an urgent card one Like books it
+        why = why[: cap - week_full - len(clash)] + clash + [WEEK_FULL] * week_full
         org = orgs.get(o.org_id)
         cards.append(
             {
@@ -557,7 +554,6 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "notes": o.notes,
                 "orientation": o.orientation_required,
                 "surprise": odd,
-                # an urgent card says more up top: fewer reasons, so it still fits
                 "why": why,
                 # the card's picture: the opening's photo, else the org's; its logo
                 # as a badge
@@ -598,9 +594,6 @@ def _fit(p, rated, skills, spoken, o, slugs, near, rates):
 
 
 MAX_WHY = 4
-# Openings have no end time yet: a shift counts as 3 h plus a 1 h travel buffer each side,
-# so two starts less than 4 h apart clash.
-CLASH_HOURS = 4
 URGENT_WHY = 2  # an urgent card's reasons: its badge and "booked" line come first
 WORK_WORDS = {
     ("setting", "indoor"): "Indoors",
@@ -614,9 +607,16 @@ WORK_WORDS = {
 }
 
 
+# Openings have no end time yet: two starts less than this apart clash (a 3 h shift
+# plus a 1 h buffer).
+CLASH_HOURS = 4
+
+
 def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
-    """1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on a
-    cause chip (drawn in its color). Its causes always come first, so there is at least one.
+    """(1 to 4 reasons a card is shown, most telling first: [{"text", "slug"}], slug set on
+    a cause chip (drawn in its color); its causes always come first, so there is at least
+    one. Then the clash chip in a list, [] when no booked shift is within CLASH_HOURS:
+    the caller keeps it past any cut.)
     """
     order = {_prefs.LOVE: 0, _prefs.OPEN: 1}
     why = [
@@ -634,8 +634,6 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
         (org for at, org in booked if abs(start - at) < timedelta(hours=CLASH_HOURS)),
         None,
     )
-    if clash:  # first, so it replaces the last chip rather than adding a line
-        more.append(f"You're booked at {clash} then")
     if surprise:
         more.append("Surprise pick")
     if o.remote and not near:
@@ -655,7 +653,11 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
         more.append(f"{LANGUAGE_NAMES[min(helps)]} helps")
     if o.first_timer_ok and not wanted:  # a fact about it, after what matches
         more.append("First-timer friendly")
-    return why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)]
+    chip = [{"text": f"You're booked at {clash} then", "slug": None}] if clash else []
+    return (
+        why + [{"text": t, "slug": None} for t in more][: MAX_WHY - len(why)],
+        chip,
+    )
 
 
 def has_match_news(uid):
@@ -1018,9 +1020,11 @@ MAX_CANCEL_REASON = 300  # characters of "why", passed on to the org's coordinat
 
 def _gives_up_spot(s):
     """True when cancelling shift s (shift_event's row) ends its match: the only upcoming
-    shift of a one-time opening, so there is nothing left to keep."""
+    shift of a one-time opening that is open or filled (a closed one has no spot to free),
+    so there is nothing left to keep."""
     m = _db.matches[s["match_id"]]
-    if _db.openings[m.opening_id].recurrence != "one_time":
+    o = _db.openings[m.opening_id]
+    if o.recurrence != "one_time" or o.status not in ("open", "filled"):
         return False
     return not _db.shifts.count_where(
         "match_id = ? AND id != ? AND status = 'scheduled' AND starts_at > ?",
@@ -1043,7 +1047,8 @@ def cancel_my_shift(uid, shift_id, reason=""):
     whose only upcoming shift this is, the match ends as a withdrawal does (_end_match):
     the spot frees up, and when the shift starts within URGENT_HOURS, it refills itself
     (_refill). {"reason": the reason trimmed, "late": whether it was that close,
-    "ended": whether the match ended, "call": the UrgentCall posted, or None}.
+    "ended": whether the match ended, "call": the UrgentCall posted, or None, "can_call":
+    whether, with no call posted, the org could post one for that time now}.
     """
     reason = reason.strip() if isinstance(reason, str) else ""
     if len(reason) > MAX_CANCEL_REASON or hidden_chars(reason, multiline=True):
@@ -1061,7 +1066,18 @@ def cancel_my_shift(uid, shift_id, reason=""):
         soon = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
         late = s["starts_at"] <= soon
         call = _refill(m, s["starts_at"]) if late and ended else None
-    return {"reason": reason, "late": late, "ended": ended, "call": call}
+        can_call = (
+            late
+            and not call
+            and not _call_refused(_db.openings[m.opening_id], s["starts_at"], 1)
+        )
+    return {
+        "reason": reason,
+        "late": late,
+        "ended": ended,
+        "call": call,
+        "can_call": can_call,
+    }
 
 
 def confirm_my_shift(uid, shift_id):
@@ -2169,29 +2185,35 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
     return _post_call(o, starts_at, needed, auto_accept, coordinator_uid)
 
 
-def _post_call(o, starts_at, needed, auto_accept, by):
-    """post_urgent_call's rules and insert, for opening o, posted by `by`."""
+def _call_refused(o, starts_at, needed):
+    """Why post_urgent_call would refuse this call on opening o (its ValueError message),
+    or None when it may go up."""
     _urgent_sweep()
-    calls = _open_calls()
     if o.status != "open":
-        raise ValueError("not open")
-    if o.id in calls:
-        raise ValueError("already")
+        return "not open"
+    if o.id in _open_calls():
+        return "already"
     now = datetime.now(LA)
     latest = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
     if not now.strftime(_LOCAL_FORMAT) < starts_at <= latest:
-        raise ValueError("time")
+        return "time"
     if not 1 <= needed <= o.slots - _accepted(o.id):
-        raise ValueError("needed")
+        return "needed"
     since = (datetime.now(UTC) - timedelta(days=1)).isoformat(timespec="seconds")
+    if (
+        _db.urgent_calls.count_where("org_id = ? AND created_at > ?", [o.org_id, since])
+        >= URGENT_PER_DAY
+    ):
+        return "limit"
+    return None
+
+
+def _post_call(o, starts_at, needed, auto_accept, by, refill=False):
+    """post_urgent_call's rules and insert, for opening o, posted by `by`."""
     with _db.db.conn:
-        if (
-            _db.urgent_calls.count_where(
-                "org_id = ? AND created_at > ?", [o.org_id, since]
-            )
-            >= URGENT_PER_DAY
-        ):
-            raise ValueError("limit")
+        refused = _call_refused(o, starts_at, needed)
+        if refused:
+            raise ValueError(refused)
         return _db.urgent_calls.insert(
             _db.UrgentCall(
                 opening_id=o.id,
@@ -2202,6 +2224,7 @@ def _post_call(o, starts_at, needed, auto_accept, by):
                 status="open",
                 created_by=by,
                 created_at=_now(),
+                refill=refill,
             )
         ).id
 
@@ -2209,13 +2232,14 @@ def _post_call(o, starts_at, needed, auto_accept, by):
 def _refill(m, starts_at):
     """A late cancel's urgent call: 1 person on match m's opening at starts_at, posted
     for the coordinator who accepted m under post_urgent_call's rules, auto-accepting when
-    the org's last call did (else not). Once per opening and time: none when a call was
-    ever posted for them, so cancelling again can't send more texts. The UrgentCall, or
-    None when the rules say no (no open spot, another open call, the daily limit) or the
-    org is deactivated."""
+    the org's last call did (else not). It counts toward the org's URGENT_PER_DAY. Once
+    per opening and time: none when a refill was posted for them before, so a refill's
+    own volunteer cancelling again can't send more texts (the org's own calls don't
+    count). The UrgentCall, or None when the rules say no (no open spot, another open
+    call, the daily limit) or the org is deactivated."""
     o = _db.openings[m.opening_id]
     if _db.orgs[o.org_id].deactivated_at or _db.urgent_calls.count_where(
-        "opening_id = ? AND starts_at = ?", [o.id, starts_at]
+        "opening_id = ? AND starts_at = ? AND refill = 1", [o.id, starts_at]
     ):
         return None
     last = _db.urgent_calls(
@@ -2223,7 +2247,9 @@ def _refill(m, starts_at):
     )
     auto = bool(last and last[0].auto_accept)
     try:
-        return _db.urgent_calls[_post_call(o, starts_at, 1, auto, m.decided_by)]
+        return _db.urgent_calls[
+            _post_call(o, starts_at, 1, auto, m.decided_by, refill=True)
+        ]
     except ValueError:
         return None
 

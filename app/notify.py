@@ -484,12 +484,19 @@ def on_shift_cancelled(shift_id, done):
             "It was less than 48 hours away, so we posted an urgent call for 1 person "
             f"at that time to volunteers nearby ({how}). Follow it: {base}/org"
         )
-    elif done["late"]:
+    elif done["can_call"]:
         lines.append(
             "It's less than 48 hours away. Short of people? Post an urgent call: "
             f"{base}/org"
         )
-    lines.append(f"Who, and a way to reply: {base}/org/chat/{info['match_id']}")
+    elif done["late"] and not done["ended"]:
+        lines.append(
+            "It's less than 48 hours away. Reply to them in chat to arrange cover."
+        )
+    chat = f"{base}/org/chat/{info['match_id']}"
+    lines.append(
+        f"Who: {chat}" if done["ended"] else f"Who, and a way to reply: {chat}"
+    )
     _email_org(
         "cancel",
         f"cancel:{shift_id}",
@@ -500,15 +507,16 @@ def on_shift_cancelled(shift_id, done):
 
 
 def on_withdrawn(match_id, was):
-    """Called after a volunteer withdrew from a match that was `was` (pending or
-    accepted): emails the org's coordinators, once per match. No name: the inbox shows
-    who."""
+    """Called after a volunteer withdrew from a match that was `was`: emails the org's
+    coordinators, once per match, when it was accepted (a pending like the inbox drops
+    quietly). No name: the inbox shows who."""
     info = data.match_notice(match_id)
-    if not info or info["status"] != "withdrawn":
+    if was != "accepted" or not info or info["status"] != "withdrawn":
         return
-    text = f"A volunteer withdrew from {info['opening']}."
-    if was == "accepted":
-        text += " Their upcoming shifts are cancelled and their spot is open again."
+    text = (
+        f"A volunteer withdrew from {info['opening']}. Their upcoming shifts are "
+        "cancelled and their spot is open again."
+    )
     _email_org(
         "withdrawn",
         f"withdrawn:{match_id}",
@@ -549,13 +557,12 @@ def send_due_reminders():
         info = data.shift_notice(shift_id)
         if not info:
             continue
-        start = datetime.strptime(info["starts_at"], _LOCAL_FORMAT)
         if _text(
             "reminder",
             f"reminder:{shift_id}",
             volunteer_id,
             f"Reminder: {info['opening']} with {info['org']} is on "
-            f"{start.strftime('%a %b %-d, %-I:%M %p')}. Still coming? "
+            f"{_when(info['starts_at'])}. Still coming? "
             f"{public_base_url()}/shifts/{shift_id}/confirm",
         ):
             reminded.add(volunteer_id)

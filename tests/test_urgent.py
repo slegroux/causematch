@@ -1149,7 +1149,7 @@ def test_late_cancel_on_a_recurring_opening_keeps_the_match_and_calls_no_one(
     r = v.post(f"/shifts/{s.id}/cancel", follow_redirects=False)
     assert r.headers["location"] == "/matches?notice=cancelled"
     assert matches[s.match_id].status == "accepted" and not urgent_calls()
-    assert "Short of people? Post an urgent call" in cancel_email()
+    assert "Reply to them in chat to arrange cover" in cancel_email()  # full: no call
 
 
 def test_refill_waits_for_48_hours_and_auto_accepts_as_the_orgs_last_call(shelter):
@@ -1166,3 +1166,19 @@ def test_refill_waits_for_48_hours_and_auto_accepts_as_the_orgs_last_call(shelte
     refill = urgent_calls(where="starts_at = ?", where_args=[call_start()])
     assert [(c.auto_accept, c.status) for c in refill] == [(True, "open")]
     assert "booked automatically" in cancel_email()
+
+
+def test_late_cancel_by_a_volunteer_an_urgent_call_booked_still_refills(shelter, user):
+    """The call that booked them is no refill: their cancel posts one."""
+    openings.update(id=shelter.opening.id, recurrence="one_time", slots=1)
+    booking = call_on(shelter, starts_at=call_start())
+    urgent_calls.update(id=booking.id, auto_accept=True)
+    user.post("/swipe", data=card_like(shelter))
+    (m,) = matches(where="opening_id = ?", where_args=[shelter.opening.id])
+    assert m.status == "accepted" and openings[shelter.opening.id].status == "filled"
+    (s,) = shifts(where="match_id = ?", where_args=[m.id])
+    user.post(f"/shifts/{s.id}/cancel")
+    refill = urgent_calls(where="refill = 1")
+    assert [(c.starts_at, c.needed, c.status) for c in refill] == [
+        (call_start(), 1, "open")
+    ]
