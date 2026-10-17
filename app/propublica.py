@@ -95,9 +95,10 @@ def lookup(ein, client=None):
 
 
 def search(q, state, ntee_id, page=0, client=None):
-    """One page of the name search, 501(c)(3)s only: (hits, num_pages, skipped).
+    """One page of the name search, 501(c)(3)s only: (hits, num_pages, skipped). A state
+    or ntee_id of None is left out of the query.
 
-    A hit is {"ein", "name", "city", "ntee"} with the EIN as nine digits (the API sends an
+    A hit is {"ein", "name", "city", "state", "ntee"} with the EIN as nine digits (the API sends an
     integer, so a leading zero is lost). A record that is not that shape is counted in
     skipped, not returned. LookupFailed on a timeout, an error status or a body that is not
     a search page. The search results carry no ZIP: lookup() it per hit.
@@ -109,6 +110,7 @@ def search(q, state, ntee_id, page=0, client=None):
         "c_code[id]": 3,
         "page": page,
     }
+    params = {k: v for k, v in params.items() if v is not None}
     with _asking(client) as c:
         r = c.get(SEARCH_URL, params=params)
         r.raise_for_status()
@@ -130,6 +132,7 @@ def search(q, state, ntee_id, page=0, client=None):
                     "ein": ein,
                     "name": name,
                     "city": _text(rec.get("city")),
+                    "state": _text(rec.get("state")),
                     "ntee": _text(rec.get("ntee_code")),
                 }
             )

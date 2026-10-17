@@ -1,10 +1,11 @@
-from fasthtml.common import A, P
+from fasthtml.common import A, Div, P, Script, Ul
 from monsterui.all import AT, Form, LabelCheckboxX, TextPresets
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
-from app.forms import EMAIL, HIDDEN_CHARS_MESSAGE, hidden_chars, str_form
+from app.forms import EMAIL, HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
 ar = Router()
@@ -22,6 +23,28 @@ def ClaimForm(values=None, error=None):
     return SignInPage(
         "Claim your organization",
         Form(
+            # static/claim.js shows it: without the script, the EIN is typed as before
+            Div(
+                Field(
+                    "Find your organization",
+                    TextInput(
+                        id="org-search",
+                        type="search",
+                        placeholder="Start typing its name",
+                        maxlength=str(SEARCH_MAX),
+                        autocomplete="off",
+                    ),
+                ),
+                P(
+                    "From IRS records. Pick yours to fill in the EIN and name below.",
+                    cls=TextPresets.muted_sm,
+                ),
+                Ul(id="org-results", hidden=True, cls="space-y-2"),
+                P(id="org-search-note", aria_live="polite", cls=TextPresets.muted_sm),
+                id="org-search-field",
+                hidden=True,
+                cls="space-y-2",
+            ),
             Field(
                 "Organization's EIN",
                 TextInput(
@@ -83,6 +106,7 @@ def ClaimForm(values=None, error=None):
             method="post",
             cls="space-y-3",
         ),
+        Script(src="/static/claim.js", defer=True),
         error=error,
         intro="Ask to manage your nonprofit's volunteer openings.",
         aside=P(
@@ -99,6 +123,46 @@ def ClaimForm(values=None, error=None):
 @ar("/org/claim", methods=["GET"])
 def claim_page():
     return ClaimForm()
+
+
+SEARCH_MIN, SEARCH_MAX, SEARCH_SHOWN = 3, 100, 10
+
+
+@ar("/org/claim/search", methods=["GET"])
+async def claim_search(req):
+    """{"results": [{"ein", "name", "city", "state"}]}: California 501(c)(3)s in IRS records
+    (ProPublica) whose name matches q, for static/claim.js. It reads ProPublica only, never
+    the orgs table, so the answer is the same whether an org is on Causematch, claimed or
+    neither. 429 over the limit and 503 when ProPublica fails: the EIN is typed instead."""
+    q = query(req, "q").strip()
+    if not SEARCH_MIN <= len(q) <= SEARCH_MAX or hidden_chars(q):
+        return JSONResponse({"results": []})  # spends nothing
+    return await run_in_threadpool(_sync_claim_search, req, q)
+
+
+def _sync_claim_search(req, q):
+    if not security.allow(
+        (security.CLAIM_SEARCH_PER_IP, security.ip_subject(req)),
+        (security.CLAIM_SEARCH_ALL, "all"),
+    ):
+        return JSONResponse({"results": []}, status_code=429)
+    try:
+        hits, _, _ = propublica.search(q, "CA", None)
+    except propublica.LookupFailed:
+        return JSONResponse({"results": []}, status_code=503)
+    return JSONResponse(
+        {
+            "results": [
+                {
+                    "ein": f"{h['ein'][:2]}-{h['ein'][2:]}",
+                    "name": h["name"],
+                    "city": h["city"],
+                    "state": h["state"],
+                }
+                for h in hits[:SEARCH_SHOWN]
+            ]
+        }
+    )
 
 
 @ar("/org/claim", methods=["POST"])

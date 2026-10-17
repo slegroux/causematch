@@ -67,6 +67,7 @@ ROUTES = {
     ("POST", "/org/login/verify"): ("public", None),
     ("GET", "/org/claim"): ("public", None),
     ("POST", "/org/claim"): ("public", None),
+    ("GET", "/org/claim/search"): ("public", None),  # IRS records only, rate-limited
     ("GET", "/onboarding"): ("volunteer", "own-record"),
     ("POST", "/onboarding"): ("volunteer", "own-record"),
     ("GET", "/onboarding/more"): ("volunteer", "own-record"),

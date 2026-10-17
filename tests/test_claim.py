@@ -16,7 +16,7 @@ from conftest import (
 )
 from starlette.testclient import TestClient
 
-from app import data, notify, propublica
+from app import data, notify, propublica, security
 from app.db import claim_requests, org_members, orgs, profiles
 from main import app
 
@@ -550,6 +550,77 @@ def test_only_an_admin_can_import_and_nothing_is_fetched(monkeypatch):
         assert r.status_code in (302, 303, 403), who
         assert r.headers.get("location") != "/admin/claims"
     assert not orgs(where="ein = ?", where_args=[EIN])
+
+
+# find your organization by name (IRS records through ProPublica)
+
+SEARCH_FIXTURE = json.loads((FIXTURES / "search_food_bank.json").read_text())
+
+
+def serve_search(request):
+    assert request.url.path.endswith("/search.json")
+    return httpx.Response(200, json=SEARCH_FIXTURE)
+
+
+def search(q="food bank", client=None):
+    return (client or TestClient(app)).get("/org/claim/search", params={"q": q})
+
+
+def test_the_name_search_never_says_whether_an_org_is_on_causematch(monkeypatch):
+    asked = []
+    propublica_says(monkeypatch, lambda r: asked.append(r.url) or serve_search(r))
+    nowhere = search()  # no org on Causematch yet
+    # 86-1620575 is on Causematch and claimed; 23-7111782 is in IRS records only
+    owned = imported()
+    data.add_coordinator("olive@example.org", owned.id, "owner", name="Olive Owner")
+    claim()
+    known = search()
+    assert (known.status_code, known.text) == (nowhere.status_code, nowhere.text)
+    results = {r["ein"]: r for r in known.json()["results"]}
+    assert results["86-1620575"] == {
+        "ein": "86-1620575",
+        "name": "Los Angeles Food Bank",
+        "city": "Los Angeles",
+        "state": "CA",
+    }
+    assert results["23-7111782"].keys() == results["86-1620575"].keys()
+    assert not re.search(r"(?i)causematch|claim|olive|verified", known.text)
+    params = asked[0].params
+    assert (params["q"], params["state[id]"], params["c_code[id]"]) == (
+        "food bank",
+        "CA",
+        "3",
+    )
+    assert "ntee[id]" not in params
+
+
+def test_the_name_search_is_rate_limited_and_its_failure_leaves_the_ein(monkeypatch):
+    asked = []
+    propublica_says(monkeypatch, lambda r: asked.append(r) or serve_search(r))
+    monkeypatch.setattr(
+        security, "CLAIM_SEARCH_PER_IP", (("claim-search-ip", 2, 3600),)
+    )
+    monkeypatch.setattr(security, "PROPUBLICA", (("propublica", 2, 3600),))
+    visitor = TestClient(app, client=("198.51.100.30", 1))
+    assert search("fo", visitor).json() == {"results": []}  # too short: spends nothing
+    assert [search(client=visitor).status_code for _ in range(3)] == [200, 200, 429]
+    assert len(asked) == 2
+    # the admins' ProPublica budget is not spent by the public
+    assert security.allow((security.PROPUBLICA, "all"), record=False)
+    propublica_says(monkeypatch, lambda r: httpx.Response(500))
+    assert search().status_code == 503
+    page = TestClient(app).get("/org/claim").text
+    assert 'name="ein"' in page and 'src="/static/claim.js"' in page
+
+
+def test_a_picked_result_posts_a_valid_claim(monkeypatch):
+    propublica_says(monkeypatch, serve_search)
+    results = search("los angeles food bank").json()["results"]
+    hit = next(h for h in results if h["name"] == "Los Angeles Food Bank")
+    r = claim(ein=hit["ein"], org_name=hit["name"])
+    assert r.status_code == 200 and RECEIVED in r.text
+    c = the_claim()
+    assert (c.ein, c.org_name, c.status) == (EIN, "Los Angeles Food Bank", "pending")
 
 
 # how long a claim keeps its contact details

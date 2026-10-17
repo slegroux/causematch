@@ -25,6 +25,7 @@ PUBLIC = [
     r"/org/login/verify",
     r"/org/login/demo",
     r"/org/claim",
+    r"/org/claim/search",  # IRS records only (ProPublica), rate-limited
     r"/privacy",
     r"/tasks/reminders",  # not signed in: the scheduler's bearer token guards it
     r"/tasks/urgent",  # the same
