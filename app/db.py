@@ -136,6 +136,8 @@ class Profile:
     urgent_quiet_from: int  # local hour no notice is sent from (NULL: 21)
     urgent_quiet_to: int  # ... until (NULL: 8); from > to wraps past midnight
     urgent_per_week: int  # 1..3 (NULL: 3)
+    # Up to this many shifts a week (app/prefs.py weekly_limit), 1..5; NULL or 0: off
+    weekly_limit: int
 
 
 class OrgMember:

@@ -476,8 +476,20 @@ def PrefsPage(uid, f, error=None, saved=False):
                     COMMITMENT,
                     f["commitment"],
                 ),
+                Group(
+                    "Up to this many shifts a week",
+                    "flex flex-wrap gap-2",
+                    "weekly_limit",
+                    prefs.WEEKLY_LIMITS,
+                    f["weekly_limit"],
+                ),
+                P(
+                    "Once a week is full, its openings come last and last-minute calls "
+                    "for it stop.",
+                    cls="text-sm text-ink-muted",
+                ),
                 shared=": a summary of the times you tick (weekday or weekend mornings, "
-                "afternoons, evenings). Your dates stay private.",
+                "afternoons, evenings). Your dates and weekly limit stay private.",
             ),
             Section(
                 "Kind of work",
@@ -637,6 +649,7 @@ def _sync_save(req, form):
         # "sections" marker came with the form.
         "horizon_days": form.get("horizon_days", str(saved["horizon_days"])),
         "commitment": form.get("commitment", saved["commitment"]),
+        "weekly_limit": form.get("weekly_limit", str(saved["weekly_limit"])),
         "setting": form.get("setting", saved["setting"]),
         "effort": form.get("effort", saved["effort"]),
         "group_size": form.get("group_size", saved["group_size"]),
@@ -706,6 +719,7 @@ def _sync_save(req, form):
         or not set(f["availability"]) <= SLOTS
         or f["horizon_days"] not in {str(v) for v, _ in HORIZON}
         or f["commitment"] not in {v for v, _ in COMMITMENT}
+        or f["weekly_limit"] not in {str(v) for v, _ in prefs.WEEKLY_LIMITS}
         or f["setting"] not in {v for v, _ in SETTINGS}
         or f["effort"] not in {v for v, _ in EFFORTS}
         or f["group_size"] not in {v for v, _ in GROUPS}
@@ -734,8 +748,13 @@ def _sync_save(req, form):
         return PrefsPage(uid, f, NO_PLACE)
     data.save_preferences(
         uid,
-        **{k: v for k, v in f.items() if k not in ("place_forms", "horizon_days")},
+        **{
+            k: v
+            for k, v in f.items()
+            if k not in ("place_forms", "horizon_days", "weekly_limit")
+        },
         horizon_days=int(f["horizon_days"]),
+        weekly_limit=int(f["weekly_limit"]),
         places=places,
     )
     req.session.pop(

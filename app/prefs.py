@@ -109,6 +109,14 @@ def urgent(profile):
     return {k: URGENT_DEFAULTS[k] if v is None else v for k, v in saved.items()}
 
 
+WEEKLY_LIMITS = [(0, "Off")] + [(n, str(n)) for n in range(1, 6)]
+
+
+def weekly_limit(profile):
+    """Up to this many shifts a week (Monday to Sunday, Los Angeles); 0 for no limit."""
+    return profile.weekly_limit or 0
+
+
 def quiet_now(u, hour):
     """True when `hour` (local, 0-23) is in the volunteer's quiet hours."""
     start, end = u["quiet_from"], u["quiet_to"]

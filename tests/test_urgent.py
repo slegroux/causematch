@@ -622,6 +622,10 @@ EXCLUDED = {
     "passed on it": lambda s: (v := opted_in(), data.swipe(v, s.opening.id, False))[0],
     "suspended": lambda s: opted_in(suspended_at="2026-01-01T00:00:00+00:00"),
     "not onboarded": lambda s: opted_in(onboarded_at=None),
+    "week full": lambda s: (  # a limit of 1, booked later that day: not busy, full
+        v := opted_in(weekly_limit=1),
+        booked_at(v, f"{call_day()}T17:00"),
+    )[0],
 }
 
 
