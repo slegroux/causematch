@@ -6,6 +6,7 @@ from starlette.responses import JSONResponse
 from app import data, propublica, security
 from app.auth import BAD_PHONE, normalize_phone
 from app.forms import EMAIL, HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
+from app.org_import import PLACE_NAMES
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
 ar = Router()
@@ -130,10 +131,15 @@ SEARCH_MIN, SEARCH_MAX, SEARCH_SHOWN = 3, 100, 10
 
 @ar("/org/claim/search", methods=["GET"])
 async def claim_search(req):
-    """{"results": [{"ein", "name", "city", "state"}]}: California 501(c)(3)s in IRS records
-    (ProPublica) whose name matches q, for static/claim.js. It reads ProPublica only, never
-    the orgs table, so the answer is the same whether an org is on Causematch, claimed or
-    neither. 429 over the limit and 503 when ProPublica fails: the EIN is typed instead."""
+    """{"results": [{"ein", "name", "city", "state", "outside_la"}]}: California
+    501(c)(3)s in IRS records (ProPublica) whose name matches q, for static/claim.js, the
+    ones mailing from a Los Angeles County place first. It reads ProPublica only, never the
+    orgs table, so the answer is the same whether an org is on Causematch, claimed or
+    neither. 403 for another site's request (nothing spent), 429 over the limit and 503
+    when ProPublica fails: the EIN is typed instead."""
+    site = req.headers.get("sec-fetch-site")
+    if site and site != "same-origin":
+        return JSONResponse({"results": []}, status_code=403)
     q = query(req, "q").strip()
     if not SEARCH_MIN <= len(q) <= SEARCH_MAX or hidden_chars(q):
         return JSONResponse({"results": []})  # spends nothing
@@ -150,6 +156,9 @@ def _sync_claim_search(req, q):
         hits, _, _ = propublica.search(q, "CA", None)
     except propublica.LookupFailed:
         return JSONResponse({"results": []}, status_code=503)
+    for h in hits:
+        h["outside_la"] = h["city"].lower() not in PLACE_NAMES
+    hits.sort(key=lambda h: h["outside_la"])  # stable: ProPublica's order within each
     return JSONResponse(
         {
             "results": [
@@ -158,6 +167,7 @@ def _sync_claim_search(req, q):
                     "name": h["name"],
                     "city": h["city"],
                     "state": h["state"],
+                    "outside_la": h["outside_la"],
                 }
                 for h in hits[:SEARCH_SHOWN]
             ]

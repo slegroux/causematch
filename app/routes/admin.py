@@ -1,6 +1,7 @@
 import csv
 import io
 import logging
+import re
 from datetime import UTC, datetime
 
 from fasthtml.common import (
@@ -559,6 +560,11 @@ async def admin_claim_approve(req, claim_id: int):
     return await run_in_threadpool(_sync_admin_claim_approve, req, form, claim_id)
 
 
+def _same_name(name):
+    """A name for comparing: casefolded, punctuation and whitespace runs as one space."""
+    return re.sub(r"[\W_]+", " ", name.casefold()).strip()
+
+
 def _sync_admin_claim_approve(req, form, claim_id: int):
     """One tap: an org no one has added yet is imported from ProPublica (network first,
     as scripts/import_orgs.py --ein does), then the claim is approved."""
@@ -568,12 +574,13 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
     except LookupError:
         return Redirect("/admin/claims")  # already decided
     if missing:
+        ein, typed = missing
         if not security.allow((security.PROPUBLICA, "all")):
             return ClaimsPage(
                 uid, claim_id, "Too many IRS lookups this hour. Try again later."
             )
         try:
-            import_ein(missing)
+            org = import_ein(ein)
         except propublica.LookupFailed:
             return ClaimsPage(
                 uid,
@@ -582,7 +589,22 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
                 "Tap Approve again in a minute.",
             )
         except ValueError as e:  # NotImportable: worded for an admin
-            return ClaimsPage(uid, claim_id, f"Can't add this organization: {e}.")
+            return ClaimsPage(
+                uid,
+                claim_id,
+                f"Can't add this organization: {e}. Decline it, or ask for help "
+                "adding it.",
+            )
+        if _same_name(org["name"]) != _same_name(typed):
+            # someone could type a harmless name beside a real nonprofit's EIN: the admin
+            # sees the IRS name first, and the card (the org exists now) shows both
+            where = ", ".join(x for x in (org["name"], org["city"]) if x)
+            return ClaimsPage(
+                uid,
+                claim_id,
+                f"IRS records name this EIN '{where}', not what they typed. "
+                "Check it's right, then tap Approve again.",
+            )
     try:
         _, email, org_name = data.approve_claim(
             uid, claim_id, form.get("confirm") == "1"

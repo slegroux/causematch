@@ -512,7 +512,7 @@ PROPUBLICA = (
 # The claim page's name search (static/claim.js): per address, and every visitor together
 # so the app stays polite to ProPublica. Apart from PROPUBLICA, so the public can't spend
 # the admins' budget for imports.
-CLAIM_SEARCH_PER_IP = (("claim-search-ip", 30, 3600),)
+CLAIM_SEARCH_PER_IP = (("claim-search-ip", 60, 3600),)
 CLAIM_SEARCH_ALL = (("claim-search-all", 300, 3600),)
 assert all(
     w <= data.RATE_KEEP_SECONDS

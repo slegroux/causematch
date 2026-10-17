@@ -43,6 +43,7 @@
       b.className =
         "block w-full min-h-11 text-left rounded-xl border border-line bg-white px-3 py-2 hover:border-brand";
       var place = [hit.city, hit.state].filter(Boolean).join(", ");
+      if (hit.outside_la) place += (place ? " · " : "") + "outside LA County";
       b.appendChild(line(hit.name, "block font-semibold text-ink"));
       b.appendChild(
         line((place ? place + " · " : "") + "EIN " + hit.ein, "block text-sm text-ink-muted")

@@ -96,7 +96,8 @@ def lookup(ein, client=None):
 
 def search(q, state, ntee_id, page=0, client=None):
     """One page of the name search, 501(c)(3)s only: (hits, num_pages, skipped). A state
-    or ntee_id of None is left out of the query.
+    or ntee_id of None is left out of the query. The API answers 404 when nothing matches:
+    that is ([], 0, 0).
 
     A hit is {"ein", "name", "city", "state", "ntee"} with the EIN as nine digits (the API sends an
     integer, so a leading zero is lost). A record that is not that shape is counted in
@@ -113,6 +114,8 @@ def search(q, state, ntee_id, page=0, client=None):
     params = {k: v for k, v in params.items() if v is not None}
     with _asking(client) as c:
         r = c.get(SEARCH_URL, params=params)
+        if r.status_code == 404:
+            return [], 0, 0
         r.raise_for_status()
         body = r.json()
         records, pages = body["organizations"], body["num_pages"]
