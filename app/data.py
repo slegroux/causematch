@@ -3075,13 +3075,18 @@ def reject_claim(admin_uid, claim_id):
     return c.email
 
 
-def claim_ein_to_import(admin_uid, claim_id):
-    """(EIN, typed org name) of a pending claim when no org has the EIN yet, else None:
-    approving imports that org from ProPublica first (app/org_import.py, outside the data
-    lock). LookupError when the claim is not pending."""
+def claim_for_approval(admin_uid, claim_id):
+    """(EIN, typed org name, {"name", "city"} of the org with that EIN or None) of a
+    pending claim. With None, approving imports the org from ProPublica first
+    (app/org_import.py, outside the data lock). LookupError when the claim is not pending."""
     _admin(admin_uid)
     c = _pending_claim(claim_id)
-    return None if _claim_org(c.ein) else (c.ein, c.org_name)
+    org = _claim_org(c.ein)
+    return (
+        c.ein,
+        c.org_name,
+        {"name": org.name, "city": org.city or ""} if org else None,
+    )
 
 
 CLAIM_KEEP_DAYS = 90

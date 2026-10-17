@@ -464,6 +464,7 @@ def ClaimCard(c, error=None):
     org = c["org"]
     ein = f"EIN {c['ein'][:2]}-{c['ein'][2:]}"
     members = ", ".join(f"{m['name']} ({m['role']})" for m in c["members"])
+    mismatch = org is not None and not _names_match(org["name"], c["org_name"])
     if org is None:
         note = P("New to Causematch: approving adds it from IRS records.")
     elif org["deactivated"]:
@@ -478,7 +479,7 @@ def ClaimCard(c, error=None):
             cls="text-ink break-words",
         ),
         P(f"They typed: {c['org_name']}", cls=TextPresets.muted_sm)
-        if org and c["org_name"] != org["name"]
+        if mismatch
         else None,
         note,
         P(f"Already claimed by {members}.", cls="font-semibold") if members else None,
@@ -493,6 +494,11 @@ def ClaimCard(c, error=None):
                     value="1",
                 )
                 if members
+                else None,
+                LabelCheckboxX(
+                    f"Yes, approve for {org['name']}", name="name_checked", value="1"
+                )
+                if mismatch
                 else None,
                 PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
                 action=f"/admin/claims/{c['id']}/approve",
@@ -562,7 +568,12 @@ async def admin_claim_approve(req, claim_id: int):
 
 def _same_name(name):
     """A name for comparing: casefolded, punctuation and whitespace runs as one space."""
-    return re.sub(r"[\W_]+", " ", name.casefold()).strip()
+    return re.sub(r"[\W_]+", " ", (name or "").casefold()).strip()
+
+
+def _names_match(irs_name, typed):
+    """The typed name is the IRS one, give or take case and punctuation (never empty)."""
+    return bool(_same_name(irs_name)) and _same_name(irs_name) == _same_name(typed)
 
 
 def _sync_admin_claim_approve(req, form, claim_id: int):
@@ -570,11 +581,10 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
     as scripts/import_orgs.py --ein does), then the claim is approved."""
     uid = req.scope["uid"]
     try:
-        missing = data.claim_ein_to_import(uid, claim_id)
+        ein, typed, org = data.claim_for_approval(uid, claim_id)
     except LookupError:
         return Redirect("/admin/claims")  # already decided
-    if missing:
-        ein, typed = missing
+    if org is None:
         if not security.allow((security.PROPUBLICA, "all")):
             return ClaimsPage(
                 uid, claim_id, "Too many IRS lookups this hour. Try again later."
@@ -595,16 +605,17 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
                 f"Can't add this organization: {e}. Decline it, or ask for help "
                 "adding it.",
             )
-        if _same_name(org["name"]) != _same_name(typed):
-            # someone could type a harmless name beside a real nonprofit's EIN: the admin
-            # sees the IRS name first, and the card (the org exists now) shows both
-            where = ", ".join(x for x in (org["name"], org["city"]) if x)
-            return ClaimsPage(
-                uid,
-                claim_id,
-                f"IRS records name this EIN '{where}', not what they typed. "
-                "Check it's right, then tap Approve again.",
-            )
+    if not _names_match(org["name"], typed) and form.get("name_checked") != "1":
+        # someone could type a harmless name beside a real nonprofit's EIN: approving
+        # needs the box the card shows beside the IRS name (a double tap or a stale tab
+        # never had it)
+        where = ", ".join(x for x in (org["name"], org["city"]) if x)
+        return ClaimsPage(
+            uid,
+            claim_id,
+            f"IRS records name this EIN '{where}', not what they typed. Check it's "
+            f'right, tick "Yes, approve for {org["name"]}", then tap Approve again.',
+        )
     try:
         _, email, org_name = data.approve_claim(
             uid, claim_id, form.get("confirm") == "1"

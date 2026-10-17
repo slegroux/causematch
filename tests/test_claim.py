@@ -551,8 +551,22 @@ def test_a_typed_name_unlike_the_irs_name_needs_a_second_look(admin, monkeypatch
         raise AssertionError("no second import expected")
 
     propublica_says(monkeypatch, boom)
-    assert approve(admin, cid).status_code == 303  # the admin looked: approved
+    assert (
+        'name="name_checked"' in text
+        and "Yes, approve for Los Angeles Food Bank" in text
+    )
+    r = approve(admin, cid)  # a double tap, or a stale tab: no box ticked
+    assert r.status_code == 200 and "IRS records name this EIN" in r.text
+    assert the_claim().status == "pending" and not org_members.count
+    assert approve(admin, cid, name_checked="1").status_code == 303  # the admin looked
     assert the_claim().status == "approved" and orgs[org.id].verified_at
+
+
+def test_a_name_with_no_letters_never_matches(admin):
+    imported(name="...")
+    claim(org_name="---")
+    r = approve(admin, the_claim().id)
+    assert r.status_code == 200 and the_claim().status == "pending"
 
 
 def test_a_name_that_differs_only_in_case_and_punctuation_is_the_same(
@@ -749,7 +763,7 @@ def test_the_data_layer_refuses_a_caller_who_is_not_an_admin():
             (data.admin_claims, ()),
             (data.approve_claim, (cid, True)),
             (data.reject_claim, (cid,)),
-            (data.claim_ein_to_import, (cid,)),
+            (data.claim_for_approval, (cid,)),
         ):
             with pytest.raises(PermissionError):
                 fn(uid, *args)
