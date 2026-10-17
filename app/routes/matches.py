@@ -52,6 +52,7 @@ NOTICE = {
     "reported": "Thanks. We read every report.",
     "blocked": "Blocked. Their openings won't show up again.",
     "cancelled": "That shift is cancelled and the nonprofit knows. You're still matched.",
+    "gave_up": "Your spot is given up and the nonprofit knows.",
     "confirmed": "Thanks! The nonprofit can see you're coming.",
 }
 

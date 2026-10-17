@@ -1016,27 +1016,52 @@ def shift_event(uid, shift_id):
 MAX_CANCEL_REASON = 300  # characters of "why", passed on to the org's coordinators
 
 
-def cancel_my_shift(uid, shift_id, reason=""):
-    """ "Can't make this one": the volunteer's own upcoming shift is cancelled and the
-    match stays accepted. PermissionError as shift_event; ValueError for a reason over
-    MAX_CANCEL_REASON characters or holding hidden characters.
+def _gives_up_spot(s):
+    """True when cancelling shift s (shift_event's row) ends its match: the only upcoming
+    shift of a one-time opening, so there is nothing left to keep."""
+    m = _db.matches[s["match_id"]]
+    if _db.openings[m.opening_id].recurrence != "one_time":
+        return False
+    return not _db.shifts.count_where(
+        "match_id = ? AND id != ? AND status = 'scheduled' AND starts_at > ?",
+        [m.id, s["id"], _local_now()],
+    )
 
-    A shift starting within URGENT_HOURS refills itself (_refill). {"reason": the reason
-    trimmed, "late": whether it was that close, "call": the UrgentCall posted, or None}.
+
+def shift_to_cancel(uid, shift_id):
+    """shift_event's row, plus "gives_up_spot" (_gives_up_spot), for the cancel page."""
+    s = shift_event(uid, shift_id)
+    return {**s, "gives_up_spot": _gives_up_spot(s)}
+
+
+def cancel_my_shift(uid, shift_id, reason=""):
+    """ "Can't make this one": the volunteer's own upcoming shift is cancelled.
+    PermissionError as shift_event; ValueError for a reason over MAX_CANCEL_REASON
+    characters or holding hidden characters.
+
+    On a recurring or flexible opening the match stays accepted. On a one-time opening
+    whose only upcoming shift this is, the match ends as a withdrawal does (_end_match):
+    the spot frees up, and when the shift starts within URGENT_HOURS, it refills itself
+    (_refill). {"reason": the reason trimmed, "late": whether it was that close,
+    "ended": whether the match ended, "call": the UrgentCall posted, or None}.
     """
     reason = reason.strip() if isinstance(reason, str) else ""
     if len(reason) > MAX_CANCEL_REASON or hidden_chars(reason, multiline=True):
         raise ValueError("reason")
     with _db.db.conn:
         s = shift_event(uid, shift_id)
+        ended = _gives_up_spot(s)
         _db.shifts.update(
             id=s["id"], status="cancelled", cancelled_at=_now(), cancelled_by=uid
         )
+        m = _db.matches[s["match_id"]]
+        if ended:
+            _end_match(m, uid, "withdrawn")
         now = datetime.strptime(_local_now(), _LOCAL_FORMAT)
         soon = (now + timedelta(hours=URGENT_HOURS)).strftime(_LOCAL_FORMAT)
         late = s["starts_at"] <= soon
-        call = _refill(_db.matches[s["match_id"]], s["starts_at"]) if late else None
-    return {"reason": reason, "late": late, "call": call}
+        call = _refill(m, s["starts_at"]) if late and ended else None
+    return {"reason": reason, "late": late, "ended": ended, "call": call}
 
 
 def confirm_my_shift(uid, shift_id):

@@ -463,9 +463,12 @@ def on_shift_cancelled(shift_id, done):
     base = public_base_url()
     when = _when(info["starts_at"])
     lines = [
-        (
-            f"A volunteer can't make their {when} shift for {info['opening']}. They're "
-            f"still matched with {info['org']}; only this shift is cancelled."
+        f"A volunteer can't make their {when} shift for {info['opening']}. "
+        + (
+            "It was their only shift, so they gave up their spot: it's open again."
+            if done["ended"]
+            else f"They're still matched with {info['org']}; only this shift is "
+            "cancelled."
         )
     ]
     if done["reason"]:

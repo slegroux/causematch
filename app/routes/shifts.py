@@ -329,9 +329,9 @@ def history(req):
 # this one" (Matches, the chat). Like the .ics, any other shift id is a 404.
 
 
-def _own_shift(uid, shift_id):
+def _own_shift(uid, shift_id, read=data.shift_event):
     try:
-        return data.shift_event(uid, shift_id)
+        return read(uid, shift_id)
     except PermissionError:
         return None
 
@@ -355,8 +355,10 @@ def CancelShiftPage(uid, s, error=None, reason=""):
         s,
         f"Can't make {s['title']}?",
         P(
-            f"Only this shift is cancelled: you stay matched, and {s['org']} hears from "
-            "us right away.",
+            f"This gives up your spot at {s['org']}. They'll be told right away."
+            if s["gives_up_spot"]
+            else f"Only this shift is cancelled: you stay matched, and {s['org']} hears "
+            "from us right away.",
             cls="text-sm text-ink",
         ),
         PlainForm(
@@ -388,7 +390,7 @@ NOT_FOUND = "Not found"
 
 @ar("/shifts/{shift_id}/cancel", methods=["GET"])
 def cancel_mine_page(req, shift_id: int):
-    s = _own_shift(req.scope["uid"], shift_id)
+    s = _own_shift(req.scope["uid"], shift_id, data.shift_to_cancel)
     if s is None:
         return Response(NOT_FOUND, status_code=404)
     return CancelShiftPage(req.scope["uid"], s)
@@ -410,7 +412,7 @@ def _sync_cancel_mine(req, form, shift_id: int):
     except PermissionError:
         return Response(NOT_FOUND, status_code=404)
     except ValueError:
-        s = _own_shift(uid, shift_id)
+        s = _own_shift(uid, shift_id, data.shift_to_cancel)
         if s is None:
             return Response(NOT_FOUND, status_code=404)
         return CancelShiftPage(
@@ -420,7 +422,7 @@ def _sync_cancel_mine(req, form, shift_id: int):
             reason[: data.MAX_CANCEL_REASON],
         )
     notify.on_shift_cancelled(shift_id, done)
-    return Redirect("/matches?notice=cancelled")
+    return Redirect(f"/matches?notice={'gave_up' if done['ended'] else 'cancelled'}")
 
 
 @ar("/shifts/{shift_id}/confirm", methods=["GET"])
