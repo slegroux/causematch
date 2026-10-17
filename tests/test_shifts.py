@@ -17,7 +17,7 @@ from conftest import (
     volunteer,
 )
 
-from app import data
+from app import data, notify
 from app.db import matches, openings, orgs, shifts
 
 LA = ZoneInfo("America/Los_Angeles")
@@ -548,3 +548,49 @@ def test_only_the_volunteer_on_an_upcoming_shift_gets_its_ics(accepted, clock, a
     clock.at = NOW
     data.cancel_shift(accepted.org0.uid, s.id)
     assert accepted.a.get(path).status_code == 404
+
+
+# --- the volunteer's side: "Can't make this one" ------------------------------------------
+
+
+def org_emails(subject):
+    return [(to, body) for to, s, body in notify.get_emailer().sent if subject in s]
+
+
+def test_a_volunteer_cancels_one_shift_keeps_the_match_and_the_org_hears(
+    accepted, clock
+):
+    mid = accepted.match.id
+    [first] = shifts_of(accepted.match)
+    later = data.add_shift(accepted.org0.uid, mid, clock.local(days=14))
+    for page in ("/matches", f"/chat/{mid}"):  # the next shift, and the way out of it
+        assert f'href="/shifts/{first.id}/cancel"' in accepted.a.get(page).text
+    assert "Can't make" in accepted.a.get(f"/shifts/{first.id}/cancel").text
+    r = accepted.a.post(
+        f"/shifts/{first.id}/cancel",
+        data={"reason": "  My kid is sick  "},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/matches?notice=cancelled"
+    assert (shifts[first.id].status, shifts[first.id].cancelled_by) == (
+        "cancelled",
+        accepted.a.uid,
+    )
+    assert shifts[later.id].status == "scheduled" and matches[mid].status == "accepted"
+    [(to, body)] = org_emails("A volunteer can't make")
+    assert to == "coord0@example.org" and "Their reason: My kid is sick" in body
+    assert f"/org/chat/{mid}" in body and "urgent" not in body  # a week out: no call
+    assert "Zelda" not in body
+    assert f'href="/shifts/{later.id}/cancel"' in accepted.a.get("/matches").text
+    # done once: the same shift again is a 404, and no second email
+    r = accepted.a.post(f"/shifts/{first.id}/cancel", follow_redirects=False)
+    assert r.status_code == 404 and len(org_emails("A volunteer can't make")) == 1
+
+
+def test_a_withdrawal_emails_the_coordinators(accepted):
+    r = accepted.a.post(
+        f"/matches/{accepted.match.id}/withdraw", follow_redirects=False
+    )
+    assert r.status_code == 303 and matches[accepted.match.id].status == "withdrawn"
+    [(to, body)] = org_emails("A volunteer withdrew from")
+    assert to == "coord0@example.org" and "spot is open again" in body

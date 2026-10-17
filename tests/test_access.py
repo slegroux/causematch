@@ -22,7 +22,7 @@ from starlette.routing import Mount, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import data
+from app import data, notify
 from app.auth import (
     PUBLIC,
     is_admin_path,
@@ -130,6 +130,8 @@ ROUTES = {
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
     ("GET", "/history"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}.ics"): ("volunteer", "own-record"),
+    ("GET", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
+    ("POST", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
     ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
     ("WS", "/chat/{match_id}/ws"): ("volunteer", "own-record"),
@@ -669,6 +671,39 @@ def check_shift_ics(w):
     assert r.status_code == 200 and "BEGIN:VEVENT" in r.text
 
 
+def own_shift_check(method, action):
+    """B, and A's own org's coordinator, get 404 or their home for A's shift, whatever the
+    id: no page, the shift stays scheduled, the org gets no email. Then A gets the page,
+    or the change."""
+
+    def check(w):
+        sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
+        sent = len(notify.get_emailer().sent)
+
+        def call(client, i):
+            path = f"/shifts/{i}/{action}"
+            if method == "GET":
+                return client.get(path, follow_redirects=False)
+            return client.post(path, data={"reason": "x"}, follow_redirects=False)
+
+        for i in (sid, *GONE):
+            r = call(w.b, i)
+            assert r.status_code == 404, (i, r.status_code)
+            no_secrets(r)
+        assert_turned_away(call(w.org0, sid), "coordinator", f"/shifts/{sid}")
+        assert_turned_away(call(w.admin, sid), "admin", f"/shifts/{sid}")
+        assert shifts[sid].status == "scheduled"
+        assert len(notify.get_emailer().sent) == sent
+        r = call(w.a, sid)
+        if method == "GET":
+            assert r.status_code == 200 and PANTRY in r.text
+        else:
+            assert r.status_code == 303 and shifts[sid].status == "cancelled"
+            assert matches[w.match.id].status == "accepted"
+
+    return check
+
+
 def stranger_post(client, template, **body):
     def call(w, rid):
         return client(w).post(
@@ -886,6 +921,11 @@ OWNERSHIP = {
     ("POST", "/org/shifts/{shift_id}/cancel"): check_cancel_shift,
     ("POST", "/org/matches/{match_id}/shifts/repeat"): check_repeat_shift,
     ("GET", "/shifts/{shift_id}.ics"): check_shift_ics,
+    **{
+        (method, f"/shifts/{{shift_id}}/{action}"): own_shift_check(method, action)
+        for method in ("GET", "POST")
+        for action in ("cancel",)
+    },
     ("GET", "/chat/{match_id}"): chat_id_check("b", "a", "/chat", "page"),
     ("POST", "/chat/{match_id}/send"): chat_id_check("b", "a", "/chat", "send"),
     ("WS", "/chat/{match_id}/ws"): chat_id_check("b", "a", "/chat", "ws"),

@@ -907,12 +907,13 @@ def my_match(uid, match_id):
 
 
 def withdraw(uid, match_id):
-    """The volunteer's own pending or accepted match becomes withdrawn."""
+    """The volunteer's own pending or accepted match becomes withdrawn; the status it had."""
     with _db.db.conn:
         m = _own_match(uid, match_id)
         if m.status not in ("pending", "accepted"):
             raise ValueError("already " + m.status)
         _end_match(m, uid, "withdrawn")
+        return m.status
 
 
 def _face(org, o):
@@ -958,6 +959,26 @@ def shift_event(uid, shift_id):
     if not rows:
         raise PermissionError("no such shift")
     return rows[0]
+
+
+MAX_CANCEL_REASON = 300  # characters of "why", passed on to the org's coordinators
+
+
+def cancel_my_shift(uid, shift_id, reason=""):
+    """ "Can't make this one": the volunteer's own upcoming shift is cancelled and the
+    match stays accepted. PermissionError as shift_event; ValueError for a reason over
+    MAX_CANCEL_REASON characters or holding hidden characters. {"reason": the reason
+    trimmed}.
+    """
+    reason = reason.strip() if isinstance(reason, str) else ""
+    if len(reason) > MAX_CANCEL_REASON or hidden_chars(reason, multiline=True):
+        raise ValueError("reason")
+    with _db.db.conn:
+        s = shift_event(uid, shift_id)
+        _db.shifts.update(
+            id=s["id"], status="cancelled", cancelled_at=_now(), cancelled_by=uid
+        )
+    return {"reason": reason}
 
 
 def my_matches(uid):
@@ -2467,13 +2488,13 @@ def due_reminders(first, last):
 
 
 def shift_notice(shift_id):
-    """{"volunteer_id", "org", "opening", "starts_at"} of a shift, or None."""
+    """match_notice's keys and the shift's "match_id" and "starts_at", or None."""
     try:
         sh = _db.shifts[shift_id]
     except NotFoundError:
         return None
     info = match_notice(sh.match_id)
-    return info and {**info, "starts_at": sh.starts_at}
+    return info and {**info, "match_id": sh.match_id, "starts_at": sh.starts_at}
 
 
 # --- trust and safety: reports, blocks, suspension, org verification, deletion ---------------

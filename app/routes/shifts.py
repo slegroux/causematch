@@ -1,7 +1,7 @@
 import re
 from datetime import UTC, datetime
 
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Response
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Response, Textarea
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -13,7 +13,7 @@ from monsterui.all import (
 )
 from starlette.concurrency import run_in_threadpool
 
-from app import data
+from app import data, notify
 from app.config import public_base_url
 from app.forms import query, str_form
 from app.ui import (
@@ -322,6 +322,104 @@ def history(req):
         ),
         uid=req.scope["uid"],
     )
+
+
+# A volunteer's own upcoming shift: "Can't make this one" (Matches, the chat). Like the
+# .ics, any other shift id is a 404.
+
+
+def _own_shift(uid, shift_id):
+    try:
+        return data.shift_event(uid, shift_id)
+    except PermissionError:
+        return None
+
+
+def ShiftQuestion(uid, s, title, *body):
+    return VolunteerShell(
+        "matches",
+        Div(
+            H1(title, cls="font-display text-xl font-extrabold leading-snug text-ink"),
+            P(f"{when(s['starts_at'])} with {s['org']}", cls=TextPresets.muted_sm),
+            *body,
+            cls="mt-4 space-y-3 p-5 " + CARD,
+        ),
+        uid=uid,
+    )
+
+
+def CancelShiftPage(uid, s, error=None, reason=""):
+    return ShiftQuestion(
+        uid,
+        s,
+        f"Can't make {s['title']}?",
+        P(
+            f"Only this shift is cancelled: you stay matched, and {s['org']} hears from "
+            "us right away.",
+            cls="text-sm text-ink",
+        ),
+        PlainForm(
+            Field(
+                f"Want to say why? (optional, up to {data.MAX_CANCEL_REASON} characters)",
+                Textarea(
+                    reason,
+                    name="reason",
+                    rows=3,
+                    maxlength=str(data.MAX_CANCEL_REASON),
+                    cls="uk-textarea",
+                ),
+            ),
+            Alert(error, cls=AlertT.error) if error else None,
+            Div(
+                Button("Cancel this shift", cls=ButtonT.destructive),
+                A("Keep it", href="/matches", cls=SMALL_LINK),
+                cls="flex items-center gap-4",
+            ),
+            action=f"/shifts/{s['id']}/cancel",
+            method="post",
+            cls="space-y-3 pt-2",
+        ),
+    )
+
+
+NOT_FOUND = "Not found"
+
+
+@ar("/shifts/{shift_id}/cancel", methods=["GET"])
+def cancel_mine_page(req, shift_id: int):
+    s = _own_shift(req.scope["uid"], shift_id)
+    if s is None:
+        return Response(NOT_FOUND, status_code=404)
+    return CancelShiftPage(req.scope["uid"], s)
+
+
+@ar("/shifts/{shift_id}/cancel", methods=["POST"])
+async def cancel_mine(req, shift_id: int):
+    form = await str_form(req)
+    if form is None:
+        return Refusal(400)
+    return await run_in_threadpool(_sync_cancel_mine, req, form, shift_id)
+
+
+def _sync_cancel_mine(req, form, shift_id: int):
+    uid = req.scope["uid"]
+    reason = form.get("reason", "")
+    try:
+        done = data.cancel_my_shift(uid, shift_id, reason)
+    except PermissionError:
+        return Response(NOT_FOUND, status_code=404)
+    except ValueError:
+        s = _own_shift(uid, shift_id)
+        if s is None:
+            return Response(NOT_FOUND, status_code=404)
+        return CancelShiftPage(
+            uid,
+            s,
+            "That reason holds a character we can't show, or is too long.",
+            reason[: data.MAX_CANCEL_REASON],
+        )
+    notify.on_shift_cancelled(shift_id, done)
+    return Redirect("/matches?notice=cancelled")
 
 
 # GET /shifts/{id}.ics: one VEVENT, written by hand (RFC 5545). The start is wall clock

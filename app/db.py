@@ -210,18 +210,16 @@ class Shift:
     marked_by: int
     corrected_at: str  # UTC; the one correction allowed within 7 days of marked_at
     corrected_by: int
-    cancelled_at: (
-        str  # UTC; set when a coordinator cancels it (a withdraw leaves it null)
-    )
-    cancelled_by: int
+    cancelled_at: str  # UTC; set when a coordinator or the volunteer cancels it (a withdraw leaves it null)
+    cancelled_by: int  # the coordinator, or the volunteer ("Can't make this one")
     created_at: str
 
 
 class Notification:
     id: int
-    kind: str  # accepted|message|likes|reminder|urgent|auto
+    kind: str  # accepted|message|likes|reminder|urgent|auto|cancel|withdrawn
     key: str  # unique per logical event, so a repeat or a throttled send is a no-op
-    recipient_id: int  # the volunteer's profile id; for "likes", the org id
+    recipient_id: int  # the volunteer's profile id; for "likes", "auto", "cancel" and "withdrawn", the org id
     sent_at: str  # UTC; when this stream's last send was claimed
     status: str  # pending|sent|failed|skipped|cancelled|deferred (the SMS ceiling)|unknown (a timeout: may have been delivered)
     attempts: (
