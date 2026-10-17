@@ -400,9 +400,15 @@ def test_reminders_pick_exactly_the_shifts_in_the_window_and_only_once(
         r = post_reminders(anon, Authorization=f"Bearer {TOKEN}")
         assert r.status_code == 200
         assert len(texts()) == n
+    # "Still coming?": each links to its own shift's confirm page, with no login token
+    assert sorted(t.rsplit(" ", 1)[1] for _, t in texts()) == sorted(
+        f"{BASE}/shifts/{s.id}/confirm"
+        for s in shifts(where="status = 'scheduled'")
+        if local(clock, hours=23) <= s.starts_at <= local(clock, hours=25)
+    )
     assert all(
         t.startswith(f"Reminder: {PANTRY} with {orgs()[0].name} is on ")
-        and f"{BASE}/matches" in t
+        and "Still coming? " in t
         for _, t in texts()
     )
 

@@ -929,8 +929,8 @@ def _face(org, o):
 
 # An upcoming shift for a calendar: ui.AddToCalendar and GET /shifts/{id}.ics read it.
 _EVENT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, o.title, g.name AS org, o.neighborhood "
-    "FROM shift s JOIN match m ON m.id = s.match_id "
+    "SELECT s.id, s.match_id, s.starts_at, s.confirmed_at, o.title, g.name AS org, "
+    "o.neighborhood FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "WHERE m.status = 'accepted' AND s.status = 'scheduled' AND s.starts_at > ? "
 )
@@ -947,9 +947,10 @@ def _next_shift(match_id):
 
 
 def shift_event(uid, shift_id):
-    """{"id", "match_id", "starts_at", "title", "org", "neighborhood"} of this volunteer's
-    own upcoming shift on an accepted match. PermissionError for anything else (another
-    volunteer's shift, a cancelled or past one, an unknown id), so the caller answers 404."""
+    """{"id", "match_id", "starts_at", "confirmed_at", "title", "org", "neighborhood"} of
+    this volunteer's own upcoming shift on an accepted match. PermissionError for anything
+    else (another volunteer's shift, a cancelled or past one, an unknown id), so the caller
+    answers 404."""
     if not _is_id(shift_id):
         raise PermissionError("no such shift")
     rows = _db.db.q(
@@ -985,6 +986,15 @@ def cancel_my_shift(uid, shift_id, reason=""):
         late = s["starts_at"] <= soon
         call = _refill(_db.matches[s["match_id"]], s["starts_at"]) if late else None
     return {"reason": reason, "late": late, "call": call}
+
+
+def confirm_my_shift(uid, shift_id):
+    """ "Yes, I'll be there": stamps the volunteer's own upcoming shift's confirmed_at,
+    once. PermissionError as shift_event."""
+    with _db.db.conn:
+        s = shift_event(uid, shift_id)
+        if not s["confirmed_at"]:
+            _db.shifts.update(id=s["id"], confirmed_at=_now())
 
 
 def my_matches(uid):
@@ -1260,7 +1270,8 @@ _BLOCKED = (
 )
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "o.title, o.recurrence, g.name AS org, p.display_name, p.last_name, p.photo_key, "
+    "s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
+    "p.last_name, p.photo_key, "
     "m.status AS match_status, " + _BLOCKED + " AS blocked, "
     "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
     "o.causes "
@@ -1300,7 +1311,8 @@ def org_shifts(coordinator_uid):
 
     to_mark: started and not yet marked. marked: marked within 7 days and still open to
     their one correction. Rows carry the volunteer's name as volunteer_name gives it
-    (BLOCKED_NAME under a block) and photo, whether the opening repeats weekly, and "latest" when the row is its match's latest live shift (set only
+    (BLOCKED_NAME under a block) and photo, whether the opening repeats weekly, whether the
+    volunteer confirmed they're coming ("confirmed"), and "latest" when the row is its match's latest live shift (set only
     on rows in these lists; an old corrected shift can be the latest but is not listed).
     """
     now = _local_now()
@@ -1326,6 +1338,7 @@ def org_shifts(coordinator_uid):
         )
         row["photo_key"] = None if r["blocked"] else r["photo_key"]
         row["weekly"] = r["recurrence"] == "weekly"
+        row["confirmed"] = bool(r["confirmed_at"])
         if r["status"] == "scheduled":
             out["upcoming" if r["starts_at"] > now else "to_mark"].append(row)
         elif not r["corrected_at"] and datetime.fromisoformat(r["marked_at"]) >= cutoff:

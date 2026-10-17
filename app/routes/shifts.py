@@ -164,8 +164,9 @@ def org_shifts_page(req):
                             CancelForm(s["id"]),
                             cls="flex flex-wrap gap-2 pt-1",
                         ),
-                        status="Upcoming",
-                        tone="info",
+                        # "Still coming?" answered yes from the reminder's link
+                        status="Confirmed" if s["confirmed"] else "Upcoming",
+                        tone="good" if s["confirmed"] else "info",
                     )
                     for s in box["upcoming"]
                 ],
@@ -324,8 +325,8 @@ def history(req):
     )
 
 
-# A volunteer's own upcoming shift: "Can't make this one" (Matches, the chat). Like the
-# .ics, any other shift id is a 404.
+# A volunteer's own upcoming shift: "Still coming?" (the reminder's link) and "Can't make
+# this one" (Matches, the chat). Like the .ics, any other shift id is a 404.
 
 
 def _own_shift(uid, shift_id):
@@ -420,6 +421,42 @@ def _sync_cancel_mine(req, form, shift_id: int):
         )
     notify.on_shift_cancelled(shift_id, done)
     return Redirect("/matches?notice=cancelled")
+
+
+@ar("/shifts/{shift_id}/confirm", methods=["GET"])
+def confirm_page(req, shift_id: int):
+    uid = req.scope["uid"]
+    s = _own_shift(uid, shift_id)
+    if s is None:
+        return Response(NOT_FOUND, status_code=404)
+    return ShiftQuestion(
+        uid,
+        s,
+        f"Still coming to {s['title']}?",
+        P("You told them you're coming. Thanks!", cls="text-sm font-semibold text-ink")
+        if s["confirmed_at"]
+        else None,
+        Div(
+            None
+            if s["confirmed_at"]
+            else PlainForm(
+                Button("Yes, I'll be there", cls=ButtonT.primary),
+                action=f"/shifts/{s['id']}/confirm",
+                method="post",
+            ),
+            A("Can't make it", href=f"/shifts/{s['id']}/cancel", cls=SMALL_LINK),
+            cls="flex flex-wrap items-center gap-4 pt-2",
+        ),
+    )
+
+
+@ar("/shifts/{shift_id}/confirm", methods=["POST"])
+def confirm(req, shift_id: int):
+    try:
+        data.confirm_my_shift(req.scope["uid"], shift_id)
+    except PermissionError:
+        return Response(NOT_FOUND, status_code=404)
+    return Redirect("/matches?notice=confirmed")
 
 
 # GET /shifts/{id}.ics: one VEVENT, written by hand (RFC 5545). The start is wall clock

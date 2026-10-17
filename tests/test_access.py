@@ -132,6 +132,8 @@ ROUTES = {
     ("GET", "/shifts/{shift_id}.ics"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
     ("POST", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
+    ("GET", "/shifts/{shift_id}/confirm"): ("volunteer", "own-record"),
+    ("POST", "/shifts/{shift_id}/confirm"): ("volunteer", "own-record"),
     ("GET", "/chat/{match_id}"): ("volunteer", "own-record"),
     ("POST", "/chat/{match_id}/send"): ("volunteer", "own-record"),
     ("WS", "/chat/{match_id}/ws"): ("volunteer", "own-record"),
@@ -673,8 +675,8 @@ def check_shift_ics(w):
 
 def own_shift_check(method, action):
     """B, and A's own org's coordinator, get 404 or their home for A's shift, whatever the
-    id: no page, the shift stays scheduled, the org gets no email. Then A gets the page,
-    or the change."""
+    id: no page, the shift stays scheduled and unconfirmed, the org gets no email. Then A
+    gets the page, or the change."""
 
     def check(w):
         sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
@@ -692,14 +694,16 @@ def own_shift_check(method, action):
             no_secrets(r)
         assert_turned_away(call(w.org0, sid), "coordinator", f"/shifts/{sid}")
         assert_turned_away(call(w.admin, sid), "admin", f"/shifts/{sid}")
-        assert shifts[sid].status == "scheduled"
+        assert (shifts[sid].status, shifts[sid].confirmed_at) == ("scheduled", None)
         assert len(notify.get_emailer().sent) == sent
         r = call(w.a, sid)
         if method == "GET":
             assert r.status_code == 200 and PANTRY in r.text
-        else:
+        elif action == "cancel":
             assert r.status_code == 303 and shifts[sid].status == "cancelled"
             assert matches[w.match.id].status == "accepted"
+        else:
+            assert r.status_code == 303 and shifts[sid].confirmed_at
 
     return check
 
@@ -924,7 +928,7 @@ OWNERSHIP = {
     **{
         (method, f"/shifts/{{shift_id}}/{action}"): own_shift_check(method, action)
         for method in ("GET", "POST")
-        for action in ("cancel",)
+        for action in ("cancel", "confirm")
     },
     ("GET", "/chat/{match_id}"): chat_id_check("b", "a", "/chat", "page"),
     ("POST", "/chat/{match_id}/send"): chat_id_check("b", "a", "/chat", "send"),

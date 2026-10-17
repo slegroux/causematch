@@ -550,7 +550,7 @@ def test_only_the_volunteer_on_an_upcoming_shift_gets_its_ics(accepted, clock, a
     assert accepted.a.get(path).status_code == 404
 
 
-# --- the volunteer's side: "Can't make this one" ------------------------------------------
+# --- the volunteer's side: "Can't make this one" and "Still coming?" ------------------
 
 
 def org_emails(subject):
@@ -594,3 +594,17 @@ def test_a_withdrawal_emails_the_coordinators(accepted):
     assert r.status_code == 303 and matches[accepted.match.id].status == "withdrawn"
     [(to, body)] = org_emails("A volunteer withdrew from")
     assert to == "coord0@example.org" and "spot is open again" in body
+
+
+def test_still_coming_yes_is_recorded_and_the_coordinator_sees_confirmed(
+    accepted, clock
+):
+    [s] = shifts_of(accepted.match)
+    page = accepted.a.get(f"/shifts/{s.id}/confirm").text
+    assert "Yes, I&#x27;ll be there" in page or "Yes, I'll be there" in page
+    assert f'href="/shifts/{s.id}/cancel"' in page  # "Can't make it": item 1's page
+    assert "Confirmed" not in accepted.org0.get("/org/shifts").text
+    r = accepted.a.post(f"/shifts/{s.id}/confirm", follow_redirects=False)
+    assert r.headers["location"] == "/matches?notice=confirmed"
+    assert shifts[s.id].confirmed_at and shifts[s.id].status == "scheduled"
+    assert "Confirmed" in accepted.org0.get("/org/shifts").text

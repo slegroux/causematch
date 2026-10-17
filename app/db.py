@@ -213,6 +213,7 @@ class Shift:
     cancelled_at: str  # UTC; set when a coordinator or the volunteer cancels it (a withdraw leaves it null)
     cancelled_by: int  # the coordinator, or the volunteer ("Can't make this one")
     created_at: str
+    confirmed_at: str  # UTC; the volunteer answered "Still coming?" with yes
 
 
 class Notification:

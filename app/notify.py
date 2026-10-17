@@ -552,7 +552,8 @@ def send_due_reminders():
             f"reminder:{shift_id}",
             volunteer_id,
             f"Reminder: {info['opening']} with {info['org']} is on "
-            f"{start.strftime('%a %b %-d, %-I:%M %p')}. Details: {public_base_url()}/matches",
+            f"{start.strftime('%a %b %-d, %-I:%M %p')}. Still coming? "
+            f"{public_base_url()}/shifts/{shift_id}/confirm",
         ):
             reminded.add(volunteer_id)
     return sent + len(reminded)
