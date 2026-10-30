@@ -26,3 +26,4 @@ package-lock.json
 .sesskey
 CLAUDE.md
 .claude/
+_site/

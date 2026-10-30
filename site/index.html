@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Causematch: swipe to volunteer in Los Angeles County</title>
+<meta name="description" content="Causematch matches people with nonprofits across Los Angeles County that need a hand. Swipe through openings ranked for you; when the nonprofit says yes too, a chat opens.">
+<meta property="og:title" content="Causematch: swipe to volunteer">
+<meta property="og:description" content="Volunteers swipe, nonprofits say yes, and a chat opens. A Los Angeles County pilot, coming soon.">
+<meta property="og:image" content="https://slegroux.github.io/causematch/assets/hero.png">
+<meta name="theme-color" content="#FFF8F0">
+<link rel="icon" href="assets/causematch-mark.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/nunito-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+/* The app's own palette and font (static/theme.css, static/vendor/fonts): one column,
+   sections that alternate between the cream page and white cards. */
+@font-face {
+  font-family: "Nunito";
+  src: url("assets/fonts/nunito-latin-wght-normal.woff2") format("woff2");
+  font-weight: 200 1000;
+  font-display: swap;
+}
+:root {
+  --bg: #FFF8F0; --card: #FFFFFF; --sand: #F5E9DC; --line: #EADCCD;
+  --ink: #2D1E17; --muted: #6E5A4E; --brand: #C0452A; --brand-strong: #A33A23;
+  --brand-soft: #FBE4DC; --brand-ink: #9A3520;
+  --food: #8A3F06; --food-soft: #FDEBD8; --parks: #1F5C38; --parks-soft: #DFF1E5;
+  --animals: #5B3392; --animals-soft: #EEE5FA; --homeless: #1F4F87; --homeless-soft: #E0ECF8;
+  --font: "Nunito", ui-rounded, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1B1310; --card: #261B16; --sand: #30231D; --line: #45342B;
+    --ink: #F6ECE4; --muted: #C2AE9F; --brand: #E2694C; --brand-strong: #EC8268;
+    --brand-soft: #3D211A; --brand-ink: #F3A08B;
+    --food: #F5B77A; --food-soft: #3A2414; --parks: #8FD6A8; --parks-soft: #16301F;
+    --animals: #C9A8F2; --animals-soft: #2A1E3D; --homeless: #9CC3F0; --homeless-soft: #172A40;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 17px; line-height: 1.6; }
+img, video { max-width: 100%; display: block; }
+a { color: inherit; }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; border-radius: 6px; }
+h1, h2, h3 { line-height: 1.15; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 max(20px, env(safe-area-inset-left, 0px)); }
+.eyebrow { font-size: .8rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--brand-ink); }
+.muted { color: var(--muted); }
+
+header.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; }
+.logo { display: inline-flex; align-items: center; min-height: 44px; }
+.logo img { height: 34px; width: auto; }
+nav.links { display: flex; flex-wrap: wrap; gap: 4px 18px; font-weight: 700; font-size: .95rem; }
+nav.links a { text-decoration: none; color: var(--muted); display: inline-flex; align-items: center; min-height: 44px; }
+nav.links a:hover { color: var(--ink); }
+@media (max-width: 640px) { nav.links .hide-sm { display: none; } }
+
+.hero { padding: 56px 0 40px; }
+.hero .wrap { display: grid; gap: 40px; }
+.hero-text { display: flex; flex-direction: column; gap: 18px; max-width: 46rem; }
+.hero h1 { font-size: clamp(2.6rem, 7vw, 4.4rem); font-weight: 900; letter-spacing: -0.025em; }
+.hero h1 span { color: var(--brand); }
+.lede { font-size: 1.2rem; color: var(--muted); max-width: 40rem; }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 6px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border-radius: 999px; font-weight: 800; text-decoration: none; border: 1px solid transparent; }
+.btn.primary { background: var(--brand); color: #fff; }
+.btn.primary:hover { background: var(--brand-strong); }
+.btn.ghost { border-color: var(--line); background: var(--card); color: var(--ink); }
+.btn.ghost:hover { border-color: var(--brand); }
+.hero-img { border-radius: 28px; overflow: hidden; border: 1px solid var(--line); }
+.causes { display: flex; flex-wrap: wrap; gap: 8px; }
+.cause { padding: 6px 14px; border-radius: 999px; font-weight: 800; font-size: .9rem; }
+.c-food { background: var(--food-soft); color: var(--food); }
+.c-parks { background: var(--parks-soft); color: var(--parks); }
+.c-animals { background: var(--animals-soft); color: var(--animals); }
+.c-homeless { background: var(--homeless-soft); color: var(--homeless); }
+
+section.block { padding: 64px 0; }
+section.block.alt { background: var(--card); border-block: 1px solid var(--line); }
+.head { display: flex; flex-direction: column; gap: 10px; max-width: 44rem; margin-bottom: 32px; }
+.head h2 { font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 900; }
+
+.player { border-radius: 20px; overflow: hidden; border: 1px solid var(--line); background: var(--sand); box-shadow: 0 18px 50px -30px rgba(45,30,23,.55); }
+.player video { width: 100%; aspect-ratio: 16 / 9; }
+
+.sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+.side { background: var(--bg); border: 1px solid var(--line); border-radius: 24px; padding: 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+section.block:not(.alt) .side { background: var(--card); }
+.side h3 { font-size: 1.35rem; font-weight: 900; }
+.side ol { list-style: none; margin: 0; padding: 0; counter-reset: s; display: flex; flex-direction: column; gap: 16px; }
+.side li { counter-increment: s; display: grid; grid-template-columns: 2.25rem 1fr; gap: 12px; }
+.side li::before { content: counter(s); display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; font-weight: 900; color: #fff; background: var(--brand); }
+.side.vol li::before { background: #2E7A4A; }
+.side li b { display: block; }
+.side li span { color: var(--muted); font-size: .97rem; }
+
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+.feature { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; border-top: 3px solid var(--brand); min-width: 0; }
+.feature h3 { font-size: 1.1rem; font-weight: 900; }
+.feature p { color: var(--muted); font-size: .97rem; }
+
+.privacy { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 0; margin: 0; list-style: none; }
+.privacy li { background: var(--bg); border: 1px solid var(--line); border-radius: 18px; padding: 18px 20px; }
+.privacy li b { display: block; margin-bottom: 4px; }
+.privacy li span { color: var(--muted); font-size: .95rem; }
+
+.status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; background: var(--brand-soft); border-radius: 24px; padding: 28px 32px; }
+.status h2 { font-size: 1.5rem; font-weight: 900; }
+.status p { color: var(--muted); max-width: 40rem; }
+
+footer { padding: 36px 0 48px; color: var(--muted); font-size: .92rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="#top" aria-label="Causematch home">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/causematch-logo-dark.svg">
+        <img src="assets/causematch-logo-light.svg" alt="Causematch" width="170" height="34">
+      </picture>
+    </a>
+    <nav class="links" aria-label="Sections">
+      <a href="#demo">Demo</a>
+      <a class="hide-sm" href="#how">How it works</a>
+      <a class="hide-sm" href="#privacy">Privacy</a>
+      <a href="https://github.com/slegroux/causematch">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-text">
+        <span class="eyebrow">Los Angeles County pilot · coming soon</span>
+        <h1>Swipe to <span>volunteer.</span></h1>
+        <p class="lede">Causematch matches people with nonprofits across Los Angeles County that need a hand. Swipe through openings ranked for you. When the nonprofit says yes too, you're matched and a chat opens.</p>
+        <div class="causes" aria-label="Causes in the pilot">
+          <span class="cause c-food">Food insecurity</span>
+          <span class="cause c-parks">Environment &amp; parks</span>
+          <span class="cause c-animals">Animal shelters</span>
+          <span class="cause c-homeless">Homelessness services</span>
+        </div>
+        <div class="ctas">
+          <a class="btn primary" href="#demo">Watch the 2-minute demo</a>
+          <a class="btn ghost" href="#how">How it works</a>
+        </div>
+      </div>
+      <div class="hero-img">
+        <img src="assets/hero.png" width="1600" height="900" alt="Causematch on a phone: a volunteer's swipe deck, a match chat, and a nonprofit's volunteer inbox">
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="demo" aria-labelledby="demo-h">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">From sign-up to first shift</span>
+        <h2 id="demo-h">See a nonprofit and a volunteer find each other</h2>
+        <p class="muted">Jordan signs Silver Lake Garden Friends up and posts an opening. Riley registers with a phone number, picks the causes they love and when they're free, and likes it. Jordan says yes, and the two are chatting two minutes later. Recorded live in the app, on invented demo data.</p>
+      </div>
+      <div class="player">
+        <video controls preload="metadata" playsinline poster="assets/demo-poster.jpg" aria-label="Causematch demo: a new nonprofit and a new volunteer sign up, match and chat">
+          <source src="assets/demo.mp4" type="video/mp4">
+        </video>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">How it works</span>
+        <h2 id="how-h">Two sides, one yes each</h2>
+        <p class="muted">A match takes two likes: the volunteer's, then the nonprofit's.</p>
+      </div>
+      <div class="sides">
+        <div class="side vol">
+          <h3>For volunteers</h3>
+          <ol>
+            <li><div><b>Sign up with your phone</b><span>A text code, no password. Tell us where you'll help from, which causes you love, and when you're usually free.</span></div></li>
+            <li><div><b>Swipe openings ranked for you</b><span>Each card says why it's shown: a cause you love, a time you're free, a short trip. Like it or pass.</span></div></li>
+            <li><div><b>Match, chat and show up</b><span>When the nonprofit says yes, your first shift is booked and a chat opens. You get a text the day before.</span></div></li>
+          </ol>
+        </div>
+        <div class="side" id="nonprofits">
+          <h3>For nonprofits</h3>
+          <ol>
+            <li><div><b>Claim your organization</b><span>Find it by name in IRS records. A Causematch admin checks every request before anyone is added.</span></div></li>
+            <li><div><b>Post openings anywhere in the county</b><span>What volunteers will do, where and when, how many people. Short of people this week? Post a last-minute call.</span></div></li>
+            <li><div><b>Say yes, chat and track shifts</b><span>One inbox shows who's waiting for an answer and which messages need a reply. Mark who came after each shift.</span></div></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" aria-labelledby="why-h">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Why it works</span>
+        <h2 id="why-h">Built for the shift, not the sign-up sheet</h2>
+      </div>
+      <div class="features">
+        <div class="feature"><h3>Ranked, with reasons</h3><p>Your causes, places and free times rank every opening. "Free in the next 48h" and filters narrow the deck when you want something now.</p></div>
+        <div class="feature"><h3>Last-minute calls</h3><p>A nonprofit short of people in the next two days can text nearby volunteers who opted in and are free, with caps so nobody gets spammed.</p></div>
+        <div class="feature"><h3>Commitments that hold</h3><p>Day-before "still coming?" texts, one-tap "can't make this one", and a warning when two shifts clash.</p></div>
+        <div class="feature"><h3>On a phone, no app store</h3><p>It runs in the browser and can be added to your home screen in two taps.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="privacy" aria-labelledby="privacy-h">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Privacy by design</span>
+        <h2 id="privacy-h">You decide what a nonprofit sees</h2>
+      </div>
+      <ul class="privacy">
+        <li><b>A first name until they say yes</b><span>A nonprofit sees "Sam L." and only the fields you agreed to share, until it accepts you.</span></li>
+        <li><b>Places, never your address</b><span>You help from a neighborhood or ZIP code. Device location is rounded to about a kilometer.</span></li>
+        <li><b>Preferences stay private</b><span>Your places, how you rate each cause and your dealbreakers only rank your deck. A nonprofit sees a short summary after you like one of its openings.</span></li>
+        <li><b>Clean photos, quiet inbox</b><span>Photos are re-encoded with no hidden metadata, and sign-ins and texts are rate-limited.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" aria-labelledby="status-h" style="padding-top:0">
+    <div class="wrap">
+      <div class="status">
+        <div>
+          <h2 id="status-h">Coming to Los Angeles County</h2>
+          <p>Causematch is pre-launch. A private preview is running while the pilot gets ready. It's open source: follow along or contribute on GitHub.</p>
+        </div>
+        <a class="btn primary" href="https://github.com/slegroux/causematch">Follow on GitHub</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Causematch · open source under the MIT licence · built with FastHTML, MonsterUI and SQLite</span>
+    <span>The organizations and people in the demo are invented.</span>
+  </div>
+</footer>
+</body>
+</html>
