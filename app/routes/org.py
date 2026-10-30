@@ -177,6 +177,11 @@ def UrgentLine(o, urgent, accepted):
     return None
 
 
+def messages_to_answer(n):
+    """The dashboard link and the inbox heading for the chats owed a reply."""
+    return "1 message to answer" if n == 1 else f"{n} messages to answer"
+
+
 def OpeningRow(o, counts, urgent=None):
     status, tone = OPENING_STATUS.get(o.status, (o.status.title(), "off"))
     pending, accepted = counts.get("pending", 0), counts.get("accepted", 0)
@@ -263,11 +268,11 @@ def org_home(req, error=""):
             )
         )
     named = bool(profile.display_name)
+    unanswered = len(data.org_unanswered(uid))
     return OrgShell(
         "openings",
-        sum(
-            c["pending"] for c in counts.values()
-        ),  # data.org_waiting, without a re-read
+        # data.org_waiting, without re-reading the counts
+        sum(c["pending"] for c in counts.values()) + unanswered,
         Div(
             H1("Your openings", cls=ORG_TITLE),
             A(
@@ -279,6 +284,14 @@ def org_home(req, error=""):
             else None,
             cls="flex flex-wrap items-center justify-between gap-3 pb-4",
         ),
+        A(
+            messages_to_answer(unanswered),
+            href="/org/inbox",
+            cls="mb-4 inline-flex min-h-11 items-center rounded-full bg-brand px-4 "
+            "text-sm font-bold text-white hover:bg-brand-strong",
+        )
+        if unanswered
+        else None,
         None
         if named
         else P(
@@ -903,6 +916,18 @@ def InboxRow(m):
     )
 
 
+def UnansweredRow(c):
+    """A chat whose latest message is the volunteer's: who, for what, what they said."""
+    return A(
+        VolunteerHeader(c["name"], c["photo_key"]),
+        P(f"About: {c['opening']}", cls=TextPresets.muted_sm),
+        P(c["body"], cls="line-clamp-2 whitespace-pre-line text-ink"),
+        Span("Reply", cls="text-sm font-bold text-brand underline"),
+        href=f"/org/chat/{c['id']}",
+        cls="block space-y-2 p-4 hover:border-brand " + CARD,
+    )
+
+
 def InboxSection(title, rows, empty=None):
     if not rows and empty is None:
         return None
@@ -920,6 +945,7 @@ def inbox(req):
     chat_id = chat_id if chat_id.isascii() and chat_id.isdigit() else ""
     uid = req.scope["uid"]
     box = data.org_inbox(uid)
+    unanswered = data.org_unanswered(uid)
     return OrgShell(
         "inbox",
         data.org_waiting(uid),
@@ -933,6 +959,15 @@ def inbox(req):
             cls=AlertT.success + " mb-4",
         )
         if notice == "accepted" and chat_id
+        else None,
+        Div(
+            InboxSection(
+                messages_to_answer(len(unanswered)),
+                [UnansweredRow(c) for c in unanswered],
+            ),
+            cls="pb-8 lg:max-w-[calc(50%-1rem)]",
+        )
+        if unanswered
         else None,
         Div(
             InboxSection(
