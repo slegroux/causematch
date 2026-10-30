@@ -220,6 +220,9 @@ class Shift:
     created_at: str
     confirmed_at: str  # UTC; the volunteer answered "Still coming?" with yes
     duration_minutes: int  # copied from the opening; NULL: no length known
+    # The hours a coordinator confirmed when marking it attended (choices.SHIFT_HOURS);
+    # NULL: not attended, or attended with the hours unknown
+    confirmed_minutes: int
 
 
 class Notification:

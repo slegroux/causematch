@@ -21,6 +21,7 @@ from app.choices import (
     INTERESTS,
     LANGUAGES,
     MAX_MINUTES,
+    SHIFT_HOURS,
     SHIFT_LENGTHS,
 )
 from app.config import demo_matches, phone_hash_key
@@ -1371,22 +1372,55 @@ def cancel_shift(coordinator_uid, shift_id):
         return _db.shifts[shift_id]
 
 
-def complete_shift(coordinator_uid, shift_id, attended):
+class HoursRefused(ValueError):
+    """Attended with hours that can't be confirmed: none on a shift with no length (when
+    the caller requires them), or more than the shift's length and the time since it
+    started, whichever is longer."""
+
+
+def complete_shift(
+    coordinator_uid, shift_id, attended, minutes=None, require_hours=False
+):
     """Mark a started shift completed (attended) or no_show; the Shift.
+
+    Attended confirms the hours: `minutes` (one of choices.SHIFT_HOURS, ValueError
+    otherwise) or, when None, the shift's own length (NULL on an old shift: hours unknown,
+    or HoursRefused with require_hours). Hours above both the shift's length and the time
+    since it started raise HoursRefused, so nobody confirms 12 hours of a 1-hour shift at
+    its start. A no-show confirms none.
 
     PermissionError unless a member of the shift's org. ValueError before the shift
     starts, for a cancelled shift, and for a change after the one correction or more than
-    7 days after the first mark. Marking the same result again changes nothing.
+    7 days after the first mark. Marking the same result with the same minutes again
+    changes nothing; a different result, or different minutes on an attended shift, is
+    the one correction.
     """
     with _db.db.conn:
         sh, org_id = _shift_org(shift_id)
         _member_of(coordinator_uid, org_id)
         status = "completed" if attended else "no_show"
+        if attended and minutes is not None and str(minutes) not in dict(SHIFT_HOURS):
+            raise ValueError("pick the hours from the list")
+        confirmed = (
+            None
+            if not attended
+            else sh.duration_minutes
+            if minutes is None
+            else int(minutes)
+        )
         if sh.status == "cancelled":
             raise ValueError("this shift was cancelled")
         if sh.starts_at > _local_now():
             raise ValueError("this shift has not started")
-        if sh.status == status:
+        if attended and confirmed is None and require_hours:
+            raise HoursRefused("pick the hours: this shift has no length")
+        if confirmed is not None:
+            elapsed = _parse_local(_local_now()) - _parse_local(sh.starts_at)
+            if confirmed > max(sh.duration_minutes or 0, elapsed.total_seconds() // 60):
+                raise HoursRefused(
+                    "more hours than the shift and the time since it began"
+                )
+        if sh.status == status and sh.confirmed_minutes == confirmed:
             return sh
         if sh.status != "scheduled":
             if sh.corrected_at:
@@ -1399,12 +1433,17 @@ def complete_shift(coordinator_uid, shift_id, attended):
             _db.shifts.update(
                 id=shift_id,
                 status=status,
+                confirmed_minutes=confirmed,
                 corrected_at=_now(),
                 corrected_by=coordinator_uid,
             )
         else:
             _db.shifts.update(
-                id=shift_id, status=status, marked_at=_now(), marked_by=coordinator_uid
+                id=shift_id,
+                status=status,
+                confirmed_minutes=confirmed,
+                marked_at=_now(),
+                marked_by=coordinator_uid,
             )
         return _db.shifts[shift_id]
 
@@ -1415,7 +1454,8 @@ _BLOCKED = (
     "(b.blocked_user_id = p.id OR (b.blocker_id = p.id AND b.blocked_user_id IS NULL)))"
 )
 _SHIFT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.status, s.marked_at, "
+    "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.confirmed_minutes, "
+    "s.status, s.marked_at, "
     "s.corrected_at, s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
     "p.last_name, p.photo_key, "
     "m.status AS match_status, " + _BLOCKED + " AS blocked, "
@@ -1448,6 +1488,7 @@ def my_shifts(uid):
                 "match_id",
                 "starts_at",
                 "duration_minutes",
+                "confirmed_minutes",
                 "status",
                 "title",
                 "org",
@@ -1488,6 +1529,7 @@ def org_shifts(coordinator_uid):
                 "match_id",
                 "starts_at",
                 "duration_minutes",
+                "confirmed_minutes",
                 "status",
                 "title",
                 "org",

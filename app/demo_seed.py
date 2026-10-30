@@ -330,6 +330,8 @@ def _past_shift(match_id, coordinator, days_ago, status, minutes):
             match_id=match_id,
             starts_at=when,
             duration_minutes=minutes,
+            # an attended shift carries the hours its nonprofit confirmed
+            confirmed_minutes=minutes if status == "completed" else None,
             status=status,
             kind="added",
             created_by=coordinator,

@@ -652,3 +652,88 @@ def test_shift_without_a_length_shows_only_its_start(world):
     # the calendar file still gives it two hours
     ics = world.a.get(f"/shifts/{s.id}.ics").text
     assert "DTEND;TZID=America/Los_Angeles:20261022T110000" in ics
+
+
+def _started(accepted, clock, minutes=180):
+    """The accepted match's one shift, given a length and already started."""
+    [s] = shifts_of(accepted.match)
+    shifts.update(id=s.id, duration_minutes=minutes)
+    clock.at = datetime.fromisoformat(s.starts_at).replace(tzinfo=LA) + timedelta(
+        hours=4
+    )
+    return s
+
+
+def test_confirmed_hours_one_tap_stores_the_shifts_length(accepted, clock):
+    s = _started(accepted, clock)
+    page = accepted.org0.get("/org/shifts").text
+    assert 'name="minutes"' in page and 'value="180" selected' in page
+    r = accepted.org0.post(
+        f"/org/shifts/{s.id}/mark",
+        data={"result": "attended", "minutes": "180"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and shifts[s.id].confirmed_minutes == 180
+    assert "3 hours confirmed" in accepted.org0.get("/org/shifts").text
+    assert "3 hours confirmed" in accepted.a.get("/history").text
+    # chosen hours replace the length; no hours at all falls back to it
+    other = data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=1))
+    shifts.update(id=other.id, starts_at="2026-10-15T01:00", duration_minutes=180)
+    assert data.complete_shift(accepted.org0.uid, other.id, True, "150")
+    assert shifts[other.id].confirmed_minutes == 150
+    third = data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=3))
+    shifts.update(id=third.id, starts_at="2026-10-13T01:00", duration_minutes=180)
+    assert (
+        data.complete_shift(accepted.org0.uid, third.id, True).confirmed_minutes == 180
+    )
+    # an old shift with no length: the page asks for its hours rather than store none
+    old = data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=2))
+    shifts.update(id=old.id, starts_at="2026-10-14T01:00", duration_minutes=None)
+    r = accepted.org0.post(
+        f"/org/shifts/{old.id}/mark",
+        data={"result": "attended", "minutes": ""},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/org/shifts?notice=hours"
+    assert shifts[old.id].status == "scheduled"
+
+
+def test_confirmed_hours_no_show_stores_none_and_forged_hours_are_refused(
+    accepted, clock
+):
+    s = _started(accepted, clock)
+    for bad in ("45", "abc", "9999"):
+        r = accepted.org0.post(
+            f"/org/shifts/{s.id}/mark",
+            data={"result": "attended", "minutes": bad},
+            follow_redirects=False,
+        )
+        assert r.status_code == 400 and shifts[s.id].status == "scheduled"
+    with pytest.raises(ValueError, match="hours"):
+        data.complete_shift(accepted.org0.uid, s.id, True, 45)
+    # 4 hours into a 3-hour shift: up to 4 hours, not 5
+    with pytest.raises(data.HoursRefused):
+        data.complete_shift(accepted.org0.uid, s.id, True, "300")
+    assert shifts[s.id].status == "scheduled"
+    r = accepted.org0.post(
+        f"/org/shifts/{s.id}/mark",
+        data={"result": "no_show", "minutes": "180"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and shifts[s.id].status == "no_show"
+    assert shifts[s.id].confirmed_minutes is None
+
+
+def test_confirmed_hours_changing_them_uses_up_the_one_correction(accepted, clock):
+    s = _started(accepted, clock)
+    uid = accepted.org0.uid
+    data.complete_shift(uid, s.id, True, "180")
+    assert "Update hours" in accepted.org0.get("/org/shifts").text
+    assert data.complete_shift(uid, s.id, True, "180").corrected_at is None
+    clock.advance(days=2)
+    fixed = data.complete_shift(uid, s.id, True, "150")
+    assert (fixed.confirmed_minutes, fixed.corrected_by) == (150, uid)
+    assert fixed.corrected_at
+    with pytest.raises(ValueError, match="corrected"):
+        data.complete_shift(uid, s.id, True, "120")
+    assert shifts[s.id].confirmed_minutes == 150
