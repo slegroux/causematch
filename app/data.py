@@ -21,6 +21,7 @@ from app.choices import (
     INTERESTS,
     LANGUAGES,
     MAX_MINUTES,
+    SHIFT_LENGTHS,
 )
 from app.config import demo_matches, phone_hash_key
 from app.forms import BIDI, hidden_chars
@@ -543,6 +544,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 # the same active causes as slugs, in the same order (art and chips)
                 "slugs": slugs,
                 "starts_at": o.starts_at,
+                "duration_minutes": o.duration_minutes,
                 "neighborhood": o.neighborhood,
                 "slots": o.slots,
                 "remote": bool(o.remote),
@@ -860,11 +862,16 @@ def _auto_accept(m, call):
     _new_shift(m.id, call.starts_at, "accept", call.created_by)
 
 
-def _new_shift(match_id, starts_at, kind, by):
+def _new_shift(match_id, starts_at, kind, by, minutes=None):
+    """A scheduled shift; `minutes` is its length, else the match's opening's (NULL when the
+    opening has none)."""
+    if minutes is None:
+        minutes = _db.openings[_db.matches[match_id].opening_id].duration_minutes
     return _db.shifts.insert(
         _db.Shift(
             match_id=match_id,
             starts_at=starts_at,
+            duration_minutes=minutes,
             status="scheduled",
             kind=kind,
             created_by=by,
@@ -982,7 +989,8 @@ def _face(org, o):
 
 # An upcoming shift for a calendar: ui.AddToCalendar and GET /shifts/{id}.ics read it.
 _EVENT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, s.confirmed_at, o.title, g.name AS org, "
+    "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.confirmed_at, o.title, "
+    "g.name AS org, "
     "o.neighborhood FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "WHERE m.status = 'accepted' AND s.status = 'scheduled' AND s.starts_at > ? "
@@ -1000,7 +1008,8 @@ def _next_shift(match_id):
 
 
 def shift_event(uid, shift_id):
-    """{"id", "match_id", "starts_at", "confirmed_at", "title", "org", "neighborhood"} of
+    """{"id", "match_id", "starts_at", "duration_minutes", "confirmed_at", "title", "org",
+    "neighborhood"} of
     this volunteer's own upcoming shift on an accepted match. PermissionError for anything
     else (another volunteer's shift, a cancelled or past one, an unknown id), so the caller
     answers 404."""
@@ -1108,6 +1117,7 @@ def my_matches(uid):
                 "title": o.title,
                 "org": org.name if org else "",
                 "starts_at": _like_starts_at(m, o),
+                "duration_minutes": o.duration_minutes,
                 "neighborhood": o.neighborhood,
                 "event_url": o.event_url,
                 "notes": o.notes if accepted else None,
@@ -1278,12 +1288,13 @@ def _shift_org(shift_id):
     return sh, o.org_id
 
 
-def add_shift(coordinator_uid, match_id, starts_at):
+def add_shift(coordinator_uid, match_id, starts_at, minutes=None):
     """Schedule another shift on an accepted match of the coordinator's org; the Shift.
 
     PermissionError unless a member of the org. ValueError unless the match is accepted
     and starts_at ("YYYY-MM-DDTHH:MM", LA time) is real, in the future, within 366 days,
-    and not already a shift of this match.
+    and not already a shift of this match. `minutes` is the shift's length, one of
+    choices.SHIFT_LENGTHS (ValueError otherwise); None takes the opening's.
     """
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
@@ -1291,6 +1302,8 @@ def add_shift(coordinator_uid, match_id, starts_at):
         raise PermissionError("this org is deactivated")
     if m.status != "accepted":
         raise ValueError("the match is not accepted")
+    if minutes is not None and str(minutes) not in dict(SHIFT_LENGTHS):
+        raise ValueError("pick how long the shift is")
     start = _parse_local(starts_at)
     now = datetime.strptime(_local_now(), _LOCAL_FORMAT)
     if start <= now:
@@ -1299,7 +1312,11 @@ def add_shift(coordinator_uid, match_id, starts_at):
         raise ValueError("the shift must be within the next 12 months")
     try:
         return _new_shift(
-            match_id, start.strftime(_LOCAL_FORMAT), "added", coordinator_uid
+            match_id,
+            start.strftime(_LOCAL_FORMAT),
+            "added",
+            coordinator_uid,
+            None if minutes is None else int(minutes),
         )
     except apsw.ConstraintError:
         raise ValueError("that shift is already scheduled") from None
@@ -1326,7 +1343,12 @@ def repeat_shift(coordinator_uid, match_id):
     if not latest:
         raise ValueError("there is no shift to repeat")
     nxt = datetime.strptime(latest[0].starts_at, _LOCAL_FORMAT) + timedelta(days=7)
-    return add_shift(coordinator_uid, match_id, nxt.strftime(_LOCAL_FORMAT))
+    return add_shift(
+        coordinator_uid,
+        match_id,
+        nxt.strftime(_LOCAL_FORMAT),
+        latest[0].duration_minutes,
+    )
 
 
 def cancel_shift(coordinator_uid, shift_id):
@@ -1393,8 +1415,8 @@ _BLOCKED = (
     "(b.blocked_user_id = p.id OR (b.blocker_id = p.id AND b.blocked_user_id IS NULL)))"
 )
 _SHIFT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
+    "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.status, s.marked_at, "
+    "s.corrected_at, s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
     "p.last_name, p.photo_key, "
     "m.status AS match_status, " + _BLOCKED + " AS blocked, "
     "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
@@ -1420,7 +1442,16 @@ def my_shifts(uid):
         [uid],
     ):
         row = {
-            k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
+            k: r[k]
+            for k in (
+                "id",
+                "match_id",
+                "starts_at",
+                "duration_minutes",
+                "status",
+                "title",
+                "org",
+            )
         }
         row["logo"], row["photo"] = r["org_logo"], r["opening_photo"]
         row["slug"] = next(iter(json.loads(r["causes"] or "[]")), None)
@@ -1451,7 +1482,16 @@ def org_shifts(coordinator_uid):
         [coordinator_uid],
     ):
         row = {
-            k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
+            k: r[k]
+            for k in (
+                "id",
+                "match_id",
+                "starts_at",
+                "duration_minutes",
+                "status",
+                "title",
+                "org",
+            )
         }
         row["name"] = (
             BLOCKED_NAME
@@ -1630,6 +1670,7 @@ def chat_header(uid, match_id):
         "other": other,
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
+        "duration_minutes": o.duration_minutes,  # the opening's shift length, if said
         "notes": o.notes if m.status == "accepted" else None,
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
         **_face(the_org, o),
@@ -2039,6 +2080,7 @@ def create_opening(
     orientation_required,
     notes,
     reply_channel,
+    duration_minutes=None,
     skills=(),
     setting="",
     effort="",
@@ -2068,6 +2110,7 @@ def create_opening(
             neighborhood=neighborhood,
             remote=False,
             starts_at=starts_at,
+            duration_minutes=duration_minutes,
             recurrence=recurrence,
             slots=slots,
             orientation_required=orientation_required,

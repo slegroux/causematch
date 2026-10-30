@@ -491,6 +491,7 @@ def opening_form(org_id, **over):
         "neighborhood": "Chinatown",
         "starts_at": (datetime.now(LA) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M"),
         "recurrence": "weekly",
+        "duration_minutes": "180",
         "slots": "5",
         "orientation_required": "no",
         "notes": "",

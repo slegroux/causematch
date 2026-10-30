@@ -12,6 +12,19 @@ AVAILABILITY = [
     ("weekend_evening", "Weekend evenings"),
 ]
 
+# How long a shift lasts, as Opening.duration_minutes and Shift.duration_minutes store it.
+SHIFT_LENGTHS = [
+    ("60", "1 hour"),
+    ("90", "1.5 hours"),
+    ("120", "2 hours"),
+    ("150", "2.5 hours"),
+    ("180", "3 hours"),
+    ("240", "4 hours"),
+    ("300", "5 hours"),
+    ("360", "6 hours"),
+    ("480", "8 hours"),
+]
+
 # The day grid: 7 days x 3 parts, stored as "mon_morning" ... "sun_evening" (21 slots).
 # AVAILABILITY above is the weekday/weekend summary the nonprofit sees: the grid summed up
 # into it (app/match.py general_buckets).

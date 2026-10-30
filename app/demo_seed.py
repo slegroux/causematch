@@ -203,6 +203,7 @@ def load_orgs(orgs, media=None):
                         neighborhood=o.get("neighborhood") or "",
                         remote=False,
                         starts_at=first_start(x.get("typical_time"), i),
+                        duration_minutes=(2, 3, 4)[i % 3] * 60,
                         recurrence=RECURRENCE.get(x.get("recurrence"), "flexible"),
                         slots=4 + i % 5,
                         orientation_required=x.get("orientation_required") or "no",
@@ -319,7 +320,7 @@ def _preferences(uid):
     )  # fmt: skip
 
 
-def _past_shift(match_id, coordinator, days_ago, status):
+def _past_shift(match_id, coordinator, days_ago, status, minutes):
     from app.db import Shift, now, shifts
 
     when = (datetime.now(LA) - timedelta(days=days_ago)).strftime("%Y-%m-%dT09:00")
@@ -328,6 +329,7 @@ def _past_shift(match_id, coordinator, days_ago, status):
         Shift(
             match_id=match_id,
             starts_at=when,
+            duration_minutes=minutes,
             status=status,
             kind="added",
             created_by=coordinator,
@@ -441,8 +443,8 @@ def seed(seed_file=None):
     )
     data.send_message(me, m.id, "Great, see you there. Anything I should bring?")
     data.send_message(coord, m.id, "Closed-toe shoes. We have gloves and coffee.")
-    _past_shift(m.id, coord, 14, "completed")
-    _past_shift(m.id, coord, 2, "scheduled")  # for the coordinator to mark
+    _past_shift(m.id, coord, 14, "completed", first.duration_minutes)
+    _past_shift(m.id, coord, 2, "scheduled", first.duration_minutes)  # to mark
     _preferences(me)
     soon = _soon_shifts(me, org.id)
     urgent = _urgent_call(coord, org, first, sample=bool(seed_file))
@@ -614,6 +616,7 @@ def _urgent_call(coord, org, first, sample=False):
                 "%Y-%m-%dT10:00"
             ),
             recurrence="weekly",
+            duration_minutes=120,
             slots=4,
             orientation_required="no",
             notes="",

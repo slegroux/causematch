@@ -1,5 +1,4 @@
 import re
-from datetime import datetime
 
 from fasthtml.common import (
     H1,
@@ -46,6 +45,7 @@ from app.ui import (
     OrgFace,
     Router,
     VolunteerNav,
+    when,
 )
 
 ar = Router()
@@ -120,7 +120,6 @@ def CardImage(c):
 
 
 def OpeningCard(c):
-    starts = datetime.fromisoformat(c["starts_at"])
     return Div(
         CardImage(c),
         Div(
@@ -160,7 +159,9 @@ def OpeningCard(c):
             if c.get("about")
             else None,
             Div(
-                Meta(CALENDAR, starts.strftime("%a %b %-d · %-I:%M %p")),
+                Meta(
+                    CALENDAR, when(c["starts_at"], c.get("duration_minutes"), sep=" · ")
+                ),
                 Meta(PIN, place_line(c)),
                 Div(
                     Meta(PEOPLE, f"{c['slots']} spots"),

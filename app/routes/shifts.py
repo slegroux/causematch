@@ -14,6 +14,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
+from app.choices import SHIFT_LENGTHS
 from app.config import public_base_url
 from app.forms import query, str_form
 from app.ui import (
@@ -22,6 +23,7 @@ from app.ui import (
     ORG_TITLE,
     SMALL_LINK,
     TITLE,
+    Choice,
     Field,
     OrgFace,
     OrgShell,
@@ -64,7 +66,8 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
                 P(s["title"], cls="font-bold leading-snug text-ink"),
                 VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
                 P(
-                    f"{when(s['starts_at'])}" + ("" if for_org else f" - {s['org']}"),
+                    f"{when(s['starts_at'], s['duration_minutes'])}"
+                    + ("" if for_org else f" - {s['org']}"),
                     cls=TextPresets.muted_sm,
                 ),
                 cls="min-w-0 space-y-2",
@@ -218,7 +221,7 @@ def repeat(req, match_id: int):
     return Redirect("/org/shifts")
 
 
-def ShiftForm(uid, match_id, head, error=None, value=""):
+def ShiftForm(uid, match_id, head, error=None, value="", minutes=None):
     return OrgShell(
         "inbox",
         data.org_waiting(uid),
@@ -237,6 +240,17 @@ def ShiftForm(uid, match_id, head, error=None, value=""):
                         type="datetime-local",
                         value=value,
                         required=True,
+                    ),
+                ),
+                Field(
+                    "How long is the shift?",
+                    Choice(
+                        "duration_minutes",
+                        SHIFT_LENGTHS,
+                        # the opening's length unless the coordinator chose another
+                        minutes
+                        if minutes is not None
+                        else str(head["duration_minutes"] or ""),
                     ),
                 ),
                 Div(
@@ -281,14 +295,15 @@ async def new_shift_save(req, match_id: int):
 def _sync_new_shift_save(req, form, match_id: int):
     uid = req.scope["uid"]
     starts_at = form.get("starts_at", "").strip()
+    minutes = form.get("duration_minutes", "").strip()
     try:
         head = _writable_head(uid, match_id)
-        data.add_shift(uid, match_id, starts_at)
+        data.add_shift(uid, match_id, starts_at, minutes or None)
     except PermissionError:
         return Refusal(403)
     except ValueError as e:
         return ShiftForm(
-            uid, match_id, head, f"Couldn't schedule that: {e}.", starts_at
+            uid, match_id, head, f"Couldn't schedule that: {e}.", starts_at, minutes
         )
     return Redirect("/org/shifts")
 
@@ -341,7 +356,10 @@ def ShiftQuestion(uid, s, title, *body):
         "matches",
         Div(
             H1(title, cls="font-display text-xl font-extrabold leading-snug text-ink"),
-            P(f"{when(s['starts_at'])} with {s['org']}", cls=TextPresets.muted_sm),
+            P(
+                f"{when(s['starts_at'], s['duration_minutes'])} with {s['org']}",
+                cls=TextPresets.muted_sm,
+            ),
             *body,
             cls="mt-4 space-y-3 p-5 " + CARD,
         ),

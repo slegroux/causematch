@@ -304,6 +304,7 @@ def make_opening(title, **fields):
         "skills": "[]",
         "remote": False,
         "recurrence": "one_time",
+        "duration_minutes": "180",
         "slots": 3,
         "status": "open",
         "created_at": now(),

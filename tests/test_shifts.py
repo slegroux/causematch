@@ -526,7 +526,7 @@ def test_the_ics_is_one_event_in_los_angeles_time(accepted):
     lines = raw.replace("\r\n ", "").split("\r\n")  # unfolded
     assert lines.count("BEGIN:VEVENT") == 1 and "END:VEVENT" in lines
     assert "DTSTART;TZID=America/Los_Angeles:20261022T090000" in lines
-    assert "DTEND;TZID=America/Los_Angeles:20261022T110000" in lines
+    assert "DTEND;TZID=America/Los_Angeles:20261022T120000" in lines
     assert f"SUMMARY:Sort\\, pack\\; then\\nstack · {orgs()[0].name}" in lines
     assert f"DESCRIPTION:Chat with {orgs()[0].name}: " in "\n".join(lines)
     assert f"https://causematch.test/chat/{accepted.match.id}" in raw.replace(
@@ -614,3 +614,41 @@ def test_a_pending_withdrawal_emails_no_one(world):
     world.a.post(f"/matches/{world.match.id}/withdraw")
     assert matches[world.match.id].status == "withdrawn"
     assert not org_emails("A volunteer withdrew from")
+
+
+def test_shift_length_is_copied_from_the_opening_and_shown_as_a_time_range(world):
+    openings.update(id=world.opening.id, duration_minutes=180)
+    data.decide(world.org0.uid, world.match.id, True)
+    [s] = shifts_of(world.match)
+    assert s.duration_minutes == 180
+    assert "Thu Oct 22, 9:00 AM to 12:00 PM" in world.org0.get("/org/shifts").text
+    assert "Thu Oct 22, 9:00 AM to 12:00 PM" in world.a.get("/history").text
+    # a coordinator adding a shift without choosing one gets the opening's length
+    assert (
+        data.add_shift(
+            world.org0.uid, world.match.id, "2026-10-29T09:00"
+        ).duration_minutes
+        == 180
+    )
+    # or picks another length; a forged one is refused
+    assert (
+        data.add_shift(
+            world.org0.uid, world.match.id, "2026-10-30T09:00", 90
+        ).duration_minutes
+        == 90
+    )
+    with pytest.raises(ValueError):
+        data.add_shift(world.org0.uid, world.match.id, "2026-10-31T09:00", 45)
+
+
+def test_shift_without_a_length_shows_only_its_start(world):
+    openings.update(id=world.opening.id, duration_minutes=None)  # made before lengths
+    data.decide(world.org0.uid, world.match.id, True)
+    [s] = shifts_of(world.match)
+    assert s.duration_minutes is None
+    page = world.org0.get("/org/shifts").text
+    assert "Thu Oct 22, 9:00 AM" in page
+    assert "9:00 AM to" not in page
+    # the calendar file still gives it two hours
+    ics = world.a.get(f"/shifts/{s.id}.ics").text
+    assert "DTEND;TZID=America/Los_Angeles:20261022T110000" in ics
