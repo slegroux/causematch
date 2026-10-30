@@ -64,8 +64,8 @@ def world(clock):
     openings.update(id=w.opening.id, starts_at=OPENING_START)
     w.opening = openings[w.opening.id]
     assert w.opening.org_id == orgs()[0].id
+    clock.freeze()  # before the like: on the real clock the opening has passed
     w.match = data.swipe(w.a.uid, w.opening.id, True)
-    clock.freeze()
     return w
 
 

@@ -18,7 +18,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app import data, notify, security
-from app.db import matches, messages, openings, orgs
+from app.db import blocks, matches, messages, openings, orgs
 from main import app
 
 XSS = ["<script>alert(1)</script>", '"><img src=x onerror=alert(1)>']
@@ -643,3 +643,35 @@ def test_notes_and_calendar_show_once_accepted_only(chat):
         assert "Closed-toe shoes, park on 5th" in page
         assert f'href="/shifts/{shift["id"]}.ics"' in page
         assert "https://calendar.google.com/calendar/render?action=TEMPLATE" in page
+
+
+def test_the_org_sees_a_chat_waiting_for_a_reply_until_anyone_there_answers(chat):
+    data.send_message(chat.vol.uid, chat.id, "Can I bring a friend?")
+    inbox = chat.coord.get("/org/inbox").text
+    assert "1 message to answer" in inbox and "Can I bring a friend?" in inbox
+    assert f'href="/org/chat/{chat.id}"' in inbox
+    assert "1 message to answer" in chat.coord.get("/org").text
+    assert data.org_waiting(chat.coord.uid) == 1  # the Inbox badge
+
+    data.send_message(chat.coord.uid, chat.id, "Of course!")
+    assert "to answer" not in chat.coord.get("/org/inbox").text
+    assert data.org_waiting(chat.coord.uid) == 0
+
+
+def test_a_chat_waits_only_for_its_own_org_while_it_can_be_answered(chat):
+    data.send_message(chat.vol.uid, chat.id, "Hello?")
+    assert data.org_unanswered(coordinator(1).uid) == []
+    org_id = orgs()[0].id
+    # a block row alone, with the match still accepted (block_org would withdraw it)
+    b = blocks.insert(
+        blocker_id=chat.vol.uid,
+        blocked_user_id=None,
+        blocked_org_id=org_id,
+        created_at="2026-10-15T00:00:00",
+    )
+    assert data.org_unanswered(chat.coord.uid) == []
+    blocks.delete(b.id)
+    orgs.update(id=org_id, deactivated_at="2026-10-15T00:00:00")
+    assert data.org_unanswered(chat.coord.uid) == []
+    orgs.update(id=org_id, deactivated_at=None)
+    assert [c["id"] for c in data.org_unanswered(chat.coord.uid)] == [chat.id]

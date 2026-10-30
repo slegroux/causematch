@@ -1202,6 +1202,38 @@ def org_inbox(coordinator_uid):
     return out
 
 
+def org_unanswered(coordinator_uid):
+    """The chats this coordinator's orgs owe a reply, oldest first: accepted matches whose
+    latest message is the volunteer's. Nothing to store: a reply from anyone at the org
+    answers it. Chats that can't be written in (a block, a deactivated org) never wait.
+    Rows: {"id", "name", "photo_key", "opening", "body", "at"} (at: UTC ISO)."""
+    rows = _db.db.query(
+        "SELECT m.id, o.title, p.display_name, p.last_name, p.photo_key, "
+        "x.body, x.created_at "
+        "FROM match m JOIN opening o ON o.id = m.opening_id "
+        "JOIN org g ON g.id = o.org_id "
+        "JOIN profile p ON p.id = m.volunteer_id "
+        "JOIN message x ON x.id = (SELECT max(id) FROM message WHERE match_id = m.id) "
+        "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
+        "AND m.status = 'accepted' AND x.sender_id = m.volunteer_id "
+        "AND p.deleted_at IS NULL AND p.suspended_at IS NULL "
+        "AND g.deactivated_at IS NULL AND coalesce(m.org_blind, 0) = 0 "
+        "AND NOT " + _BLOCKED + " ORDER BY x.id",
+        [coordinator_uid],
+    )
+    return [
+        {
+            "id": r["id"],
+            "name": volunteer_name(r["display_name"], r["last_name"], True),
+            "photo_key": r["photo_key"],
+            "opening": r["title"],
+            "body": r["body"],
+            "at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
 MAX_SHIFT_AHEAD = timedelta(days=366)
 CORRECTION_WINDOW = timedelta(days=7)
 
@@ -2088,9 +2120,11 @@ def opening_counts(coordinator_uid):
 
 
 def org_waiting(coordinator_uid):
-    """How many likes wait for the coordinator's answer (the nav's Inbox badge): the
-    same counts as the dashboard's cards, so the two never disagree."""
-    return sum(c["pending"] for c in opening_counts(coordinator_uid).values())
+    """What waits for the coordinator's answer (the nav's Inbox badge): the likes, the
+    same counts as the dashboard's cards so the two never disagree, plus the chats owed
+    a reply."""
+    pending = sum(c["pending"] for c in opening_counts(coordinator_uid).values())
+    return pending + len(org_unanswered(coordinator_uid))
 
 
 def close_opening(coordinator_uid, opening_id):
