@@ -22,11 +22,11 @@ def MonthCard(m):
             *(
                 Li(
                     P(
-                        f"{s['title']} - {minutes_label(s['minutes'])}",
+                        f"{s['title']} · {minutes_label(s['minutes'])}",
                         cls="font-bold leading-snug text-ink",
                     ),
                     P(
-                        f"{when(s['starts_at'], s['duration_minutes'])} - {s['org']}",
+                        f"{when(s['starts_at'], s['duration_minutes'])} · {s['org']}",
                         cls=TextPresets.muted_sm,
                     ),
                     P(f"Confirmed by {s['by']}", cls=TextPresets.muted_sm),
@@ -66,7 +66,7 @@ def HoursSection(uid):
             ),
             Ul(
                 *(
-                    Li(f"{s['title']} - {s['org']}, {when(s['starts_at'])}")
+                    Li(f"{s['title']} · {s['org']}, {when(s['starts_at'])}")
                     for s in left
                 ),
                 cls="uk-list uk-list-disc text-sm text-ink-muted",

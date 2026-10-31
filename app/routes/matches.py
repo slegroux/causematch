@@ -21,6 +21,7 @@ from app.ui import (
     CHAT,
     HEART,
     LIKE_SENT,
+    MATCH_STATUS,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
@@ -35,18 +36,11 @@ from app.ui import (
     Refusal,
     Router,
     VolunteerShell,
+    status_pill,
     when,
 )
 
 ar = Router()
-
-STATUS = {  # status: (label, PILL tone)
-    "pending": ("Waiting for the nonprofit", "wait"),
-    "accepted": ("Accepted", "good"),
-    "declined": ("Not this time", "off"),
-    "withdrawn": ("Withdrawn", "off"),
-}
-
 
 NOTICE = {
     "reported": "Thanks. We read every report.",
@@ -131,7 +125,7 @@ def MatchRow(m):
     accepted = m["status"] == "accepted"
     return Div(
         Div(
-            Pill(*STATUS[m["status"]]),
+            status_pill(MATCH_STATUS, m["status"], "volunteer"),
             Pill("Blocked", "off") if m["blocked"] else None,
             cls="flex flex-wrap gap-1.5",
         ),

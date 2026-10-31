@@ -50,6 +50,7 @@ from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
     CARD,
+    MATCH_STATUS,
     ORG_SECTION,
     ORG_TITLE,
     PIN,
@@ -64,6 +65,7 @@ from app.ui import (
     Router,
     TextInput,
     VolunteerHeader,
+    status_pill,
     when,
 )
 
@@ -862,12 +864,6 @@ def label_of(options, value):
     return dict(options).get(value, "")
 
 
-INBOX_STATUS = {
-    "pending": ("Waiting", "wait"),
-    "accepted": ("Accepted", "good"),
-    "declined": ("Declined", "off"),
-    "withdrawn": ("Withdrawn", "off"),
-}
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
@@ -893,7 +889,7 @@ def InboxRow(m):
                 P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
                 cls="min-w-0 flex-1",
             ),
-            Pill(*INBOX_STATUS[m["status"]]),
+            status_pill(MATCH_STATUS, m["status"], "org"),
             cls="flex items-start gap-3",
         ),
         P(m["bio"], cls="whitespace-pre-line text-sm text-ink") if m["bio"] else None,

@@ -146,7 +146,7 @@ def ChatPage(uid, match_id, role, notice=""):
             P(
                 head["org"]
                 if role == "coordinator"
-                else f"{head['org']} - {head['other']}",
+                else f"{head['org']} · {head['other']}",
                 cls=TextPresets.muted_sm,
             ),
             cls="space-y-1 border-b border-line pb-3",
