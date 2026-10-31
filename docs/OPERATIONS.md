@@ -11,9 +11,10 @@ Environment variables (`.env.example` lists them all, without values). The app r
 - `EMAIL_API_KEY`, `EMAIL_FROM`
 - `CONTACT_EMAIL`: the address on the privacy page
 - `PHONE_HASH_KEY`: keys the hash kept of a deleted account's phone when a block, report or suspension must outlive it, the rate-limit hashes, and the urgent unsubscribe links
+- `CERTIFICATE_KEY`: signs volunteers' hour certificates (HMAC); changing it makes every certificate issued before read as not genuine, so keep it like `SESSION_SECRET`
 - `TRUSTED_PROXY_HOPS` on Cloud Run (see Security)
 
-`SESSION_SECRET`, `PHONE_HASH_KEY` and `TASKS_TOKEN` must be at least 32 random characters in production, and `PUBLIC_BASE_URL` an `https://` origin with no path.
+`SESSION_SECRET`, `PHONE_HASH_KEY`, `CERTIFICATE_KEY` and `TASKS_TOKEN` must be at least 32 random characters in production, and `PUBLIC_BASE_URL` an `https://` origin with no path.
 
 ### Scheduled jobs
 

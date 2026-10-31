@@ -138,6 +138,17 @@ def phone_hash_key(env=os.environ):
     return strong_secret("PHONE_HASH_KEY", key, env)
 
 
+def certificate_key(env=os.environ):
+    """Key that signs volunteers' hour certificates (app/signing.py). Required in production;
+    changing it makes every certificate issued before read as not genuine."""
+    key = env.get("CERTIFICATE_KEY") or ""
+    if not key:
+        if is_dev(env):
+            return "dev-only-certificate-key"
+        raise RuntimeError("CERTIFICATE_KEY must be set (any long random string)")
+    return strong_secret("CERTIFICATE_KEY", key, env)
+
+
 def db_path(env=os.environ):
     """The SQLite file: CAUSEMATCH_DB, else data/causematch.db in the repo (not the cwd)."""
     return Path(env.get("CAUSEMATCH_DB") or ROOT / "data" / "causematch.db").resolve()

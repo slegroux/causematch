@@ -26,6 +26,7 @@ from app.auth import session_cookie, session_secret
 from app.config import (
     DEMO_COORDINATOR,
     DEMO_PHONE,
+    certificate_key,
     contact_email,
     demo_banner,
     demo_matches,
@@ -59,7 +60,12 @@ PASSWORD = "p" * 20  # low entropy on purpose: the secret scan reads tests too
 SECRET = "s" * 32
 PREVIEW = {"CAUSEMATCH_ENV": "preview", "PREVIEW_PASSWORD": PASSWORD}
 # what a running preview has on top: production's secrets
-SECRETS = {"PHONE_HASH_KEY": SECRET, "TASKS_TOKEN": SECRET, "SESSION_SECRET": SECRET}
+SECRETS = {
+    "PHONE_HASH_KEY": SECRET,
+    "CERTIFICATE_KEY": SECRET,
+    "TASKS_TOKEN": SECRET,
+    "SESSION_SECRET": SECRET,
+}
 CLOUD_RUN = {"K_SERVICE": "causematch-preview"}
 PRODUCTION = (
     {"CAUSEMATCH_ENV": "production"},
@@ -155,6 +161,7 @@ def test_a_preview_keeps_productions_secrets_cookie_and_https():
     assert session_secret({**PREVIEW, "SESSION_SECRET": SECRET}) == SECRET
     for check, name in (
         (phone_hash_key, "PHONE_HASH_KEY"),
+        (certificate_key, "CERTIFICATE_KEY"),
         (tasks_token, "TASKS_TOKEN"),
     ):
         with pytest.raises(RuntimeError):
@@ -177,6 +184,7 @@ def _start(tmp_path, **env):
         "CAUSEMATCH_DB": str(tmp_path / "preview.db"),
         "SESSION_SECRET": SECRET,
         "PHONE_HASH_KEY": SECRET,
+        "CERTIFICATE_KEY": SECRET,
         "TASKS_TOKEN": SECRET,
         "PUBLIC_BASE_URL": "https://causematch-preview.run.app",
         "CONTACT_EMAIL": "hello@causematch.test",

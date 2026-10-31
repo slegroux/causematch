@@ -955,9 +955,20 @@ def test_phone_hash_key_is_required_in_production():
         phone_hash_key({"CAUSEMATCH_ENV": "production"})
 
 
+def test_certificate_key_is_required_in_production():
+    from app.config import certificate_key
+
+    assert certificate_key({"CERTIFICATE_KEY": "k"}) == "k"
+    assert certificate_key({"CAUSEMATCH_ENV": "test"}).startswith("dev-only")
+    with pytest.raises(RuntimeError):
+        certificate_key({"CAUSEMATCH_ENV": "production"})
+    with pytest.raises(RuntimeError):
+        certificate_key({"CAUSEMATCH_ENV": "production", "CERTIFICATE_KEY": "short"})
+
+
 def test_env_example_lists_contact_email_and_phone_hash_key():
     text = (ROOT / ".env.example").read_text()
-    for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY="):
+    for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY=", "CERTIFICATE_KEY="):
         assert name in text
         assert name.rstrip("=") in (ROOT / "docs" / "OPERATIONS.md").read_text()
 

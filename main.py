@@ -10,6 +10,7 @@ from starlette.staticfiles import StaticFiles
 from app import data, demo_seed, notify, security, ui
 from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
+    certificate_key,
     contact_email,
     demo_banner,
     demo_matches,
@@ -52,6 +53,7 @@ tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact
 phone_hash_key()  # ... or deleted accounts' blocks can't be kept
+certificate_key()  # ... or hour certificates can't be signed
 trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
 sms_ceilings()  # ... or the SMS ceiling is unreadable
 demo_banner()  # ... or production was asked to show the demo banner

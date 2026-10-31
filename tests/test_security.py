@@ -813,6 +813,7 @@ def test_production_session_cookie_is_host_prefixed_and_secure(tmp_path):
         "EMAIL_FROM": "hello@causematch.example",
         "CONTACT_EMAIL": "hello@causematch.example",
         "PHONE_HASH_KEY": "k" * 32,
+        "CERTIFICATE_KEY": "c" * 32,
     }
     out = subprocess.run(
         [sys.executable, "-c", code],
