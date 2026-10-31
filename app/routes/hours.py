@@ -1,11 +1,11 @@
 from datetime import datetime
 
-from fasthtml.common import H1, H2, Div, Li, P, Span, Ul
+from fasthtml.common import H2, Div, Li, P, Redirect, Span, Ul
 from monsterui.all import TextPresets
 
 from app import data
 from app.choices import minutes_label
-from app.ui import CARD, ORG_SECTION, TITLE, Router, VolunteerShell, when
+from app.ui import CARD, ORG_SECTION, Router, when
 
 ar = Router()
 
@@ -40,25 +40,22 @@ def MonthCard(m):
     )
 
 
-@ar("/hours", methods=["GET"])
-def hours_page(req):
-    mine = data.my_hours(req.scope["uid"])
+def HoursSection(uid):
+    """The Hours part of /history: confirmed hours by month, then earlier shifts
+    with none."""
+    mine = data.my_hours(uid)
     left = mine["unconfirmed"]
-    return VolunteerShell(
-        "me",
-        H1("My hours", cls=TITLE),
+    return Div(
+        H2("Hours", cls=ORG_SECTION),
         P(
             "Hours a nonprofit confirmed when it marked you as attended.",
-            cls=TextPresets.muted_sm + " pb-4",
+            cls=TextPresets.muted_sm,
         ),
-        Div(
-            *(MonthCard(m) for m in mine["months"]),
-            *(
-                []
-                if mine["months"]
-                else [P("No confirmed hours yet.", cls=TextPresets.muted_sm)]
-            ),
-            cls="flex flex-col gap-3 pb-6",
+        *(MonthCard(m) for m in mine["months"]),
+        *(
+            []
+            if mine["months"]
+            else [P("No confirmed hours yet.", cls=TextPresets.muted_sm)]
         ),
         Div(
             H2("Hours not confirmed", cls=ORG_SECTION),
@@ -74,9 +71,15 @@ def hours_page(req):
                 ),
                 cls="uk-list uk-list-disc text-sm text-ink-muted",
             ),
-            cls="space-y-2 pb-6",
+            cls="space-y-2 pt-3",
         )
         if left
         else None,
-        uid=req.scope["uid"],
+        cls="flex flex-col gap-3 pb-6",
     )
+
+
+@ar("/hours", methods=["GET"])
+def hours_page(req):
+    """Old links and texted links: the hours moved into /history."""
+    return Redirect("/history")

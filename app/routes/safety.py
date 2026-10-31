@@ -42,7 +42,6 @@ from app.ui import (
     SIGN_OUT,
     SMALL_LINK,
     TITLE,
-    TRASH,
     Avatar,
     Choice,
     Field,
@@ -287,8 +286,9 @@ def block_volunteer_save(req, match_id: int):
 # --- account deletion ------------------------------------------------------------------------
 
 
-def HubRow(icon, label, href=None, danger=False):
-    """One row of the Me hub: a link, or (without href) a sign-out button."""
+def HubRow(icon, label, href=None, danger=False, sub=None):
+    """One row of the Me hub: a link with a chevron, or (without href) a sign-out
+    button, which acts rather than opens a page. sub: a muted line under the label."""
     cls = (
         "flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left font-bold "
         "hover:bg-cream " + ("text-red-700" if danger else "text-ink")
@@ -299,8 +299,12 @@ def HubRow(icon, label, href=None, danger=False):
             cls="grid h-9 w-9 shrink-0 place-items-center rounded-full "
             + ("bg-red-50" if danger else "bg-sand"),
         ),
-        Span(label, cls="flex-1"),
-        Icon(NEXT, size=18, cls="text-ink-muted"),
+        Span(
+            label,
+            Span(sub, cls="block text-sm font-normal text-ink-muted") if sub else None,
+            cls="flex-1",
+        ),
+        Icon(NEXT, size=18, cls="text-ink-muted") if href else None,
     )
     if href:
         return A(*inner, href=href, cls=cls)
@@ -324,22 +328,19 @@ def profile_page(req):
             cls="flex items-center gap-4 p-4 " + CARD,
         ),
         Div(
-            HubRow(PERSON, "Your profile", "/me/profile"),
-            HubRow(HEART, "Preferences", "/me/preferences"),
-            HubRow(CLOCK, "History", "/history"),
-            HubRow(CLOCK, "My hours", "/hours"),
+            HubRow(PERSON, "Your profile", "/me/profile", sub="What nonprofits see"),
+            HubRow(
+                HEART, "Preferences", "/me/preferences", sub="What you see, and when"
+            ),
+            HubRow(
+                CLOCK,
+                "Shifts and hours",
+                "/history",
+                sub="Upcoming, past, confirmed hours",
+            ),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),
             cls="mt-4 divide-y divide-line overflow-hidden " + CARD,
-        ),
-        Div(
-            HubRow(TRASH, "Delete my account", "/profile/delete", danger=True),
-            cls="mt-4 overflow-hidden " + CARD,
-        ),
-        P(
-            "Deleting your account removes your name, phone, email and location and "
-            "withdraws your matches.",
-            cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
         uid=req.scope["uid"],
     )

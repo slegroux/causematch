@@ -17,6 +17,7 @@ from app import data, notify
 from app.choices import SHIFT_HOURS, SHIFT_LENGTHS, minutes_label
 from app.config import public_base_url
 from app.forms import query, str_form
+from app.routes.hours import HoursSection
 from app.ui import (
     CARD,
     ORG_SECTION,
@@ -172,9 +173,14 @@ def org_shifts_page(req):
                     "Nothing to mark.",
                 ),
                 Section(
-                    "Marked this week (one correction allowed)",
+                    "Marked this week",
                     [
-                        ShiftCard(s, MarkForm(s, corrected=True), repeat_of(s))
+                        ShiftCard(
+                            s,
+                            P("One correction allowed", cls=TextPresets.muted_sm),
+                            MarkForm(s, corrected=True),
+                            repeat_of(s),
+                        )
                         for s in box["marked"]
                     ],
                     "Nothing marked this week.",
@@ -353,7 +359,7 @@ def history(req):
     mine = data.my_shifts(req.scope["uid"])
     return VolunteerShell(
         "me",
-        H1("Your history", cls=TITLE),
+        H1("Shifts and hours", cls=TITLE),
         Section(
             "Upcoming",
             [
@@ -376,7 +382,7 @@ def history(req):
             ],
             "Nothing yet.",
         ),
-        A("My hours", href="/hours", cls=SMALL_LINK),
+        HoursSection(req.scope["uid"]),
         uid=req.scope["uid"],
     )
 
