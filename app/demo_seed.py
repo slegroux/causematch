@@ -30,6 +30,7 @@ COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 # the stand-in coordinators of the other orgs (data.DEMO_TEAM_DOMAIN), by turns
 TEAM_NAMES = ("Rosa", "Alex", "Jamie", "Noor", "Luis", "Kim", "Theo", "Dana")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
+CONFIRMING_ORG = "Downtown Harvest Kitchen"  # the invented org that confirms hours
 SOON_TIMES = ("10:00", "13:00", "16:00", "18:30")  # tomorrow's shifts (_soon_shifts)
 # the seed file's words -> the opening form's values (app/routes/org.py)
 RECURRENCE = {
@@ -380,7 +381,11 @@ def seed(seed_file=None):
     else:
         seed_demo()
         for o in orgs():  # app/db.py verifies them in development only; a preview's too
-            orgs.update(id=o.id, verified_at=o.verified_at or now())
+            orgs.update(
+                id=o.id,
+                verified_at=o.verified_at or now(),
+                confirms_hours=o.name == CONFIRMING_ORG,
+            )
         _fill_invented_openings()
     org = orgs()[0]
     coord = data.add_coordinator(COORDINATOR[0], org.id, name=COORDINATOR[1])

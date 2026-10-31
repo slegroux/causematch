@@ -157,9 +157,9 @@ def OrgSection(org, f=None, error=None):
                     checked=bool(f["confirms_hours"]),
                 ),
                 P(
-                    "Volunteers who need proof of their hours can ask for nonprofits "
-                    "that do. You confirm each shift's hours when you mark it attended; "
-                    "your cards say so.",
+                    "Volunteers can choose to see nonprofits that confirm hours first. "
+                    "You confirm each shift's hours when you mark it attended; your "
+                    "cards say so.",
                     cls=TextPresets.muted_sm,
                 ),
                 cls="space-y-1",

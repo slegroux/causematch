@@ -663,6 +663,13 @@ def test_seed_preview_without_a_seed_dir_uses_the_invented_orgs(preview):
     assert any(m.status == "accepted" for m in matches())
 
 
+def test_seed_has_one_invented_org_that_confirms_hours(preview):
+    """So the demo's and the preview's deck show the "Confirms your hours" chip."""
+    _empty()
+    demo_seed.seed_preview(None)
+    assert [o.name for o in orgs() if o.confirms_hours] == [demo_seed.CONFIRMING_ORG]
+
+
 def test_seed_preview_runs_in_a_preview_only(seed_dir):
     _empty()
     with pytest.raises(RuntimeError, match="preview only"):
