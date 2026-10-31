@@ -171,8 +171,9 @@ def test_blocked_org_leaves_deck(w):
     assert not org_openings & set(deck_ids(w.vol))
     assert deck_ids(w.vol)  # other orgs' openings are still there
     assert "Blocked" in w.vol.get("/matches").text
+    unliked = next(o for o in org_openings if o != m.opening_id)
     with pytest.raises(LookupError):  # and a like sent by id is refused
-        data.swipe(w.vol.uid, next(iter(org_openings)), True)
+        data.swipe(w.vol.uid, unliked, True)
 
 
 def test_volunteer_block_withdraws_matches_cancels_shifts_and_freezes_chat(w):
