@@ -41,6 +41,7 @@ NOT_PAGES = {
     "/photos/{key}.jpg",
     "/photos/thumb/{key}.jpg",
     "/shifts/{shift_id}.ics",
+    "/hours/certificate/{cert_id}.pdf",
     "/org/zip",
     "/org/claim/search",  # JSON for static/claim.js
 }

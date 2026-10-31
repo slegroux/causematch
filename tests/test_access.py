@@ -133,6 +133,7 @@ ROUTES = {
     ("GET", "/hours"): ("volunteer", "own-record"),
     ("POST", "/hours/orgs/{org_id}/certificate"): ("volunteer", "own-record"),
     ("GET", "/hours/certificate/{cert_id}"): ("volunteer", "own-record"),
+    ("GET", "/hours/certificate/{cert_id}.pdf"): ("volunteer", "own-record"),
     ("GET", "/hours/certificate/{cert_id}/withdraw"): ("volunteer", "own-record"),
     ("POST", "/hours/certificate/{cert_id}/withdraw"): ("volunteer", "own-record"),
     # a certificate's check link: the random id is the credential, answers rate-limited
@@ -718,6 +719,16 @@ def check_certificate_page(w):
     assert w.a.get(f"/hours/certificate/{cid}").status_code == 200
 
 
+def check_certificate_pdf(w):
+    """B gets 404 for A's certificate PDF, whatever the id; A gets a PDF."""
+    data.issue_certificate(w.a.uid, confirmed_hours(w), "all")
+    cid = certificates()[0].id
+    for i in (cid, *map(str, GONE), "nope"):
+        assert_refused(w.b.get(f"/hours/certificate/{i}.pdf", follow_redirects=False))
+    r = w.a.get(f"/hours/certificate/{cid}.pdf")
+    assert r.status_code == 200 and r.content.startswith(b"%PDF")
+
+
 def check_certificate_withdraw(method):
     """B can't withdraw A's certificate, whatever the id; A can, and the GET only asks."""
 
@@ -1018,6 +1029,7 @@ OWNERSHIP = {
     ("GET", "/shifts/{shift_id}.ics"): check_shift_ics,
     ("POST", "/hours/orgs/{org_id}/certificate"): check_issue_certificate,
     ("GET", "/hours/certificate/{cert_id}"): check_certificate_page,
+    ("GET", "/hours/certificate/{cert_id}.pdf"): check_certificate_pdf,
     ("GET", "/hours/certificate/{cert_id}/withdraw"): check_certificate_withdraw("GET"),
     ("POST", "/hours/certificate/{cert_id}/withdraw"): check_certificate_withdraw(
         "POST"

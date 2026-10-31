@@ -2,12 +2,15 @@
 
 import json
 import re
+import zlib
 
 import pytest
 from conftest import coordinator, pantry_opening, volunteer
 from starlette.testclient import TestClient
 
 from app import data, security, signing
+from app.certificate import build_pdf, qr_matrix
+from app.config import public_base_url
 from app.db import certificates, matches, openings, orgs, profiles, shifts
 from main import app
 
@@ -289,3 +292,81 @@ def test_check_link_is_limited_per_address(monkeypatch):
     visitor = TestClient(app, client=("198.51.100.40", 1))
     codes = [visitor.get("/check/nothing").status_code for _ in range(4)]
     assert codes == [404, 404, 404, 429]
+
+
+# --- the PDF ------------------------------------------------------------------------------
+
+
+def _pdf_content(raw):
+    """The page content of a PDF made by app.certificate, inflated: its drawing and text
+    operators, so a test can read what was put on the pages without a PDF library."""
+    streams = re.findall(rb"stream\r?\n(.*?)\r?\nendstream", raw, re.DOTALL)
+    return "\n".join(zlib.decompress(s).decode("latin-1") for s in streams)
+
+
+def _qr_drawn(content):
+    """The dark modules drawn as filled squares, as rows of 0/1 (top row first)."""
+    squares = {
+        (float(x), float(y), float(w))
+        for x, y, w in re.findall(r"([\d.]+) ([\d.]+) ([\d.]+) -?[\d.]+ re f", content)
+    }
+    side = min(w for _, _, w in squares)
+    left, top = min(x for x, _, _ in squares), max(y for _, y, _ in squares)
+    dark = {(round((top - y) / side), round((x - left) / side)) for x, y, _ in squares}
+    size = max(max(r for r, _ in dark), max(c for _, c in dark)) + 1
+    return [[int((r, c) in dark) for c in range(size)] for r in range(size)]
+
+
+def test_certificate_pdf_is_the_owners_and_carries_the_check_link(anon):
+    a, cid, _ = _issued()
+    r = a.get(f"/hours/certificate/{cid}.pdf")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
+    assert r.headers["cache-control"] == "private, no-store"
+    assert re.fullmatch(
+        r'attachment; filename="causematch-hours-[a-z0-9-]+-all\.pdf"',
+        r.headers["content-disposition"],
+    )
+    assert "Download PDF" in a.get(f"/hours/certificate/{cid}").text
+
+    check = f"{public_base_url()}/check/{cid}"
+    content = _pdf_content(r.content)
+    code = signing.code(certificates()[0].signature)
+    assert "(Zelda Lee) Tj" in content and "(Total: 5.5 hours) Tj" in content
+    assert f"Signature code: {code}) Tj" in content
+    assert _qr_drawn(content) == qr_matrix(check)  # the QR encodes the check link
+    assert f"/URI ({check})".encode() in r.content  # and the address is a link
+    assert b"zelda@example.com" not in r.content and b"/Author" not in r.content
+
+    assert volunteer("Bianca").get(f"/hours/certificate/{cid}.pdf").status_code == 404
+    r = anon.get(f"/hours/certificate/{cid}.pdf", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login")
+
+
+def _snapshot(name, shifts=1):
+    return {
+        "volunteer": name,
+        "org": {"name": "Riverside Food Bank", "ein": "123456789", "website": ""},
+        "period": "all",
+        "shifts": [
+            {"id": i, "date": "2026-10-03", "minutes": 150, "role": "Sorting donations"}
+            for i in range(shifts)
+        ],
+        "minutes": 150 * shifts,
+        "coordinators": ["Pat Lee"],
+        "issued": "2026-10-31",
+    }
+
+
+def test_certificate_pdf_builder_runs_on_its_own_for_long_lists_and_any_name():
+    check = "http://localhost:5001/check/abc"
+    many = build_pdf(_snapshot("Sam Rivera", 60), "abc", check)
+    assert re.search(rb"/Count ([2-9])", many)  # more than one page, header repeated
+    content = _pdf_content(many)
+    assert content.count("(Date) Tj") > 1 and "(Total: 150 hours) Tj" in content
+    assert _qr_drawn(content) == qr_matrix(check)
+    for name in ("Nguyễn Thị Ánh", "李雷", "José Muñoz", "a" * 300, "x\ny\x00", ""):
+        assert build_pdf(_snapshot(name), "abc", check).startswith(b"%PDF")
+    assert "(Nguyen Thi Ánh) Tj" in _pdf_content(
+        build_pdf(_snapshot("Nguyễn Thị Ánh"), "abc", check)
+    )
+    assert "(??) Tj" in _pdf_content(build_pdf(_snapshot("李雷"), "abc", check))
