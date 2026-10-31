@@ -143,7 +143,7 @@ def test_deleting_the_account_withdraws_and_scrubs_its_certificates():
     assert "Zelda" in certificates()[0].snapshot
     data.delete_account(a.uid)
     (cert,) = certificates()
-    assert cert.withdrawn_at and cert.snapshot is None
+    assert cert.withdrawn_at and cert.snapshot is None and cert.signature is None
     with pytest.raises(LookupError):
         data.my_certificate(a.uid, cert.id)
 

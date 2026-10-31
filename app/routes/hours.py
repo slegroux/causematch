@@ -25,7 +25,10 @@ ar = Router()
 NOT_FOUND = "Not found"
 
 NOTICE = {
-    "limit": "You can issue 20 certificates a day. Try again tomorrow.",
+    "limit": (
+        f"You can issue {data.CERTIFICATES_PER_DAY} certificates a day. "
+        "Try again tomorrow."
+    ),
     "period": "Pick a month, or all your hours there.",
 }
 

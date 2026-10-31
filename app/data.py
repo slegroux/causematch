@@ -3762,7 +3762,7 @@ def delete_account(uid):
         # certificates carry the name and every shift: withdrawn, and nothing left to read
         _db.db.execute(
             "UPDATE certificate SET withdrawn_at = coalesce(withdrawn_at, ?), "
-            "snapshot = NULL WHERE volunteer_id = ?",
+            "snapshot = NULL, signature = NULL WHERE volunteer_id = ?",
             [_now(), uid],
         )
         _db.db.execute(
@@ -4039,6 +4039,7 @@ def _drop_demo_volunteer(uid):
         ("DELETE FROM match WHERE volunteer_id = ?", 1),
         ("DELETE FROM swipe WHERE volunteer_id = ?", 1),
         ("DELETE FROM place WHERE user_id = ?", 1),
+        ("DELETE FROM certificate WHERE volunteer_id = ?", 1),
         ("DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", 1),
         ("DELETE FROM deck_empty WHERE volunteer_id = ?", 1),
         ("DELETE FROM notification WHERE recipient_id = ? AND kind != 'likes'", 1),
