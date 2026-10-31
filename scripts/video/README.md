@@ -90,6 +90,15 @@ inside the repo, or on a database without the demo seed; it opens the file read-
 (never creates one), changes exactly one row in one transaction (rolled back otherwise)
 and closes the connection.
 
+## Why the takeover is nudged
+
+On Riley's phone the deck asks `/deck/news` every 10 seconds, and a nonprofit's yes brings
+the "It's a match!" takeover with no tap. Left alone, the takeover would land anywhere in
+those 10 seconds, often well after the narration says it has. So the `accept` beat fires the
+page's own tab-visible trigger (a `visibilitychange` event) once, while Jordan types, and
+then waits for the takeover (`dialog.cm-moment[open]`). The fetch and the takeover are the
+app's own; only their timing is chosen.
+
 ## Invented data only
 
 The repo is public. The video uses the demo seed (`app/demo_seed.py`) and made-up people
@@ -103,5 +112,5 @@ no repo `.venv`; Hugging Face's model cache and Playwright's Chromium kept): 4 m
 seconds on an Apple-silicon Mac (2026-10-31). Of that, setup and voice took about 1
 minute 20 seconds, recording 3 minutes 10 seconds (the story itself is 2 minutes 47
 seconds, paced by the voice lines) and composing under 30 seconds. With everything set
-up, one change to a line and a re-run is about 4 minutes. The result: 2:52, 1920x1080,
-7.5 MB, -16.1 LUFS.
+up, one change to a line and a re-run is about 4 minutes. The result (after the match takeover
+was added): 3:01, 1920x1080, 7.5 MB, -16.1 LUFS.
