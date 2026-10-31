@@ -244,6 +244,13 @@ def test_place_geolocation_is_allowed_on_the_preferences_page_only(bare):
     assert "geolocation=(self)" in policy("/me/preferences/causes")
     assert "geolocation=()" in policy("/deck")
     assert "geolocation=()" in policy("/profile")
+    # the page a save error re-renders is at the section form's own path
+    r = bare.post(
+        "/me/preferences",
+        data={**BASE, **place_fields(1, "Home", "Nowhereville"), "back": "causes"},
+    )
+    assert "couldn't find" in r.text
+    assert "geolocation=(self)" in r.headers["permissions-policy"]
 
 
 def test_place_page_lists_neighborhoods_and_loads_geo_js(bare):
@@ -1291,6 +1298,24 @@ def test_verified_hours_a_coordinator_sets_it_and_a_non_member_cannot(coord):
     other = coordinator(1)
     r = other.post(f"/org/organization/{org}", data={"confirms_hours": "1"})
     assert r.status_code == 403 and not orgs[org].confirms_hours
+
+
+def test_a_ticked_language_skill_with_no_language_picked_survives_a_work_save(bare):
+    uid = uid_of(bare)
+    profiles.update(id=uid, skills='["admin", "language"]', languages="[]")
+    post = lambda **kw: bare.post(
+        "/me/preferences", data={"sections": "work", "back": "work", **kw}
+    )
+    post(skills="admin")
+    assert data._skills(profiles[uid]) == ["admin", "language"]
+    assert json.loads(profiles[uid].skills) == ["admin", "language"]  # stored, once
+    post(skills=["admin", "language"])
+    assert json.loads(profiles[uid].skills) == ["admin", "language"]
+    # a volunteer who picked a language has the skill without the tick, and the ticked
+    # one is no longer kept (the urgent-call ranking reads data._skills too)
+    post(skills="admin", languages="es")
+    assert json.loads(profiles[uid].skills) == ["admin"]
+    assert data._skills(profiles[uid]) == ["admin", "language"]
 
 
 def test_a_volunteer_who_speaks_a_language_has_the_language_skill(bare):

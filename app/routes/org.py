@@ -355,8 +355,10 @@ def OpeningForm(uid, f=None, error=None):
     my_orgs = data.coordinator_orgs(uid)
     org_id = f.get("org_id") or (str(my_orgs[0][0].id) if len(my_orgs) == 1 else "")
     reply_choices = reply_options(bool(data.get_profile(uid).contact_phone))
-    reply_channel = f.get("reply_channel") or (
-        reply_choices[0][0] if len(reply_choices) == 1 else ""
+    reply_channel = (
+        f.get("reply_channel")
+        if f.get("reply_channel") in dict(reply_choices)
+        else (reply_choices[0][0] if len(reply_choices) == 1 else "")
     )
     reply_field = (
         Input(type="hidden", name="reply_channel", value=reply_channel)
@@ -568,6 +570,7 @@ def _sync_save_details(req, form):
     if error:
         if back == "/org":
             return org_home(req, error)
+        # here, not at the top: org_profile imports this module
         from app.routes.org_profile import OrganizationPage
 
         return OrganizationPage(uid, details_error=error)

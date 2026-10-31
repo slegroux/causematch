@@ -193,6 +193,22 @@ def test_at_least_one_cause_must_be_loved_or_open(user):
     assert json.loads(profile_of(user).cause_prefs) == {FOOD: "love"}
 
 
+def test_a_volunteer_with_only_inactive_causes_can_still_save_the_other_pages(
+    homelessness_off, user
+):
+    (dead,) = [c for c in causes() if not c.active][:1]
+    profiles.update(id=uid_of(user), cause_prefs=json.dumps({dead.slug: "love"}))
+    r = user.post(
+        "/me/preferences",
+        data={"sections": "when", "back": "when", "availability": ["mon_morning"]},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and r.headers["location"].endswith("/when?saved=1")
+    assert json.loads(profile_of(user).availability) == ["mon_morning"]
+    r = user.post("/me/preferences", data={"cause_" + dead.slug: "love"})
+    assert "at least one cause" in r.text  # the Causes page itself is still held to it
+
+
 def test_a_rating_of_an_inactive_cause_is_kept(homelessness_off, user):
     (dead,) = [c for c in causes() if not c.active][:1]
     profiles.update(

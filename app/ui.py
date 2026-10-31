@@ -329,7 +329,10 @@ MATCH_STATUS = {
         "org": ("Waiting for you", "wait"),
     },
     "accepted": ("Accepted", "good"),
-    "declined": ("Not this time", "off"),
+    "declined": {
+        "volunteer": ("Not this time", "off"),
+        "org": ("Declined", "off"),
+    },
     "withdrawn": ("Withdrawn", "off"),
 }
 SHIFT_STATUS = {

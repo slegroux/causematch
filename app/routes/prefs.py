@@ -603,7 +603,8 @@ def WorkCards(f):
     )
 
 
-# section key -> (name, its cards, what a nonprofit sees of it); the key is the page's path and its form's `back`
+# section key -> (name, its cards, what a nonprofit sees of it); the key is the
+# page's path and its form's `back`
 SECTIONS = {
     "causes": (
         "Causes and places",
@@ -624,20 +625,8 @@ SECTIONS = {
 }
 
 
-def PrefsRow(key, f):
+def PrefsRow(key, saved):
     """One row of the index: its name, a line on what is saved, a chevron."""
-    loved = [
-        c.label
-        for c in data.active_causes()
-        if f["causes"].get(c.slug) in (prefs.LOVE, prefs.OPEN)
-    ]
-    places = [pf["label"] for pf in f["place_forms"] if pf["where"].strip()]
-    saved = {
-        "causes": " · ".join(filter(None, [", ".join(loved), ", ".join(places)])),
-        "when": f"{len(f['availability'])} usual times" if f["availability"] else "",
-        "work": "",
-        "urgent": "On" if f["urgent"]["on"] else "Off",
-    }[key]
     return A(
         Div(
             Div(SECTIONS[key][0], cls="font-bold text-ink"),
@@ -677,6 +666,18 @@ def BackLink(text, href):
 
 def PrefsPage(uid, f, error=None, saved=False):
     """The index: one row per section."""
+    picked = [
+        c.label
+        for c in data.active_causes()
+        if f["causes"].get(c.slug) in (prefs.LOVE, prefs.OPEN)
+    ]
+    places = [pf["label"] for pf in f["place_forms"] if pf["where"].strip()]
+    n = len(f["availability"])
+    lines = {
+        "causes": " · ".join(filter(None, [", ".join(picked), ", ".join(places)])),
+        "when": f"{n} usual time{'' if n == 1 else 's'}" if n else "",
+        "urgent": "On" if f["urgent"]["on"] else "Off",
+    }
     return VolunteerShell(
         "me",
         BackLink("Me", "/profile"),
@@ -693,7 +694,7 @@ def PrefsPage(uid, f, error=None, saved=False):
         ),
         *Notices(error, saved),
         Div(
-            *[PrefsRow(key, f) for key in SECTIONS],
+            *[PrefsRow(key, lines.get(key)) for key in SECTIONS],
             cls="divide-y divide-line overflow-hidden " + CARD,
         ),
         uid=uid,
@@ -792,15 +793,24 @@ def _sync_save(req, form):
     uid = req.scope["uid"]
     saved = data.preferences(uid)
     marks = form.getlist("sections")
+    if "only" in marks:  # a form loaded before the section pages existed
+        marks += ["causes", "when"]
     back = form.get("back")
-    if (
-        back not in SECTIONS
-    ):  # a form without one (a script): the page its fields are from
+    # a form without a `back` (a script): the page its fields are from
+    if back not in SECTIONS:
         back = (
             "causes"
             if "place1_where" in form
             else next((k for k in ("when", "work", "urgent") if k in marks), None)
         )
+    skills = form.getlist("skills")
+    # a ticked "language" with no language picked has lost its checkbox: keep it
+    if (
+        "language" in saved["skills"]
+        and "language" not in skills
+        and not form.getlist("languages")
+    ):
+        skills.append("language")
     active = [c.slug for c in data.active_causes()]
     # a cause the posted page didn't rate keeps its saved rating (a page loaded before
     # the cause came back); a rated cause always sends its radio
@@ -811,6 +821,10 @@ def _sync_save(req, form):
     }
     # the places come with the causes page, whose first place field is always posted
     has_places = "place1_where" in form
+    # only the Causes page can fix a missing cause or place, so only it is held to them
+    on_causes_page = (
+        has_places or "causes" in marks or any(k.startswith("cause_") for k in form)
+    )
     f = {
         # a rating of a cause that is inactive now is kept for when it comes back
         "causes": {
@@ -839,7 +853,7 @@ def _sync_save(req, form):
                 "first_timer": form.get("first_timer") == "1",
                 "orientation_ok": form.get("orientation_ok") == "1",
                 "languages": form.getlist("languages"),
-                "skills": form.getlist("skills"),
+                "skills": skills,
                 "frequency": form.get("frequency", ""),
             }
             if "work" in marks
@@ -929,7 +943,7 @@ def _sync_save(req, form):
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
         return page_of(uid, f, back, prefs.UNRECOGNIZED)
-    if not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
+    if on_causes_page and not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
         return page_of(uid, f, back, NO_CAUSE)
     if date_error:
         return page_of(uid, f, back, date_error)
@@ -941,7 +955,7 @@ def _sync_save(req, form):
             return page_of(uid, f, back, error)
         if place:
             places.append(place)
-    if not places or not f["place_forms"][0]["where"].strip():
+    if on_causes_page and (not places or not f["place_forms"][0]["where"].strip()):
         return page_of(uid, f, back, NO_PLACE)
     data.save_preferences(
         uid,
