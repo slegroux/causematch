@@ -3,7 +3,8 @@
 python compose.py BEATS.json VOICE_DIR TAKE_DIR OUT.mp4
 Each beat is a segment with its own layout (card, laptop, phone, both), caption and voice
 line; the segments are joined, then encoded once (H.264, crf 23, faststart) with the audio
-normalised to -16 LUFS (two-pass loudnorm). Also writes demo-poster.jpg next to OUT.mp4.
+normalised to -16 LUFS (two-pass loudnorm). Also writes demo-poster.jpg and demo.vtt (English captions of the narration, one cue
+per sentence, timed from each beat's start in the video) next to OUT.mp4.
 Fails if a voice line doesn't fit inside its beat.
 """
 
@@ -219,6 +220,8 @@ CARDS = {
 }
 
 segments = []
+begins = {}  # where each beat starts in the composed video
+running = 0.0
 n = 0
 for i, b in enumerate(BEATS):
     bid, start = b["id"], starts[b["id"]]
@@ -307,6 +310,8 @@ for i, b in enumerate(BEATS):
         check=True,
     )
     segments.append(out)
+    begins[bid] = running
+    running += dur
     print(f"{bid:9s} {dur:5.1f}s")
 
 listing = SEG / "list.txt"
@@ -330,6 +335,23 @@ subprocess.run(
     ],
     check=True,
 )
+
+
+def stamp(t):
+    return f"{int(t // 3600):02d}:{int(t % 3600 // 60):02d}:{t % 60:06.3f}"
+
+
+# captions: each line's sentences share the line's voice time in proportion to their length
+cues = ["WEBVTT", ""]
+for b in BEATS:
+    sentences = re.findall(r"[^.!?]+[.!?]+|[^.!?]+$", b["say"])
+    total = sum(len(x) for x in sentences)
+    t = begins[b["id"]] + 0.25  # the line starts 250 ms into its beat
+    for x in sentences:
+        span = voice_len[b["id"]] * len(x) / total
+        cues += [f"{stamp(t)} --> {stamp(t + span)}", x.strip(), ""]
+        t += span
+OUT.with_name("demo.vtt").write_text("\n".join(cues))
 
 # loudness: measure, then apply the measured values (linear), so the result lands on target
 TARGET = "I=-16:TP=-1.5:LRA=11"
