@@ -2,8 +2,9 @@
 
 `site/assets/demo.mp4` (the video on the website, with `demo-poster.jpg` and the captions
 `demo.vtt`) is made from the
-running app, on invented demo data, in three steps: Playwright drives the demo app in three
-browser sessions (Riley on a phone, Jordan on a laptop, a Causematch admin on a laptop) and
+running app, on invented demo data, in three steps: Playwright drives the demo app in four
+browser sessions (Riley on a phone, Jordan on a laptop, a Causematch admin on a laptop, and a
+signed-out visitor on a laptop) and
 records each; Kokoro text to speech voices one narration line per beat; ffmpeg composes
 the recordings, captions and voice into one 1080p video with the loudness normalised.
 
@@ -56,7 +57,7 @@ Outside the repo, so nothing here can be committed by accident:
 - `CAUSEMATCH_VIDEO_WORK`, default `$CAUSEMATCH_VIDEO_CACHE/video-work` (the script refuses
   a folder inside the repo; `setup` marks its work folder with `.causematch-video-work`, and
   `record` deletes `take/` and `rec.db` only in a folder that has the mark): `voice/`,
-  `take/` (the three `.webm` recordings, `timeline.json`, `problems.txt`, the segments),
+  `take/` (the four `.webm` recordings, `timeline.json`, `problems.txt`, the segments),
   `rec.db` (the throwaway database), `server.log`, and the finished `demo.mp4` and
   `demo-poster.jpg` and `demo.vtt`.
 
@@ -73,7 +74,8 @@ scripts/video/make_demo_video.sh voice record compose install
 
 `voice` voices only the changed line. `record` has to run again, because every beat is
 paced by its line's length (about 3 minutes). Keep the words about hours to "hours a
-nonprofit confirms": the video says nothing about why anyone needs them.
+nonprofit confirms" and the one example the preference page gives, school: the
+video says nothing more about why anyone needs them.
 
 To change only a caption, the colours or a card, run `compose install`: the recordings
 are reused. To change what happens on screen, edit `record.py` and run
@@ -99,6 +101,15 @@ page's own tab-visible trigger (a `visibilitychange` event) once, while Jordan t
 then waits for the takeover (`dialog.cm-moment[open]`). The fetch and the takeover are the
 app's own; only their timing is chosen.
 
+## The check link is opened by a fourth browser
+
+The `check` beat shows a certificate's check link signed out, so it opens in its own fresh
+browser context (`guest`, a laptop), not in Jordan's or the admin's signed-in ones. That
+context exists for the whole recording and sits on a blank page until the beat. The link is
+the one Riley's certificate page prints (`http://127.0.0.1:PORT/check/...`, demo data only).
+The certificate page itself shows the code and the link; the QR code is in the PDF, which
+the video names but does not open.
+
 ## Invented data only
 
 The repo is public. The video uses the demo seed (`app/demo_seed.py`) and made-up people
@@ -112,5 +123,5 @@ no repo `.venv`; Hugging Face's model cache and Playwright's Chromium kept): 4 m
 seconds on an Apple-silicon Mac (2026-10-31). Of that, setup and voice took about 1
 minute 20 seconds, recording 3 minutes 10 seconds (the story itself is 2 minutes 47
 seconds, paced by the voice lines) and composing under 30 seconds. With everything set
-up, one change to a line and a re-run is about 4 minutes. The result (after the match takeover
-was added): 3:01, 1920x1080, 7.5 MB, -16.1 LUFS.
+up, one change to a line and a re-run is about 4 minutes. The result (with the certificate and its check link, and the confirmed-hours checkbox): 3:29, 1920x1080,
+9.1 MB, -16.1 LUFS; the voice and record steps now take about 4 minutes 40 seconds together with compose.
