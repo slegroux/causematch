@@ -20,6 +20,7 @@ from monsterui.all import Alert, AlertT, Button, ButtonT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, security
+from app.certificate import ein_label, long_date, month_name
 from app.choices import minutes_label
 from app.config import public_base_url
 from app.forms import query, str_form
@@ -78,10 +79,6 @@ def MonthCard(m):
         ),
         cls="w-full space-y-2 p-4 " + CARD,
     )
-
-
-def month_name(period):
-    return datetime.strptime(period, "%Y-%m").strftime("%B %Y")
 
 
 def CertificateCard(o):
@@ -191,15 +188,6 @@ def _sync_issue(uid, org_id, period):
     except (LookupError, PermissionError):
         return Response(NOT_FOUND, status_code=404)
     return Redirect(f"/hours/certificate/{done['id']}")
-
-
-def ein_label(ein):
-    digits = re.sub(r"\D", "", ein or "")
-    return f"{digits[:2]}-{digits[2:]}" if len(digits) == 9 else (ein or "")
-
-
-def long_date(iso):
-    return datetime.strptime(iso, "%Y-%m-%d").strftime("%b %-d, %Y")
 
 
 def Certificate(c):
