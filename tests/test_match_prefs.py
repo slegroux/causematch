@@ -35,7 +35,7 @@ BASE = {
     "availability": ["sat_morning"],
     "frequency": "weekly",
     "only_distance": "only",  # the default: a place's travel time is a limit
-    "sections": ["when", "work", "only"],  # as the page sends: its checkboxes count
+    "sections": ["when", "work", "causes"],  # as the page sends: its checkboxes count
 }
 
 
@@ -822,9 +822,12 @@ def test_dealbreaker_and_surprise_answers_are_stored(bare):
     p = profiles[uid_of(bare)]
     assert json.loads(p.dealbreakers) == ["causes", "distance", "work"]
     assert p.surprise
-    page = bare.get("/me/preferences/causes").text
-    assert 'name="only_work" value="only" checked' in page
-    assert 'name="surprise" value="1" checked' in page
+    assert (
+        'name="surprise" value="1" checked' in bare.get("/me/preferences/causes").text
+    )
+    assert (
+        'name="only_work" value="only" checked' in bare.get("/me/preferences/work").text
+    )
 
 
 # --- the deck's filter sheet and the empty-deck suggestion -----------------------------------
@@ -1288,3 +1291,15 @@ def test_verified_hours_a_coordinator_sets_it_and_a_non_member_cannot(coord):
     other = coordinator(1)
     r = other.post(f"/org/organization/{org}", data={"confirms_hours": "1"})
     assert r.status_code == 403 and not orgs[org].confirms_hours
+
+
+def test_a_volunteer_who_speaks_a_language_has_the_language_skill(bare):
+    """The skills picker no longer offers "language"; the languages list says it."""
+    add("needs a car", DOWNTOWN, skills='["car"]')
+    add("needs a language", DOWNTOWN, skills='["language"]')  # made second: wins no tie
+    save(bare, work_form())
+    assert list(cards(bare)) == ["needs a car", "needs a language"]  # a tie
+    save(bare, work_form(languages=["es"]))
+    assert json.loads(profiles[uid_of(bare)].skills) == []
+    assert list(cards(bare)) == ["needs a language", "needs a car"]
+    assert 'value="language"' not in bare.get("/me/preferences/work").text

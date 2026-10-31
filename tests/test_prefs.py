@@ -93,7 +93,7 @@ def test_page_shows_the_onboarding_answers(homelessness_off, user):
 
 @pytest.mark.parametrize(
     "key, marker",
-    [("causes", "only"), ("when", "when"), ("work", "work"), ("urgent", "urgent")],
+    [("causes", "causes"), ("when", "when"), ("work", "work"), ("urgent", "urgent")],
 )
 def test_every_section_page_has_its_own_save_and_marker(user, key, marker):
     assert f'href="/me/preferences/{key}"' in user.get("/me/preferences").text
@@ -402,34 +402,59 @@ def test_homelessness_services_is_offered_now_that_it_is_active(user):
 def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
     """Causes, general availability, languages and how often are shared after a like
     (choices.SHARED_WITH_NONPROFIT); places, ratings, dates, kind of work, skills and the
-    Only-show choices are not. The page must not promise everything is private."""
+    Only-show choices are not. Each section page says so once, under its title, and the
+    last-minute page says nothing: it must not promise everything is private."""
     from html import unescape
 
     from app.choices import SHARED_WITH_NONPROFIT
     from app.routes.prefs import SHARED
 
-    pages = [
-        unescape(user.get(f"/me/preferences/{k}").text)
-        for k in ("causes", "when", "work", "urgent")
-    ]
     assert 'href="/privacy"' in user.get("/me/preferences").text
-    sections = [s for html in pages for s in html.split("<h2")[1:]]
-    marked = {s.split(">", 1)[1].split("<", 1)[0]: SHARED in s for s in sections}
-    assert marked == {
-        "Causes": True,
-        "Where you'll help from": False,
-        "When": True,
-        "Kind of work": True,  # its languages fieldset only
-        "Only show, or prefer?": False,
-        "How often": True,
-        "What you bring": False,
-        "Last-minute calls": False,
+    counts = {
+        k: unescape(user.get(f"/me/preferences/{k}").text).count(SHARED)
+        for k in ("causes", "when", "work", "urgent")
     }
-    kind = next(
-        s for s in sections if s.startswith(">Kind of work") or "Kind of work<" in s
-    )
-    assert kind.count(SHARED) == 1 and kind.index("Languages you speak") < kind.index(
-        SHARED
-    )
+    assert counts == {"causes": 1, "when": 1, "work": 1, "urgent": 0}
+    work = unescape(user.get("/me/preferences/work").text)
+    assert work.index(SHARED) < work.index("<h2")  # a legend, not a card's own note
     for item in ("causes", "availability", "languages", "how often"):
         assert item in SHARED_WITH_NONPROFIT
+
+
+def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
+    """Prefer / Only show sits under its own controls; surprise and verified hours save
+    from the causes page, and a page that doesn't carry them leaves them alone."""
+    pages = {
+        "causes": ("only_causes", "only_distance"),
+        "when": ("only_when",),
+        "work": ("only_work",),
+    }
+    for key, names in pages.items():
+        html = user.get(f"/me/preferences/{key}").text
+        assert all(f'name="{n}" value="only"' in html for n in names), key
+    assert 'name="only_work"' not in user.get("/me/preferences/when").text
+    r = user.post(
+        "/me/preferences",
+        data={
+            **SAVE,
+            "sections": "causes",
+            "back": "causes",
+            "only_causes": "only",
+            "only_distance": "prefer",
+            "surprise": "1",
+            "verified_hours": "prefer",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    saved = data.preferences(uid_of(user))
+    assert saved["dealbreakers"] == ["causes"]
+    assert saved["surprise"] and saved["verified_hours"] == "prefer"
+    for key, field in (("when", "only_when"), ("work", "only_work")):
+        user.post(
+            "/me/preferences",
+            data={"sections": key, "back": key, field: "only"},
+        )
+    saved = data.preferences(uid_of(user))
+    assert saved["dealbreakers"] == ["causes", "when", "work"]
+    assert saved["surprise"] and saved["verified_hours"] == "prefer"  # kept

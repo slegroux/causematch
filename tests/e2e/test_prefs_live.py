@@ -77,3 +77,12 @@ def test_an_empty_deck_offers_the_change_that_adds_most(phone):
     offer.click()
     phone.wait_for_load_state("networkidle")
     assert phone.get_by_role("heading", name="Pasadena trail day").is_visible()
+
+
+def test_each_preferences_page_is_a_short_scroll_on_a_phone(phone_context):
+    page = phone_context.new_page()
+    sign_in_page(page, "(310) 555-0172")
+    for key in ("causes", "when", "work", "urgent"):
+        page.goto(f"/me/preferences/{key}")
+        height = page.evaluate("document.scrollingElement.scrollHeight")
+        assert height < 5000, (key, height)

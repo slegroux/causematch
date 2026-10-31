@@ -355,7 +355,9 @@ def test_optin_is_off_by_default(user):
 
 def test_optin_saves_and_shows(user):
     r = save_prefs(user)
-    assert r.status_code == 303 and r.headers["location"] == "/me/preferences?saved=1"
+    # the whole form at once: it comes back on the first section page
+    assert r.status_code == 303
+    assert r.headers["location"] == "/me/preferences/causes?saved=1"
     assert data.preferences(uid_of(user))["urgent"] == {
         "on": True,
         "window": "today",

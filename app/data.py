@@ -503,7 +503,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     active = {c.slug for c in _db.causes() if c.active}
     rated = {s: v for s, v in p["causes"].items() if s in active}
     loved = {s for s, v in rated.items() if v == _prefs.LOVE}
-    skills = json.loads(me.skills or "[]")
+    skills = _skills(me)
     spoken = _prefs.languages(me)
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
@@ -598,6 +598,13 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
             }
         )
     return cards, len(ranked)
+
+
+def _skills(me):
+    """A volunteer's skills as ranking reads them: one who speaks a language besides
+    English has the "language" skill an opening can ask for."""
+    skills = set(json.loads(me.skills or "[]"))
+    return sorted(skills | {"language"} if _prefs.languages(me) else skills)
 
 
 VERIFIED_WEIGHT = 0.15  # "Prefer" nonprofits that confirm hours: this share of the fit
@@ -2629,7 +2636,7 @@ def urgent_recipients(call_id, limit, at):
         fit = _fit(
             p,
             rated,
-            json.loads(me.skills or "[]"),
+            _skills(me),
             _prefs.languages(me),
             o,
             slugs,

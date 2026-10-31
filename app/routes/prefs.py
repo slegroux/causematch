@@ -10,6 +10,7 @@ from fasthtml.common import (
     A,
     Button,
     Datalist,
+    Details,
     Div,
     Fieldset,
     Form,
@@ -24,6 +25,7 @@ from fasthtml.common import (
     Script,
     Select,
     Span,
+    Summary,
 )
 from monsterui.all import Alert, AlertT
 from starlette.concurrency import run_in_threadpool
@@ -78,6 +80,9 @@ ar = Router()
 SETTINGS = [*SETTING, ("either", "Either")]
 EFFORTS = [*EFFORT, ("any", "Any")]
 GROUPS = [*GROUP, ("any", "Any")]
+
+# "language" stays a skill an opening can ask for; a volunteer's languages say it
+PICKABLE_SKILLS = [(v, label) for v, label in SKILLS if v != "language"]
 
 SLOTS = {f"{d}_{p}" for d, _ in DAYS for p, _ in PARTS}
 CHECK = ("M5 12.5 10 17.5 19.5 7",)
@@ -150,21 +155,20 @@ def Chip(kind, name, value, text, checked, on=CHIP_ON, icon=None):
 SHARED = "Shared with a nonprofit after you like its opening"
 
 
-def SharedNote(detail=""):
-    """Marks what a nonprofit sees (choices.SHARED_WITH_NONPROFIT); the rest is private."""
+def SharedNote(detail):
+    """The legend under a section page's title: what a nonprofit sees of it
+    (choices.SHARED_WITH_NONPROFIT); the rest of the page is private."""
     return P(
         Icon(PEOPLE, size=16, cls="mt-0.5"),
         Span(SHARED + detail),
-        cls="flex gap-1.5 text-xs font-bold text-brand-ink",
+        cls="-mt-2 mb-4 flex gap-1.5 text-xs font-bold text-brand-ink",
     )
 
 
-def Section(title, hint, *content, shared=None):
-    """shared: None for a private section, else the detail its SharedNote adds."""
+def Section(title, hint, *content):
     return Div(
         H2(title, cls=ORG_SECTION),
         P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
-        SharedNote(shared) if shared is not None else None,
         *content,
         cls="space-y-3 p-5 " + CARD,
     )
@@ -296,6 +300,34 @@ def Group(title, cls, name, options, value):
     )
 
 
+# A <details> whose summary is a 44 px target; a closed one still posts its fields.
+SUMMARY = (
+    "inline-flex min-h-11 cursor-pointer list-none items-center font-bold text-ink "
+    "[&::-webkit-details-marker]:hidden"
+)
+
+
+def Fold(title, *content, open=False):
+    return Details(Summary(title, cls=SUMMARY), *content, open=open, cls="space-y-3")
+
+
+def OnlyShow(f, key, hint=False):
+    """A dealbreaker (choices.DEALBREAKERS) as Prefer / Only show, under the controls it
+    applies to."""
+    return Div(
+        Group(
+            dict(DEALBREAKERS)[key],
+            "grid grid-cols-2 gap-2",
+            f"only_{key}",
+            [("prefer", "Prefer"), ("only", "Only show")],
+            "only" if key in f["dealbreakers"] else "prefer",
+        ),
+        P("Only show hides what doesn't fit.", cls="mt-1.5 text-sm text-ink-muted")
+        if hint
+        else None,
+    )
+
+
 def Hour(name, value):
     return Select(
         *[Option(label, value=str(h), selected=h == value) for h, label in HOURS],
@@ -308,9 +340,8 @@ def LastMinute(u):
     """The opt-in to urgent calls: off unless turned on, and private."""
     return Section(
         "Last-minute calls",
-        "When a nonprofit near you is short of people in the next 48 hours and you're "
-        "free then, we can text you (or email you, without a number). Off unless you "
-        "turn it on. Nonprofits never see these settings.",
+        "Short of people in the next 48 hours and you're free then: we text you (or "
+        "email you, without a number). Off unless you turn it on.",
         Hidden(name="sections", value="urgent"),
         Chip(
             "checkbox",
@@ -326,10 +357,18 @@ def LastMinute(u):
             URGENT_WINDOWS,
             u["window"],
         ),
-        Div(
-            Field("No texts from", Hour("urgent_quiet_from", u["quiet_from"])),
-            Field("Until", Hour("urgent_quiet_to", u["quiet_to"])),
-            cls="grid grid-cols-2 gap-2",
+        Fold(
+            "Quiet hours",
+            Div(
+                Field("No texts from", Hour("urgent_quiet_from", u["quiet_from"])),
+                Field("Until", Hour("urgent_quiet_to", u["quiet_to"])),
+                cls="grid grid-cols-2 gap-2",
+            ),
+            open=(str(u["quiet_from"]), str(u["quiet_to"]))
+            != (
+                str(prefs.URGENT_DEFAULTS["quiet_from"]),
+                str(prefs.URGENT_DEFAULTS["quiet_to"]),
+            ),
         ),
         Group(
             "At most, a week",
@@ -415,35 +454,14 @@ def PlaceFields(slot, pf, named=True):
 
 
 def CausesCards(f):
+    first, second = f["place_forms"]
     return (
         Section(
             "Causes",
             "Love ranks first. Not for me hides every opening for that cause.",
+            Hidden(name="sections", value="causes"),
             *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
-            shared=": the causes you love or are open to, not how you rated them.",
-        ),
-        Section(
-            "Where you'll help from",
-            "Each card shows the time from the nearest of your places. Only you see "
-            "them; we keep an area, never an address.",
-            *[PlaceFields(i, pf) for i, pf in enumerate(f["place_forms"])],
-            Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
-        ),
-        Section(
-            "Only show, or prefer?",
-            "Prefer ranks what fits first and still shows the rest. Only show hides "
-            "what doesn't fit. Causes that are not for you are always hidden.",
-            Hidden(name="sections", value="only"),
-            *[
-                Group(
-                    label,
-                    "grid grid-cols-2 gap-2",
-                    f"only_{key}",
-                    [("prefer", "Prefer"), ("only", "Only show")],
-                    "only" if key in f["dealbreakers"] else "prefer",
-                )
-                for key, label in DEALBREAKERS
-            ],
+            OnlyShow(f, "causes", hint=True),
             Group(
                 "Nonprofits that confirm my hours",
                 "grid grid-cols-3 gap-2",
@@ -458,6 +476,19 @@ def CausesCards(f):
                 "Surprise me: now and then, a cause beyond the ones I love",
                 f["surprise"],
             ),
+        ),
+        Section(
+            "Where you'll help from",
+            "Each card shows the time from the nearest of your places. Only you see "
+            "them; we keep an area, never an address.",
+            PlaceFields(0, first),
+            Fold(
+                "Add a second place",
+                PlaceFields(1, second),
+                open=bool(second["where"].strip()),
+            ),
+            Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
+            OnlyShow(f, "distance"),
         ),
     )
 
@@ -496,8 +527,7 @@ def WhenCards(f):
                 "for it stop.",
                 cls="text-sm text-ink-muted",
             ),
-            shared=": a summary of the times you tick (weekday or weekend mornings, "
-            "afternoons, evenings). Your dates and weekly limit stay private.",
+            OnlyShow(f, "when", hint=True),
         ),
     )
 
@@ -552,36 +582,45 @@ def WorkCards(f):
                     "Languages you speak besides English",
                     cls="uk-form-label mb-1.5",
                 ),
-                SharedNote("."),
                 Checks("languages", LANGUAGES, f["languages"], "flex flex-wrap gap-2"),
             ),
-        ),
-        Section(
-            "How often",
-            None,
-            Div(
-                *[
-                    Chip("radio", "frequency", v, label, f["frequency"] == v)
-                    for v, label in FREQUENCY
-                ],
-                cls="flex flex-wrap gap-2",
+            Group(
+                "How often",
+                "flex flex-wrap gap-2",
+                "frequency",
+                FREQUENCY,
+                f["frequency"],
             ),
-            shared=".",
-        ),
-        Section(
-            "What you bring",
-            "Openings that need it rank higher.",
-            Checks("skills", SKILLS, f["skills"], "flex flex-wrap gap-2"),
+            Fieldset(
+                Legend(
+                    "What you bring (openings that need it rank higher)",
+                    cls="uk-form-label mb-1.5",
+                ),
+                Checks("skills", PICKABLE_SKILLS, f["skills"], "flex flex-wrap gap-2"),
+            ),
+            OnlyShow(f, "work", hint=True),
         ),
     )
 
 
-# section key -> (name, its cards); the key is the page's path and its form's `back`
+# section key -> (name, its cards, what a nonprofit sees of it); the key is the page's path and its form's `back`
 SECTIONS = {
-    "causes": ("Causes and places", CausesCards),
-    "when": ("When", WhenCards),
-    "work": ("Kind of work", WorkCards),
-    "urgent": ("Last-minute calls", lambda f: (LastMinute(f["urgent"]),)),
+    "causes": (
+        "Causes and places",
+        CausesCards,
+        ": the causes you love or are open to, not how you rated them.",
+    ),
+    "when": (
+        "When",
+        WhenCards,
+        ": a summary of the times you tick, not your dates or weekly limit.",
+    ),
+    "work": (
+        "Kind of work",
+        WorkCards,
+        ": the languages you speak and how often you'd like to help.",
+    ),
+    "urgent": ("Last-minute calls", lambda f: (LastMinute(f["urgent"]),), None),
 }
 
 
@@ -663,11 +702,12 @@ def PrefsPage(uid, f, error=None, saved=False):
 
 def SectionPage(uid, f, key, error=None, saved=False):
     """One section's cards in a form of their own, with its own Save."""
-    name, cards = SECTIONS[key]
+    name, cards, shared = SECTIONS[key]
     return VolunteerShell(
         "me",
         BackLink("Preferences", "/me/preferences"),
         H1(name, cls=TITLE + " !mt-0"),
+        SharedNote(shared) if shared else None,
         *Notices(error, saved),
         Form(
             *cards(f),
@@ -822,7 +862,7 @@ def _sync_save(req, form):
         ],
         "verified_hours": form.get("verified_hours", saved["verified_hours"]),
         "surprise": form.get("surprise") == "1"
-        if "only" in marks
+        if "causes" in marks
         else saved["surprise"],
         "urgent": {
             "on": form.get("urgent_on") == "1",
