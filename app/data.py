@@ -15,6 +15,7 @@ from app import db as _db
 from app import match as _match
 from app import photos as _photos
 from app import prefs as _prefs
+from app import signing as _signing
 from app.choices import (
     ANY_DISTANCE_KM,
     DEFAULT_DEALBREAKERS,
@@ -1571,6 +1572,191 @@ def my_hours(uid):
         month["minutes"] += row["minutes"]
         month["shifts"].append(row)
     return out
+
+
+# --- certificates ------------------------------------------------------------------------
+
+CERTIFICATES_PER_DAY = 20  # issued by one volunteer in any rolling 24 hours
+
+
+class CertificateLimit(ValueError):
+    """Too many certificates issued by this volunteer in the last 24 hours."""
+
+
+def _is_period(period):
+    """ "all", or a month as "2026-10"."""
+    if period == "all":
+        return True
+    try:
+        return datetime.strptime(period, "%Y-%m").strftime("%Y-%m") == period
+    except (TypeError, ValueError):
+        return False
+
+
+def _confirmed_rows(uid, org_id=None):
+    """This volunteer's attended shifts with confirmed hours, oldest first, one dict each:
+    org_id, org, ein, website, starts_at, title, minutes and by (the coordinator who last
+    confirmed them, as their profile names them, else the org's name; as my_hours says)."""
+    where, args = "", [uid]
+    if org_id is not None:
+        where, args = "AND g.id = ? ", [uid, org_id]
+    return [
+        {
+            "org_id": r["org_id"],
+            "org": r["org"],
+            "ein": r["ein"],
+            "website": r["website"],
+            "starts_at": r["starts_at"],
+            "title": r["title"],
+            "minutes": r["confirmed_minutes"],
+            "by": (r["coordinator"] or "").strip() or r["org"],
+        }
+        for r in _db.db.query(
+            "SELECT g.id AS org_id, g.name AS org, g.ein, g.website, s.starts_at, "
+            "s.confirmed_minutes, o.title, c.display_name AS coordinator "
+            "FROM shift s JOIN match m ON m.id = s.match_id "
+            "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
+            "LEFT JOIN profile c ON c.id = coalesce(s.corrected_by, s.marked_by) "
+            "WHERE m.volunteer_id = ? AND s.status = 'completed' "
+            "AND s.confirmed_minutes > 0 " + where + "ORDER BY s.starts_at, s.id",
+            args,
+        )
+    ]
+
+
+def certificate_options(uid):
+    """The nonprofits this volunteer can certify hours at, by name: [{"org_id", "org",
+    "minutes" (all their hours there), "months": [{"period": "2026-10", "minutes"}]}],
+    months newest first. Only confirmed hours count; a nonprofit with none is not listed."""
+    out = {}
+    for r in _confirmed_rows(uid):
+        o = out.setdefault(
+            r["org_id"],
+            {"org_id": r["org_id"], "org": r["org"], "minutes": 0, "months": {}},
+        )
+        o["minutes"] += r["minutes"]
+        month = r["starts_at"][:7]
+        o["months"][month] = o["months"].get(month, 0) + r["minutes"]
+    return [
+        {
+            **o,
+            "months": [
+                {"period": k, "minutes": o["months"][k]}
+                for k in sorted(o["months"], reverse=True)
+            ],
+        }
+        for o in sorted(out.values(), key=lambda o: (o["org"].lower(), o["org_id"]))
+    ]
+
+
+def _volunteer_full_name(uid):
+    p = _db.profiles[uid]
+    return " ".join(
+        x for x in ((p.display_name or "").strip(), (p.last_name or "").strip()) if x
+    )
+
+
+def issue_certificate(uid, org_id, period):
+    """The certificate of this volunteer's hours at one nonprofit for a period ("2026-10" or
+    "all"), as {"id", "created"}: created is False when the same content was already issued
+    and not withdrawn, so that one comes back.
+
+    Lists only hours that nonprofit confirmed for this volunteer. LookupError when there
+    are none in the period or no such nonprofit; ValueError for a bad period; CertificateLimit after
+    CERTIFICATES_PER_DAY issued in 24 hours. The snapshot stores the names and shifts as
+    they are now, so the document never changes with a profile.
+    """
+    if not _is_period(period):
+        raise ValueError("pick a month or all hours")
+    if not _is_id(org_id):
+        raise LookupError("no such nonprofit")
+    with _db.db.conn:
+        p = _db.profiles[uid] if _is_id(uid) else None
+        if p is None or p.role != "volunteer" or p.deleted_at:
+            raise PermissionError("not a volunteer")
+        rows = [
+            r
+            for r in _confirmed_rows(uid, org_id)
+            if period == "all" or r["starts_at"].startswith(period)
+        ]
+        if not rows:
+            raise LookupError("no confirmed hours there in that period")
+        snapshot = {
+            "volunteer": _volunteer_full_name(uid),
+            "org": {
+                "name": rows[0]["org"],
+                "ein": rows[0]["ein"] or "",
+                "website": rows[0]["website"] or "",
+            },
+            "coordinators": sorted({r["by"] for r in rows}, key=str.lower),
+            "shifts": [
+                {
+                    "date": r["starts_at"][:10],
+                    "minutes": r["minutes"],
+                    "role": r["title"],
+                }
+                for r in rows
+            ],
+            "minutes": sum(r["minutes"] for r in rows),
+            "period": period,
+            "issued": _local_now()[:10],
+        }
+        same = {k: v for k, v in snapshot.items() if k != "issued"}
+        for c in _db.certificates(
+            where="volunteer_id = ? AND org_id = ? AND period = ? AND withdrawn_at IS NULL",
+            where_args=[uid, org_id, period],
+        ):
+            old = json.loads(c.snapshot or "null") or {}
+            if {k: v for k, v in old.items() if k != "issued"} == same:
+                return {"id": c.id, "created": False}
+        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat(timespec="seconds")
+        (issued,) = _db.db.execute(
+            "SELECT count(*) FROM certificate WHERE volunteer_id = ? AND issued_at > ?",
+            [uid, since],
+        ).fetchone()
+        if issued >= CERTIFICATES_PER_DAY:
+            raise CertificateLimit(
+                f"You can issue {CERTIFICATES_PER_DAY} certificates a day. "
+                "Try again tomorrow."
+            )
+        cert_id = secrets.token_urlsafe(16)
+        _db.certificates.insert(
+            id=cert_id,
+            volunteer_id=uid,
+            org_id=org_id,
+            period=period,
+            minutes=snapshot["minutes"],
+            issued_at=_now(),
+            snapshot=json.dumps(snapshot, sort_keys=True),
+            signature=_signing.sign(snapshot, cert_id),
+        )
+    return {"id": cert_id, "created": True}
+
+
+def my_certificate(uid, cert_id):
+    """A certificate this volunteer issued: {"id", "period", "minutes", "issued_at",
+    "snapshot" (the dict), "signature", "code" (its first 16 characters, grouped), "genuine"
+    (the signature still matches)}. PermissionError for anyone else's or an unknown id;
+    LookupError for their own that was withdrawn."""
+    try:
+        c = _db.certificates[cert_id] if isinstance(cert_id, str) else None
+    except NotFoundError:
+        c = None
+    if c is None or c.volunteer_id != uid:
+        raise PermissionError("not yours")
+    if c.withdrawn_at or not c.snapshot:
+        raise LookupError("withdrawn")
+    snapshot = json.loads(c.snapshot)
+    return {
+        "id": c.id,
+        "period": c.period,
+        "minutes": c.minutes,
+        "issued_at": c.issued_at,
+        "snapshot": snapshot,
+        "signature": c.signature,
+        "code": _signing.code(c.signature),
+        "genuine": _signing.verify(snapshot, c.id, c.signature),
+    }
 
 
 def org_shifts(coordinator_uid):
@@ -3573,6 +3759,12 @@ def delete_account(uid):
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
+        # certificates carry the name and every shift: withdrawn, and nothing left to read
+        _db.db.execute(
+            "UPDATE certificate SET withdrawn_at = coalesce(withdrawn_at, ?), "
+            "snapshot = NULL WHERE volunteer_id = ?",
+            [_now(), uid],
+        )
         _db.db.execute(
             "DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", [uid]
         )
