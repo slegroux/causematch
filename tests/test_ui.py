@@ -44,6 +44,10 @@ NOT_PAGES = {
     "/org/zip",
     "/org/claim/search",  # JSON for static/claim.js
     "/deck/news",  # a fragment the deck and Matches pages poll
+    # sign-in with Google or Apple: each answers with a redirect, never a page of its own
+    "/auth/google/start",
+    "/auth/apple/start",
+    "/auth/google/callback",
 }
 
 
@@ -95,6 +99,7 @@ def pages(anon, user, coord):
         (anon, "/login"),
         (anon, "/org/login"),
         (anon, "/org/login/verify"),
+        (anon, "/auth/fake/consent"),  # the fake Google page (CAUSEMATCH_FAKE_OAUTH=1)
         (anon, "/org/claim"),
         (anon, "/privacy"),
         (anon, f"/urgent/off/{data.urgent_off_key(uid)}"),

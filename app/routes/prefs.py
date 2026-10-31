@@ -299,6 +299,26 @@ def Group(title, cls, name, options, value):
     )
 
 
+def SecondPlace(pf, error):
+    """The fold for the second place: closed, saying what is saved; open after an
+    error so a bad entry can be fixed."""
+    where = pf["where"].strip()
+    if not where:
+        return Fold("Add a second place", PlaceFields(1, pf))
+    mode = dict(MODES).get(pf["mode"], pf["mode"])
+    reach = (
+        "any distance" if str(pf["minutes"]) == "0" else f"up to {pf['minutes']} min"
+    )
+    label = " ".join(pf["label"].split())
+    named = f"{label}: " if label and label != prefs.DEFAULT_LABELS[1] else ""
+    return Fold(
+        "Your second place",
+        PlaceFields(1, pf),
+        open=bool(error),
+        sub=f"{named}{where} · {mode}, {reach}",
+    )
+
+
 def OnlyShow(f, key, hint=False):
     """A dealbreaker (choices.DEALBREAKERS) as Prefer / Only show, under the controls it
     applies to."""
@@ -441,7 +461,7 @@ def PlaceFields(slot, pf, named=True):
     )
 
 
-def CausesCards(f):
+def CausesCards(f, error=None):
     first, second = f["place_forms"]
     return (
         Section(
@@ -470,11 +490,7 @@ def CausesCards(f):
             "Each card shows the time from the nearest of your places. Only you see "
             "them; we keep an area, never an address.",
             PlaceFields(0, first),
-            Fold(
-                "Add a second place",
-                PlaceFields(1, second),
-                open=bool(second["where"].strip()),
-            ),
+            SecondPlace(second, error),
             Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
             OnlyShow(f, "distance"),
         ),
@@ -699,7 +715,7 @@ def SectionPage(uid, f, key, error=None, saved=False):
         SharedNote(shared) if shared else None,
         *Notices(error, saved),
         Form(
-            *cards(f),
+            *(cards(f, error=error) if key == "causes" else cards(f)),
             Hidden(name="back", value=key),
             Div(BigButton("Save"), cls="cm-savebar z-20 -mx-1 py-3"),
             action="/me/preferences",

@@ -286,8 +286,20 @@ SUMMARY = (
 )
 
 
-def Fold(title, *content, open=False):
-    return Details(Summary(title, cls=SUMMARY), *content, open=open, cls="space-y-3")
+SUMMARY_SUB = SUMMARY.replace("items-center", "flex-col items-start")
+
+
+def Fold(title, *content, open=False, sub=None):
+    """A <details>; sub is a muted line under the title, to say what is inside."""
+    if sub:
+        summary = Summary(
+            title,
+            Span(sub, cls="text-sm font-normal text-ink-muted"),
+            cls=SUMMARY_SUB,
+        )
+    else:
+        summary = Summary(title, cls=SUMMARY)
+    return Details(summary, *content, open=open, cls="space-y-3")
 
 
 def Meta(icon, text):

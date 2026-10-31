@@ -62,6 +62,12 @@ ROUTES = {
     ("GET", "/org/login"): ("public", None),
     ("POST", "/login/demo"): ("public", None),  # a demo's one tap; 403 elsewhere
     ("POST", "/org/login/demo"): ("public", None),  # the same
+    ("GET", "/auth/google/start"): ("public", None),  # 404 without a provider
+    ("GET", "/auth/google/callback"): ("public", None),  # the oauth cookie guards it
+    ("GET", "/auth/apple/start"): ("public", None),  # 404 without a provider
+    ("POST", "/auth/apple/callback"): ("public", None),  # cross-site; the oauth cookie
+    ("GET", "/auth/fake/consent"): ("public", None),  # the fake provider only
+    ("POST", "/auth/fake/consent"): ("public", None),
     ("POST", "/org/login/send"): ("public", None),
     ("GET", "/org/login/verify"): ("public", None),
     ("POST", "/org/login/verify"): ("public", None),
@@ -160,6 +166,13 @@ ROUTES = {
     ("POST", "/me/profile/photo"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo/remove"): ("volunteer", "own-record"),
     ("POST", "/me/profile/details"): ("volunteer", "own-record"),
+    ("POST", "/me/phone/send"): ("volunteer", "own-record"),  # 404 without Twilio
+    ("POST", "/me/phone/verify"): ("volunteer", "own-record"),
+    # 404 without the provider; the link flow carries the signed-in uid (app/routes/oauth.py)
+    ("POST", "/me/identity/google/connect"): ("volunteer", "own-record"),
+    ("POST", "/me/identity/apple/connect"): ("volunteer", "own-record"),
+    ("POST", "/me/identity/google/disconnect"): ("volunteer", "own-record"),
+    ("POST", "/me/identity/apple/disconnect"): ("volunteer", "own-record"),
     ("POST", "/deck/photo-nudge/dismiss"): ("volunteer", "own-record"),
     ("POST", "/admin/reports/{report_id}/remove-photo"): ("admin", "own-record"),
     # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's
@@ -1081,7 +1094,7 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 TABLES = {
     "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
     "messages", "orgs", "profiles", "swipes", "shifts", "notifications",
-    "blocks", "reports",
+    "blocks", "reports", "identities", "retained_identities",
 }  # fmt: skip
 
 

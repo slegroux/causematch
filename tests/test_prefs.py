@@ -91,6 +91,49 @@ def test_page_shows_the_onboarding_answers(homelessness_off, user):
     assert "Homelessness services" not in html  # inactive causes are not offered
 
 
+def details_of(html, summary):
+    """The opening tag of the <details> whose summary text starts with summary."""
+    head = html[: html.index(summary)]
+    return head[head.rindex("<details") :]
+
+
+def test_a_saved_second_place_stays_folded_and_says_what_it_is(user):
+    user.post(
+        "/me/preferences",
+        data={
+            **SAVE,
+            "place2_where": "Venice",
+            "place2_mode": "walk",
+            "place2_minutes": "15",
+        },
+    )
+    html = user.get("/me/preferences/causes").text
+    assert "Your second place" in html and "Venice · Walk, up to 15 min" in html
+    assert "Add a second place" not in html
+    assert "open" not in details_of(html, "Your second place").split(">")[0].split()
+
+
+def test_without_a_second_place_the_fold_invites_one(user):
+    html = user.get("/me/preferences/causes").text
+    assert "Add a second place" in html and "Your second place" not in html
+
+
+def test_a_bad_second_zip_reopens_the_fold(user):
+    r = user.post(
+        "/me/preferences",
+        data={
+            **SAVE,
+            "sections": "causes",
+            "back": "causes",
+            "place2_where": "1234",
+            "place2_mode": "car",
+            "place2_minutes": "30",
+        },
+    )
+    assert "Enter a five-digit ZIP code" in r.text
+    assert "open" in details_of(r.text, "Your second place").split(">")[0].split()
+
+
 @pytest.mark.parametrize(
     "key, marker",
     [("causes", "causes"), ("when", "when"), ("work", "work"), ("urgent", "urgent")],
