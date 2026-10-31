@@ -19,6 +19,7 @@ day_slots_migration = importlib.import_module("app.migrations.0011_day_slots")
 
 FOOD, PARKS, ANIMALS = "food-insecurity", "environment-parks", "animal-shelters"
 SAVE = {
+    "sections": ["when", "work"],  # as the pages send: their checkboxes count
     f"cause_{FOOD}": "love",
     f"cause_{PARKS}": "open",
     f"cause_{ANIMALS}": "no",
@@ -73,32 +74,92 @@ def test_me_links_to_preferences(user):
 
 
 def test_page_shows_the_onboarding_answers(homelessness_off, user):
-    html = user.get("/me/preferences").text
-    assert "Preferences" in html and "stay private" in html
+    index = user.get("/me/preferences").text
+    assert "Preferences" in index and "Only you see them" in index
     # FORM in conftest: food loved, free weekend mornings, has a car, weekly
-    for name, value in (
-        (f"cause_{FOOD}", "love"),
-        ("availability", "sat_morning"),  # weekend mornings, as day slots
-        ("availability", "sun_morning"),
-        ("skills", "car"),
-        ("frequency", "weekly"),
+    for page, name, value in (
+        ("causes", f"cause_{FOOD}", "love"),
+        ("when", "availability", "sat_morning"),  # weekend mornings, as day slots
+        ("when", "availability", "sun_morning"),
+        ("work", "skills", "car"),
+        ("work", "frequency", "weekly"),
     ):
+        html = user.get(f"/me/preferences/{page}").text
         assert f'name="{name}" value="{value}" checked' in html, name
+    html = user.get("/me/preferences/causes").text
     assert f'name="cause_{PARKS}" value="love" checked' not in html
     assert "Homelessness services" not in html  # inactive causes are not offered
 
 
+@pytest.mark.parametrize(
+    "key, marker",
+    [("causes", "only"), ("when", "when"), ("work", "work"), ("urgent", "urgent")],
+)
+def test_every_section_page_has_its_own_save_and_marker(user, key, marker):
+    assert f'href="/me/preferences/{key}"' in user.get("/me/preferences").text
+    r = user.get(f"/me/preferences/{key}")
+    assert r.status_code == 200 and "Save</button>" in r.text
+    assert f'value="{marker}" name="sections"' in r.text
+    assert f'value="{key}" name="back"' in r.text
+    assert user.get("/me/preferences/nowhere").status_code == 404
+
+
+def test_saving_one_section_leaves_the_others_unchanged(user):
+    user.post(
+        "/me/preferences",
+        data={
+            **SAVE,
+            "urgent_on": "1",
+            "sections": ["when", "work", "urgent"],
+            "urgent_window": "today",
+            "urgent_quiet_from": "22",
+            "urgent_quiet_to": "7",
+            "urgent_per_week": "2",
+            "place2_where": "Venice",
+            "place2_mode": "walk",
+            "place2_minutes": "15",
+        },
+    )
+    before = data.preferences(uid_of(user))
+    r = user.post(
+        "/me/preferences",
+        data={"sections": "when", "back": "when", "availability": ["mon_morning"]},
+        follow_redirects=False,
+    )
+    assert (
+        r.status_code == 303 and r.headers["location"] == "/me/preferences/when?saved=1"
+    )
+    after = data.preferences(uid_of(user))
+    assert after["availability"] == ["mon_morning"]
+    for k in ("causes", "places", "skills", "languages", "urgent", "frequency"):
+        assert after[k] == before[k], k
+    r = user.post(
+        "/me/preferences",
+        data={"sections": "work", "back": "work"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/me/preferences/work?saved=1"
+    again = data.preferences(uid_of(user))
+    assert again["availability"] == ["mon_morning"]
+    assert (
+        again["skills"] == [] and again["frequency"] == ""
+    )  # this page's own, cleared
+    assert again["places"] == before["places"] and again["causes"] == before["causes"]
+
+
 def test_saving_stores_every_answer(user):
-    r = user.post("/me/preferences", data=SAVE, follow_redirects=False)
+    r = user.post(
+        "/me/preferences", data={**SAVE, "back": "causes"}, follow_redirects=False
+    )
     assert r.status_code == 303
-    assert r.headers["location"] == "/me/preferences?saved=1"
+    assert r.headers["location"] == "/me/preferences/causes?saved=1"
     p = profile_of(user)
     assert json.loads(p.cause_prefs) == {FOOD: "love", PARKS: "open", ANIMALS: "no"}
     assert json.loads(p.causes) == [FOOD, PARKS]  # love + open, for the metrics
     assert json.loads(p.availability) == ["tue_evening", "sat_morning"]
     assert json.loads(p.skills) == ["admin", "media"]
     assert p.frequency == "monthly"
-    html = user.get("/me/preferences?saved=1").text
+    html = user.get("/me/preferences/causes?saved=1").text
     assert "Saved." in html
     assert f'name="cause_{ANIMALS}" value="no" checked' in html
 
@@ -334,7 +395,7 @@ def test_the_migration_adds_the_column_to_an_old_table(tmp_path):
 
 
 def test_homelessness_services_is_offered_now_that_it_is_active(user):
-    html = user.get("/me/preferences").text
+    html = user.get("/me/preferences/causes").text
     assert 'name="cause_homelessness-services" value="love"' in html
 
 
@@ -347,9 +408,12 @@ def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
     from app.choices import SHARED_WITH_NONPROFIT
     from app.routes.prefs import SHARED
 
-    html = unescape(user.get("/me/preferences").text)
-    assert "Only you see these" not in html and 'href="/privacy"' in html
-    sections = html.split("<h2")[1:]
+    pages = [
+        unescape(user.get(f"/me/preferences/{k}").text)
+        for k in ("causes", "when", "work", "urgent")
+    ]
+    assert 'href="/privacy"' in user.get("/me/preferences").text
+    sections = [s for html in pages for s in html.split("<h2")[1:]]
     marked = {s.split(">", 1)[1].split("<", 1)[0]: SHARED in s for s in sections}
     assert marked == {
         "Causes": True,

@@ -346,7 +346,7 @@ def test_optin_is_off_by_default(user):
         "quiet_to": 8,
         "per_week": 3,
     }
-    page = user.get("/me/preferences").text
+    page = user.get("/me/preferences/urgent").text
     assert "Last-minute calls" in page and "Tell me about last-minute calls" in page
     assert 'name="urgent_on" value="1" class' in page  # unchecked
     assert '<option value="21" selected>9 pm</option>' in page
@@ -363,7 +363,7 @@ def test_optin_saves_and_shows(user):
         "quiet_to": 7,
         "per_week": 2,
     }
-    page = user.get("/me/preferences").text
+    page = user.get("/me/preferences/urgent").text
     assert 'name="urgent_on" value="1" checked' in page
     assert '<option value="22" selected>10 pm</option>' in page
     # turned off again
