@@ -9,6 +9,7 @@ from app.db import openings, orgs, places
 from e2e.helpers import (
     SE,
     accepted_match,
+    certificate_id,
     coordinator_page,
     guard,
     onboard_page,
@@ -67,11 +68,15 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
     phone.context.clear_cookies()
     p = sign_in_page(phone, "(310) 555-0171")
     match_id = accepted_match(p.id)
+    cert = certificate_id(p.id, match_id)
     for path in (
         "/deck",
         "/matches",
         "/history",
         "/hours",
+        f"/hours/certificate/{cert}",
+        f"/hours/certificate/{cert}/withdraw",
+        f"/check/{cert}",  # public; the same page signed out
         "/profile",
         "/me/preferences",
         "/me/profile",

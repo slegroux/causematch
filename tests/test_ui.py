@@ -41,6 +41,7 @@ NOT_PAGES = {
     "/photos/{key}.jpg",
     "/photos/thumb/{key}.jpg",
     "/shifts/{shift_id}.ics",
+    "/hours/certificate/{cert_id}.pdf",
     "/org/zip",
     "/org/claim/search",  # JSON for static/claim.js
     "/deck/news",  # a fragment the deck and Matches pages poll
@@ -95,6 +96,26 @@ def pages(anon, user, coord):
     profiles.update(id=liker.uid, heard_from="")
     admin = admin_client()
     (shift,) = shifts(where="match_id = ? AND status = 'scheduled'", where_args=[m.id])
+    shifts.insert(  # confirmed hours, so My hours offers a certificate and one exists
+        match_id=m.id,
+        starts_at="2026-10-03T09:00",
+        status="completed",
+        kind="added",
+        created_by=shift.created_by,
+        confirmed_minutes=180,
+        marked_by=shift.created_by,
+        marked_at=now(),  # inside the correction window: "Marked this week"
+    )
+    shifts.insert(  # started, not marked: "Did they come?"
+        match_id=m.id,
+        starts_at="2026-10-02T09:00",
+        status="scheduled",
+        kind="added",
+        created_by=shift.created_by,
+        duration_minutes=120,
+    )
+    profiles.update(id=uid, last_name="Lee")
+    certificate = data.issue_certificate(uid, opening.org_id, "all")["id"]
     return [
         (anon, "/login"),
         (anon, "/org/login"),
@@ -103,12 +124,15 @@ def pages(anon, user, coord):
         (anon, "/org/claim"),
         (anon, "/privacy"),
         (anon, f"/urgent/off/{data.urgent_off_key(uid)}"),
+        (anon, f"/check/{certificate}"),
+        (user, f"/hours/certificate/{certificate}/withdraw"),
         (newcomer, "/onboarding"),
         (liker, "/onboarding/more"),
         (user, "/deck"),
         (user, "/matches"),
         (user, "/history"),
         (user, "/hours"),
+        (user, f"/hours/certificate/{certificate}"),
         (user, "/profile"),
         (user, "/me/preferences"),
         (user, "/me/preferences/causes"),

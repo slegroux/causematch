@@ -55,6 +55,7 @@ from app.db import (
     Opening,
     blocks,
     causes,
+    certificates,
     claim_requests,
     deck_empties,
     ensure_causes,
@@ -110,6 +111,7 @@ def fresh_db():
         deck_empties,
         photos,
         urgent_calls,
+        certificates,
     ):
         table.delete_where()
     security.reset_buckets()

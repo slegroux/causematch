@@ -337,3 +337,14 @@ dialog.cm-moment::backdrop {
 body:has(#a2hs:not([hidden])) .cm-about {
   -webkit-line-clamp: 1;
 }
+
+/* Printing a certificate (app/routes/hours.py): the page alone, without the tab bar and links */
+@media print {
+  .cm-tabbar,
+  .cm-noprint {
+    display: none !important;
+  }
+  body:has(.cm-tabbar) {
+    padding-bottom: 0;
+  }
+}

@@ -470,6 +470,24 @@ def privacy():
             "change it under Me, then Your profile).",
         ),
         Section(
+            "Hours certificates",
+            "When you get a certificate on Shifts and hours, we keep a signed copy of it: your "
+            "full name, the nonprofit's name, EIN and website, each confirmed shift (date, "
+            "role and hours), the coordinators who confirmed them, the period, the total, "
+            "the issue date and a signature code.",
+            "Anyone with the certificate's check link or QR code, signed in or not, sees "
+            "your full name, the nonprofit and its EIN, the period, the total hours, the "
+            "issue date and the signature code, and whether the nonprofit has corrected "
+            "the hours since. They don't see your shifts, phone or email. The link doesn't "
+            "expire: it works until you withdraw the certificate, or get a new one for the "
+            "same nonprofit and period, which withdraws the old one. Coordinators' names appear on "
+            "certificates and stay there after a coordinator's account is deleted.",
+            "Withdrawing a certificate, or deleting your account, erases the name, the "
+            "shifts and the signature, and the check link then says only that it was "
+            "withdrawn. What remains, without your name: your account's number, the "
+            "nonprofit, the period, the total hours and the issue date.",
+        ),
+        Section(
             "Who else handles your data",
             "Twilio sends your sign-in codes and our texts. Our email provider (Resend) "
             "sends coordinators' sign-in links and notices, and volunteers' notices when "

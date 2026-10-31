@@ -36,6 +36,7 @@ def test_the_profile_page_has_the_details_form(user):
     assert 'name="bio"' in page and 'maxlength="280"' in page
     assert page.count('name="interests"') == len(INTERESTS)
     assert '<datalist id="pronoun-suggestions">' in page
+    assert "before the change can't go on a certificate" in page.replace("&#x27;", "'")
 
 
 def test_details_are_saved_and_shown(user):

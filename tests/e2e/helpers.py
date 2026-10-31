@@ -7,7 +7,7 @@ import time
 from conftest import coordinator_for, last_link_token
 
 from app import data, notify
-from app.db import openings, orgs, profiles
+from app.db import openings, orgs, profiles, shifts
 
 SE = {"width": 375, "height": 667}  # iPhone SE, the smallest phone in common use
 EXTERNAL = re.compile(r"^(?!(http|ws)://127\.0\.0\.1)(https?|wss?)://")
@@ -100,3 +100,19 @@ def accepted_match(uid):
     m = data.swipe(uid, opening.id, True)
     data.decide(data.coordinator_by_email(coordinator_for(0)[1]), m.id, True)
     return m.id
+
+
+def certificate_id(uid, match_id):
+    """The id of a certificate for 3 confirmed hours at the match's nonprofit."""
+    profiles.update(id=uid, last_name="Lee")
+    shifts.insert(
+        match_id=match_id,
+        starts_at="2026-10-03T09:00",
+        status="completed",
+        kind="added",
+        created_by=uid,
+        confirmed_minutes=180,
+        marked_by=uid,
+        marked_at="2026-10-04T10:00:00+00:00",
+    )
+    return data.issue_certificate(uid, orgs()[0].id, "all")["id"]
