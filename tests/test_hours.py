@@ -9,7 +9,7 @@ from conftest import coordinator, pantry_opening, volunteer
 from starlette.testclient import TestClient
 
 from app import data, security, signing
-from app.certificate import build_pdf, qr_matrix
+from app.certificate import build_pdf, pdf_text, qr_matrix
 from app.config import public_base_url
 from app.db import certificates, matches, openings, orgs, profiles, shifts
 from main import app
@@ -505,6 +505,24 @@ def test_certificate_pdf_downloads_are_limited_per_user():
     assert (
         a.get(f"/hours/certificate/{cid}").status_code == 200
     )  # the page is not limited
+
+
+def test_pdf_text_shows_only_letters_marks_numbers_punctuation_symbols_and_spaces():
+    for hidden in (
+        "\u202e",  # right-to-left override
+        "\u2066",
+        "\u2069",
+        "\u200b",
+        "\u200f",
+        "\u2028",
+        "\u2029",
+        "\x00",
+        "\n",
+        "\ufeff",
+    ):
+        assert pdf_text(f"a{hidden}b") == "a?b", hex(ord(hidden))
+    assert pdf_text("José O'Neil-Núñez, Jr. 3rd") == "José O'Neil-Núñez, Jr. 3rd"
+    assert pdf_text("李") == "?"
 
 
 def test_certificate_pdf_builder_runs_on_its_own_for_long_lists_and_any_name():

@@ -54,12 +54,18 @@ def _glyphs():
     return TTFont(FONTS / "NotoSans-Regular.ttf").getBestCmap()
 
 
+def _plain(category):
+    return category[0] in "LMNPS" or category == "Zs"
+
+
 def pdf_text(value):
-    """`value` with every character the font has no glyph for, and every control
-    character, replaced by "?"."""
+    """`value` with every character the font has no glyph for replaced by "?", and every
+    one that is not a letter, mark, number, punctuation, symbol or space (control and
+    format characters such as the bidirectional overrides, zero-width characters, line
+    and paragraph separators)."""
     glyphs = _glyphs()
     return "".join(
-        ch if ord(ch) in glyphs and unicodedata.category(ch) != "Cc" else "?"
+        ch if ord(ch) in glyphs and _plain(unicodedata.category(ch)) else "?"
         for ch in str(value)
     )
 
