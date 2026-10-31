@@ -98,7 +98,15 @@ def pages(anon, user, coord):
         created_by=shift.created_by,
         confirmed_minutes=180,
         marked_by=shift.created_by,
-        marked_at="2026-10-04T10:00:00+00:00",  # past the correction window
+        marked_at=now(),  # inside the correction window: "Marked this week"
+    )
+    shifts.insert(  # started, not marked: "Did they come?"
+        match_id=m.id,
+        starts_at="2026-10-02T09:00",
+        status="scheduled",
+        kind="added",
+        created_by=shift.created_by,
+        duration_minutes=120,
     )
     certificate = data.issue_certificate(uid, opening.org_id, "all")["id"]
     return [

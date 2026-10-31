@@ -95,15 +95,14 @@ def MarkForm(s, corrected=False):
     The correction offers the hours again, and the other answer."""
     done = s["status"] == "completed"
     minutes = s["confirmed_minutes"] if corrected and done else s["duration_minutes"]
-    hours = Div(
-        Choice(
-            "minutes",
-            SHIFT_HOURS,
-            str(minutes or ""),
-            placeholder="Hours?",
-        ),
-        cls="w-36",
+    select = Choice(
+        "minutes",
+        SHIFT_HOURS,
+        str(minutes or ""),
+        placeholder="Hours?",
     )
+    select.attrs["aria-label"] = "Hours attended"
+    hours = Div(select, cls="w-36")
     attended = Button(
         "Update hours" if corrected and done else "Attended",
         name="result",
