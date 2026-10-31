@@ -95,10 +95,11 @@ async def org_login_send(req):
 
 
 def _sync_org_login_send(req, form):
-    email = form.get("email", "").strip().lower()
-    if len(email) > 254 or not EMAIL.fullmatch(email):
-        return EmailForm(email[:254], BAD_EMAIL)
-    return link_sent(req, email)
+    raw = form.get("email", "").strip()
+    # not ASCII is refused before lowercasing, which would turn the Kelvin sign into a "k"
+    if len(raw) > 254 or not raw.isascii() or not EMAIL.fullmatch(raw):
+        return EmailForm(raw[:254], BAD_EMAIL)
+    return link_sent(req, raw.lower())
 
 
 def link_sent(req, email):

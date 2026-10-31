@@ -22,7 +22,7 @@ from starlette.responses import RedirectResponse
 from app import data, notify, oauth, security
 from app.auth import sign_in, sign_in_staff
 from app.config import is_preview, is_production, public_base_url
-from app.forms import bad_request, query, str_form
+from app.forms import EMAIL, bad_request, query, str_form
 from app.routes.auth import SUSPENDED, PhoneForm
 from app.routes.org_auth import EmailForm, link_sent
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
@@ -178,9 +178,6 @@ def _login(error, status, intent="volunteer", name=""):
 
 
 def _sync_callback(req, sess, provider, params):
-    # each callback can call the provider with our client secret: counted before anything
-    if not security.allow((security.OAUTH_PER_IP, security.ip_subject(req))):
-        return security.too_many()
     name, label = provider.name, oauth.LABELS[provider.name]
     try:
         flow = oauth.unseal(
@@ -189,6 +186,13 @@ def _sync_callback(req, sess, provider, params):
     except oauth.AuthError as e:
         log.warning("%s sign-in refused: %s", label, e)
         return _login(FAILED.format(label), 400)
+    # Each callback past here can call the provider with our client secret, so it is
+    # counted. Only after the flow cookie and state check out: a page on another site can
+    # fire junk callbacks at a visitor (an img tag, Apple's cross-site post), and those
+    # must not use up the budget of everyone behind the same address. A valid cookie only
+    # comes from /start, so the budget a caller can spend is their own address's.
+    if not security.allow((security.OAUTH_PER_IP, security.ip_subject(req))):
+        return security.too_many()
     intent = flow.intent
     code = params.get("code", "")
     if params.get("error") or not code:
@@ -235,7 +239,12 @@ def _staff_sign_in(req, sess, claims):
     (oauth.authoritative). Otherwise the verified email may be stale, so the answer is the
     emailed link's, for known and unknown addresses alike. Creates nothing: no profile,
     no identity row."""
-    email = claims.email.strip().lower()
+    raw = claims.email.strip()
+    # judged as the provider sent it: lowercasing first turns the Kelvin sign into a "k"
+    if not (raw.isascii() and len(raw) <= 254 and EMAIL.fullmatch(raw)):
+        no_org = Span(NO_ORG, A("start a claim", href="/org/claim", cls="font-bold"))
+        return FtResponse(EmailForm(error=no_org), status_code=200)
+    email = raw.lower()
     if not oauth.authoritative(claims):
         sent = link_sent(req, email)
         return sent if isinstance(sent, Response) else FtResponse(sent)

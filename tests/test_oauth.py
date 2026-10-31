@@ -8,7 +8,7 @@ from conftest import FORM, coordinator_for, jpeg, volunteer
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from app import data, notify, oauth
+from app import data, notify, oauth, security
 from app.db import identities, photos, profiles
 from app.routes import oauth as oauth_routes
 from main import app
@@ -279,3 +279,21 @@ def test_unlink_never_removes_the_last_way_in(anon):
     assert r.headers["location"] == "/me/profile?error=last"
     assert "Keep at least one way to sign in" in anon.get(r.headers["location"]).text
     assert identities.count_where("subject = ?", ["g-only"]) == 1
+
+
+def test_staff_sign_in_refuses_a_non_ascii_email_before_lowercasing(anon):
+    coordinator_for(0, "karen@example.org")
+    kelvin = "Karen@example.org"  # Python lowercases the Kelvin sign to "k"
+    before, mails = counts(), len(notify.get_emailer().sent)
+    r, _ = google_sign_in(anon, STAFF, email=kelvin, hd="example.org")
+    assert r.status_code == 200 and NO_ACCOUNT in r.text
+    assert counts() == before and len(notify.get_emailer().sent) == mails
+    assert anon.get("/org", follow_redirects=False).headers["location"] == "/org/login"
+
+
+def test_junk_callbacks_do_not_use_up_a_shared_address_budget(anon):
+    for _ in range(security.OAUTH_PER_IP[0][1] + 5):  # more than the limit allows
+        r = anon.get("/auth/google/callback?state=x&code=y", follow_redirects=False)
+        assert r.status_code == 400  # refused on the missing flow cookie, never 429
+    r, _ = google_sign_in(anon)  # a real flow from the same address still works
+    assert r.status_code == 303
