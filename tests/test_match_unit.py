@@ -166,6 +166,11 @@ def test_skill_coverage_is_share_of_what_the_opening_asks():
     )  # extra skills are free
 
 
+def test_skill_coverage_counts_creative_skills():
+    assert match.skill_coverage(["music"], ["music"]) == 1
+    assert match.skill_coverage([], ["music"]) == 0
+
+
 def test_skill_coverage_of_an_opening_asking_nothing_is_neutral():
     assert match.skill_coverage([], []) == 0.5
     assert match.skill_coverage(["car"], []) == 0.5

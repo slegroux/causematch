@@ -75,6 +75,7 @@ def configure(port, db=None, seed_file=None):
         CAUSEMATCH_DB=str(db),
         CAUSEMATCH_FAKE_SMS="1",
         CAUSEMATCH_FAKE_EMAIL="1",
+        CAUSEMATCH_FAKE_OAUTH="1",
         PUBLIC_BASE_URL=f"http://127.0.0.1:{port}",
     )
     if seed_file:

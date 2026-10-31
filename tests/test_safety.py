@@ -25,10 +25,11 @@ from fasthtml.common import to_xml
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import data, notify, propublica
+from app import data, notify, oauth, propublica
 from app.choices import SHARED_WITH_NONPROFIT
 from app.db import (
     blocks,
+    identities,
     matches,
     messages,
     notifications,
@@ -171,8 +172,9 @@ def test_blocked_org_leaves_deck(w):
     assert not org_openings & set(deck_ids(w.vol))
     assert deck_ids(w.vol)  # other orgs' openings are still there
     assert "Blocked" in w.vol.get("/matches").text
+    unliked = next(o for o in org_openings if o != m.opening_id)
     with pytest.raises(LookupError):  # and a like sent by id is refused
-        data.swipe(w.vol.uid, next(iter(org_openings)), True)
+        data.swipe(w.vol.uid, unliked, True)
 
 
 def test_volunteer_block_withdraws_matches_cancels_shifts_and_freezes_chat(w):
@@ -257,7 +259,7 @@ def test_a_blocked_volunteers_like_gets_the_same_notice_and_survey(w):
         r2 = who.post("/swipe", data={"opening_id": fourth.id, "liked": "1"},
                       headers={"HX-Request": "true"})  # fmt: skip
         notice = re.search(r'<p role="status"[^>]*>([^<]*)', r2.text)[1]
-        seen.append((r.headers["location"], f"Sent to {org}." in survey, notice))
+        seen.append((r.headers["location"], f"When {org} says yes" in survey, notice))
     assert seen[0] == seen[1] and seen[0][1], seen
     assert matches(where="volunteer_id = ? AND opening_id = ?",
                    where_args=[w.vol.uid, third.id])[0].org_blind  # fmt: skip
@@ -688,8 +690,11 @@ def test_delete_account_scrubs_pii(w):
     )
     before_version = profiles[uid].session_version
 
-    page = w.vol.get("/profile")
-    assert "Delete my account" in page.text
+    assert (
+        "Delete my account" not in w.vol.get("/profile").text
+    )  # it lives in the profile
+    page = w.vol.get("/me/profile")
+    assert 'href="/profile/delete"' in page.text
     assert profiles[uid].deleted_at is None  # neither page deletes
     assert w.vol.get("/profile/delete").status_code == 200
     assert profiles[uid].deleted_at is None
@@ -938,6 +943,33 @@ def test_a_suspended_account_cannot_come_back_by_deleting_itself(w):
     again.post("/login/send", data={"phone": phone})
     r = again.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
     assert r.status_code == 200 and "can't sign in" in r.text
+
+
+def test_a_suspended_google_account_cannot_come_back_by_deleting_itself(w):
+    claims = oauth.Claims("google", "g-gone", "gone@example.com", True, "Gale", "", "")
+    uid = data.volunteer_for_identity(claims)
+    profiles.update(id=uid, display_name="Gale", onboarded_at="2026-01-01T00:00:00")
+    m = data.swipe(uid, w.opening.id, True)
+    accept(w, m)
+    data.report_volunteer(w.coord_uid, m.id, "harassment")
+    data.delete_account(uid)  # deleted while the report is open
+    assert identities.count_where("user_id = ?", [uid]) == 0
+    w.admin.post(
+        f"/admin/reports/{reports()[0].id}/suspend"
+    )  # suspended after the fact
+    (row,) = data.__dict__["_db"].retained_identities()
+    assert row.suspended and "g-gone" not in json.dumps(row.__dict__)
+    again = TestClient(app)
+    r = again.get("/auth/google/start", follow_redirects=False)
+    flow = dict(
+        re.findall(r"(state|nonce|code_challenge)=([^&]+)", r.headers["location"])
+    )
+    form = {**flow, "sub": "g-gone", "email": "gone@example.com", "email_verified": "1"}
+    r = again.post("/auth/fake/consent", data=form, follow_redirects=False)
+    r = again.get(r.headers["location"], follow_redirects=False)
+    assert r.status_code == 200 and "can't sign in" in r.text
+    (i,) = identities(where="subject = ?", where_args=["g-gone"])  # the new sign-up's
+    assert i.user_id != uid and profiles[i.user_id].suspended_at
 
 
 def test_an_account_with_no_blocks_or_reports_leaves_no_hash(w):

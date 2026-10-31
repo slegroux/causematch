@@ -1,5 +1,5 @@
 """The volunteer's own profile, /me/profile: their photo, name, pronouns, bio and
-interests.
+interests, and how we reach them (a mobile number for texts, else email).
 
 A photo goes up as a multipart form. static/photo.js first shrinks it in the browser and
 shows it (a blob: preview); without script the form posts the original. Either way the
@@ -7,7 +7,10 @@ server decodes and re-encodes it (app/photos.py) before storing anything.
 """
 
 import json
+import logging
+import re
 
+import httpx
 from fasthtml.common import (
     H1,
     H2,
@@ -15,6 +18,7 @@ from fasthtml.common import (
     Div,
     FtResponse,
     Img,
+    Label,
     Option,
     P,
     Redirect,
@@ -33,7 +37,8 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from app import data, photos
+from app import data, notify, oauth, photos, security
+from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
 from app.forms import (
     EMAIL,
@@ -43,15 +48,18 @@ from app.forms import (
     query,
     str_form,
 )
+from app.routes.auth import phone_off
+from app.routes.prefs import Checks as ChipChecks
+from app.routes.safety import HubRow
 from app.ui import (
     CARD,
     ORG_SECTION,
     SMALL_LINK,
     TITLE,
+    TRASH,
     Avatar,
     BackLink,
     BigButton,
-    Checks,
     Field,
     Router,
     TextInput,
@@ -59,6 +67,7 @@ from app.ui import (
 )
 
 ar = Router()
+log = logging.getLogger("causematch")
 
 BAD_PHOTO = (
     "We couldn't read that picture. Choose a JPEG, PNG or WebP photo under 6 MB."
@@ -68,7 +77,24 @@ NOTICE = {
     "saved": "Photo saved.",
     "removed": "Photo removed.",
     "details": "Profile saved.",
+    "phone": "Number saved. Match news and shift reminders now come by text.",
+    "connected": "Connected. You can sign in with it now.",
+    "disconnected": "Disconnected.",
 }
+# Why Me's connect or disconnect didn't happen: ?error=<key>, from app/routes/oauth.py
+ERRORS = {"last": "Keep at least one way to sign in."}
+for _name, _label in oauth.LABELS.items():
+    ERRORS |= {
+        f"taken-{_name}": f"That {_label} account is already connected to another "
+        "Causematch account.",
+        f"other-{_name}": f"You already connected a {_label} account. Disconnect it "
+        "first.",
+        f"refused-{_name}": f"That {_label} account can't be connected. Contact us if "
+        "that is a mistake.",
+        f"failed-{_name}": f"Connecting {_label} didn't work. Try again.",
+    }
+# Me's add-a-number keeps its pending number under its own session keys (auth.set_pending)
+ME_PENDING = "me_pending"
 MAX_NAME = 80
 MAX_NEIGHBORHOOD = 80
 MAX_EMAIL = 254
@@ -77,9 +103,9 @@ MAX_OTHER_CAUSES = 300
 ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif"
 
 
-def PhotoForm(action, label, button, ident="photo", shrink=True):
+def PhotoForm(action, label, button, ident="photo", shrink=True, auto=False):
     """A picture upload: static/photo.js previews it and, with shrink, sends a 1600 px
-    JPEG instead of the original."""
+    JPEG instead of the original. With auto, choosing the picture sends it."""
     return PlainForm(
         Div(
             FormLabel(label, fr=ident),
@@ -107,13 +133,14 @@ def PhotoForm(action, label, button, ident="photo", shrink=True):
         enctype="multipart/form-data",
         data_photo_form="1",
         data_shrink="1600" if shrink else None,
+        data_auto="1" if auto else None,
         cls="space-y-3",
     )
 
 
 def DetailsForm(p, f=None):
-    """Name, pronouns, bio, interests and the neighborhood nonprofits see; f: the values
-    just typed, after an error."""
+    """What nonprofits see about the volunteer, then what only we see; f: the values just
+    typed, after an error."""
     f = f or {
         "first_name": p.display_name or "",
         "last_name": p.last_name or "",
@@ -187,7 +214,13 @@ def DetailsForm(p, f=None):
             ),
         ),
         Field(
-            "Email (optional; only we see it, for last-minute calls when you have no texts)",
+            f"Interests (up to {MAX_INTERESTS})",
+            ChipChecks("interests", INTERESTS, f["interests"], "flex flex-wrap gap-2"),
+        ),
+        H2("Only we see", cls=ORG_SECTION + " pt-2"),
+        P("Never shown to nonprofits.", cls=TextPresets.muted_sm),
+        Field(
+            "Email (optional, for last-minute calls when you have no texts)",
             TextInput(
                 name="email",
                 type="email",
@@ -204,15 +237,6 @@ def DetailsForm(p, f=None):
                 maxlength=str(MAX_OTHER_CAUSES),
             ),
         ),
-        Field(
-            f"Interests (up to {MAX_INTERESTS})",
-            Checks(
-                "interests",
-                INTERESTS,
-                f["interests"],
-                "grid grid-cols-1 gap-y-1 sm:grid-cols-2 sm:gap-x-4",
-            ),
-        ),
         BigButton("Save profile"),
         action="/me/profile/details",
         method="post",
@@ -220,7 +244,108 @@ def DetailsForm(p, f=None):
     )
 
 
-def ProfilePage(uid, error=None, notice=None, f=None):
+def CodeInput():
+    return TextInput(
+        name="code",
+        inputmode="numeric",
+        autocomplete="one-time-code",
+        maxlength="6",
+        aria_label="Code",
+        required=True,
+    )
+
+
+def ReachCard(p, pending=None):
+    """How we reach this volunteer: texts to their number, or email; without a number
+    (and while texts can be sent) a form to add and verify one."""
+    to = " to the address below." if p.email else ": add your email below."
+    by_email = f"match news and shift reminders come by email{to}"
+    if notify.channel(p.id) == "sms":
+        content = (
+            H2("Texts", cls=ORG_SECTION),
+            P(
+                "Match news and shift reminders come by text to "
+                f"{notify.mask(p.phone)}. A volunteer without a number gets them "
+                "by email.",
+                cls=TextPresets.muted_sm,
+            ),
+        )
+    elif p.phone or not notify.phone_sign_in_enabled():
+        content = (
+            H2("Email", cls=ORG_SECTION),
+            P(by_email.capitalize(), cls=TextPresets.muted_sm),
+        )
+    else:
+        content = (
+            H2("Add a mobile number for text reminders", cls=ORG_SECTION),
+            P(f"Without one, {by_email}", cls=TextPresets.muted_sm),
+            PlainForm(
+                P(f"We texted a code to {pending}.", cls="text-ink"),
+                Field("Code", CodeInput()),
+                BigButton("Save number"),
+                action="/me/phone/verify",
+                method="post",
+                cls="space-y-3",
+            )
+            if pending
+            else None,
+            PlainForm(
+                Field(
+                    "Another number" if pending else "Mobile number",
+                    TextInput(
+                        name="phone",
+                        type="tel",
+                        inputmode="tel",
+                        autocomplete="tel",
+                        placeholder="(310) 555-0123",
+                        aria_label="Mobile number",
+                        required=True,
+                    ),
+                ),
+                BigButton("Text me a code"),
+                action="/me/phone/send",
+                method="post",
+                cls="space-y-3",
+            ),
+        )
+    return Div(*content, cls="space-y-3 p-5 " + CARD)
+
+
+def SignInMethods(p):
+    """Me's sign-in methods: the number, and each provider either connected (with its
+    email and a Disconnect button) or offered (Connect), when it is configured."""
+    connected = data.identities_of(p.id)
+
+    def button(label, action):
+        return PlainForm(
+            PlainButton(label, type="submit", cls=SMALL_LINK + " text-sm"),
+            action=action,
+            method="post",
+        )
+
+    rows = [
+        Div(
+            P(f"Connected as {connected[name]}", cls="text-ink"),
+            button(f"Disconnect {label}", f"/me/identity/{name}/disconnect"),
+            cls="space-y-1",
+        )
+        if name in connected
+        else button(f"Connect {label}", f"/me/identity/{name}/connect")
+        for name, label in oauth.LABELS.items()
+        if name in connected or oauth.get_provider(name)
+    ]
+    return Div(
+        H2("Sign-in methods", cls=ORG_SECTION),
+        P(
+            "Phone: " + (notify.mask(p.phone) if p.phone else "none"),
+            cls="text-ink",
+        ),
+        *rows,
+        cls="space-y-3 p-5 " + CARD,
+    )
+
+
+def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
     p = data.get_profile(uid)
     return VolunteerShell(
         "me",
@@ -230,14 +355,19 @@ def ProfilePage(uid, error=None, notice=None, f=None):
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
         Div(
             Div(
-                Avatar(p.display_name, p.photo_key, "lg", data_photo_current="1"),
-                # what the chosen photo will look like, filled in by static/photo.js
-                Img(
-                    alt="Your new photo",
-                    hidden=True,
-                    data_photo_preview="1",
-                    cls="h-28 w-28 rounded-full object-cover ring-2 ring-white "
-                    "shadow-warm",
+                # the picture is the tap target that opens the file picker
+                Label(
+                    Avatar(p.display_name, p.photo_key, "lg", data_photo_current="1"),
+                    # what the chosen photo will look like, filled in by static/photo.js
+                    Img(
+                        alt="Your new photo",
+                        hidden=True,
+                        data_photo_preview="1",
+                        cls="h-28 w-28 rounded-full object-cover ring-2 ring-white "
+                        "shadow-warm",
+                    ),
+                    fr="photo",
+                    cls="cursor-pointer",
                 ),
                 Div(
                     Span(
@@ -258,6 +388,7 @@ def ProfilePage(uid, error=None, notice=None, f=None):
                 "/me/profile/photo",
                 "Change your photo" if p.photo_key else "Add a photo",
                 "Save photo",
+                auto=True,
             ),
             PlainForm(
                 PlainButton(
@@ -273,15 +404,31 @@ def ProfilePage(uid, error=None, notice=None, f=None):
             data_photo_card="1",
             cls="space-y-5 p-5 " + CARD,
         ),
+        Div(ReachCard(p, pending), cls="mt-4"),
+        Div(SignInMethods(p), cls="mt-4"),
         Div(DetailsForm(p, f), cls="mt-4"),
+        Div(
+            HubRow(TRASH, "Delete my account", "/profile/delete", danger=True),
+            cls="mt-4 overflow-hidden " + CARD,
+        ),
+        P(
+            "Deleting your account removes your name, phone, email and location and "
+            "withdraws your matches.",
+            cls=TextPresets.muted_sm + " px-2 pt-2",
+        ),
         Script(src="/static/photo.js", defer=True),
         uid=uid,
     )
 
 
 @ar("/me/profile", methods=["GET"])
-def profile(req):
-    return ProfilePage(req.scope["uid"], notice=query(req, "notice"))
+def profile(req, sess):
+    return ProfilePage(
+        req.scope["uid"],
+        error=ERRORS.get(query(req, "error")),
+        notice=query(req, "notice"),
+        pending=pending_phone(sess, ME_PENDING),
+    )
 
 
 async def read_photo(req):
@@ -376,3 +523,90 @@ def _sync_save_details(uid, f):
         return FtResponse(ProfilePage(uid, error, f=f), status_code=400)
     data.save_profile_details(uid, **f)
     return Redirect("/me/profile?notice=details")
+
+
+def _phone_error(uid, error, pending=None):
+    return FtResponse(ProfilePage(uid, error, pending=pending), status_code=400)
+
+
+@ar("/me/phone/send", methods=["POST"])
+async def phone_send(req, sess):
+    """Text a code to the number a volunteer without one wants to add. Counted as a
+    sign-in code is (security.sms_send_limits); the number waits in the session for
+    /me/phone/verify, under Me's own keys."""
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    return await run_in_threadpool(_sync_phone_send, req, form, sess)
+
+
+def _sync_phone_send(req, form, sess):
+    if not notify.phone_sign_in_enabled():
+        return phone_off()
+    uid = req.scope["uid"]
+    if data.get_profile(uid).phone:
+        return Redirect("/me/profile")  # changing a number is not offered
+    e164 = normalize_phone(form.get("phone", ""))
+    if not e164:
+        return _phone_error(uid, BAD_PHONE)
+    if not security.allow(*security.sms_send_limits(req, e164)):
+        return security.too_many()
+    try:
+        if not data.phone_suspended(
+            e164
+        ):  # as at sign-in: a suspended number costs no text
+            notify.send_code(e164)
+    except httpx.HTTPError as e:
+        log.warning("sending a code to add a number failed: %s", type(e).__name__)
+        return _phone_error(
+            uid, "We couldn't send a text just now. Try again in a minute."
+        )
+    set_pending(sess, e164, ME_PENDING)
+    return Redirect("/me/profile")
+
+
+@ar("/me/phone/verify", methods=["POST"])
+async def phone_verify(req, sess):
+    """Save the pending number once its code checks out (security.verify_limits); a
+    number on another live account is refused and nothing is saved."""
+    form = await str_form(req)
+    if form is None:
+        return bad_request()
+    return await run_in_threadpool(_sync_phone_verify, req, form, sess)
+
+
+def _sync_phone_verify(req, form, sess):
+    if not notify.phone_sign_in_enabled():
+        return phone_off()
+    uid = req.scope["uid"]
+    e164 = pending_phone(sess, ME_PENDING)  # only the number a code was sent to
+    if not e164:
+        return _phone_error(uid, "Enter your number to get a code.")
+    code = form.get("code", "").strip()
+    if not re.fullmatch(r"[0-9]{6}", code):
+        return _phone_error(uid, "Enter the 6-digit code from the text.", e164)
+    # only wrong codes count, so the right one always gets through below the limit
+    if not security.allow(*security.verify_limits(e164), record=False):
+        return security.too_many()
+    try:
+        ok = notify.check_code(e164, code)
+    except httpx.HTTPError as e:
+        log.warning("checking a code to add a number failed: %s", type(e).__name__)
+        return _phone_error(
+            uid, "We couldn't check that code just now. Try again.", e164
+        )
+    if not ok:
+        security.allow(*security.verify_limits(e164))
+        return _phone_error(
+            uid, "That code didn't work. Check the text and try again.", e164
+        )
+    for key in ("phone", "at"):  # the code is used: the number leaves the session
+        sess.pop(f"{ME_PENDING}_{key}", None)
+    why = data.add_volunteer_phone(uid, e164)
+    if why == "taken":
+        return _phone_error(uid, "That number is already on another account.")
+    if why:
+        return _phone_error(
+            uid, "That number can't be added. Contact us if that is a mistake."
+        )
+    return Redirect("/me/profile?notice=phone")

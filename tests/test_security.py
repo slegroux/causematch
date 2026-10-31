@@ -447,7 +447,7 @@ def concrete(path):
     return re.sub(r"\{\w+\}", "1", path)
 
 
-@pytest.mark.parametrize("path", [p for p in POSTS if not p.startswith("/tasks/")])
+@pytest.mark.parametrize("path", [p for p in POSTS if p not in security.ORIGIN_EXEMPT])
 def test_every_post_route_refuses_a_foreign_origin(anon, path):
     r = anon.post(concrete(path), data={}, headers={"Origin": EVIL})
     assert r.status_code == 403 and "outside Causematch" in r.text
@@ -517,7 +517,9 @@ def test_tasks_take_the_token_without_an_origin(monkeypatch):
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
     "connect-src 'self' wss://causematch.test; font-src 'self'; frame-ancestors 'none'; "
-    "base-uri 'self'; form-action 'self'; object-src 'none'"
+    "base-uri 'self'; "
+    "form-action 'self' https://accounts.google.com https://appleid.apple.com; "
+    "object-src 'none'"
 )
 
 
@@ -1004,9 +1006,15 @@ def test_secret_scan_config_and_script_exist():
 
 
 def test_only_the_listed_task_path_skips_the_origin_check(anon):
-    """L10: an exact list, so a future /tasks/ route isn't exempt by accident."""
-    assert security.ORIGIN_EXEMPT == {"/tasks/reminders", "/tasks/urgent"}
-    for path in ("/tasks/other", "/tasks/reminders/x", "/tasks/urgent/x", "/tasks/"):
+    """L10: an exact list, so a future /tasks/ route isn't exempt by accident. Apple's
+    sign-in callback is the one other: its flow cookie guards it (tests/test_oauth_apple.py)."""
+    assert security.ORIGIN_EXEMPT == {
+        "/tasks/reminders",
+        "/tasks/urgent",
+        "/auth/apple/callback",
+    }
+    for path in ("/tasks/other", "/tasks/reminders/x", "/tasks/urgent/x", "/tasks/",
+                 "/auth/apple/callback/x", "/auth/google/callback"):  # fmt: skip
         assert anon.post(path, headers={"Origin": EVIL}).status_code == 403, path
 
 

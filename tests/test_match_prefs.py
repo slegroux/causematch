@@ -35,7 +35,7 @@ BASE = {
     "availability": ["sat_morning"],
     "frequency": "weekly",
     "only_distance": "only",  # the default: a place's travel time is a limit
-    "sections": ["work", "only"],  # as the page sends: its checkboxes count
+    "sections": ["when", "work", "causes"],  # as the page sends: its checkboxes count
 }
 
 
@@ -146,7 +146,7 @@ def test_place_a_device_point_is_stored_with_two_decimals(bare):
     assert p.area == "My location"
     profile = profiles[uid_of(bare)]
     assert (profile.lat, profile.lon) == (34.06, -118.23)
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/causes").text
     assert "34.06" not in page and "118.23" not in page  # never sent back to the page
     assert 'value="My location"' in page
 
@@ -225,7 +225,7 @@ def test_place_a_profile_from_sign_up_shows_its_home(bare):
     """No saved place yet: the sign-up ZIP is Home, by car, at the sign-up travel time."""
     from_before_places(bare)
     profiles.update(id=uid_of(bare), radius_km=16)
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/causes").text
     assert 'name="place1_where" value="Chinatown"' in page
     assert 'name="place1_mode" value="car" checked' in page
     assert 'name="place1_minutes" value="30" checked' in page
@@ -241,13 +241,20 @@ def test_place_rows_go_with_the_account(bare):
 
 def test_place_geolocation_is_allowed_on_the_preferences_page_only(bare):
     policy = lambda path: bare.get(path).headers["permissions-policy"]
-    assert "geolocation=(self)" in policy("/me/preferences")
+    assert "geolocation=(self)" in policy("/me/preferences/causes")
     assert "geolocation=()" in policy("/deck")
     assert "geolocation=()" in policy("/profile")
+    # the page a save error re-renders is at the section form's own path
+    r = bare.post(
+        "/me/preferences",
+        data={**BASE, **place_fields(1, "Home", "Nowhereville"), "back": "causes"},
+    )
+    assert "couldn't find" in r.text
+    assert "geolocation=(self)" in r.headers["permissions-policy"]
 
 
 def test_place_page_lists_neighborhoods_and_loads_geo_js(bare):
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/causes").text
     assert '<datalist id="la-areas">' in page and '<option value="Silverlake">' in page
     assert '<script src="/static/geo.js" defer>' in page
     assert bare.get("/static/geo.js").status_code == 200
@@ -447,7 +454,7 @@ def test_when_free_dates_are_future_only_and_at_most_ten(bare):
     assert "wasn't recognized" in r.text
     r = save(bare, when_form(free_dates=eleven[:10]))
     assert r.status_code == 303
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/when").text
     assert (
         page.count('name="free_dates"') == 10
     )  # all kept, and no field to add an 11th
@@ -477,7 +484,7 @@ def test_when_an_unknown_answer_saves_nothing(bare, over):
 
 def test_when_the_grid_shows_21_slots_and_a_legacy_bucket_as_days(bare):
     profiles.update(id=uid_of(bare), availability='["weekday_morning"]')
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/when").text
     assert page.count('name="availability"') == 21
     for d in ("mon", "tue", "wed", "thu", "fri"):
         assert f'value="{d}_morning" checked' in page
@@ -659,7 +666,7 @@ def test_work_answers_are_stored_and_shown(bare):
         '["tl"]',
     )
     assert p.orientation_ok and not p.first_timer
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/work").text
     assert 'name="setting" value="indoor" checked' in page
     assert 'name="languages" value="tl" checked' in page
     assert 'name="orientation_ok" value="1" checked' in page
@@ -686,7 +693,7 @@ def test_dealbreaker_distance_prefer_shows_what_is_out_of_reach_lower(bare):
 
 def test_dealbreaker_distance_is_on_for_a_profile_from_before(bare):
     assert data.preferences(uid_of(bare))["dealbreakers"] == ["distance"]
-    page = bare.get("/me/preferences").text
+    page = bare.get("/me/preferences/causes").text
     assert 'name="only_distance" value="only" checked' in page
     assert 'name="only_causes" value="prefer" checked' in page
 
@@ -822,9 +829,12 @@ def test_dealbreaker_and_surprise_answers_are_stored(bare):
     p = profiles[uid_of(bare)]
     assert json.loads(p.dealbreakers) == ["causes", "distance", "work"]
     assert p.surprise
-    page = bare.get("/me/preferences").text
-    assert 'name="only_work" value="only" checked' in page
-    assert 'name="surprise" value="1" checked' in page
+    assert (
+        'name="surprise" value="1" checked' in bare.get("/me/preferences/causes").text
+    )
+    assert (
+        'name="only_work" value="only" checked' in bare.get("/me/preferences/work").text
+    )
 
 
 # --- the deck's filter sheet and the empty-deck suggestion -----------------------------------
@@ -1288,3 +1298,33 @@ def test_verified_hours_a_coordinator_sets_it_and_a_non_member_cannot(coord):
     other = coordinator(1)
     r = other.post(f"/org/organization/{org}", data={"confirms_hours": "1"})
     assert r.status_code == 403 and not orgs[org].confirms_hours
+
+
+def test_a_ticked_language_skill_with_no_language_picked_survives_a_work_save(bare):
+    uid = uid_of(bare)
+    profiles.update(id=uid, skills='["admin", "language"]', languages="[]")
+    post = lambda **kw: bare.post(
+        "/me/preferences", data={"sections": "work", "back": "work", **kw}
+    )
+    post(skills="admin")
+    assert data._skills(profiles[uid]) == ["admin", "language"]
+    assert json.loads(profiles[uid].skills) == ["admin", "language"]  # stored, once
+    post(skills=["admin", "language"])
+    assert json.loads(profiles[uid].skills) == ["admin", "language"]
+    # a volunteer who picked a language has the skill without the tick, and the ticked
+    # one is no longer kept (the urgent-call ranking reads data._skills too)
+    post(skills="admin", languages="es")
+    assert json.loads(profiles[uid].skills) == ["admin"]
+    assert data._skills(profiles[uid]) == ["admin", "language"]
+
+
+def test_a_volunteer_who_speaks_a_language_has_the_language_skill(bare):
+    """The skills picker no longer offers "language"; the languages list says it."""
+    add("needs a car", DOWNTOWN, skills='["car"]')
+    add("needs a language", DOWNTOWN, skills='["language"]')  # made second: wins no tie
+    save(bare, work_form())
+    assert list(cards(bare)) == ["needs a car", "needs a language"]  # a tie
+    save(bare, work_form(languages=["es"]))
+    assert json.loads(profiles[uid_of(bare)].skills) == []
+    assert list(cards(bare)) == ["needs a language", "needs a car"]
+    assert 'value="language"' not in bare.get("/me/preferences/work").text

@@ -108,6 +108,25 @@ def require_env(env=os.environ):
         )
 
 
+def require_volunteer_sign_in(env=os.environ):
+    """Refuse a production start where volunteers would have no way in: Twilio Verify
+    (texted codes, or the fake on a preview), Google or Apple must be configured. Each
+    one alone is enough; Twilio is optional when Google or Apple is set."""
+    if not is_production(env):
+        return
+    twilio = all(
+        env.get(k)
+        for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
+    )
+    # the fake counts here; notify.make_verifier refuses it where fakes aren't allowed
+    fake = env.get("CAUSEMATCH_FAKE_SMS") == "1"
+    if not (twilio or fake or google_oauth(env) or apple_oauth(env)):
+        raise RuntimeError(
+            "No volunteer sign-in is configured: set Twilio Verify (TWILIO_*), "
+            "Google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) or Apple (APPLE_*)"
+        )
+
+
 def tasks_token(env=os.environ):
     """Bearer token for the scheduler's /tasks/* calls. Required in production; elsewhere
     "" means those calls are always refused."""
@@ -147,6 +166,37 @@ def certificate_key(env=os.environ):
             return "dev-only-certificate-key"
         raise RuntimeError("CERTIFICATE_KEY must be set (any long random string)")
     return strong_secret("CERTIFICATE_KEY", key, env)
+
+
+def google_oauth(env=os.environ):
+    """(client id, client secret) of the Google OAuth client, or None when neither is set:
+    then there is no Google button. One without the other refuses to start."""
+    client_id = (env.get("GOOGLE_CLIENT_ID") or "").strip()
+    secret = (env.get("GOOGLE_CLIENT_SECRET") or "").strip()
+    if not client_id and not secret:
+        return None
+    if not (client_id and secret):
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together"
+        )
+    return client_id, strong_secret("GOOGLE_CLIENT_SECRET", secret, env)
+
+
+APPLE_VARS = ("APPLE_CLIENT_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY")
+
+
+def apple_oauth(env=os.environ):
+    """(Services ID, team id, key id, private key PEM) for Sign in with Apple, or None when
+    none is set: then there is no Apple button. Some but not all refuses to start. A key
+    stored with literal "\\n" sequences (as Secret Manager values often are) gets its
+    newlines back."""
+    values = [(env.get(k) or "").strip() for k in APPLE_VARS]
+    if not any(values):
+        return None
+    if missing := [k for k, v in zip(APPLE_VARS, values) if not v]:
+        raise RuntimeError(f"Sign in with Apple needs all four APPLE_* set: {missing}")
+    client_id, team_id, key_id, pem = values
+    return client_id, team_id, key_id, pem.replace("\\n", "\n")
 
 
 def db_path(env=os.environ):

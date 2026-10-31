@@ -3,6 +3,7 @@
 // that many pixels and upload the JPEG instead of the original, so a 12 MB phone photo
 // goes up as a few hundred KB. The server re-encodes whatever arrives. If the browser
 // can't read the picture, the form posts the original as it would without this script.
+// A form with data-auto sends the picture as soon as it is shrunk and shown.
 (function () {
   var TOO_LARGE = "That photo is too large. Choose one under 6 MB.";
   var UNREADABLE = "We couldn't read that picture. Choose a JPEG, PNG or WebP photo.";
@@ -56,6 +57,7 @@
         if (input.files[0] !== file || !b) return;
         blob = b;
         show(b);
+        if (form.hasAttribute("data-auto")) form.requestSubmit(); // one tap, no Save
       }, function () {
         blob = null; // not decodable here: the original goes up, and the server decides
       });

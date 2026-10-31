@@ -10,6 +10,7 @@ from fasthtml.common import (
     Div,
     Fieldset,
     Hidden,
+    HttpHeader,
     Img,
     Legend,
     P,
@@ -37,10 +38,12 @@ from app.ui import (
     PIN,
     SMALL_LINK,
     AddToHomeScreen,
+    Avatar,
     CauseChip,
     EventLink,
     Icon,
     LogoBadge,
+    MatchesDot,
     Meta,
     OrgFace,
     Router,
@@ -147,11 +150,14 @@ def OpeningCard(c):
             # is on the span, so the padding shows no third line.
             Div(
                 Button(
-                    Span(c["about"], cls="cm-about line-clamp-2"),
+                    Span(c["about"], cls="cm-about line-clamp-2 min-w-0 flex-1"),
+                    # beside the clamp's last line, so it takes no height; it says a tap
+                    # shows the rest
+                    Span("More", cls="shrink-0 text-sm font-bold text-brand-ink"),
                     type="button",
                     data_open_sheet="1",
                     aria_haspopup="dialog",
-                    cls="-my-3 block w-full py-3 text-left text-sm leading-snug "
+                    cls="-my-3 flex w-full items-end gap-2 py-3 text-left text-sm leading-snug "
                     "text-ink",
                 ),
                 cls="flow-root",
@@ -326,7 +332,7 @@ def EmptyDeck(today=False, relax=None):
 
 
 def TodaySwitch(today):
-    """ "Free in the next 48h": only shifts starting in the next 48 hours, soonest first. A plain
+    """ "Next 48h": only shifts starting in the next 48 hours, soonest first. A plain
     GET form, so it works without script; the button says whether it is on."""
     return PlainForm(
         Hidden(name="today", value="0" if today else "1"),
@@ -340,7 +346,8 @@ def TodaySwitch(today):
                 + ("bg-brand" if today else "bg-gray-500"),
                 aria_hidden="true",
             ),
-            Span("Free in the next 48h"),
+            Span("Next 48h", aria_hidden="true"),
+            Span("Only shifts starting within 48 hours", cls="sr-only"),
             type="submit",
             aria_pressed="true" if today else "false",
             cls="flex min-h-11 items-center gap-2.5 rounded-full px-1 text-sm font-bold "
@@ -376,7 +383,7 @@ def FilterSheet(uid, today, count, view):
     bar, whatever the card's height, so all of it is on screen:
     the main place's travel time, which causes show, and this week only. They hold until
     cleared and change no saved preference. Its button says how many cards the deck
-    holds."""
+    holds, in words for a screen reader."""
     view = view or {}
     f = data.preferences(uid)
     main = f["places"][0] if f["places"] else None
@@ -386,17 +393,11 @@ def FilterSheet(uid, today, count, view):
     return Details(
         Summary(
             Icon(SLIDERS, size=20),
-            # the count as a badge; its full words for a screen reader
-            Span(
-                str(count),
-                aria_hidden="true",
-                cls="absolute -right-1 -top-1 grid h-6 min-w-6 place-items-center "
-                "rounded-full bg-ink px-1.5 text-xs font-bold text-cream",
-            ),
+            # the count is under Pass and Like (DeckArea); its words here for a screen reader
             Span(f"{count} opening{'' if count == 1 else 's'}", cls="sr-only"),
             Span(" (Filtered)", cls="sr-only") if view else None,
             Span(", filters", cls="sr-only"),
-            cls="relative grid h-12 w-12 cursor-pointer list-none place-items-center "
+            cls="grid h-12 w-12 cursor-pointer list-none place-items-center "
             "rounded-full border bg-white text-ink shadow-warm "
             "[&::-webkit-details-marker]:hidden "
             + ("border-2 border-brand text-brand-ink" if view else "border-line"),
@@ -485,46 +486,121 @@ def FilterSheet(uid, today, count, view):
     )
 
 
-def MatchSheet(uid):
-    """The "It's a match!" sheet: one row per nonprofit that said yes since the volunteer
-    last saw it (data.new_matches; the demo's auto-accepts land first), or None. Drawing
-    it marks them seen. An open <dialog>, closed by its own method=dialog form: no script."""
+def MatchSheet(uid, close="Keep swiping"):
+    """The "It's a match!" takeover: the first nonprofit that said yes since the volunteer
+    last saw it (data.new_matches; the demo's auto-accepts land first) with both faces,
+    a heart and Say hi, any others as short rows below; None when nothing is new.
+    Drawing it marks them seen (one request wins that: the other gets None). close: the
+    second button's words. An open <dialog>, closed by its own method=dialog form: no
+    script."""
     data.demo_accept_due(uid)
     rows = data.new_matches(uid)
     if not rows:
         return None
-    data.saw_new_matches(uid, rows)
+    if not data.saw_new_matches(uid, rows):
+        return None  # another request is showing them
+    first, *others = rows
+    me = data.get_profile(uid)
     return Dialog(
-        H2("It's a match!", cls=ORG_SECTION),
-        *[
+        Div(
             Div(
-                OrgFace(r["org"], r["logo"], r["photo"], r["slug"]),
-                Div(
-                    P(r["org"], cls="font-semibold leading-snug text-ink"),
-                    P(r["title"], cls="text-sm leading-snug text-ink-muted"),
-                    cls="min-w-0 flex-1",
+                Span(
+                    OrgFace(
+                        first["org"],
+                        first["logo"],
+                        first["photo"],
+                        first["slug"],
+                        size="lg",
+                    ),
+                    cls="rounded-full ring-4 ring-white",
                 ),
-                A(
-                    "Say hi",
-                    href=f"/chat/{r['id']}",
-                    cls="uk-btn uk-btn-primary h-11 shrink-0 px-4",
+                Span(
+                    Avatar(me.display_name, me.photo_key, "moment"),
+                    cls="-ml-6 rounded-full ring-4 ring-white",
                 ),
-                cls="flex items-center gap-3",
-            )
-            for r in rows
-        ],
-        PlainForm(
-            Button(
-                "Close",
-                data_close_sheet="1",
-                cls="uk-btn uk-btn-default h-11 w-full",
+                Span(
+                    Span(Icon(HEART, size=22, filled=True), cls="cm-heart flex"),
+                    cls="absolute -bottom-3 left-1/2 grid h-10 w-10 -translate-x-1/2 "
+                    "place-items-center rounded-full bg-brand text-white "
+                    "ring-4 ring-white",
+                ),
+                cls="relative flex items-center justify-center pb-3",
             ),
-            method="dialog",
+            H2(
+                "It's a match!",
+                cls="font-display text-4xl font-extrabold leading-tight text-brand-ink",
+            ),
+            Div(
+                P(f"{first['org']} said yes", cls="font-semibold text-ink"),
+                P(first["title"], cls="text-sm leading-snug text-ink-muted"),
+                cls="space-y-1",
+            ),
+            A(
+                "Say hi",
+                href=f"/chat/{first['id']}",
+                cls="uk-btn uk-btn-primary h-12 w-full",
+            ),
+            PlainForm(
+                Button(
+                    close,
+                    data_close_sheet="1",
+                    cls="uk-btn uk-btn-default h-12 w-full",
+                ),
+                method="dialog",
+            ),
+            *[
+                Div(
+                    OrgFace(r["org"], r["logo"], r["photo"], r["slug"]),
+                    Div(
+                        P(r["org"], cls="font-semibold leading-snug text-ink"),
+                        P(r["title"], cls="text-sm leading-snug text-ink-muted"),
+                        cls="min-w-0 flex-1 text-left",
+                    ),
+                    A(
+                        "Say hi",
+                        href=f"/chat/{r['id']}",
+                        cls="uk-btn uk-btn-default h-11 shrink-0 px-4",
+                    ),
+                    cls="flex items-center gap-3",
+                )
+                for r in others
+            ],
+            cls="space-y-4",
         ),
         open=True,
-        cls="cm-moment z-50 space-y-3 " + CARD,
+        cls="cm-moment z-50 " + CARD,
         aria_label="It's a match!",
     )
+
+
+def MomentSlot(sheet=None, matches_page=False):
+    """Where a match that lands while the page is open arrives: it asks /deck/news every
+    10 seconds (static/sheet.js skips a hidden tab) and the sheet drawn into it. Outside
+    #deck-area, so a swipe leaves it alone."""
+    return Div(
+        sheet,
+        id="moment-slot",
+        hx_get="/deck/news?on=matches" if matches_page else "/deck/news",
+        hx_trigger="every 10s, visibilitychange from:document",
+        hx_swap="innerHTML",
+    )
+
+
+@ar("/deck/news", methods=["GET"])
+def deck_news(req):
+    """The poll's answer: a new match's sheet, into the slot. With nothing new the Matches
+    dot alone, and HX-Reswap: none so the slot, and a sheet the volunteer has open in it,
+    stays as it is (an empty 200 would swap it away). Like GET /deck and /matches it writes
+    on a GET (the demo's accepts, the seen mark); the worst a forged request costs is a
+    takeover the volunteer then finds on Matches."""
+    uid = req.scope["uid"]
+    sheet = MatchSheet(
+        uid, "Close" if query(req, "on") == "matches" else "Keep swiping"
+    )
+    dot = MatchesDot(data.match_news_count(uid), oob=True)
+    if sheet is None:
+        return dot, HttpHeader("HX-Reswap", "none")
+    return sheet, dot
 
 
 def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
@@ -570,13 +646,23 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
         # and Like stay in reach above the tab bar; the gaps between them still drag
         Div(
             Div(
-                FilterSheet(uid, today, count, view),
-                cls="pointer-events-auto",
+                Div(
+                    FilterSheet(uid, today, count, view),
+                    cls="pointer-events-auto",
+                ),
+                SwipeButtons(c["id"], today, c["call_id"]),
+                Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
+                cls="flex items-center justify-center gap-6",
             ),
-            SwipeButtons(c["id"], today, c["call_id"]),
-            Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
-            cls="cm-swipe-buttons pointer-events-none mt-2 flex items-center "
-            "justify-center gap-6",
+            # with the 48-hour switch on, the line above the card says it
+            None
+            if today
+            else P(
+                f"{count} opening{'' if count == 1 else 's'}"
+                + (" · filtered" if view else ""),
+                cls="text-center text-xs font-semibold text-ink-muted",
+            ),
+            cls="cm-swipe-buttons pointer-events-none mt-2",
         ),
         P(
             "Couldn't save that. Try again.",
@@ -642,6 +728,7 @@ def deck(req):
         # deck only: elsewhere it would push the page's content
         None if nudge else AddToHomeScreen(),
         DeckArea(uid, today, deck_view(req), first=first, sheet=MatchSheet(uid)),
+        MomentSlot(),
         PhotoNudge() if nudge else None,
         Script(src="/static/swipe.js", defer=True),
         Script(src="/static/sheet.js", defer=True),

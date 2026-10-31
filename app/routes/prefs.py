@@ -56,6 +56,7 @@ from app.ui import (
     BACK,
     CARD,
     HEART,
+    NEXT,
     ORG_SECTION,
     PEOPLE,
     PIN,
@@ -64,6 +65,7 @@ from app.ui import (
     BigButton,
     CauseChip,
     Field,
+    Fold,
     Icon,
     Router,
     SimplePage,
@@ -77,6 +79,9 @@ ar = Router()
 SETTINGS = [*SETTING, ("either", "Either")]
 EFFORTS = [*EFFORT, ("any", "Any")]
 GROUPS = [*GROUP, ("any", "Any")]
+
+# "language" stays a skill an opening can ask for; a volunteer's languages say it
+PICKABLE_SKILLS = [(v, label) for v, label in SKILLS if v != "language"]
 
 SLOTS = {f"{d}_{p}" for d, _ in DAYS for p, _ in PARTS}
 CHECK = ("M5 12.5 10 17.5 19.5 7",)
@@ -149,21 +154,20 @@ def Chip(kind, name, value, text, checked, on=CHIP_ON, icon=None):
 SHARED = "Shared with a nonprofit after you like its opening"
 
 
-def SharedNote(detail=""):
-    """Marks what a nonprofit sees (choices.SHARED_WITH_NONPROFIT); the rest is private."""
+def SharedNote(detail):
+    """The legend under a section page's title: what a nonprofit sees of it
+    (choices.SHARED_WITH_NONPROFIT); the rest of the page is private."""
     return P(
         Icon(PEOPLE, size=16, cls="mt-0.5"),
         Span(SHARED + detail),
-        cls="flex gap-1.5 text-xs font-bold text-brand-ink",
+        cls="-mt-2 mb-4 flex gap-1.5 text-xs font-bold text-brand-ink",
     )
 
 
-def Section(title, hint, *content, shared=None):
-    """shared: None for a private section, else the detail its SharedNote adds."""
+def Section(title, hint, *content):
     return Div(
         H2(title, cls=ORG_SECTION),
         P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
-        SharedNote(shared) if shared is not None else None,
         *content,
         cls="space-y-3 p-5 " + CARD,
     )
@@ -295,6 +299,43 @@ def Group(title, cls, name, options, value):
     )
 
 
+def SecondPlace(pf, error):
+    """The fold for the second place: closed, saying what is saved; open after an
+    error so a bad entry can be fixed."""
+    where = pf["where"].strip()
+    if not where:
+        return Fold("Add a second place", PlaceFields(1, pf))
+    mode = dict(MODES).get(pf["mode"], pf["mode"])
+    reach = (
+        "any distance" if str(pf["minutes"]) == "0" else f"up to {pf['minutes']} min"
+    )
+    label = " ".join(pf["label"].split())
+    named = f"{label}: " if label and label != prefs.DEFAULT_LABELS[1] else ""
+    return Fold(
+        "Your second place",
+        PlaceFields(1, pf),
+        open=bool(error),
+        sub=f"{named}{where} · {mode}, {reach}",
+    )
+
+
+def OnlyShow(f, key, hint=False):
+    """A dealbreaker (choices.DEALBREAKERS) as Prefer / Only show, under the controls it
+    applies to."""
+    return Div(
+        Group(
+            dict(DEALBREAKERS)[key],
+            "grid grid-cols-2 gap-2",
+            f"only_{key}",
+            [("prefer", "Prefer"), ("only", "Only show")],
+            "only" if key in f["dealbreakers"] else "prefer",
+        ),
+        P("Only show hides what doesn't fit.", cls="mt-1.5 text-sm text-ink-muted")
+        if hint
+        else None,
+    )
+
+
 def Hour(name, value):
     return Select(
         *[Option(label, value=str(h), selected=h == value) for h, label in HOURS],
@@ -307,9 +348,8 @@ def LastMinute(u):
     """The opt-in to urgent calls: off unless turned on, and private."""
     return Section(
         "Last-minute calls",
-        "When a nonprofit near you is short of people in the next 48 hours and you're "
-        "free then, we can text you (or email you, without a number). Off unless you "
-        "turn it on. Nonprofits never see these settings.",
+        "Short of people in the next 48 hours and you're free then: we text you (or "
+        "email you, without a number). Off unless you turn it on.",
         Hidden(name="sections", value="urgent"),
         Chip(
             "checkbox",
@@ -325,10 +365,18 @@ def LastMinute(u):
             URGENT_WINDOWS,
             u["window"],
         ),
-        Div(
-            Field("No texts from", Hour("urgent_quiet_from", u["quiet_from"])),
-            Field("Until", Hour("urgent_quiet_to", u["quiet_to"])),
-            cls="grid grid-cols-2 gap-2",
+        Fold(
+            "Quiet hours",
+            Div(
+                Field("No texts from", Hour("urgent_quiet_from", u["quiet_from"])),
+                Field("Until", Hour("urgent_quiet_to", u["quiet_to"])),
+                cls="grid grid-cols-2 gap-2",
+            ),
+            open=(str(u["quiet_from"]), str(u["quiet_to"]))
+            != (
+                str(prefs.URGENT_DEFAULTS["quiet_from"]),
+                str(prefs.URGENT_DEFAULTS["quiet_to"]),
+            ),
         ),
         Group(
             "At most, a week",
@@ -413,30 +461,193 @@ def PlaceFields(slot, pf, named=True):
     )
 
 
-def PrefsPage(uid, f, error=None, saved=False):
-    return VolunteerShell(
-        "me",
-        A(
-            Icon(BACK, size=18),
-            "Me",
-            href="/profile",
-            cls="-ml-1 inline-flex min-h-11 items-center gap-1 font-bold text-ink-muted "
-            "hover:text-ink",
-        ),
-        H1("Preferences", cls=TITLE + " !mt-0"),
-        P(
-            Icon(SHIELD, size=16, cls="mt-0.5 text-ink-muted"),
-            Span(
-                "These decide which openings you see, and in what order. Your places, "
-                "cause ratings, dates, skills, Only-show choices and the kind of work "
-                "you want stay private. What's marked shared (your causes, a summary of "
-                "when you're free, the languages you speak and how often) a nonprofit "
-                "sees only after you like one of its openings (",
-                A("Privacy", href="/privacy", cls="underline"),
-                ").",
+def CausesCards(f, error=None):
+    first, second = f["place_forms"]
+    return (
+        Section(
+            "Causes",
+            "Love ranks first. Not for me hides every opening for that cause.",
+            Hidden(name="sections", value="causes"),
+            *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
+            OnlyShow(f, "causes", hint=True),
+            Group(
+                "Nonprofits that confirm my hours",
+                "grid grid-cols-3 gap-2",
+                "verified_hours",
+                VERIFIED_HOURS,
+                f["verified_hours"],
             ),
-            cls="-mt-2 mb-4 flex gap-2 text-sm text-ink-muted",
+            Chip(
+                "checkbox",
+                "surprise",
+                "1",
+                "Surprise me: now and then, a cause beyond the ones I love",
+                f["surprise"],
+            ),
         ),
+        Section(
+            "Where you'll help from",
+            "Each card shows the time from the nearest of your places. Only you see "
+            "them; we keep an area, never an address.",
+            PlaceFields(0, first),
+            SecondPlace(second, error),
+            Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
+            OnlyShow(f, "distance"),
+        ),
+    )
+
+
+def WhenCards(f):
+    return (
+        Section(
+            "When",
+            "Tick the times you're usually free: openings then rank first.",
+            Hidden(name="sections", value="when"),
+            DayGrid(f["availability"]),
+            FreeDates(f["free_dates"]),
+            Group(
+                "How far ahead to look",
+                "flex flex-wrap gap-2",
+                "horizon_days",
+                HORIZON,
+                f["horizon_days"],
+            ),
+            Group(
+                "One-time or recurring",
+                "grid grid-cols-3 gap-2",
+                "commitment",
+                COMMITMENT,
+                f["commitment"],
+            ),
+            Group(
+                "Up to this many shifts a week",
+                "flex flex-wrap gap-2",
+                "weekly_limit",
+                prefs.WEEKLY_LIMITS,
+                f["weekly_limit"],
+            ),
+            P(
+                "Once a week is full, its openings come last and last-minute calls "
+                "for it stop.",
+                cls="text-sm text-ink-muted",
+            ),
+            OnlyShow(f, "when", hint=True),
+        ),
+    )
+
+
+def WorkCards(f):
+    return (
+        Section(
+            "Kind of work",
+            "Openings that say they fit rank higher; ones that don't say aren't held "
+            "back.",
+            Hidden(name="sections", value="work"),
+            Group(
+                "Indoors or outdoors",
+                "grid grid-cols-3 gap-2",
+                "setting",
+                SETTINGS,
+                f["setting"],
+            ),
+            Group(
+                "How active",
+                "grid grid-cols-4 gap-1.5",
+                "effort",
+                EFFORTS,
+                f["effort"],
+            ),
+            Group(
+                "Group size",
+                "grid grid-cols-2 gap-2",
+                "group_size",
+                GROUPS,
+                f["group_size"],
+            ),
+            Div(
+                Chip(
+                    "checkbox",
+                    "first_timer",
+                    "1",
+                    "I'm new: first-timer friendly first",
+                    f["first_timer"],
+                ),
+                Chip(
+                    "checkbox",
+                    "orientation_ok",
+                    "1",
+                    "A separate orientation session is fine",
+                    f["orientation_ok"],
+                ),
+                cls="flex flex-wrap gap-2",
+            ),
+            Fieldset(
+                Legend(
+                    "Languages you speak besides English",
+                    cls="uk-form-label mb-1.5",
+                ),
+                Checks("languages", LANGUAGES, f["languages"], "flex flex-wrap gap-2"),
+            ),
+            Group(
+                "How often",
+                "flex flex-wrap gap-2",
+                "frequency",
+                FREQUENCY,
+                f["frequency"],
+            ),
+            Fieldset(
+                Legend(
+                    "What you bring (openings that need it rank higher)",
+                    cls="uk-form-label mb-1.5",
+                ),
+                Checks("skills", PICKABLE_SKILLS, f["skills"], "flex flex-wrap gap-2"),
+            ),
+            OnlyShow(f, "work", hint=True),
+        ),
+    )
+
+
+# section key -> (name, its cards, what a nonprofit sees of it); the key is the
+# page's path and its form's `back`
+SECTIONS = {
+    "causes": (
+        "Causes and places",
+        CausesCards,
+        ": the causes you love or are open to, not how you rated them.",
+    ),
+    "when": (
+        "When",
+        WhenCards,
+        ": a summary of the times you tick, not your dates or weekly limit.",
+    ),
+    "work": (
+        "Kind of work",
+        WorkCards,
+        ": the languages you speak and how often you'd like to help.",
+    ),
+    "urgent": ("Last-minute calls", lambda f: (LastMinute(f["urgent"]),), None),
+}
+
+
+def PrefsRow(key, saved):
+    """One row of the index: its name, a line on what is saved, a chevron."""
+    return A(
+        Div(
+            Div(SECTIONS[key][0], cls="font-bold text-ink"),
+            Div(saved, cls="truncate text-sm font-normal text-ink-muted")
+            if saved
+            else None,
+            cls="min-w-0 flex-1",
+        ),
+        Icon(NEXT, size=18, cls="text-ink-muted"),
+        href=f"/me/preferences/{key}",
+        cls="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left "
+        "hover:bg-cream",
+    )
+
+
+def Notices(error, saved):
+    return (
         Alert(error, cls=AlertT.error + " mb-4") if error else None,
         Alert(
             "Saved. Your deck now follows these preferences.",
@@ -444,173 +655,95 @@ def PrefsPage(uid, f, error=None, saved=False):
         )
         if saved and not error
         else None,
-        Form(
-            Section(
-                "Causes",
-                "Love ranks first. Not for me hides every opening for that cause.",
-                *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
-                shared=": the causes you love or are open to, not how you rated them.",
+    )
+
+
+def BackLink(text, href):
+    return A(
+        Icon(BACK, size=18),
+        text,
+        href=href,
+        cls="-ml-1 inline-flex min-h-11 items-center gap-1 font-bold text-ink-muted "
+        "hover:text-ink",
+    )
+
+
+def PrefsPage(uid, f, error=None, saved=False):
+    """The index: one row per section."""
+    picked = [
+        c.label
+        for c in data.active_causes()
+        if f["causes"].get(c.slug) in (prefs.LOVE, prefs.OPEN)
+    ]
+    places = [pf["label"] for pf in f["place_forms"] if pf["where"].strip()]
+    n = len(f["availability"])
+    lines = {
+        "causes": " · ".join(filter(None, [", ".join(picked), ", ".join(places)])),
+        "when": f"{n} usual time{'' if n == 1 else 's'}" if n else "",
+        "urgent": "On" if f["urgent"]["on"] else "Off",
+    }
+    return VolunteerShell(
+        "me",
+        BackLink("Me", "/profile"),
+        H1("Preferences", cls=TITLE + " !mt-0"),
+        P(
+            Icon(SHIELD, size=16, cls="mt-0.5 text-ink-muted"),
+            Span(
+                "These decide which openings you see, and in what order. Only you see "
+                "them unless a line says otherwise (",
+                A("Privacy", href="/privacy", cls="underline"),
+                ").",
             ),
-            Section(
-                "Where you'll help from",
-                "Each card shows the time from the nearest of your places. Only you see "
-                "them; we keep an area, never an address.",
-                *[PlaceFields(i, pf) for i, pf in enumerate(f["place_forms"])],
-                Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
-            ),
-            Section(
-                "When",
-                "Tick the times you're usually free: openings then rank first.",
-                DayGrid(f["availability"]),
-                FreeDates(f["free_dates"]),
-                Group(
-                    "How far ahead to look",
-                    "flex flex-wrap gap-2",
-                    "horizon_days",
-                    HORIZON,
-                    f["horizon_days"],
-                ),
-                Group(
-                    "One-time or recurring",
-                    "grid grid-cols-3 gap-2",
-                    "commitment",
-                    COMMITMENT,
-                    f["commitment"],
-                ),
-                Group(
-                    "Up to this many shifts a week",
-                    "flex flex-wrap gap-2",
-                    "weekly_limit",
-                    prefs.WEEKLY_LIMITS,
-                    f["weekly_limit"],
-                ),
-                P(
-                    "Once a week is full, its openings come last and last-minute calls "
-                    "for it stop.",
-                    cls="text-sm text-ink-muted",
-                ),
-                shared=": a summary of the times you tick (weekday or weekend mornings, "
-                "afternoons, evenings). Your dates and weekly limit stay private.",
-            ),
-            Section(
-                "Kind of work",
-                "Openings that say they fit rank higher; ones that don't say aren't held "
-                "back.",
-                Hidden(name="sections", value="work"),
-                Group(
-                    "Indoors or outdoors",
-                    "grid grid-cols-3 gap-2",
-                    "setting",
-                    SETTINGS,
-                    f["setting"],
-                ),
-                Group(
-                    "How active",
-                    "grid grid-cols-4 gap-1.5",
-                    "effort",
-                    EFFORTS,
-                    f["effort"],
-                ),
-                Group(
-                    "Group size",
-                    "grid grid-cols-2 gap-2",
-                    "group_size",
-                    GROUPS,
-                    f["group_size"],
-                ),
-                Div(
-                    Chip(
-                        "checkbox",
-                        "first_timer",
-                        "1",
-                        "I'm new: first-timer friendly first",
-                        f["first_timer"],
-                    ),
-                    Chip(
-                        "checkbox",
-                        "orientation_ok",
-                        "1",
-                        "A separate orientation session is fine",
-                        f["orientation_ok"],
-                    ),
-                    cls="flex flex-wrap gap-2",
-                ),
-                Fieldset(
-                    Legend(
-                        "Languages you speak besides English",
-                        cls="uk-form-label mb-1.5",
-                    ),
-                    SharedNote("."),
-                    Checks(
-                        "languages", LANGUAGES, f["languages"], "flex flex-wrap gap-2"
-                    ),
-                ),
-            ),
-            Section(
-                "Only show, or prefer?",
-                "Prefer ranks what fits first and still shows the rest. Only show hides "
-                "what doesn't fit. Causes that are not for you are always hidden.",
-                Hidden(name="sections", value="only"),
-                *[
-                    Group(
-                        label,
-                        "grid grid-cols-2 gap-2",
-                        f"only_{key}",
-                        [("prefer", "Prefer"), ("only", "Only show")],
-                        "only" if key in f["dealbreakers"] else "prefer",
-                    )
-                    for key, label in DEALBREAKERS
-                ],
-                Group(
-                    "Nonprofits that confirm my hours",
-                    "grid grid-cols-3 gap-2",
-                    "verified_hours",
-                    VERIFIED_HOURS,
-                    f["verified_hours"],
-                ),
-                Chip(
-                    "checkbox",
-                    "surprise",
-                    "1",
-                    "Surprise me: now and then, a cause beyond the ones I love",
-                    f["surprise"],
-                ),
-            ),
-            Section(
-                "How often",
-                None,
-                Div(
-                    *[
-                        Chip("radio", "frequency", v, label, f["frequency"] == v)
-                        for v, label in FREQUENCY
-                    ],
-                    cls="flex flex-wrap gap-2",
-                ),
-                shared=".",
-            ),
-            Section(
-                "What you bring",
-                "Openings that need it rank higher.",
-                Checks("skills", SKILLS, f["skills"], "flex flex-wrap gap-2"),
-            ),
-            LastMinute(f["urgent"]),
-            Div(BigButton("Save preferences"), cls="cm-savebar z-20 -mx-1 py-3"),
-            action="/me/preferences",
-            method="post",
-            cls="space-y-4",
+            cls="-mt-2 mb-4 flex gap-2 text-sm text-ink-muted",
         ),
-        Script(src="/static/geo.js", defer=True),
+        *Notices(error, saved),
+        Div(
+            *[PrefsRow(key, lines.get(key)) for key in SECTIONS],
+            cls="divide-y divide-line overflow-hidden " + CARD,
+        ),
         uid=uid,
     )
 
 
-def form_values(saved):
-    """data.preferences() as the page shows it: each place as its form fields."""
-    places = saved.pop("places")
-    saved["place_forms"] = [
+def SectionPage(uid, f, key, error=None, saved=False):
+    """One section's cards in a form of their own, with its own Save."""
+    name, cards, shared = SECTIONS[key]
+    return VolunteerShell(
+        "me",
+        BackLink("Preferences", "/me/preferences"),
+        H1(name, cls=TITLE + " !mt-0"),
+        SharedNote(shared) if shared else None,
+        *Notices(error, saved),
+        Form(
+            *(cards(f, error=error) if key == "causes" else cards(f)),
+            Hidden(name="back", value=key),
+            Div(BigButton("Save"), cls="cm-savebar z-20 -mx-1 py-3"),
+            action="/me/preferences",
+            method="post",
+            cls="space-y-4",
+        ),
+        Script(src="/static/geo.js", defer=True) if key == "causes" else None,
+        uid=uid,
+    )
+
+
+def page_of(uid, f, key, error=None, saved=False):
+    """The index, or the section page named by key."""
+    if key in SECTIONS:
+        return SectionPage(uid, f, key, error, saved)
+    return PrefsPage(uid, f, error, saved)
+
+
+def place_forms(places):
+    return [
         prefs.place_form(places[i] if i < len(places) else None, i)
         for i in range(MAX_PLACES)
     ]
+
+
+def form_values(saved):
+    """data.preferences() as the page shows it: each place as its form fields."""
+    saved["place_forms"] = place_forms(saved.pop("places"))
     return saved
 
 
@@ -618,10 +751,38 @@ def form_values(saved):
 def preferences_page(req):
     uid = req.scope["uid"]
     return PrefsPage(
+        uid, form_values(data.preferences(uid)), saved=query(req, "saved") == "1"
+    )
+
+
+def section_page(req, key):
+    uid = req.scope["uid"]
+    return SectionPage(
         uid,
         form_values(data.preferences(uid)),
+        key,
         saved=query(req, "saved") == "1",
     )
+
+
+@ar("/me/preferences/causes", methods=["GET"])
+def preferences_causes_page(req):
+    return section_page(req, "causes")
+
+
+@ar("/me/preferences/when", methods=["GET"])
+def preferences_when_page(req):
+    return section_page(req, "when")
+
+
+@ar("/me/preferences/work", methods=["GET"])
+def preferences_work_page(req):
+    return section_page(req, "work")
+
+
+@ar("/me/preferences/urgent", methods=["GET"])
+def preferences_urgent_page(req):
+    return section_page(req, "urgent")
 
 
 @ar("/me/preferences", methods=["POST"])
@@ -635,6 +796,25 @@ async def preferences_save(req):
 def _sync_save(req, form):
     uid = req.scope["uid"]
     saved = data.preferences(uid)
+    marks = form.getlist("sections")
+    if "only" in marks:  # a form loaded before the section pages existed
+        marks += ["causes", "when"]
+    back = form.get("back")
+    # a form without a `back` (a script): the page its fields are from
+    if back not in SECTIONS:
+        back = (
+            "causes"
+            if "place1_where" in form
+            else next((k for k in ("when", "work", "urgent") if k in marks), None)
+        )
+    skills = form.getlist("skills")
+    # a ticked "language" with no language picked has lost its checkbox: keep it
+    if (
+        "language" in saved["skills"]
+        and "language" not in skills
+        and not form.getlist("languages")
+    ):
+        skills.append("language")
     active = [c.slug for c in data.active_causes()]
     # a cause the posted page didn't rate keeps its saved rating (a page loaded before
     # the cause came back); a rated cause always sends its radio
@@ -643,18 +823,29 @@ def _sync_save(req, form):
         for s in active
         if form.get(f"cause_{s}") or s in saved["causes"]
     }
+    # the places come with the causes page, whose first place field is always posted
+    has_places = "place1_where" in form
+    # only the Causes page can fix a missing cause or place, so only it is held to them
+    on_causes_page = (
+        has_places or "causes" in marks or any(k.startswith("cause_") for k in form)
+    )
     f = {
         # a rating of a cause that is inactive now is kept for when it comes back
         "causes": {
             **{s: v for s, v in saved["causes"].items() if s not in active},
             **rated,
         },
-        "availability": form.getlist("availability"),
-        "free_dates": form.getlist("free_dates"),
-        # A field the form doesn't carry keeps its saved value: a page loaded before a
-        # section existed must not reset it. A radio group on the page sends its checked
-        # value (and these always have one); a section's checkboxes count only when its
-        # "sections" marker came with the form.
+        # A field the form doesn't carry keeps its saved value: a section page posts
+        # only its own fields, and a page loaded before a section existed must not
+        # reset it. A radio group on the page sends its checked value (and these always
+        # have one); a section's checkboxes count only when its "sections" marker came
+        # with the form.
+        "availability": form.getlist("availability")
+        if "when" in marks
+        else saved["availability"],
+        "free_dates": form.getlist("free_dates")
+        if "when" in marks
+        else saved["free_dates"],
         "horizon_days": form.get("horizon_days", str(saved["horizon_days"])),
         "commitment": form.get("commitment", saved["commitment"]),
         "weekly_limit": form.get("weekly_limit", str(saved["weekly_limit"])),
@@ -666,9 +857,20 @@ def _sync_save(req, form):
                 "first_timer": form.get("first_timer") == "1",
                 "orientation_ok": form.get("orientation_ok") == "1",
                 "languages": form.getlist("languages"),
+                "skills": skills,
+                "frequency": form.get("frequency", ""),
             }
-            if "work" in form.getlist("sections")
-            else {k: saved[k] for k in ("first_timer", "orientation_ok", "languages")}
+            if "work" in marks
+            else {
+                k: saved[k]
+                for k in (
+                    "first_timer",
+                    "orientation_ok",
+                    "languages",
+                    "skills",
+                    "frequency",
+                )
+            }
         ),
         "dealbreakers": [
             key
@@ -678,10 +880,8 @@ def _sync_save(req, form):
         ],
         "verified_hours": form.get("verified_hours", saved["verified_hours"]),
         "surprise": form.get("surprise") == "1"
-        if "only" in form.getlist("sections")
+        if "causes" in marks
         else saved["surprise"],
-        "skills": form.getlist("skills"),
-        "frequency": form.get("frequency", ""),
         "urgent": {
             "on": form.get("urgent_on") == "1",
             **{
@@ -689,7 +889,7 @@ def _sync_save(req, form):
                 for k in ("window", "quiet_from", "quiet_to", "per_week")
             },
         }
-        if "urgent" in form.getlist("sections")
+        if "urgent" in marks
         else saved["urgent"],
         "place_forms": [
             {
@@ -697,32 +897,37 @@ def _sync_save(req, form):
                 for k in ("label", "where", "lat", "lon", "mode", "minutes")
             }
             for i in range(MAX_PLACES)
-        ],
+        ]
+        if has_places
+        else place_forms(saved["places"]),
     }
     # the page shows dates as chips, so only valid ones go back into it
-    dates, date_error = prefs.parse_free_dates(
-        f["free_dates"], form.get("free_date_new", ""), data.local_today()
-    )
-    f["free_dates"] = saved["free_dates"] if date_error else dates
+    date_error = None
+    if "when" in marks:
+        dates, date_error = prefs.parse_free_dates(
+            f["free_dates"], form.get("free_date_new", ""), data.local_today()
+        )
+        f["free_dates"] = saved["free_dates"] if date_error else dates
     # resolved from what was posted; an error page shows at most the rounded point
     posted = [dict(pf) for pf in f["place_forms"]]
     for pf in f["place_forms"]:
         pf["lat"], pf["lon"] = shown_point(pf["lat"], pf["lon"])
     u = f["urgent"]
-    if (
+    if "urgent" in marks and (
         u["window"] not in {v for v, _ in URGENT_WINDOWS}
         or str(u["per_week"]) not in {str(v) for v, _ in URGENT_PER_WEEK}
         or not {str(u["quiet_from"]), str(u["quiet_to"])} <= {str(h) for h, _ in HOURS}
         or form.get("urgent_on") not in (None, "1")
     ):
         f["urgent"] = saved["urgent"]  # the page shows what is saved
-        return PrefsPage(uid, f, prefs.UNRECOGNIZED)
-    u = f["urgent"] = {
-        **u,
-        **{k: int(u[k]) for k in ("quiet_from", "quiet_to", "per_week")},
-    }
-    if u["quiet_from"] == u["quiet_to"]:
-        return PrefsPage(uid, f, QUIET_SAME)
+        return page_of(uid, f, back, prefs.UNRECOGNIZED)
+    if "urgent" in marks:
+        u = f["urgent"] = {
+            **u,
+            **{k: int(u[k]) for k in ("quiet_from", "quiet_to", "per_week")},
+        }
+        if u["quiet_from"] == u["quiet_to"]:
+            return page_of(uid, f, back, QUIET_SAME)
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
         or not set(f["availability"]) <= SLOTS
@@ -741,21 +946,21 @@ def _sync_save(req, form):
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
-        return PrefsPage(uid, f, prefs.UNRECOGNIZED)
-    if not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
-        return PrefsPage(uid, f, NO_CAUSE)
+        return page_of(uid, f, back, prefs.UNRECOGNIZED)
+    if on_causes_page and not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
+        return page_of(uid, f, back, NO_CAUSE)
     if date_error:
-        return PrefsPage(uid, f, date_error)
+        return page_of(uid, f, back, date_error)
     places = []
     for i, pf in enumerate(posted):
         current = saved["places"][i] if i < len(saved["places"]) else None
         place, error = prefs.resolve_place(pf, current, i)
         if error:
-            return PrefsPage(uid, f, error)
+            return page_of(uid, f, back, error)
         if place:
             places.append(place)
-    if not places or not f["place_forms"][0]["where"].strip():
-        return PrefsPage(uid, f, NO_PLACE)
+    if on_causes_page and (not places or not f["place_forms"][0]["where"].strip()):
+        return page_of(uid, f, back, NO_PLACE)
     data.save_preferences(
         uid,
         **{
@@ -770,7 +975,9 @@ def _sync_save(req, form):
     req.session.pop(
         "deck_view", None
     )  # the deck's filter sheet starts again from these
-    return Redirect("/me/preferences?saved=1")
+    return Redirect(
+        f"/me/preferences/{back}?saved=1" if back else "/me/preferences?saved=1"
+    )
 
 
 UNSUBSCRIBE = "Stop last-minute calls"

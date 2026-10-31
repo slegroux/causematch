@@ -49,7 +49,9 @@ UPLOADS = (
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
 # Cloud Scheduler calls these with a bearer token and sends no Origin. Exact paths: a
 # future /tasks/ route isn't exempt until it is listed (and checks the token).
-ORIGIN_EXEMPT = frozenset({"/tasks/reminders", "/tasks/urgent"})
+# Apple posts its sign-in back from appleid.apple.com (form_post): instead of the Origin,
+# the flow cookie's state guards it (app/routes/oauth.py apple_callback).
+ORIGIN_EXEMPT = frozenset({"/tasks/reminders", "/tasks/urgent", "/auth/apple/callback"})
 # Static assets may be cached; every other response may hold someone's data.
 CACHEABLE = ("/static/", "/favicon.ico")
 STYLESHEETS = (
@@ -110,14 +112,16 @@ def csp():
             "font-src 'self'",
             "frame-ancestors 'none'",
             "base-uri 'self'",
-            "form-action 'self'",
+            # Me's Connect is a form whose answer is a 303 to Google's or Apple's consent
+            # page, and browsers apply form-action to that redirect too
+            "form-action 'self' https://accounts.google.com https://appleid.apple.com",
             "object-src 'none'",
         )
     )
 
 
 # The pages whose "Use my location" button (static/geo.js) may ask for the device location.
-GEOLOCATION_PATHS = ("/me/preferences", "/onboarding")
+GEOLOCATION_PATHS = ("/me/preferences", "/me/preferences/causes", "/onboarding")
 
 
 def security_headers(path):
@@ -504,6 +508,8 @@ def verify_limits(phone):
 
 
 LINK_PER_IP = (("link-ip", 20, 3600),)
+# OAuth callbacks: each may call the provider's token endpoint with our client secret
+OAUTH_PER_IP = (("oauth-ip", 30, 600),)
 CLAIM_PER_IP = (("claim-ip", 5, 3600),)
 CLAIM_PER_EMAIL = (("claim-email", 3, 24 * 3600),)
 PROPUBLICA = (
@@ -521,6 +527,7 @@ assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
     + (VERIFY_PER_PHONE, LINK_PER_EMAIL, LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL)
+    + (OAUTH_PER_IP,)
     + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL, CHECK_PER_IP)
     for _, _, w in rules
 )
@@ -646,7 +653,8 @@ def reset_buckets():
 # --- logs ----------------------------------------------------------------------------
 
 
-REDACTED = ("token", "access")
+# code: an OAuth callback's (app/routes/oauth.py)
+REDACTED = ("token", "access", "code")
 # a certificate's id is the credential for its check link and its owner's pages
 _CERTIFICATE_PATH = re.compile(r"^(/check|/hours/certificate)/[^/?.]+")
 
@@ -669,8 +677,8 @@ def redact_query(target):
 
 
 class RedactTokens(logging.Filter):
-    """Drop the sign-in token (the emailed link's query) and a preview's access key from
-    uvicorn's access log lines."""
+    """Drop the sign-in token (the emailed link's query), an OAuth callback's code and a
+    preview's access key from uvicorn's access log lines."""
 
     def filter(self, record):
         if isinstance(record.args, tuple) and len(record.args) >= 3:

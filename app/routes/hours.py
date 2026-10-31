@@ -29,7 +29,7 @@ from app.certificate import (
 )
 from app.choices import minutes_label
 from app.config import public_base_url
-from app.forms import query, str_form
+from app.forms import str_form
 from app.ui import (
     CARD,
     ORG_SECTION,
@@ -74,11 +74,11 @@ def MonthCard(m):
             *(
                 Li(
                     P(
-                        f"{s['title']} - {minutes_label(s['minutes'])}",
+                        f"{s['title']} · {minutes_label(s['minutes'])}",
                         cls="font-bold leading-snug text-ink",
                     ),
                     P(
-                        f"{when(s['starts_at'], s['duration_minutes'])} - {s['org']}",
+                        f"{when(s['starts_at'], s['duration_minutes'])} · {s['org']}",
                         cls=TextPresets.muted_sm,
                     ),
                     P(f"Confirmed by {s['by']}", cls=TextPresets.muted_sm),
@@ -127,30 +127,24 @@ def CertificateCard(o):
     )
 
 
-@ar("/hours", methods=["GET"])
-def hours_page(req):
-    notice = query(req, "notice")
-    mine = data.my_hours(req.scope["uid"])
-    options = data.certificate_options(req.scope["uid"])
+def HoursSection(uid, notice=""):
+    """The Hours part of /history: confirmed hours by month, the certificates one can get
+    for them, then earlier shifts with none."""
+    mine = data.my_hours(uid)
+    options = data.certificate_options(uid)
     left = mine["unconfirmed"]
-    return VolunteerShell(
-        "me",
-        H1("My hours", cls=TITLE),
-        Alert(NOTICE[notice], cls=AlertT.warning + " mb-4")
-        if notice in NOTICE
-        else None,
+    return Div(
+        H2("Hours", cls=ORG_SECTION),
+        Alert(NOTICE[notice], cls=AlertT.warning) if notice in NOTICE else None,
         P(
             "Hours a nonprofit confirmed when it marked you as attended.",
-            cls=TextPresets.muted_sm + " pb-4",
+            cls=TextPresets.muted_sm,
         ),
-        Div(
-            *(MonthCard(m) for m in mine["months"]),
-            *(
-                []
-                if mine["months"]
-                else [P("No confirmed hours yet.", cls=TextPresets.muted_sm)]
-            ),
-            cls="flex flex-col gap-3 pb-6",
+        *(MonthCard(m) for m in mine["months"]),
+        *(
+            []
+            if mine["months"]
+            else [P("No confirmed hours yet.", cls=TextPresets.muted_sm)]
         ),
         Div(
             H2("Certificates", cls=ORG_SECTION),
@@ -160,7 +154,7 @@ def hours_page(req):
                 cls=TextPresets.muted_sm,
             ),
             *(CertificateCard(o) for o in options),
-            cls="flex flex-col gap-3 pb-6",
+            cls="flex flex-col gap-3 pt-3",
         )
         if options
         else None,
@@ -173,17 +167,23 @@ def hours_page(req):
             ),
             Ul(
                 *(
-                    Li(f"{s['title']} - {s['org']}, {when(s['starts_at'])}")
+                    Li(f"{s['title']} · {s['org']}, {when(s['starts_at'])}")
                     for s in left
                 ),
                 cls="uk-list uk-list-disc text-sm text-ink-muted",
             ),
-            cls="space-y-2 pb-6",
+            cls="space-y-2 pt-3",
         )
         if left
         else None,
-        uid=req.scope["uid"],
+        cls="flex flex-col gap-3 pb-6",
     )
+
+
+@ar("/hours", methods=["GET"])
+def hours_page(req):
+    """Old links and texted links: the hours moved into /history."""
+    return Redirect("/history")
 
 
 @ar("/hours/orgs/{org_id}/certificate", methods=["POST"])
@@ -191,7 +191,7 @@ async def issue_certificate(req, org_id: int):
     form = await str_form(req)
     period = form.get("period", "") if form else ""
     if not re.fullmatch(r"all|\d{4}-\d{2}", period):
-        return Redirect("/hours?notice=period")
+        return Redirect("/history?notice=period")
     return await run_in_threadpool(_sync_issue, req.scope["uid"], org_id, period)
 
 
@@ -199,13 +199,13 @@ def _sync_issue(uid, org_id, period):
     try:
         done = data.issue_certificate(uid, org_id, period)
     except data.CertificateLimit:
-        return Redirect("/hours?notice=limit")
+        return Redirect("/history?notice=limit")
     except data.NameChanged:
-        return Redirect("/hours?notice=renamed")
+        return Redirect("/history?notice=renamed")
     except data.NameRequired:
-        return Redirect("/hours?notice=name")
+        return Redirect("/history?notice=name")
     except ValueError:
-        return Redirect("/hours?notice=period")
+        return Redirect("/history?notice=period")
     except (LookupError, PermissionError):
         return Response(NOT_FOUND, status_code=404)
     return Redirect(f"/hours/certificate/{done['id']}")
@@ -306,7 +306,7 @@ def certificate_page(req, cert_id: str):
         return Response(NOT_FOUND, status_code=404)
     return VolunteerShell(
         "me",
-        Div(BackLink("/hours", "My hours"), cls="cm-noprint pb-2"),
+        Div(BackLink("/history", "Shifts and hours"), cls="cm-noprint pb-2"),
         Certificate(c),
         Div(
             P("Anyone with this link can check this certificate:", cls="text-ink"),
@@ -348,7 +348,7 @@ def withdraw_certificate_confirm(req, cert_id: str):
             P(
                 "Its check link will say the certificate was withdrawn, and nothing "
                 "else. Copies you already gave out stop being checkable. You can issue "
-                "a new one from My hours.",
+                "a new one from Shifts and hours.",
                 cls="text-ink",
             ),
             PlainForm(
@@ -374,7 +374,7 @@ def withdraw_certificate(req, cert_id: str):
         data.withdraw_certificate(req.scope["uid"], cert_id)
     except PermissionError:
         return Response(NOT_FOUND, status_code=404)
-    return Redirect("/hours?notice=withdrawn")
+    return Redirect("/history?notice=withdrawn")
 
 
 # --- the public check link ----------------------------------------------------------------

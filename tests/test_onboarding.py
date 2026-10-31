@@ -132,7 +132,9 @@ def test_onboarding_saves_home_ratings_and_days(new_user):
         30,
     )
     assert (p.lat, p.lon) == (home.lat, home.lon)
-    page = new_user.get("/me/preferences").text  # the same answers, editable in Me
+    page = new_user.get(
+        "/me/preferences/causes"
+    ).text  # the same answers, editable in Me
     assert 'name="place1_where" value="90012"' in page
     assert 'name="cause_animal-shelters" value="no" checked' in page
 
@@ -379,14 +381,14 @@ def test_the_after_first_like_card_confirms_the_like_by_the_orgs_name(new_user):
         "/swipe", data={"opening_id": liked, "liked": "1"}, follow_redirects=False
     )
     page = new_user.get(f"/onboarding/more?liked={liked}").text
-    assert f"Sent to {data.org_name_of(liked)}." in page, page
+    assert f"When {data.org_name_of(liked)} says yes" in page, page
     # junk, an id they didn't like, or markup: no notice, nothing echoed
     assert profile_of(new_user).heard_from == "skipped"  # asked once it showed (L6)
     for junk in ("x1", str(other), "<b>1</b>", "9" * 30):
         profiles.update(id=profile_of(new_user).id, heard_from="")
         page = new_user.get("/onboarding/more", params={"liked": junk}).text
         assert (
-            "Sent to" not in page and "<b>1" not in page and "How did you hear" in page
+            "says yes" not in page and "<b>1" not in page and "How did you hear" in page
         )
 
 

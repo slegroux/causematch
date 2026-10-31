@@ -42,7 +42,6 @@ from app.ui import (
     SIGN_OUT,
     SMALL_LINK,
     TITLE,
-    TRASH,
     Avatar,
     Choice,
     Field,
@@ -287,8 +286,9 @@ def block_volunteer_save(req, match_id: int):
 # --- account deletion ------------------------------------------------------------------------
 
 
-def HubRow(icon, label, href=None, danger=False):
-    """One row of the Me hub: a link, or (without href) a sign-out button."""
+def HubRow(icon, label, href=None, danger=False, sub=None):
+    """One row of the Me hub: a link with a chevron, or (without href) a sign-out
+    button, which acts rather than opens a page. sub: a muted line under the label."""
     cls = (
         "flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left font-bold "
         "hover:bg-cream " + ("text-red-700" if danger else "text-ink")
@@ -299,8 +299,12 @@ def HubRow(icon, label, href=None, danger=False):
             cls="grid h-9 w-9 shrink-0 place-items-center rounded-full "
             + ("bg-red-50" if danger else "bg-sand"),
         ),
-        Span(label, cls="flex-1"),
-        Icon(NEXT, size=18, cls="text-ink-muted"),
+        Span(
+            label,
+            Span(sub, cls="block text-sm font-normal text-ink-muted") if sub else None,
+            cls="flex-1",
+        ),
+        Icon(NEXT, size=18, cls="text-ink-muted") if href else None,
     )
     if href:
         return A(*inner, href=href, cls=cls)
@@ -324,22 +328,19 @@ def profile_page(req):
             cls="flex items-center gap-4 p-4 " + CARD,
         ),
         Div(
-            HubRow(PERSON, "Your profile", "/me/profile"),
-            HubRow(HEART, "Preferences", "/me/preferences"),
-            HubRow(CLOCK, "History", "/history"),
-            HubRow(CLOCK, "My hours", "/hours"),
+            HubRow(PERSON, "Your profile", "/me/profile", sub="What nonprofits see"),
+            HubRow(
+                HEART, "Preferences", "/me/preferences", sub="What you see, and when"
+            ),
+            HubRow(
+                CLOCK,
+                "Shifts and hours",
+                "/history",
+                sub="Upcoming, past, confirmed hours",
+            ),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),
             cls="mt-4 divide-y divide-line overflow-hidden " + CARD,
-        ),
-        Div(
-            HubRow(TRASH, "Delete my account", "/profile/delete", danger=True),
-            cls="mt-4 overflow-hidden " + CARD,
-        ),
-        P(
-            "Deleting your account removes your name, phone, email and location and "
-            "withdraws your matches.",
-            cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
         uid=req.scope["uid"],
     )
@@ -385,7 +386,7 @@ def delete_save(req, sess):
 
 # --- privacy ---------------------------------------------------------------------------------
 
-EFFECTIVE = "October 15, 2026"
+EFFECTIVE = "October 31, 2026"
 
 
 def Section(title, *paras):
@@ -407,7 +408,8 @@ def privacy():
         ),
         Section(
             "What we collect",
-            "Volunteers: your mobile number; your first name and, if you give them, "
+            "Volunteers: your mobile number, if you sign in with one or add one; your "
+            "first name and, if you give them, "
             "your last name, pronouns, a short bio, your interests and a photo; an "
             "email if you give one; the neighborhood you show nonprofits; the other "
             "causes you type and whether you volunteered last year; how you heard of "
@@ -422,6 +424,13 @@ def privacy():
             "your quiet hours and how many a week.",
             "Causematch uses your answers (your causes, places, when you're free and the "
             "rest) to match you with openings.",
+            "If you sign in with Google or Apple, that company tells us your account's id "
+            "there, its email (with Apple, a relay address if you chose to hide yours) and "
+            "your name. We keep the id, the email and your first name. Google also sends "
+            'a link to your profile picture, and we use the picture only if you tick "Use '
+            'my Google photo" when you sign up. We never get your Google or Apple '
+            "password. When a coordinator signs in with Google or Apple, we only check "
+            "that the email is the one we have on file, and keep nothing from it.",
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
@@ -433,8 +442,9 @@ def privacy():
             "after we approve or reject the request.",
             "Reports and blocks: if you report someone or block them, we keep what you "
             "wrote and who it was about.",
-            "Your browser keeps one cookie that signs you in. We use no advertising or "
-            "analytics cookies.",
+            "Your browser keeps one cookie that signs you in and, for up to 10 minutes "
+            "during a Google or Apple sign-in, one that ties their answer to your "
+            "browser. We use no advertising or analytics cookies.",
         ),
         Section(
             "Who sees what",
@@ -461,7 +471,7 @@ def privacy():
         ),
         Section(
             "Hours certificates",
-            "When you get a certificate on My hours, we keep a signed copy of it: your "
+            "When you get a certificate on Shifts and hours, we keep a signed copy of it: your "
             "full name, the nonprofit's name, EIN and website, each confirmed shift (date, "
             "role and hours), the coordinators who confirmed them, the period, the total, "
             "the issue date and a signature code.",
@@ -480,25 +490,27 @@ def privacy():
         Section(
             "Who else handles your data",
             "Twilio sends your sign-in codes and our texts. Our email provider (Resend) "
-            "sends coordinators' sign-in links and notices. Google Cloud hosts the app and "
-            "keeps its backups. Each sees only what it needs to do that job. We don't sell "
-            "your data or share it for advertising.",
+            "sends coordinators' sign-in links and notices, and volunteers' notices when "
+            "we can't text them. If you sign in with Google or Apple, that company "
+            "confirms who you are, so it knows you use Causematch. Google Cloud hosts the "
+            "app and keeps its backups. Each sees only what it needs to do that job. We "
+            "don't sell your data or share it for advertising.",
         ),
         Section(
             "Texts and email",
             "We text your sign-in code, a note when a nonprofit says yes, a reminder the "
             "day before a shift, a note when a nonprofit sends a chat message and, only "
             "if you turn them on, last-minute calls (at most 3 a week, never in your "
-            "quiet hours; by email if you have no number for texts). Reply STOP to end "
-            "texts. We email coordinators their sign-in link and a note when volunteers "
-            "like an opening.",
+            "quiet hours). Without a number we can text, these come by email if we have "
+            "your email. Reply STOP to end texts. We email coordinators their sign-in "
+            "link and a note when volunteers like an opening.",
         ),
         Section(
             "How long we keep it, and what stays after you delete",
             "We keep your account until you delete it. Volunteers can delete theirs any "
             "time from Me; coordinators ask us to delete theirs. Deleting erases your "
-            "name, phone, email, places, specific free dates, neighborhood, photo and "
-            "the free text you typed. Your "
+            "name, phone, email, connected Google or Apple accounts, places, specific "
+            "free dates, neighborhood, photo and the free text you typed. Your "
             "matches are withdrawn and your future shifts cancelled, and your chat messages "
             'are replaced with "[message removed]".',
             "What remains, without your name: your answers (causes and how you rated "
@@ -511,15 +523,20 @@ def privacy():
             "If you were blocked or reported, or suspended, when you delete your account, "
             "we also keep a one-way keyed hash of your phone number (not the number). If "
             "the same number signs up again, the blocks still apply, and a suspension "
-            "stays in force. We keep nothing of this kind for an account with no blocks "
-            "or reports.",
+            "stays in force. If you had connected Google or Apple, we keep the same kind "
+            "of hash of that account's id, in the same cases, so a block or suspension "
+            "follows that account too. We keep nothing of this kind for an account with "
+            "no blocks or reports.",
         ),
         Section(
             "Seeing or correcting your data",
             "You can change your photo, name, pronouns, bio, interests and the "
             "neighborhood nonprofits see yourself under "
             "Me, then Your profile, and your match preferences under Me, then "
-            f"Preferences. For anything else, write to {contact} and we'll send you what "
+            "Preferences. The Google or Apple accounts you sign in with are listed "
+            "under Me, then Your profile, where you can connect or disconnect them, as "
+            "long as one way to sign in is left. "
+            f"For anything else, write to {contact} and we'll send you what "
             "we hold or fix it, or delete your account and sign up again.",
         ),
         Section(

@@ -50,6 +50,7 @@ from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
     CARD,
+    MATCH_STATUS,
     ORG_SECTION,
     ORG_TITLE,
     PIN,
@@ -64,6 +65,7 @@ from app.ui import (
     Router,
     TextInput,
     VolunteerHeader,
+    status_pill,
     when,
 )
 
@@ -90,8 +92,9 @@ def reply_options(has_phone):
     return REPLY if has_phone else REPLY[:1]
 
 
-def DetailsForm(profile, error=None):
+def DetailsForm(profile, error=None, back="/org"):
     return Form(
+        Input(type="hidden", name="back", value=back),
         H2("Your details", cls=ORG_SECTION),
         P("Volunteers see your name and role.", cls=TextPresets.muted_sm),
         Field(
@@ -293,6 +296,7 @@ def org_home(req, error=""):
         )
         if unanswered
         else None,
+        Alert(error, cls=AlertT.error + " mb-4") if error and named else None,
         None
         if named
         else P(
@@ -302,11 +306,7 @@ def org_home(req, error=""):
         None
         if named
         else Div(DetailsForm(profile, error or None), cls="max-w-md pb-8"),
-        Div(
-            Div(*sections, cls="flex flex-col gap-8"),
-            DetailsForm(profile, error or None) if named else None,
-            cls="grid items-start gap-6 lg:grid-cols-[1fr_20rem]",
-        ),
+        Div(*sections, cls="flex flex-col gap-8"),
     )
 
 
@@ -355,15 +355,21 @@ def OpeningForm(uid, f=None, error=None):
     my_orgs = data.coordinator_orgs(uid)
     org_id = f.get("org_id") or (str(my_orgs[0][0].id) if len(my_orgs) == 1 else "")
     reply_choices = reply_options(bool(data.get_profile(uid).contact_phone))
-    reply_channel = f.get("reply_channel") or (
-        reply_choices[0][0] if len(reply_choices) == 1 else ""
+    reply_channel = (
+        f.get("reply_channel")
+        if f.get("reply_channel") in dict(reply_choices)
+        else (reply_choices[0][0] if len(reply_choices) == 1 else "")
     )
-    reply_field = Group(
-        "Reaching you",
-        Field(
-            "Best way to send you interested volunteers?",
-            Choice("reply_channel", reply_choices, reply_channel),
-        ),
+    reply_field = (
+        Input(type="hidden", name="reply_channel", value=reply_channel)
+        if len(reply_choices) == 1
+        else Group(
+            "Reaching you",
+            Field(
+                "Best way to send you interested volunteers?",
+                Choice("reply_channel", reply_choices, reply_channel),
+            ),
+        )
     )
     form = Form(
         Group(
@@ -551,16 +557,25 @@ async def save_details(req):
 
 def _sync_save_details(req, form):
     uid = req.scope["uid"]
+    back = form.get("back")
+    back = back if back in ("/org", "/org/organization") else "/org"
     name, phone = form.get("name", "").strip(), form.get("phone", "").strip()
+    error = None
     if not name or len(name) > 80:
-        return org_home(req, "Enter your name and role (80 characters at most).")
-    if hidden_chars(name):
-        return org_home(req, HIDDEN_CHARS_MESSAGE)
-    e164 = normalize_phone(phone) if phone else ""
-    if phone and not e164:
-        return org_home(req, BAD_PHONE)
-    data.set_coordinator_details(uid, name, e164)
-    return Redirect("/org")
+        error = "Enter your name and role (80 characters at most)."
+    elif hidden_chars(name):
+        error = HIDDEN_CHARS_MESSAGE
+    elif phone and not normalize_phone(phone):
+        error = BAD_PHONE
+    if error:
+        if back == "/org":
+            return org_home(req, error)
+        # here, not at the top: org_profile imports this module
+        from app.routes.org_profile import OrganizationPage
+
+        return OrganizationPage(uid, details_error=error)
+    data.set_coordinator_details(uid, name, normalize_phone(phone) if phone else "")
+    return Redirect(back)
 
 
 @ar("/org/zip", methods=["GET"])
@@ -852,12 +867,6 @@ def label_of(options, value):
     return dict(options).get(value, "")
 
 
-INBOX_STATUS = {
-    "pending": ("Waiting", "wait"),
-    "accepted": ("Accepted", "good"),
-    "declined": ("Declined", "off"),
-    "withdrawn": ("Withdrawn", "off"),
-}
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
@@ -883,7 +892,7 @@ def InboxRow(m):
                 P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
                 cls="min-w-0 flex-1",
             ),
-            Pill(*INBOX_STATUS[m["status"]]),
+            status_pill(MATCH_STATUS, m["status"], "org"),
             cls="flex items-start gap-3",
         ),
         P(m["bio"], cls="whitespace-pre-line text-sm text-ink") if m["bio"] else None,

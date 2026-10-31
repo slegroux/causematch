@@ -17,33 +17,30 @@ from app import data, notify
 from app.choices import SHIFT_HOURS, SHIFT_LENGTHS, minutes_label
 from app.config import public_base_url
 from app.forms import query, str_form
+from app.routes.hours import HoursSection
 from app.ui import (
     CARD,
     ORG_SECTION,
     ORG_TITLE,
+    SHIFT_STATUS,
     SMALL_LINK,
     TITLE,
     Choice,
     Field,
     OrgFace,
     OrgShell,
-    Pill,
     Refusal,
     Router,
     TextInput,
     VolunteerHeader,
     VolunteerShell,
     calendar_event,
+    status_pill,
     when,
 )
 
 ar = Router()
 
-SHIFT_STATUS = {  # status: (label, PILL tone)
-    "scheduled": ("Not marked yet", "wait"),
-    "completed": ("Attended", "good"),
-    "no_show": ("No-show", "off"),
-}
 NOTICE = {
     "unavailable": (
         "That didn't go through. A shift can be marked once it has started, corrected "
@@ -57,13 +54,13 @@ NOTICE = {
 }
 
 
-def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
+def ShiftCard(s, *actions, for_org=True, state=None):
     """for_org=True: a coordinator's card, naming the volunteer; else the org's name.
-    status and tone override the pill's text and color (PILL in app/ui.py)."""
+    state: a SHIFT_STATUS key; by default the shift's status (a started, unmarked one is
+    "to_mark")."""
+    state = state or ("to_mark" if s["status"] == "scheduled" else s["status"])
     return Div(
-        Pill(
-            status or SHIFT_STATUS[s["status"]][0], tone or SHIFT_STATUS[s["status"]][1]
-        ),
+        status_pill(SHIFT_STATUS, state, "org" if for_org else "volunteer"),
         Div(
             None if for_org else OrgFace(s["org"], s["logo"], s["photo"], s["slug"]),
             Div(
@@ -71,7 +68,7 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
                 VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
                 P(
                     f"{when(s['starts_at'], s['duration_minutes'])}"
-                    + ("" if for_org else f" - {s['org']}"),
+                    + ("" if for_org else f" · {s['org']}"),
                     cls=TextPresets.muted_sm,
                 ),
                 # the hours the nonprofit confirmed, on an attended shift
@@ -171,9 +168,14 @@ def org_shifts_page(req):
                     "Nothing to mark.",
                 ),
                 Section(
-                    "Marked this week (one correction allowed)",
+                    "Marked this week",
                     [
-                        ShiftCard(s, MarkForm(s, corrected=True), repeat_of(s))
+                        ShiftCard(
+                            s,
+                            P("One correction allowed", cls=TextPresets.muted_sm),
+                            MarkForm(s, corrected=True),
+                            repeat_of(s),
+                        )
                         for s in box["marked"]
                     ],
                     "Nothing marked this week.",
@@ -196,8 +198,7 @@ def org_shifts_page(req):
                             cls="flex flex-wrap gap-2 pt-1",
                         ),
                         # "Still coming?" answered yes from the reminder's link
-                        status="Confirmed" if s["confirmed"] else "Upcoming",
-                        tone="good" if s["confirmed"] else "info",
+                        state="confirmed" if s["confirmed"] else "upcoming",
                     )
                     for s in box["upcoming"]
                 ],
@@ -352,30 +353,18 @@ def history(req):
     mine = data.my_shifts(req.scope["uid"])
     return VolunteerShell(
         "me",
-        H1("Your history", cls=TITLE),
+        H1("Shifts and hours", cls=TITLE),
         Section(
             "Upcoming",
-            [
-                ShiftCard(s, for_org=False, status="Scheduled", tone="info")
-                for s in mine["upcoming"]
-            ],
+            [ShiftCard(s, for_org=False, state="upcoming") for s in mine["upcoming"]],
             "No upcoming shifts. Like an opening to get one.",
         ),
         Section(
             "Past",
-            [
-                ShiftCard(
-                    s,
-                    for_org=False,
-                    status="Waiting for the nonprofit to confirm"
-                    if s["status"] == "scheduled"
-                    else None,
-                )
-                for s in mine["past"]
-            ],
+            [ShiftCard(s, for_org=False) for s in mine["past"]],
             "Nothing yet.",
         ),
-        A("My hours", href="/hours", cls=SMALL_LINK),
+        HoursSection(req.scope["uid"], query(req, "notice")),
         uid=req.scope["uid"],
     )
 

@@ -3,7 +3,9 @@
 uv run python scripts/screenshots.py --out DIR [--seed-file PATH] [--port 5078]
 
 Volunteer pages at iPhone 13 size (v*.png), nonprofit and admin pages at 1280x860 (o*.png,
-a*.png). Runs the demo in this process, on a throwaway database, and needs Playwright's
+a*.png). The preferences index and its four section pages (causes, when, work, urgent) each
+get a shot. The demo auto-accepts a like soon after sign-in, so the "It's a match!" sheet can
+open over any volunteer page; the script closes it before each click. Runs the demo in this process, on a throwaway database, and needs Playwright's
 chromium (uv run playwright install chromium).
 """
 
@@ -41,6 +43,16 @@ def volunteer_sign_in(page, phone):
     page.get_by_role("button", name="Text me a code").click()
     page.get_by_label("Code").fill("000000")
     page.get_by_role("button", name="Sign in").click()
+
+
+def close_match_sheet(page):
+    """The demo auto-accepts a like, so the match dialog can open over the deck at any moment
+    and would intercept the next click. Close it if it is there."""
+    page.wait_for_timeout(300)
+    button = page.locator("dialog[open] button[data-close-sheet]")
+    if button.count() > 0:
+        button.first.click()
+        page.wait_for_timeout(300)
 
 
 def staff_sign_in(page, email, lands_on):
@@ -95,10 +107,15 @@ def main():
         # the Home Screen toast shows (an iPhone user agent, in a tab); then dismiss it, so
         # it covers nothing in the other shots
         shot(v, "v04a-home-screen-toast", full_page=False)
+        close_match_sheet(v)
         v.get_by_role("button", name="Dismiss").click()
         shot(v, "v04-deck", full_page=False)
         for n in range(1, 7):  # the next cards: photos, logos and links vary by org
+            close_match_sheet(v)
             v.wait_for_timeout(500)  # swipe.js ignores taps right after a swap
+            if v.get_by_role("button", name="Pass").count() == 0:
+                shot(v, "v04-deck-empty", full_page=False)  # fewer than six cards
+                break
             v.get_by_role("button", name="Pass").click()
             v.wait_for_load_state("networkidle")
             shot(v, f"v04-deck-{n}", full_page=False)
@@ -108,13 +125,19 @@ def main():
             ("v07-history", "/history"),
             ("v08-profile", "/profile"),
             ("v09-preferences", "/me/preferences"),
+            ("v09a-prefs-causes", "/me/preferences/causes"),
+            ("v09b-prefs-when", "/me/preferences/when"),
+            ("v09c-prefs-work", "/me/preferences/work"),
+            ("v09d-prefs-urgent", "/me/preferences/urgent"),
             ("v10-deck-free-today", "/deck?today=1"),
             ("v12-my-profile", "/me/profile"),
             ("v13-report", f"/matches/{info['match_id']}/report"),
         ):
             v.goto(path)
+            close_match_sheet(v)
             shot(v, name, full_page=name != "v06-chat")
         v.goto("/deck")
+        close_match_sheet(v)
         v.locator("summary").click()  # the deck's filter sheet, open over the card
         shot(v, "v11-deck-filters", full_page=False)
 
@@ -156,7 +179,7 @@ def main():
         n = bare.new_page()
         volunteer_sign_in(n, demo_seed.NO_PHOTO_PHONE)
         n.wait_for_url("**/deck")
-        n.get_by_role("button", name="Dismiss").click()
+        close_match_sheet(n)  # no Dismiss: without a photo the deck shows the nudge
         shot(n, "v10-deck-photo-nudge")
         browser.close()
     server.should_exit = True

@@ -46,6 +46,11 @@ OVERFLOW = """() => [...document.body.querySelectorAll('*')].filter(e => {
 
 def check(page, path):
     page.goto(path)
+    # the match sheet pops in (scaled up from 90%): measure it once it has landed
+    page.evaluate(
+        """() => Promise.all(document.getAnimations()
+        .filter(a => a.effect.target.matches('dialog')).map(a => a.finished))"""
+    )
     return page.evaluate(SMALL), page.evaluate(OVERFLOW)
 
 
@@ -82,6 +87,9 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
         f"/matches/{match_id}/block",
     ):
         found[path] = check(phone, path)
+    phone.goto("/matches")  # the card's More holds Withdraw, Report and Block
+    phone.evaluate("document.querySelectorAll('details').forEach(d => d.open = true)")
+    found["/matches (More open)"] = (phone.evaluate(SMALL), phone.evaluate(OVERFLOW))
     bad = {k: v for k, v in found.items() if v != ([], [])}
     assert bad == {}
     # positive controls: the checks do see a small link and text that runs over

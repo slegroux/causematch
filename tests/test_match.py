@@ -227,6 +227,19 @@ def test_withdraw_asks_first_and_a_get_changes_nothing(user):
     assert r.status_code == 303 and r.headers["location"] == "/matches"
 
 
+def test_the_match_card_keeps_its_ways_out_under_more_and_links_to_the_chat_once(user):
+    oid = opening().id
+    user.post("/swipe", data={"opening_id": oid, "liked": "1"})
+    mid = matches()[0].id
+    coord, _ = coordinator_for(0)
+    data.decide(coord, mid, True)
+    page = user.get("/matches").text.split("</dialog>")[-1]  # past the new-match sheet
+    more = page[page.index("<details") : page.index("</details>")]
+    for tail in ("withdraw", "report", "block"):
+        assert f'href="/matches/{mid}/{tail}"' in more
+    assert page.count(f'href="/chat/{mid}"') == 1
+
+
 def test_a_withdrawn_volunteer_cannot_like_the_same_opening_again():
     v = volunteer()
     o = opening()

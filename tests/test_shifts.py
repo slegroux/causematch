@@ -216,14 +216,26 @@ def test_volunteer_history_shows_only_their_own(accepted, clock):
     data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=3))
     mine = accepted.a.get("/history")
     assert mine.status_code == 200 and PANTRY in mine.text
-    assert "Scheduled" in mine.text
-    assert "Waiting for the nonprofit to confirm" not in mine.text
+    assert "Upcoming" in mine.text
+    assert "Waiting for the nonprofit" not in mine.text
     assert len(data.my_shifts(accepted.a.uid)["upcoming"]) == 2
     assert len(data.my_shifts(accepted.b.uid)["upcoming"]) == 1
     # A's history never names B's shift: compare ids
     ids = {s["id"] for s in data.my_shifts(accepted.a.uid)["upcoming"]}
     assert ids == {s.id for s in shifts_of(accepted.match)}
     assert not any(s["id"] in ids for s in data.my_shifts(accepted.b.uid)["upcoming"])
+
+
+def test_shift_states_read_the_same_on_both_sides(accepted, clock):
+    [first] = shifts_of(accepted.match)
+    clock.at = datetime.fromisoformat(first.starts_at).replace(tzinfo=LA) + timedelta(
+        hours=2
+    )
+    data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=3))
+    vol, org = accepted.a.get("/history").text, accepted.org0.get("/org/shifts").text
+    assert "Waiting for the nonprofit" in vol and "Not marked yet" in org
+    assert vol.count("Upcoming") == 2 and org.count("Upcoming") == 2  # section + pill
+    assert "Not marked yet" not in vol and "Waiting for the nonprofit" not in org
 
 
 def test_history_splits_upcoming_and_past_and_hides_cancelled(accepted, clock):

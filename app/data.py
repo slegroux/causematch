@@ -504,7 +504,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     active = {c.slug for c in _db.causes() if c.active}
     rated = {s: v for s, v in p["causes"].items() if s in active}
     loved = {s for s, v in rated.items() if v == _prefs.LOVE}
-    skills = json.loads(me.skills or "[]")
+    skills = _skills(me)
     spoken = _prefs.languages(me)
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
@@ -601,6 +601,13 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     return cards, len(ranked)
 
 
+def _skills(me):
+    """A volunteer's skills as ranking reads them: one who speaks a language besides
+    English has the "language" skill an opening can ask for."""
+    skills = set(json.loads(me.skills or "[]"))
+    return sorted(skills | {"language"} if _prefs.languages(me) else skills)
+
+
 VERIFIED_WEIGHT = 0.15  # "Prefer" nonprofits that confirm hours: this share of the fit
 
 
@@ -694,21 +701,28 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
     )
 
 
-def has_match_news(uid):
-    """The Matches tab's dot: since the volunteer last opened Matches, a like of theirs
-    is waiting or a nonprofit decided one (never seen: any of those)."""
+# A decided match the volunteer has not seen: a nonprofit accepted or declined it after
+# they last opened Matches. Timestamps have one-second resolution, so a decision in the
+# very second of that look is missed: accepted.
+_NEWS = "volunteer_id = ? AND status IN ('accepted', 'declined') AND decided_at > ?"
+
+
+def match_news_count(uid):
+    """The number on the Matches tab: matches a nonprofit accepted or declined since the
+    volunteer last opened Matches (never opened: all of them). Their own pending likes
+    don't count."""
     seen = _db.profiles[uid].matches_seen_at or ""
-    return bool(
-        _db.matches.count_where(
-            "volunteer_id = ? AND ((status = 'pending' AND created_at > ?) "
-            "OR (decided_at IS NOT NULL AND decided_at > ?))",
-            [uid, seen, seen],
-        )
-    )
+    return _db.matches.count_where(_NEWS, [uid, seen])
+
+
+def match_news_ids(uid):
+    """The ids match_news_count counts: what the Matches page marks as new."""
+    seen = _db.profiles[uid].matches_seen_at or ""
+    return {m.id for m in _db.matches(where=_NEWS, where_args=[uid, seen])}
 
 
 def saw_matches(uid):
-    """They opened Matches: the dot goes until something new happens."""
+    """They opened Matches: the count goes until a nonprofit decides another."""
     _db.profiles.update(id=uid, matches_seen_at=_now())
 
 
@@ -739,11 +753,19 @@ def new_matches(uid):
 
 
 def saw_new_matches(uid, rows):
-    """The sheet showed these (new_matches' rows): they are not new any more."""
-    if rows:
-        _db.profiles.update(
-            id=uid, match_moment_seen_at=max(r["decided_at"] for r in rows)
-        )
+    """Claim new_matches' rows for the sheet that is about to show them: True when this
+    call moved the volunteer's watermark, False when another request (a poll and a swipe
+    run at once, or a second tab) got there first. One statement decides, so only one
+    of them draws the sheet."""
+    if not rows:
+        return False
+    mark = max(r["decided_at"] for r in rows)
+    _db.db.execute(
+        "UPDATE profile SET match_moment_seen_at = ? WHERE id = ? "
+        "AND coalesce(match_moment_seen_at, matches_seen_at, '') < ?",
+        [mark, uid, mark],
+    )
+    return _db.db.conn.changes() == 1
 
 
 def org_name_of(opening_id):
@@ -2044,7 +2066,7 @@ def chat_header(uid, match_id):
     The volunteer sees the org name and the contact name of the coordinator who accepted
     them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
     photo when data.photo_for would serve it. Also whether the caller may still write,
-    the org's face (_face), and while accepted the opening's notes and next shift.
+    the org's face (_face), and while accepted the next shift.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
@@ -2084,7 +2106,6 @@ def chat_header(uid, match_id):
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
         "duration_minutes": o.duration_minutes,  # the opening's shift length, if said
-        "notes": o.notes if m.status == "accepted" else None,
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
         **_face(the_org, o),
     }
@@ -2122,6 +2143,134 @@ def get_or_create_volunteer(phone):
         return _db.profiles(**where)[0].id
 
 
+def volunteer_for_identity(claims):
+    """Profile id for this provider sign-in (app/oauth.py Claims), creating a volunteer on
+    the first one: no phone, the provider's verified email, the given name as first name.
+    An identity whose profile was deleted reads as absent. A suspended profile's id is
+    returned too: get_profile is None for it, and the caller refuses the sign-in. As with
+    a phone, a deleted account's suspension and org blocks on this identity come back."""
+    where = {
+        "where": "provider = ? AND subject = ?",
+        "where_args": [claims.provider, claims.subject],
+    }
+    kept = _retained_identity(claims)
+    # onboarding's check on the first name: a name that fails it is dropped, not kept
+    name = " ".join(claims.given_name.split())[:80]
+    try:
+        with _db.db.conn:
+            for found in _db.identities(**where):
+                live = "id = ? AND deleted_at IS NULL"
+                if _db.profiles.count_where(live, [found.user_id]):
+                    return found.user_id
+                _db.identities.delete(found.id)  # a deleted account's: never signs in
+            uid = _db.profiles.insert(
+                _db.Profile(
+                    role="volunteer",
+                    phone=None,
+                    email=claims.email,
+                    display_name=name if name and not hidden_chars(name) else None,
+                    session_version=1,
+                    created_at=_now(),
+                    suspended_at=_now() if kept and kept.suspended else None,
+                )
+            ).id
+            _insert_identity(uid, claims)
+            _reapply_blocks(uid, kept)
+    except apsw.ConstraintError:  # a concurrent first sign-in won the race
+        return _db.identities(**where)[0].user_id
+    return uid
+
+
+def _insert_identity(uid, claims):
+    _db.identities.insert(
+        _db.Identity(
+            user_id=uid,
+            provider=claims.provider,
+            subject=claims.subject,
+            email=claims.email,
+            created_at=_now(),
+        )
+    )
+
+
+def _reapply_blocks(uid, kept):
+    for blocker_id, org_id in json.loads(kept.blocks_json) if kept else []:
+        _add_block(blocker_id=blocker_id, blocked_user_id=uid, blocked_org_id=org_id)
+
+
+def identities_of(uid):
+    """{provider: email} of the provider sign-ins connected to this profile."""
+    return {
+        i.provider: i.email
+        for i in _db.identities(where="user_id = ?", where_args=[uid])
+    }
+
+
+def link_identity(uid, claims):
+    """Connect a provider sign-in to this signed-in volunteer (Me, Connect). None when
+    connected (or it already was), else why not: "taken" when the identity is on another
+    live profile (the unique index decides a race), "other" when this profile already has
+    another account of this provider, "refused" when the profile isn't a live volunteer or
+    a deleted account suspended with this identity left its hash. A deleted account's org
+    blocks on it apply to this profile, as at a sign-up."""
+    kept = _retained_identity(claims)
+    if kept and kept.suspended:
+        return "refused"
+    where = "provider = ? AND subject = ?"
+    try:
+        with _db.db.conn:
+            args = [claims.provider, claims.subject]
+            for found in _db.identities(where=where, where_args=args):
+                if found.user_id == uid:
+                    return None
+                live = "id = ? AND deleted_at IS NULL"
+                if _db.profiles.count_where(live, [found.user_id]):
+                    return "taken"
+                _db.identities.delete(found.id)  # a deleted account's
+            mine = "user_id = ? AND provider = ?"
+            if _db.identities.count_where(mine, [uid, claims.provider]):
+                return "other"
+            p = get_profile(uid)
+            if p is None or p.role != "volunteer":
+                return "refused"
+            _insert_identity(uid, claims)
+            _reapply_blocks(uid, kept)
+    except apsw.ConstraintError:
+        return "taken"
+    return None
+
+
+def unlink_identity(uid, provider, phone_works, working_providers):
+    """Disconnect this profile's sign-in with `provider`. False, and nothing changed, when
+    it is the last way in that works: its phone only counts when `phone_works` (codes can
+    be texted), another provider only when it is in `working_providers` (configured). The
+    check and the delete are one statement, so two disconnects at once can't both pass.
+    When a block, an open or actioned report or a suspension stands against this profile,
+    the disconnected identity's hash is kept, as at a deletion (_retain), so signing in
+    with it again, as a new profile or on another, brings them back. Nobody is signed out
+    here: the route does that (routes/oauth.py)."""
+    with _db.db.conn:
+        mine = "user_id = ? AND provider = ?"
+        gone = _db.identities(where=mine, where_args=[uid, provider])
+        if not gone:
+            return True  # nothing to disconnect
+        working = ",".join("?" * len(working_providers))
+        _db.db.execute(
+            "DELETE FROM identity WHERE user_id = ? AND provider = ? AND ("
+            " (? AND (SELECT coalesce(phone, '') FROM profile WHERE id = ?) != '')"
+            " OR EXISTS (SELECT 1 FROM identity WHERE user_id = ? AND provider != ?"
+            f" AND provider IN ({working})))",
+            [uid, provider, int(bool(phone_works)), uid, uid, provider]
+            + list(working_providers),
+        )
+        if _db.db.conn.changes() != 1:
+            return False
+        suspended = bool(_db.profiles[uid].suspended_at)
+        for i in gone:
+            _retain_identity(uid, i.provider, i.subject, suspended)
+        return True
+
+
 def phone_suspended(phone):
     """True when a live profile holds this number and an admin suspended it."""
     return bool(
@@ -2129,6 +2278,33 @@ def phone_suspended(phone):
             "phone = ? AND deleted_at IS NULL AND suspended_at IS NOT NULL", [phone]
         )
     )
+
+
+def add_volunteer_phone(uid, phone):
+    """Give a volunteer without a number the one they just verified (Me's add-a-number).
+    None when saved, else why not: "taken" when another live profile holds it (the unique
+    index decides, so a race can't give two profiles one number), "refused" when a deleted
+    account suspended with it left its hash, or the profile already has a number. A deleted
+    account's org blocks on the number apply to this profile, as at a phone sign-up."""
+    kept = _db.retained_phones(where="hash = ?", where_args=[_phone_hash(phone)])
+    if kept and kept[0].suspended:
+        return "refused"
+    try:
+        with _db.db.conn:
+            _db.db.execute(
+                "UPDATE profile SET phone = ? WHERE id = ? AND role = 'volunteer' "
+                "AND coalesce(phone, '') = '' AND deleted_at IS NULL",
+                [phone, uid],
+            )
+            if _db.db.conn.changes() != 1:
+                return "refused"
+            for blocker_id, org_id in json.loads(kept[0].blocks_json) if kept else []:
+                _add_block(
+                    blocker_id=blocker_id, blocked_user_id=uid, blocked_org_id=org_id
+                )
+    except apsw.ConstraintError:
+        return "taken"
+    return None
 
 
 def sign_out_everywhere(uid):
@@ -2173,6 +2349,7 @@ def save_onboarding(
         cause_prefs if cause_prefs is not None else dict.fromkeys(causes, _prefs.LOVE)
     )
     with _db.db.conn:
+        renamed = _renamed(_db.profiles[uid], display_name, last_name)
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         if place:
             _db.places.insert(_db.Place(user_id=uid, **place))
@@ -2180,6 +2357,7 @@ def save_onboarding(
             id=uid,
             display_name=display_name,
             last_name=last_name or None,
+            **({"name_changed_at": _now()} if renamed else {}),
             email=email,
             neighborhood=neighborhood,
             volunteered_last_year=volunteered_last_year,
@@ -2292,6 +2470,19 @@ def save_preferences(
         )
 
 
+def _renamed(old, first_name, last_name):
+    """True when this profile row's first or last name was set and is now different. A
+    rename is what name_changed_at records (hours confirmed before it can't be certified
+    under the new name); filling a name in for the first time is not one."""
+    return any(
+        (before or "") not in ("", after or "")
+        for before, after in (
+            (old.display_name, first_name),
+            (old.last_name, last_name),
+        )
+    )
+
+
 def save_profile_details(
     uid,
     *,
@@ -2307,15 +2498,7 @@ def save_profile_details(
     """A volunteer's own name, pronouns, bio, interests and, unless None, the neighborhood
     nonprofits see, the email and the other causes they asked for (checked by the caller)."""
     _volunteer(uid)
-    old = _db.profiles[uid]
-    # a rename is a change of a name that was set; filling one in for the first time is not
-    renamed = any(
-        (before or "") not in ("", after or "")
-        for before, after in (
-            (old.display_name, first_name),
-            (old.last_name, last_name),
-        )
-    )
+    renamed = _renamed(_db.profiles[uid], first_name, last_name)
     _db.profiles.update(
         id=uid,
         display_name=first_name,
@@ -2456,6 +2639,21 @@ def remove_admin(email):
 
 def admin_by_email(email):
     return _staff(email, "admin")
+
+
+def staff_by_email(email):
+    """(profile, is_coordinator) for whoever signs in to staff pages with this address:
+    a coordinator with an org, else an admin. (None, False) when neither is live
+    (unknown, deleted or suspended), and for any address that isn't ASCII: Python and
+    SQLite lowercase those differently (the Kelvin sign is a "k" only to Python)."""
+    if not email.isascii():
+        return None, False
+    uid = coordinator_by_email(email)
+    is_coordinator = bool(uid and coordinator_org_ids(uid))
+    if not is_coordinator:
+        uid = admin_by_email(email)
+    profile = get_profile(uid) if uid else None
+    return (profile, is_coordinator) if profile else (None, False)
 
 
 def metrics_rows():
@@ -2939,7 +3137,7 @@ def urgent_recipients(call_id, limit, at):
         fit = _fit(
             p,
             rated,
-            json.loads(me.skills or "[]"),
+            _skills(me),
             _prefs.languages(me),
             o,
             slugs,
@@ -3798,6 +3996,23 @@ def _phone_hash(phone):
     return hmac.new(phone_hash_key().encode(), phone.encode(), "sha256").hexdigest()
 
 
+def _identity_hash(provider, subject):
+    key = f"{provider}:{subject}".encode()
+    return hmac.new(phone_hash_key().encode(), key, "sha256").hexdigest()
+
+
+def _retained_identity(claims):
+    kept = _db.retained_identities(
+        where="hash = ?", where_args=[_identity_hash(claims.provider, claims.subject)]
+    )
+    return kept[0] if kept else None
+
+
+# What a deleted account leaves behind when a block, a report or a suspension must outlive
+# it: keyed hashes of its phone and of its provider sign-ins
+RETAINED = ("retained_phone_hash", "retained_identity_hash")
+
+
 def _blocks_against(uid):
     return [
         [b.blocker_id, b.blocked_org_id]
@@ -3811,9 +4026,10 @@ def _reports_against(uid):
     )
 
 
-def _retain_phone(uid, phone, suspended):
-    """Keep a keyed hash of a deleted account's phone only when a block, a report that is
-    open or actioned, or a suspension must outlive the account. Never the number."""
+def _retain(table, key_hash, uid, suspended):
+    """Keep a keyed hash of a deleted account's phone or sign-in only when a block, a
+    report that is open or actioned, or a suspension must outlive the account. Never the
+    number or the subject."""
     blocks, reports = _blocks_against(uid), _reports_against(uid)
     if not (blocks or reports or suspended):
         return
@@ -3823,29 +4039,43 @@ def _retain_phone(uid, phone, suspended):
         if on
     )
     _db.db.execute(
-        "INSERT OR REPLACE INTO retained_phone_hash "
+        f"INSERT OR REPLACE INTO {table} "
         "(hash, profile_id, reason, blocks_json, suspended, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        [_phone_hash(phone), uid, reason, json.dumps(blocks), int(suspended), _now()],
+        [key_hash, uid, reason, json.dumps(blocks), int(suspended), _now()],
     )
+
+
+def _retain_phone(uid, phone, suspended):
+    _retain("retained_phone_hash", _phone_hash(phone), uid, suspended)
+
+
+def _retain_identity(uid, provider, subject, suspended):
+    _retain("retained_identity_hash", _identity_hash(provider, subject), uid, suspended)
 
 
 def _refresh_retained(uid, suspended=False):
     """After a report is dismissed, a block lifted or a deleted account suspended: bring the
-    kept hash of profile `uid` in line, or drop it when nothing needs it any more."""
-    rows = _db.retained_phones(where="profile_id = ?", where_args=[uid])
+    kept hashes of profile `uid` in line, or drop them when nothing needs them any more."""
+    rows = [
+        (table, row)
+        for table in RETAINED
+        for row in _db.db.q(
+            f"SELECT hash, suspended FROM {table} WHERE profile_id = ?", [uid]
+        )
+    ]
     if not rows:
         return
-    row = rows[0]
-    blocks = _blocks_against(uid)
-    sus = bool(row.suspended) or suspended
-    if blocks or sus or _reports_against(uid):
-        _db.db.execute(
-            "UPDATE retained_phone_hash SET blocks_json = ?, suspended = ? WHERE hash = ?",
-            [json.dumps(blocks), int(sus), row.hash],
-        )
-    else:
-        _db.db.execute("DELETE FROM retained_phone_hash WHERE hash = ?", [row.hash])
+    blocks, reports = _blocks_against(uid), _reports_against(uid)
+    for table, row in rows:
+        sus = bool(row["suspended"]) or suspended
+        if blocks or sus or reports:
+            _db.db.execute(
+                f"UPDATE {table} SET blocks_json = ?, suspended = ? WHERE hash = ?",
+                [json.dumps(blocks), int(sus), row["hash"]],
+            )
+        else:
+            _db.db.execute(f"DELETE FROM {table} WHERE hash = ?", [row["hash"]])
 
 
 def delete_account(uid):
@@ -3868,6 +4098,8 @@ def delete_account(uid):
             return
         if p.phone:
             _retain_phone(uid, p.phone, bool(p.suspended_at))
+        for i in _db.identities(where="user_id = ?", where_args=[uid]):
+            _retain_identity(uid, i.provider, i.subject, bool(p.suspended_at))
         for m in _db.matches(
             where="volunteer_id = ? AND status IN ('pending', 'accepted')",
             where_args=[uid],
@@ -3882,6 +4114,7 @@ def delete_account(uid):
             [uid],
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        _db.db.execute("DELETE FROM identity WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         # certificates carry the name and every shift: withdrawn, and nothing left to read
         _db.db.execute(

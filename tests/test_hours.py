@@ -1,4 +1,4 @@
-"""My hours: a volunteer's confirmed hours by month, from their own attended shifts."""
+"""Hours: a volunteer's confirmed hours by month, from their own attended shifts."""
 
 import json
 import re
@@ -56,16 +56,21 @@ def test_my_hours_counts_only_confirmed_hours_of_attended_shifts():
         mine, 6, 60, org.uid, status="scheduled", month=9
     )  # not attended: not listed
 
-    page = a.get("/hours").text
+    page = a.get("/history").text
     assert "October 2026" in page and "5.5 hours" in page
     assert "Confirmed by Pat Doe, coordinator" in page
     assert "September 2026" in page and "Confirmed by Bianca" in page
     assert page.index("October 2026") < page.index("September 2026")  # newest first
     assert "1 earlier shift has no confirmed hours" in page
     assert "2 hours" not in page and "7.5 hours" not in page and "8 hours" not in page
-    assert 'href="/hours"' in a.get("/history").text
-    assert 'href="/hours"' in a.get("/profile").text
-    assert "No confirmed hours yet" in volunteer("Nobody").get("/hours").text
+    assert 'href="/history"' in a.get("/profile").text
+    assert 'href="/hours"' not in a.get("/profile").text
+    assert "No confirmed hours yet" in volunteer("Nobody").get("/history").text
+
+
+def test_the_old_hours_link_lands_on_history():
+    r = volunteer("Zelda").get("/hours", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/history"
 
 
 # --- certificates -------------------------------------------------------------------------
@@ -106,7 +111,7 @@ def test_certificate_lists_only_the_hours_one_nonprofit_confirmed():
     _shift(mine, 12, None, org.uid)  # attended, hours never confirmed
     _shift(theirs, 4, 120, other.uid)  # another nonprofit's hours
 
-    assert "Get a certificate" in a.get("/hours").text
+    assert "Get a certificate" in a.get("/history").text
     where = _certify(a, orgs()[0].id, "2026-10")
     page = a.get(where).text
     assert "Zelda Lee" in page and "5.5 hours" in page
@@ -212,8 +217,10 @@ def test_one_persons_hours_are_certified_under_one_name_only(anon):
             data={"period": "all"},
             follow_redirects=False,
         )
-        assert r.status_code == 303 and r.headers["location"] == "/hours?notice=renamed"
-    assert "before you changed your name" in a.get("/hours?notice=renamed").text
+        assert (
+            r.status_code == 303 and r.headers["location"] == "/history?notice=renamed"
+        )
+    assert "before you changed your name" in a.get("/history?notice=renamed").text
     assert [c.withdrawn_at for c in certificates()] == [None]  # still the one
     assert "Zelda Lee" in a.get(first).text
     # hours confirmed after the change are theirs under the new name
@@ -245,6 +252,44 @@ def test_hours_confirmed_in_the_second_of_a_rename_or_with_no_time_are_refused()
     data.issue_certificate(a.uid, orgs()[0].id, "all")  # a second later: fine
 
 
+def test_a_changed_name_is_recorded_wherever_a_name_is_saved():
+    a = volunteer("Zelda")
+    assert profiles[a.uid].name_changed_at is None
+    _rename(a, "Zelda", "Lee")  # first fill-in of the last name: not a rename
+    assert profiles[a.uid].name_changed_at is None
+    _rename(a, "Zelda", "Lee")  # unchanged: nothing
+    assert profiles[a.uid].name_changed_at is None
+    _rename(a, "Zelda", "Leigh")
+    assert profiles[a.uid].name_changed_at
+    # onboarding saves the same names: a provider's given name edited there is a rename
+    b = volunteer("Robin")
+    profiles.update(id=b.uid, onboarded_at=None)
+    data.save_onboarding(
+        b.uid,
+        display_name="Rob",
+        lat=34.03,
+        lon=-118.42,
+        radius_km=10,
+        causes=["food"],
+    )
+    assert profiles[b.uid].name_changed_at
+
+
+def test_a_volunteer_without_a_last_name_is_told_how_to_add_it(anon):
+    a, m, org = _hired("Zelda")
+    profiles.update(id=a.uid, last_name=None)  # a Google or Apple sign-in brings none
+    _shift(m, 3, 180, org.uid)
+    page = a.get(
+        a.post(
+            f"/hours/orgs/{orgs()[0].id}/certificate",
+            data={"period": "all"},
+            follow_redirects=False,
+        ).headers["location"]
+    ).text
+    assert "Add your last name on your profile first" in page
+    assert 'name="last_name"' in a.get("/me/profile").text  # and the page has the field
+
+
 def test_certificate_needs_a_last_name():
     a, m, org = _hired("Zelda")
     profiles.update(id=a.uid, last_name=None)
@@ -254,8 +299,8 @@ def test_certificate_needs_a_last_name():
         data={"period": "all"},
         follow_redirects=False,
     )
-    assert r.headers["location"] == "/hours?notice=name" and certificates.count == 0
-    assert "last name" in a.get("/hours?notice=name").text
+    assert r.headers["location"] == "/history?notice=name" and certificates.count == 0
+    assert "last name" in a.get("/history?notice=name").text
 
 
 def test_a_new_certificate_for_the_same_period_replaces_the_earlier_one(anon):
@@ -386,7 +431,7 @@ def test_check_link_says_withdrawn_and_nothing_else(anon):
     ):
         assert text not in r.text, text
     assert a.get(f"/hours/certificate/{cid}").status_code == 404
-    assert "Get a certificate" in a.get("/hours").text
+    assert "Get a certificate" in a.get("/history").text
     assert _certify(a, orgs()[0].id, "all").rsplit("/", 1)[1] != cid  # a new one
 
     # deleting the account withdraws the rest the same way

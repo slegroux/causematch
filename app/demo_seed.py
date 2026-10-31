@@ -400,7 +400,13 @@ def seed(seed_file=None):
             [
                 ("Maya", "Palms", "food-insecurity", ["physical"], "weekly"),
                 ("Jordan", "Culver City", "environment-parks", ["car"], "monthly"),
-                ("Priya", "Mar Vista", "animal-shelters", ["food_handling"], "once"),
+                (
+                    "Priya",
+                    "Mar Vista",
+                    "animal-shelters",
+                    ["food_handling", "music"],
+                    "once",
+                ),
             ],
             start=1,  # (310) 555-0101 to 0103: 0100 is ME_PHONE
         )
