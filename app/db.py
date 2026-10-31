@@ -128,6 +128,9 @@ class Profile:
     last_name: (
         str  # volunteers, optional: nonprofits see its initial, all of it once accepted
     )
+    name_changed_at: (
+        str  # UTC; the last time the first or last name changed (NULL: never)
+    )
     pronouns: str  # optional, free text (choices.PRONOUNS are suggestions)
     bio: str  # optional, up to choices.MAX_BIO characters
     interests: str  # JSON list of choices.INTERESTS values
@@ -240,6 +243,24 @@ class Shift:
     confirmed_minutes: int
 
 
+class Certificate:
+    """A volunteer's record of the hours one nonprofit confirmed, for a period (app/data.py
+    issue_certificate). The snapshot is what it says, frozen when it was issued so it never
+    changes with a profile; the signature (app/signing.py) makes it checkable."""
+
+    id: str  # 22 random URL-safe characters (16 random bytes): the future check link's code
+    volunteer_id: int
+    org_id: int
+    period: str  # "2026-10" (a month) or "all"
+    minutes: int  # the total
+    issued_at: str  # UTC
+    withdrawn_at: str  # UTC; the volunteer withdrew it, or deleted their account
+    snapshot: (
+        str  # JSON: names, nonprofit, coordinators, shifts, total; NULL once scrubbed
+    )
+    signature: str  # HMAC-SHA256 hex of the snapshot and id
+
+
 class Notification:
     id: int
     kind: str  # accepted|message|likes|reminder|urgent|auto|cancel|withdrawn
@@ -297,6 +318,8 @@ matches.create_index(
 messages = db.create(Message, pk="id", transform=True)
 messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id", transform=True)
+certificates = db.create(Certificate, pk="id", transform=True)
+certificates.create_index(["volunteer_id", "issued_at"], if_not_exists=True)
 notifications = db.create(Notification, pk="id", transform=True)
 notifications.create_index(["key"], unique=True, if_not_exists=True)
 

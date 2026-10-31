@@ -26,6 +26,7 @@ from app.auth import session_cookie, session_secret
 from app.config import (
     DEMO_COORDINATOR,
     DEMO_PHONE,
+    certificate_key,
     contact_email,
     demo_banner,
     demo_matches,
@@ -40,6 +41,7 @@ from app.config import (
 from app.db import (
     Match,
     Profile,
+    certificates,
     matches,
     messages,
     openings,
@@ -59,7 +61,12 @@ PASSWORD = "p" * 20  # low entropy on purpose: the secret scan reads tests too
 SECRET = "s" * 32
 PREVIEW = {"CAUSEMATCH_ENV": "preview", "PREVIEW_PASSWORD": PASSWORD}
 # what a running preview has on top: production's secrets
-SECRETS = {"PHONE_HASH_KEY": SECRET, "TASKS_TOKEN": SECRET, "SESSION_SECRET": SECRET}
+SECRETS = {
+    "PHONE_HASH_KEY": SECRET,
+    "CERTIFICATE_KEY": SECRET,
+    "TASKS_TOKEN": SECRET,
+    "SESSION_SECRET": SECRET,
+}
 CLOUD_RUN = {"K_SERVICE": "causematch-preview"}
 PRODUCTION = (
     {"CAUSEMATCH_ENV": "production"},
@@ -155,6 +162,7 @@ def test_a_preview_keeps_productions_secrets_cookie_and_https():
     assert session_secret({**PREVIEW, "SESSION_SECRET": SECRET}) == SECRET
     for check, name in (
         (phone_hash_key, "PHONE_HASH_KEY"),
+        (certificate_key, "CERTIFICATE_KEY"),
         (tasks_token, "TASKS_TOKEN"),
     ):
         with pytest.raises(RuntimeError):
@@ -177,6 +185,7 @@ def _start(tmp_path, **env):
         "CAUSEMATCH_DB": str(tmp_path / "preview.db"),
         "SESSION_SECRET": SECRET,
         "PHONE_HASH_KEY": SECRET,
+        "CERTIFICATE_KEY": SECRET,
         "TASKS_TOKEN": SECRET,
         "PUBLIC_BASE_URL": "https://causematch-preview.run.app",
         "CONTACT_EMAIL": "hello@causematch.test",
@@ -762,6 +771,7 @@ def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
     a, b = (as_demo_volunteer().uid for _ in range(2))
     for uid in (a, b):
         data.swipe(uid, data.deck(uid, 2)[1]["id"], True)  # a match and a swipe each
+        certificates.insert(id=f"cert-{uid}", volunteer_id=uid, org_id=1, minutes=60)
     c = as_demo_volunteer().uid
     phones = {p.id: p.phone for p in profiles() if p.id in (a, b, c)}
     assert set(phones) == {b, c} and phones[c] == f"{data.DEMO_PHONE_PREFIX}0000"
@@ -771,6 +781,7 @@ def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
         assert count(a) == 0, table  # a's rows went with it
         assert count(seed_sam.id), table  # the seed's Sam keeps his
         assert count(b), table  # and so does the other copy
+    assert [c.volunteer_id for c in certificates()] == [b]  # a's certificate went too
 
 
 def test_without_the_switch_the_demo_number_is_the_seeds_sam(preview):

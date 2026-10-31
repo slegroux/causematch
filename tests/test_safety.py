@@ -797,6 +797,20 @@ def test_privacy_is_public_and_says_what_the_consent_says(anon):
         assert word.lower() in r.text.lower()
 
 
+def test_privacy_says_what_a_certificate_check_link_shows_and_what_stays(anon):
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    for words in (
+        "Hours certificates",
+        "check link or QR code",
+        "full name, the nonprofit and its EIN, the period, the total hours, the issue date",
+        "or get a new one for the same nonprofit and period",
+        "The link doesn't expire",
+        "stay there after a coordinator's account is deleted",
+        "erases the name, the shifts and the signature",
+    ):
+        assert words in text, words
+
+
 def test_privacy_is_linked_from_consent_login_pages_and_footer(anon, new_user):
     assert 'href="/privacy"' in anon.get("/login").text
     assert 'href="/privacy"' in anon.get("/org/login").text
@@ -987,9 +1001,20 @@ def test_phone_hash_key_is_required_in_production():
         phone_hash_key({"CAUSEMATCH_ENV": "production"})
 
 
+def test_certificate_key_is_required_in_production():
+    from app.config import certificate_key
+
+    assert certificate_key({"CERTIFICATE_KEY": "k"}) == "k"
+    assert certificate_key({"CAUSEMATCH_ENV": "test"}).startswith("dev-only")
+    with pytest.raises(RuntimeError):
+        certificate_key({"CAUSEMATCH_ENV": "production"})
+    with pytest.raises(RuntimeError):
+        certificate_key({"CAUSEMATCH_ENV": "production", "CERTIFICATE_KEY": "short"})
+
+
 def test_env_example_lists_contact_email_and_phone_hash_key():
     text = (ROOT / ".env.example").read_text()
-    for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY="):
+    for name in ("CONTACT_EMAIL=", "PHONE_HASH_KEY=", "CERTIFICATE_KEY="):
         assert name in text
         assert name.rstrip("=") in (ROOT / "docs" / "OPERATIONS.md").read_text()
 

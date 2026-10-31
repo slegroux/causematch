@@ -3,7 +3,14 @@ from conftest import close_all_openings, coordinator_for, make_opening
 
 from app import data
 from app.db import matches, openings, orgs
-from e2e.helpers import SE, accepted_match, coordinator_page, guard, sign_in_page
+from e2e.helpers import (
+    SE,
+    accepted_match,
+    certificate_id,
+    coordinator_page,
+    guard,
+    sign_in_page,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -11,11 +18,14 @@ pytestmark = pytest.mark.e2e
 def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(phone):
     p = sign_in_page(phone, "(310) 555-0160")
     match_id = accepted_match(p.id)
+    cert = certificate_id(p.id, match_id)
     for path, tab in (
         ("/deck", "Openings"),
         ("/matches", "Matches"),
         ("/history", "Me"),
         ("/hours", "Me"),
+        (f"/hours/certificate/{cert}", "Me"),
+        (f"/hours/certificate/{cert}/withdraw", "Me"),
         ("/profile", "Me"),
         ("/me/preferences", "Me"),
         ("/me/profile", "Me"),

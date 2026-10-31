@@ -330,3 +330,24 @@ def test_disconnecting_with_nothing_against_the_account_keeps_no_hash(anon):
     connect(vol)
     vol.post("/me/identity/google/disconnect", follow_redirects=False)
     assert retained_identities() == []
+
+
+def test_signing_in_again_or_connecting_never_renames_the_volunteer(anon):
+    """The provider's name is read once, when the account is created: a later sign-in or
+    a connect that carries another name leaves the profile as it is, so name_changed_at
+    (which refuses hours confirmed before a rename) stays unset."""
+    claims = oauth.Claims("google", "g-name", EMAIL, True, "Robin", "Lee", "")
+    uid = data.volunteer_for_identity(claims)
+    assert profiles[uid].display_name == "Robin" and profiles[uid].last_name is None
+    data.save_profile_details(
+        uid, first_name="Robin", last_name="Lee", pronouns="", bio="", interests=[]
+    )  # the last name is added by hand: a provider name is never the last name
+    assert profiles[uid].name_changed_at is None  # first fill-in
+    other = oauth.Claims("google", "g-name", EMAIL, True, "Mallory", "Mal", "")
+    assert data.volunteer_for_identity(other) == uid
+    p = profiles[uid]
+    assert (p.display_name, p.last_name, p.name_changed_at) == ("Robin", "Lee", None)
+    phone_user = volunteer("Sam")
+    connect(phone_user, sub="g-connect")
+    p = profiles[phone_user.uid]
+    assert (p.display_name, p.last_name, p.name_changed_at) == ("Sam", None, None)

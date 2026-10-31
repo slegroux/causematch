@@ -10,7 +10,7 @@
 #
 # The seed is copied into ./preview-seed for the build only: git ignores it, .gcloudignore
 # sends it, and it is removed when this script exits. The secrets PREVIEW_PASSWORD,
-# SESSION_SECRET, PHONE_HASH_KEY and TASKS_TOKEN must already be in Secret Manager, readable
+# SESSION_SECRET, PHONE_HASH_KEY, CERTIFICATE_KEY and TASKS_TOKEN must already be in Secret Manager, readable
 # by the service account the service runs as.
 set -euo pipefail
 
@@ -76,7 +76,7 @@ gcloud run deploy "$SERVICE" --source . \
 	--min-instances 0 --max-instances 1 \
 	--memory 1Gi --cpu 1 --concurrency 80 \
 	--set-env-vars "^;^CAUSEMATCH_ENV=preview;PREVIEW_SEED_DIR=/app/preview-seed;TRUSTED_PROXY_HOPS=1;CAUSEMATCH_FAKE_SMS=1;CAUSEMATCH_FAKE_EMAIL=1;CAUSEMATCH_FAKE_OAUTH=1;CAUSEMATCH_DEMO_MATCHES=1;CONTACT_EMAIL=$CONTACT_EMAIL;PUBLIC_BASE_URL=${url:-https://placeholder.invalid}" \
-	--set-secrets "PREVIEW_PASSWORD=PREVIEW_PASSWORD:latest,SESSION_SECRET=SESSION_SECRET:latest,PHONE_HASH_KEY=PHONE_HASH_KEY:latest,TASKS_TOKEN=TASKS_TOKEN:latest"
+	--set-secrets "PREVIEW_PASSWORD=PREVIEW_PASSWORD:latest,SESSION_SECRET=SESSION_SECRET:latest,PHONE_HASH_KEY=PHONE_HASH_KEY:latest,CERTIFICATE_KEY=CERTIFICATE_KEY:latest,TASKS_TOKEN=TASKS_TOKEN:latest"
 
 deployed="$(describe_url)"
 if [ -z "$deployed" ]; then
