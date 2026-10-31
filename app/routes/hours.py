@@ -1,21 +1,37 @@
 import re
 from datetime import datetime
 
-from fasthtml.common import H1, H2, Div, Li, P, Redirect, Response, Span, Ul
+from fasthtml.common import (
+    H1,
+    H2,
+    A,
+    Div,
+    FtResponse,
+    Li,
+    Meta,
+    P,
+    Redirect,
+    Response,
+    Span,
+    Ul,
+)
 from fasthtml.common import Form as PlainForm
 from monsterui.all import Alert, AlertT, Button, ButtonT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
-from app import data
+from app import data, security
 from app.choices import minutes_label
+from app.config import public_base_url
 from app.forms import query, str_form
 from app.ui import (
     CARD,
     ORG_SECTION,
+    SMALL_LINK,
     TITLE,
     BackLink,
     Choice,
     Router,
+    SimplePage,
     VolunteerShell,
     when,
 )
@@ -30,6 +46,7 @@ NOTICE = {
         "Try again tomorrow."
     ),
     "period": "Pick a month, or all your hours there.",
+    "withdrawn": "Certificate withdrawn. Its check link now says so.",
 }
 
 
@@ -253,9 +270,137 @@ def certificate_page(req, cert_id: str):
         "me",
         Div(BackLink("/hours", "My hours"), cls="cm-noprint pb-2"),
         Certificate(c),
+        Div(
+            P("Anyone with this link can check this certificate:", cls="text-ink"),
+            P(
+                f"{public_base_url()}/check/{c['id']}",
+                cls="break-words font-mono text-sm font-bold text-ink",
+            ),
+            cls="space-y-1 pt-3",
+        ),
         P(
             "To keep a copy, print this page or save it as a PDF from your browser.",
             cls=TextPresets.muted_sm + " cm-noprint pt-3",
         ),
+        A(
+            "Withdraw this certificate",
+            href=f"/hours/certificate/{c['id']}/withdraw",
+            cls=SMALL_LINK + " cm-noprint mt-3 inline-flex min-h-11 items-center",
+        ),
         uid=uid,
+    )
+
+
+@ar("/hours/certificate/{cert_id}/withdraw", methods=["GET"])
+def withdraw_certificate_confirm(req, cert_id: str):
+    uid = req.scope["uid"]
+    try:
+        data.my_certificate(uid, cert_id)
+    except (LookupError, PermissionError):
+        return Response(NOT_FOUND, status_code=404)
+    return VolunteerShell(
+        "me",
+        H1("Withdraw this certificate?", cls=TITLE),
+        Div(
+            P(
+                "Its check link will say the certificate was withdrawn, and nothing "
+                "else. Copies you already gave out stop being checkable. You can issue "
+                "a new one from My hours.",
+                cls="text-ink",
+            ),
+            PlainForm(
+                Button("Withdraw", cls=ButtonT.destructive),
+                A(
+                    "Keep it",
+                    href=f"/hours/certificate/{cert_id}",
+                    cls=SMALL_LINK + " ml-4",
+                ),
+                action=f"/hours/certificate/{cert_id}/withdraw",
+                method="post",
+                cls="flex items-center pt-2",
+            ),
+            cls="space-y-3 p-5 " + CARD,
+        ),
+        uid=uid,
+    )
+
+
+@ar("/hours/certificate/{cert_id}/withdraw", methods=["POST"])
+def withdraw_certificate(req, cert_id: str):
+    try:
+        data.withdraw_certificate(req.scope["uid"], cert_id)
+    except PermissionError:
+        return Response(NOT_FOUND, status_code=404)
+    return Redirect("/hours?notice=withdrawn")
+
+
+# --- the public check link ----------------------------------------------------------------
+
+
+def CheckRow(label, value):
+    return Div(
+        Span(label, cls=TextPresets.muted_sm),
+        Span(value, cls="text-right font-bold text-ink"),
+        cls="flex items-baseline justify-between gap-4 py-2",
+    )
+
+
+def CheckPage(r):
+    """What the check link says for data.check_certificate's result; (page, status)."""
+    state = r["state"]
+    if state == "unknown":
+        return SimplePage(
+            "Not a Causematch record",
+            P("This is not a Causematch record.", cls="mt-2 text-ink"),
+        ), 404
+    if state == "withdrawn":
+        return SimplePage(
+            "Withdrawn", P("This certificate was withdrawn.", cls="mt-2 text-ink")
+        ), 200
+    period = "All hours" if r["period"] == "all" else month_name(r["period"])
+    changed = state == "changed"
+    return SimplePage(
+        "Hours have changed" if changed else "Genuine certificate",
+        P(
+            "This is a genuine Causematch certificate as it was issued, but "
+            f"{r['org']} has since changed the hours it confirmed for this volunteer "
+            "in this period."
+            if changed
+            else "This is a genuine Causematch certificate, unchanged since it was issued.",
+            cls="mt-2 text-ink",
+        ),
+        Div(
+            CheckRow("Volunteer", r["volunteer"]),
+            CheckRow("Nonprofit", r["org"]),
+            *([CheckRow("EIN", ein_label(r["ein"]))] if r["ein"] else []),
+            CheckRow("Period", period),
+            CheckRow(
+                "Hours when issued" if changed else "Total hours",
+                minutes_label(r["minutes"]),
+            ),
+            *(
+                [CheckRow("Hours confirmed now", minutes_label(r["current_minutes"]))]
+                if changed
+                else []
+            ),
+            CheckRow("Issued", long_date(r["issued"])),
+            CheckRow("Signature code", Span(r["code"], cls="font-mono")),
+            cls="mt-4 divide-y divide-line",
+        ),
+    ), 200
+
+
+@ar("/check/{code}", methods=["GET"])
+async def check_link(req, code: str):
+    return await run_in_threadpool(_sync_check, req, code)
+
+
+def _sync_check(req, code):
+    if not security.allow((security.CHECK_PER_IP, security.ip_subject(req))):
+        return security.too_many()
+    page, status = CheckPage(data.check_certificate(code))
+    return FtResponse(
+        (Meta(name="robots", content="noindex"), *page),
+        status_code=status,
+        headers={"X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store"},
     )
