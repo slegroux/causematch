@@ -110,6 +110,11 @@ def CertificateCard(o):
             Span(minutes_label(o["minutes"]), cls="font-bold text-ink"),
             cls="flex items-baseline justify-between gap-3",
         ),
+        P(
+            "Its check link shows your full name, this nonprofit and its EIN, the "
+            "period and the total hours.",
+            cls=TextPresets.muted_sm,
+        ),
         PlainForm(
             period,
             Button("Get a certificate", cls=ButtonT.default),

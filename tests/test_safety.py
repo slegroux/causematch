@@ -792,6 +792,19 @@ def test_privacy_is_public_and_says_what_the_consent_says(anon):
         assert word.lower() in r.text.lower()
 
 
+def test_privacy_says_what_a_certificate_check_link_shows_and_what_stays(anon):
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    for words in (
+        "Hours certificates",
+        "check link or QR code",
+        "full name, the nonprofit and its EIN, the period, the total hours",
+        "The link doesn't expire",
+        "stay there after a coordinator's account is deleted",
+        "erases the name, the shifts and the signature",
+    ):
+        assert words in text, words
+
+
 def test_privacy_is_linked_from_consent_login_pages_and_footer(anon, new_user):
     assert 'href="/privacy"' in anon.get("/login").text
     assert 'href="/privacy"' in anon.get("/org/login").text
