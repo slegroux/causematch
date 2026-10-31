@@ -10,8 +10,6 @@ screens*/
 screenshots/
 # scripts/deploy_preview.sh copies the real nonprofits here for the image, then removes it
 preview-seed/
-# scripts/video/make_demo_video.sh keeps its work outside the repo; if CAUSEMATCH_VIDEO_WORK points in
-video-work/
 
 # Python
 __pycache__/
