@@ -376,9 +376,15 @@ def story(vol, org, adm):
     tap(vol, vol.get_by_role("button", name="Like").first)
     # a first like asks two optional questions: skip them, back to the deck
     vol.wait_for_url("**/onboarding/more**", timeout=8000)
-    hold(1.2)
+    hold(2.0)  # "Liked! When Silver Lake Garden Friends says yes, it's a match."
     tap(vol, vol.get_by_role("button", name="Skip"))
     vol.wait_for_url("**/deck**")
+    hold(1.0)
+    # a second like, so Matches has one waiting below the match later on
+    tap(vol, vol.get_by_role("button", name="Like").first)
+    vol.get_by_text("Liked! When").first.wait_for()
+    hold(1.5)
+    vol.reload()  # the deck drops the second like's notice, so the takeover stands alone
     hold(0.5)
 
     # 9. Jordan's inbox
@@ -395,11 +401,14 @@ def story(vol, org, adm):
     )
     point(org, row.get_by_text("Riley", exact=True))
 
-    # 10. accept, say hi
+    # 10. accept, say hi; Riley's phone sits on the deck, which asks /deck/news every 10 s
+    # (the fetch that brings the takeover, with no tap). The tab-visible trigger is fired
+    # once, so the takeover lands while the narration says so, not up to 10 s later.
     beat("accept")
     tap(org, row.get_by_role("button", name="Accept"))
     org.wait_for_url("**notice=accepted**")
     hold(1.0)
+    vol.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
     tap(org, org.get_by_role("link", name="Say hi").first)
     org.wait_for_url("**/org/chat/**")
     type_in(
@@ -409,13 +418,14 @@ def story(vol, org, adm):
         30,
     )
     tap(org, org.get_by_role("button", name="Send"))
+    takeover = vol.locator("dialog.cm-moment[open]")
+    takeover.wait_for(timeout=15000)  # no tap on Riley's side: the poll drew it
+    hold(1.2)
 
-    # 11. Riley: it's a match, reply
+    # 11. Riley: taps Say hi on the takeover, reads Jordan's message, replies
     beat("reply")
-    tap(vol, vol.get_by_role("link", name="Matches").last)
-    vol.wait_for_url("**/matches**")
-    hold(2.2)
-    tap(vol, vol.get_by_role("link", name="Say hi").first)
+    hold(1.5)
+    tap(vol, takeover.get_by_role("link", name="Say hi").first)
     vol.wait_for_url("**/chat/**")
     hold(1.0)
     type_in(vol, vol.locator("input[name=msg]"), "Great, see you then!", 55)
@@ -458,6 +468,14 @@ def story(vol, org, adm):
 
     # 15. Riley's hours, at the foot of Shifts and hours
     beat("hours")
+    # first the Matches tab: its badge clears, a match above the likes still waiting
+    tap(vol, vol.get_by_role("link", name="Matches").last)
+    vol.wait_for_url("**/matches**")
+    likes = vol.get_by_role("heading", name="Your likes")
+    likes.wait_for()
+    hold(1.0)
+    smooth_to(vol, likes)
+    hold(1.0)
     tap(vol, vol.get_by_role("link", name="Me").last)
     vol.wait_for_url("**/profile")
     hold(0.8)
