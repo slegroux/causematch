@@ -353,19 +353,16 @@ def test_name_is_required_before_posting(coord):
     )
     assert r.status_code == 303
     assert post(coord).status_code == 303
-    assert "Maria Lopez, coordinator" in coord.get("/org").text
+    assert "Maria Lopez, coordinator" in coord.get("/org/organization").text
 
 
 def test_details_form_validation_and_text_needs_a_phone(coord):
     from app.db import profiles
 
     uid = profiles(where="role = 'coordinator'")[0].id
-    assert (
-        "Text"
-        not in coord.get("/org/openings/new")
-        .text.split('name="reply_channel"')[1]
-        .split("</select>")[0]
-    )
+    form = coord.get("/org/openings/new").text  # no phone: email is the only way
+    assert "Reaching you" not in form and 'name="reply_channel"' in form
+    assert re.search(r'<input[^>]*type="hidden"[^>]*name="reply_channel"', form)
     bad = coord.post("/org/details", data={"name": "Maria", "phone": "12345"})
     assert bad.status_code == 200 and "Enter a US phone number" in bad.text
     empty = coord.post("/org/details", data={"name": " ", "phone": ""})
@@ -381,6 +378,7 @@ def test_details_form_validation_and_text_needs_a_phone(coord):
         == 303
     )
     assert profiles[uid].contact_phone == "+13105550123"
+    assert "Reaching you" in coord.get("/org/openings/new").text
     reply = (
         coord.get("/org/openings/new")
         .text.split('name="reply_channel"')[1]
@@ -388,6 +386,30 @@ def test_details_form_validation_and_text_needs_a_phone(coord):
     )
     assert "Text" in reply and "Either" in reply
     assert post(coord, reply_channel="text").status_code == 303
+
+
+def test_details_live_on_the_organization_page_once_named(coord):
+    dash, org = coord.get("/org").text, coord.get("/org/organization").text
+    assert "Your details" not in dash and 'action="/org/details"' not in dash
+    assert "Your details" in org and 'value="/org/organization"' in org
+    bad = coord.post(
+        "/org/details",
+        data={"name": " ", "phone": "", "back": "/org/organization"},
+    )
+    assert "Enter your name" in bad.text and "Your details" in bad.text
+    assert "<h1" in bad.text and "Organization" in bad.text
+    r = coord.post(
+        "/org/details",
+        data={"name": "Maria", "phone": "", "back": "/org/organization"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/org/organization"
+    r = coord.post(
+        "/org/details",
+        data={"name": "Maria", "phone": "", "back": "https://evil.example"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/org"
 
 
 def test_volunteer_cannot_post_details(user):
