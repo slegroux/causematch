@@ -150,7 +150,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
           <span class="cause c-homeless">Homelessness services</span>
         </div>
         <div class="ctas">
-          <a class="btn primary" href="#demo">Watch the 2-minute demo</a>
+          <a class="btn primary" href="#demo">Watch the 3-minute demo</a>
           <a class="btn ghost" href="#how">How it works</a>
         </div>
       </div>
@@ -165,10 +165,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div class="head">
         <span class="eyebrow">From sign-up to first shift</span>
         <h2 id="demo-h">See a nonprofit and a volunteer find each other</h2>
-        <p class="muted">Jordan signs Silver Lake Garden Friends up and posts an opening. Riley registers with a phone number, picks the causes they love and when they're free, and likes it. Jordan says yes, and the two are chatting two minutes later. Recorded live in the app, on invented demo data.</p>
+        <p class="muted">Jordan signs Silver Lake Garden Friends up and posts an opening. Riley registers with a phone number, picks the causes they love and when they're free, and likes it. Jordan says yes, and the two are chatting. A few days later Jordan marks the shift attended, confirming Riley's hours, and Riley sees them in My hours. Recorded live in the app, on invented demo data.</p>
       </div>
       <div class="player">
-        <video controls preload="metadata" playsinline poster="assets/demo-poster.jpg" aria-label="Causematch demo: a new nonprofit and a new volunteer sign up, match and chat">
+        <video controls preload="metadata" playsinline poster="assets/demo-poster.jpg" aria-label="Causematch demo, about three minutes: a new nonprofit and a new volunteer sign up, match and chat, and the volunteer's confirmed hours are recorded">
           <source src="assets/demo.mp4" type="video/mp4">
         </video>
       </div>
@@ -203,7 +203,22 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
     </div>
   </section>
 
-  <section class="block alt" aria-labelledby="why-h">
+  <section class="block alt" id="hours" aria-labelledby="hours-h">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Confirmed volunteer hours</span>
+        <h2 id="hours-h">A record of the hours you gave</h2>
+        <p class="muted">When a nonprofit marks you as attended, it confirms the hours of that shift in the same tap. Those hours are yours to keep.</p>
+      </div>
+      <div class="features">
+        <div class="feature"><h3>My hours</h3><p>Every hour a nonprofit confirmed, by month: the shift, the nonprofit and who confirmed it.</p></div>
+        <div class="feature"><h3>Nonprofits say so</h3><p>A nonprofit that can confirm volunteer hours says it on its page, and its cards in your deck say "Confirms your hours".</p></div>
+        <div class="feature"><h3>See them first, or only</h3><p>In your preferences, choose to see these nonprofits first, to see only them, or to leave the deck as it is.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" aria-labelledby="why-h">
     <div class="wrap">
       <div class="head">
         <span class="eyebrow">Why it works</span>
@@ -218,7 +233,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
     </div>
   </section>
 
-  <section class="block" id="privacy" aria-labelledby="privacy-h">
+  <section class="block alt" id="privacy" aria-labelledby="privacy-h">
     <div class="wrap">
       <div class="head">
         <span class="eyebrow">Privacy by design</span>

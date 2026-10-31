@@ -19,9 +19,9 @@ scripts/video/make_demo_video.sh
   on Linux, change `FONT` in `compose.py`.
 - Network on the first run: the TTS packages (about 1 GB with torch), the spaCy model
   `en_core_web_sm` (from its GitHub release), Kokoro's model (about 330 MB, Hugging Face,
-  kept in `~/.cache/huggingface`) and Playwright's Chromium (about 150 MB).
-- Disk: about 1.5 GB for the TTS environment, 150 MB for Chromium, and about 600 MB of
-  recordings and segments while it runs.
+  kept in `~/.cache/huggingface`) and Playwright's Chromium (about 370 MB).
+- Disk: about 1 GB for the TTS environment, 370 MB for Chromium, and about 70 MB of
+  recordings, voice and segments for one run.
 - Nothing else uses port 5190 (override with `CAUSEMATCH_VIDEO_PORT`).
 
 Nothing is installed into the repo's virtualenv except what `uv sync` already installs
@@ -92,4 +92,9 @@ The repo is public. The video uses the demo seed (`app/demo_seed.py`) and made-u
 ## Timing
 
 Run end to end from nothing (no TTS environment, no espeak data, no Kokoro voice files,
-no repo `.venv`; Hugging Face's model cache and Playwright's Chromium kept): TIMING.
+no repo `.venv`; Hugging Face's model cache and Playwright's Chromium kept): 4 minutes 55
+seconds on an Apple-silicon Mac (2026-10-31). Of that, setup and voice took about 1
+minute 20 seconds, recording 3 minutes 10 seconds (the story itself is 2 minutes 47
+seconds, paced by the voice lines) and composing under 30 seconds. With everything set
+up, one change to a line and a re-run is about 4 minutes. The result: 2:52, 1920x1080,
+7.4 MB, -16.1 LUFS.

@@ -56,7 +56,7 @@ voice() {
 }
 
 record() {
-  say "record (about 4 minutes)"
+  say "record (about 3 minutes)"
   if lsof -ti "tcp:$PORT" >/dev/null 2>&1; then
     echo "port $PORT is in use: set CAUSEMATCH_VIDEO_PORT" >&2
     exit 1
