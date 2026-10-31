@@ -139,7 +139,7 @@ def test_a_like_says_where_it_went_and_lights_the_matches_dot(user):
         headers={"HX-Request": "true"},
     )  # fmt: skip
     org = data.org_name_of(oid)
-    assert f"Sent to {org}." in r.text and "text you when they say yes." in r.text
+    assert f"When {org} says yes" in r.text and "text you" in r.text
     dot = re.search(r'<span[^>]*id="matches-dot"[^>]*>', r.text).group(0)
     assert "hidden" not in dot and 'hx-swap-oob="true"' in dot
     for page in ("/deck", "/history", "/profile", "/me/preferences"):
@@ -232,3 +232,67 @@ def test_an_urgent_card_keeps_its_clash_chip_past_the_cap_and_a_full_week(user):
     profiles.update(id=uid_of(user), weekly_limit=1)  # that one shift fills the week
     *_, clash, week = chips()
     assert clash.startswith("You're booked at ") and week == data.WEEK_FULL["text"]
+
+
+def _decline(user, title):
+    m = data.swipe(uid_of(user), add_opening(title, ["food-insecurity"]).id, True)
+    data.decide(coordinator_for(0)[0], m.id, False)
+    return m.id
+
+
+def test_matches_page_keeps_matches_likes_and_past_apart(user):
+    close_all_openings()
+    _accepted(user, "Won one", "2030-01-01T00:00:00+00:00")
+    data.swipe(uid_of(user), add_opening("Waiting one", ["food-insecurity"]).id, True)
+    _decline(user, "Declined one")
+    html = user.get("/matches").text
+    assert ">Matches</h2>" in html and ">Your likes</h2>" in html
+    assert (
+        html.index("Won one") < html.index(">Your likes<") < html.index("Waiting one")
+    )
+    past = html[html.index("<details", html.index("Waiting one")) :]
+    assert ">Past<" in past and "Declined one" in past
+    assert (
+        "Declined one" not in html[: html.index("<details", html.index("Waiting one"))]
+    )
+
+
+def test_matches_page_with_only_likes_says_no_matches_yet(user):
+    close_all_openings()
+    data.swipe(uid_of(user), add_opening("Waiting one", ["food-insecurity"]).id, True)
+    html = user.get("/matches").text
+    assert "No matches yet. When a nonprofit says yes" in html
+    assert ">Your likes</h2>" in html and "<details" not in html.split("Waiting one")[0]
+
+
+def test_the_match_takeover_names_the_org_and_both_faces(user):
+    close_all_openings()
+    mid = _accepted(user, "Won one", "2030-01-01T00:00:00+00:00")
+    profiles.update(id=uid_of(user), match_moment_seen_at=None, display_name="Robin")
+    html = user.get("/deck").text
+    sheet = html[html.index("<dialog") : html.index("</dialog>")]
+    assert "s a match!" in sheet and "said yes" in sheet and "Won one" in sheet
+    assert f'href="/chat/{mid}"' in sheet and "Say hi" in sheet
+    assert "Keep swiping" in sheet and 'method="dialog"' in sheet
+    assert ">R</span>" in sheet  # the volunteer's own initial: no photo yet
+
+
+def test_deck_news_brings_a_fresh_match_once_and_nothing_after(user):
+    close_all_openings()
+    htmx = {"HX-Request": "true"}
+    quiet = user.get("/deck/news", headers=htmx)
+    assert "<dialog" not in quiet.text and quiet.headers["hx-reswap"] == "none"
+    assert 'id="matches-dot"' in quiet.text  # the dot still updates
+    mid = _accepted(user, "Won one", "2030-01-01T00:00:00+00:00")
+    profiles.update(id=uid_of(user), match_moment_seen_at=None)
+    news = user.get("/deck/news", headers=htmx)
+    assert "<dialog" in news.text and f'href="/chat/{mid}"' in news.text
+    assert "hx-reswap" not in news.headers
+    again = user.get("/deck/news", headers=htmx)
+    assert "<dialog" not in again.text and again.headers["hx-reswap"] == "none"
+
+
+def test_deck_and_matches_pages_poll_for_news(user):
+    for page in ("/deck", "/matches"):
+        html = user.get(page).text
+        assert 'id="moment-slot"' in html and 'hx-get="/deck/news"' in html

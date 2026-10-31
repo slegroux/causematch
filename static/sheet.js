@@ -10,4 +10,9 @@
   }
   modal();
   document.body.addEventListener("htmx:afterSwap", modal);
+  // The poll for a new match (#moment-slot) skips a tab nobody is looking at; it asks
+  // again the moment the tab is visible (hx-trigger "visibilitychange from:document").
+  document.body.addEventListener("htmx:beforeRequest", function (e) {
+    if (document.hidden && e.target.id === "moment-slot") e.preventDefault();
+  });
 })();

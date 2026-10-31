@@ -45,6 +45,11 @@ OVERFLOW = """() => [...document.body.querySelectorAll('*')].filter(e => {
 
 def check(page, path):
     page.goto(path)
+    # the match sheet pops in (scaled up from 90%): measure it once it has landed
+    page.evaluate(
+        """() => Promise.all(document.getAnimations()
+        .filter(a => a.effect.target.matches('dialog')).map(a => a.finished))"""
+    )
     return page.evaluate(SMALL), page.evaluate(OVERFLOW)
 
 

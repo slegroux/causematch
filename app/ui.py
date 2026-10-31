@@ -391,7 +391,7 @@ TABS = (
 
 
 # a like's confirmation, on the deck and on the card after the first like
-LIKE_SENT = "Sent to {}. We'll text you when they say yes."
+LIKE_SENT = "Liked! When {} says yes, it's a match. We'll text you."
 
 
 def MatchesDot(on, oob=False):
@@ -581,6 +581,7 @@ AVATAR = {
     "sm": "h-9 w-9 text-base",
     "md": "h-14 w-14 text-2xl",
     "lg": "h-28 w-28 text-5xl",
+    "xl": "h-24 w-24 text-4xl",
 }
 
 
@@ -647,24 +648,28 @@ def VolunteerHeader(name, photo_key=None, pronouns=None):
     )
 
 
-def OrgFace(org, logo=None, photo=None, slug=None):
-    """A nonprofit at 48 px on the volunteer's lists: its logo, else the opening's photo,
-    else its initial on its cause's tint. Decorative: the org's name is written next to it.
-    Logos and opening photos are public to anyone signed in (data.photo_for)."""
-    cls = "h-12 w-12 shrink-0 rounded-full"
+def OrgFace(org, logo=None, photo=None, slug=None, size="md"):
+    """A nonprofit at 48 px on the volunteer's lists (size="lg": 96 px, on the match
+    takeover): its logo, else the opening's photo, else its initial on its cause's tint.
+    Decorative: the org's name is written next to it. Logos and opening photos are public
+    to anyone signed in (data.photo_for)."""
+    big = size == "lg"
+    cls = ("h-24 w-24" if big else "h-12 w-12") + " shrink-0 rounded-full"
     if logo or photo:
         return Img(
             src=f"/photos/thumb/{logo or photo}.jpg",
             alt="",
             loading="lazy",
-            width="48",
-            height="48",
+            width="96" if big else "48",
+            height="96" if big else "48",
             cls=cls + " object-cover ring-1 ring-line",
         )
     return Span(
         ((org or "").strip()[:1] or "?").upper(),
         aria_hidden="true",
-        cls=f"{cls} grid place-items-center font-display text-xl font-extrabold "
+        cls=f"{cls} grid place-items-center font-display "
+        + ("text-4xl" if big else "text-xl")
+        + " font-extrabold "
         + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
     )
 

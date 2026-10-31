@@ -14,7 +14,8 @@ from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, MatchSheet, deck_view
+from app.routes.deck import DeckArea, MatchSheet, MomentSlot, deck_view
+from app.routes.prefs import Fold
 from app.ui import (
     CALENDAR,
     CARD,
@@ -23,6 +24,7 @@ from app.ui import (
     LIKE_SENT,
     MATCH_STATUS,
     NEXT,
+    ORG_SECTION,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
@@ -201,6 +203,46 @@ def NoMatches():
     )
 
 
+def MatchSections(rows):
+    """Accepted matches, then the likes still waiting, then everything else folded away
+    as "Past". Nothing at all: NoMatches."""
+    if not rows:
+        return NoMatches()
+    matches = [m for m in rows if m["status"] == "accepted"]
+    likes = [m for m in rows if m["status"] == "pending"]
+    past = [m for m in rows if m["status"] not in ("accepted", "pending")]
+    return Div(
+        Div(
+            H2("Matches", cls=ORG_SECTION),
+            *(
+                [MatchRow(m) for m in matches]
+                or [
+                    P(
+                        "No matches yet. When a nonprofit says yes to one of your "
+                        "likes, it shows up here.",
+                        cls=TextPresets.muted_sm,
+                    )
+                ]
+            ),
+            cls="flex flex-col gap-4",
+        ),
+        Div(
+            H2("Your likes", cls=ORG_SECTION),
+            P(
+                "A like becomes a match when the nonprofit says yes. We'll tell you "
+                "here and by text.",
+                cls=TextPresets.muted_sm,
+            ),
+            *[MatchRow(m) for m in likes],
+            cls="flex flex-col gap-4",
+        )
+        if likes
+        else None,
+        Fold("Past", *[MatchRow(m) for m in past]) if past else None,
+        cls="flex flex-col gap-8 pb-8",
+    )
+
+
 @ar("/matches", methods=["GET"])
 def matches_page(req):
     uid = req.scope["uid"]
@@ -218,12 +260,9 @@ def matches_page(req):
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
-        sheet,
-        Script(src="/static/sheet.js", defer=True) if sheet else None,
-        Div(
-            *([MatchRow(m) for m in rows] or [NoMatches()]),
-            cls="flex flex-col gap-4 pb-8",
-        ),
+        MomentSlot(sheet),
+        Script(src="/static/sheet.js", defer=True),
+        MatchSections(rows),
         uid=uid,
     )
 

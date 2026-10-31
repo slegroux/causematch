@@ -270,8 +270,7 @@ body:has(#a2hs:not([hidden])) .cm-logo {
 /* The deck card's details sheet (app/routes/deck.py DetailsSheet): a modal <dialog> that
    static/swipe.js opens on a tap of the card, kept above the tab bar and never taller
    than the screen above it. */
-dialog.cm-sheet,
-dialog.cm-moment {
+dialog.cm-sheet {
   position: fixed;
   inset: auto 1rem calc(4rem + 1px + 0.75rem + env(safe-area-inset-bottom));
   max-width: 28rem;
@@ -281,13 +280,56 @@ dialog.cm-moment {
   overflow-y: auto;
   padding: 1.25rem;
 }
+/* The "It's a match!" takeover (app/routes/deck.py MatchSheet): centred over a darker
+   backdrop, never taller than the screen; a short screen scrolls it. */
+dialog.cm-moment {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  max-width: 24rem;
+  width: calc(100% - 2rem);
+  height: fit-content;
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  padding: 1.5rem 1.25rem 1.25rem;
+  text-align: center;
+}
 dialog.cm-sheet:not([open]),
 dialog.cm-moment:not([open]) {
   display: none;
 }
-dialog.cm-sheet::backdrop,
-dialog.cm-moment::backdrop {
+dialog.cm-sheet::backdrop {
   background-color: rgb(43 30 22 / 0.4);
+}
+dialog.cm-moment::backdrop {
+  background-color: rgb(43 30 22 / 0.6);
+}
+@keyframes cm-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes cm-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  dialog.cm-moment[open] {
+    animation: cm-pop 350ms ease-out;
+  }
+  .cm-heart {
+    animation: cm-pulse 1.4s ease-in-out 350ms infinite;
+  }
 }
 /* The tallest card (an urgent call, or the Home Screen hint above it) gives its "what you'll
    do" a single line, so Pass and Like still fit a small phone; the sheet has the rest. */
