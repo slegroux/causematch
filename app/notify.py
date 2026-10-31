@@ -21,6 +21,12 @@ MAX_ATTEMPTS = 5  # tries for one send before it is left failed
 MAX_REMINDERS_PER_SWEEP = 100  # the rest wait for the next hourly sweep
 _LOCAL_FORMAT = "%Y-%m-%dT%H:%M"
 VERIFY_URL = "https://verify.twilio.com/v2/Services/{sid}"
+TWILIO_KEYS = (
+    "TWILIO_ACCOUNT_SID",
+    "TWILIO_AUTH_TOKEN",
+    "TWILIO_VERIFY_SID",
+    "TWILIO_FROM_NUMBER",
+)
 FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days
 
 
@@ -78,35 +84,57 @@ def _fake(env, var):
     return True
 
 
-def make_verifier(env=os.environ):
-    if _fake(env, "CAUSEMATCH_FAKE_SMS"):
-        return FakeVerifier()
-    keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
+def _twilio(env, keys):
+    """The values of `keys`, or None when no Twilio variable is set at all (Twilio is
+    optional: Google or Apple sign-in may stand in, see config.require_volunteer_sign_in).
+    Some set but not these refuses to start: a half-configured Twilio is a mistake."""
+    if not any(env.get(k) for k in TWILIO_KEYS):
+        return None
     if not all(env.get(k) for k in keys):
         raise RuntimeError(
-            "Twilio is not configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and "
-            "TWILIO_VERIFY_SID (or CAUSEMATCH_ENV=development with CAUSEMATCH_FAKE_SMS=1)"
+            f"Twilio is half configured: set {', '.join(keys)}, or none of "
+            f"{', '.join(TWILIO_KEYS)} (or CAUSEMATCH_ENV=development with "
+            "CAUSEMATCH_FAKE_SMS=1)"
         )
-    return TwilioVerifier(*(env[k] for k in keys))
+    return [env[k] for k in keys]
 
 
-_verifier = None
+def make_verifier(env=os.environ):
+    """The sign-in code sender, or None when Twilio is not configured: no phone sign-in."""
+    if _fake(env, "CAUSEMATCH_FAKE_SMS"):
+        return FakeVerifier()
+    keys = _twilio(
+        env, ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
+    )
+    return keys and TwilioVerifier(*keys)
+
+
+_UNSET = object()
+_verifier = _UNSET
 
 
 def get_verifier():
     global _verifier
-    if _verifier is None:
+    if _verifier is _UNSET:
         _verifier = make_verifier()
     return _verifier
 
 
+def phone_sign_in_enabled():
+    """Whether codes can be texted: /login's phone form and Me's add-a-number need it."""
+    return get_verifier() is not None
+
+
 def send_code(phone):
     """The one place a sign-in code leaves the app, so rate limiting can wrap it."""
-    get_verifier().send(phone)
+    if (verifier := get_verifier()) is None:
+        raise RuntimeError("phone sign-in is off: Twilio is not configured")
+    verifier.send(phone)
 
 
 def check_code(phone, code):
-    return get_verifier().check(phone, code)
+    verifier = get_verifier()
+    return verifier is not None and verifier.check(phone, code)
 
 
 class FakeEmailer:
@@ -246,25 +274,34 @@ class TwilioSMS:
 
 
 def make_sms(env=os.environ):
+    """The text sender, or None when Twilio is not configured: volunteers get email."""
     if _fake(env, "CAUSEMATCH_FAKE_SMS"):
         return FakeSMS()
-    keys = ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")
-    if not all(env.get(k) for k in keys):
-        raise RuntimeError(
-            "Twilio is not configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and "
-            "TWILIO_FROM_NUMBER (or CAUSEMATCH_ENV=development with CAUSEMATCH_FAKE_SMS=1)"
-        )
-    return TwilioSMS(*(env[k] for k in keys))
+    keys = _twilio(
+        env, ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")
+    )
+    return keys and TwilioSMS(*keys)
 
 
-_sms = None
+_sms = _UNSET
 
 
 def get_sms():
     global _sms
-    if _sms is None:
+    if _sms is _UNSET:
         _sms = make_sms()
     return _sms
+
+
+def channel(uid):
+    """How a volunteer hears from us: "sms" to a number that may be texted (and only while
+    Twilio is configured), else "email" when their live profile has an address, else None
+    (the app only)."""
+    if get_sms() is not None and data.sms_number(uid):
+        return "sms"
+    if data.urgent_email(uid):
+        return "email"
+    return None
 
 
 def now():
@@ -325,7 +362,8 @@ def _deliver(kind, key, recipient_id, send, window=None, opt_out=None, gate=None
 def _text(kind, key, uid, body, window=None, urgent=False):
     """urgent: also under the urgent calls' own ceiling (security.sms_urgent)."""
     phone = data.sms_number(uid)
-    if phone is None:
+    sms = get_sms()
+    if phone is None or sms is None:
         return False
     limits = [(security.sms_all(), "all")]
     if urgent:
@@ -334,31 +372,48 @@ def _text(kind, key, uid, body, window=None, urgent=False):
         kind,
         key,
         uid,
-        lambda: get_sms().send(phone, body),
+        lambda: sms.send(phone, body),
         window,
         opt_out=lambda: data.sms_opted_out(uid),
         gate=lambda: security.allow(*limits),
     )
 
 
+def _tell(kind, key, uid, text, subject, body, window=None):
+    """Text the volunteer, or email them when they have no number to text (channel). One
+    key either way, so the once-per-event and window rules hold across both."""
+    how = channel(uid)
+    if how == "sms":
+        return _text(kind, key, uid, text, window)
+    if how != "email":
+        return False
+    to = data.urgent_email(uid)
+    return _deliver(
+        kind, key, uid, lambda: get_emailer().send(to, subject, body), window
+    )
+
+
 def on_accepted(match_id):
-    """Called after a coordinator accepts. Texts the volunteer, once per match."""
+    """Called after a coordinator accepts. Texts (or emails) the volunteer, once per
+    match."""
     info = data.match_notice(match_id)
     if (
         info and info["status"] == "accepted" and not info["silent"]
     ):  # a block withdraws it
-        return _text(
+        chat = f"{public_base_url()}/chat/{match_id}"
+        return _tell(
             "accepted",
             f"accepted:{match_id}",
             info["volunteer_id"],
-            f"{info['org']} said yes to {info['opening']}! "
-            f"Say hi: {public_base_url()}/chat/{match_id}",
+            f"{info['org']} said yes to {info['opening']}! Say hi: {chat}",
+            f"You're matched with {info['org']}",
+            f"{info['org']} said yes to {info['opening']}!\n\nSay hi: {chat}",
         )
 
 
 def on_new_message(match_id, sender_id):
-    """Called after a chat message is saved. Texts the volunteer about a coordinator's
-    message (never its text), at most once per match per 30 minutes."""
+    """Called after a chat message is saved. Texts (or emails) the volunteer about a
+    coordinator's message (never its text), at most once per match per 30 minutes."""
     from app.routes.chat import volunteer_online  # chat imports this module
 
     info = data.match_notice(match_id)
@@ -374,11 +429,14 @@ def on_new_message(match_id, sender_id):
 
 
 def _message_text(match_id, info):
-    return _text(
+    chat = f"{public_base_url()}/chat/{match_id}"
+    return _tell(
         "message",
         f"msg:{match_id}",
         info["volunteer_id"],
-        f"New message from {info['org']} on Causematch: {public_base_url()}/chat/{match_id}",
+        f"New message from {info['org']} on Causematch: {chat}",
+        f"New message from {info['org']}",
+        f"{info['org']} sent you a message on Causematch.\n\nRead it: {chat}",
         MESSAGE_WINDOW,
     )
 
@@ -557,13 +615,17 @@ def send_due_reminders():
         info = data.shift_notice(shift_id)
         if not info:
             continue
-        if _text(
+        when = _when(info["starts_at"])
+        confirm = f"{public_base_url()}/shifts/{shift_id}/confirm"
+        if _tell(
             "reminder",
             f"reminder:{shift_id}",
             volunteer_id,
-            f"Reminder: {info['opening']} with {info['org']} is on "
-            f"{_when(info['starts_at'])}. Still coming? "
-            f"{public_base_url()}/shifts/{shift_id}/confirm",
+            f"Reminder: {info['opening']} with {info['org']} is on {when}. "
+            f"Still coming? {confirm}",
+            f"Reminder: {info['opening']}, {when}",
+            f"{info['opening']} with {info['org']} is on {when}.\n\n"
+            f"Still coming? Let them know: {confirm}",
         ):
             reminded.add(volunteer_id)
     return sent + len(reminded)
@@ -594,9 +656,9 @@ def send_urgent_waves():
             "Preferences. Reply STOP to end all texts.)"
         )
         subject = f"Last minute: {info['org']} needs {people} {info['when']}"
-        for uid, channel in recipients:
+        for uid, how in recipients:
             key = f"urgent:{call_id}:{uid}"
-            if channel == "sms":
+            if how == "sms" and get_sms() is not None:  # else by email
                 sent += bool(_text("urgent", key, uid, text, urgent=True))
                 continue
             email = data.urgent_email(uid)

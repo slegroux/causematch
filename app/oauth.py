@@ -1,10 +1,11 @@
-"""Sign-in with an outside provider: Google, or the fake that stands in for it in
-development and tests (CAUSEMATCH_FAKE_OAUTH=1).
+"""Sign-in with an outside provider: Google, Apple, or the fake that stands in for either
+in development and tests (CAUSEMATCH_FAKE_OAUTH=1).
 
-Authorization code flow with PKCE (S256), `state` and `nonce`. /auth/google/start keeps
-all three in a short-lived signed cookie (oauth_cookie, never the session); the callback
-reads and deletes it, so a callback URL works once. The ID token is verified here, against
-Google's published keys: signature, iss, aud, exp and nonce.
+Authorization code flow with `state` and `nonce`, and PKCE (S256) for Google. Apple ignores
+PKCE: its proof is the client secret, a JWT signed with our key. /auth/{provider}/start
+keeps all three in a short-lived signed cookie (oauth_cookie, never the session); the
+callback reads and deletes it, so a callback works once. The ID token is verified here,
+against the provider's published keys: signature, iss, aud, exp and nonce.
 
 fasthtml.oauth is not used: it derives the redirect URI from the request's Host header,
 sends no state, PKCE or nonce, and never verifies the ID token.
@@ -14,21 +15,29 @@ import base64
 import functools
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import threading
+import time
 from dataclasses import dataclass
 from urllib.parse import urlencode, urlsplit
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from itsdangerous import BadData, URLSafeTimedSerializer
 
 from app import photos
 from app.auth import session_secret
-from app.config import fakes_allowed, google_oauth, is_production
+from app.config import apple_oauth, fakes_allowed, google_oauth, is_production
 
 TIMEOUT = 10  # seconds, for every call to the provider
+LABELS = {
+    "apple": "Apple",
+    "google": "Google",
+}  # the providers, in the login page's order
 COOKIE_MAX_AGE = 10 * 60  # seconds from start to callback
 PICTURE_HOST = ".googleusercontent.com"  # where Google serves profile pictures
 
@@ -108,10 +117,10 @@ JWKS = jwt.PyJWKClient(
 )
 
 
-def verify_id_token(token, client_id, nonce, jwks=None):
-    """The ID token's claims once its signature (RS256, a key from Google's JWKS), iss,
-    aud, exp and nonce check out; AuthError otherwise, Unavailable when the keys can't be
-    fetched."""
+def verify_id_token(token, client_id, nonce, jwks=None, issuers=GOOGLE_ISSUERS):
+    """The ID token's claims once its signature (RS256, a key from the provider's JWKS:
+    Google's by default), iss, aud, exp and nonce check out; AuthError otherwise,
+    Unavailable when the keys can't be fetched."""
     try:
         key = (jwks or JWKS).get_signing_key_from_jwt(token)
         claims = jwt.decode(
@@ -119,7 +128,7 @@ def verify_id_token(token, client_id, nonce, jwks=None):
             key.key,
             algorithms=["RS256"],
             audience=client_id,
-            issuer=GOOGLE_ISSUERS,
+            issuer=issuers,
             leeway=60,
             options={"require": ["exp", "iat", "iss", "aud", "sub"]},
         )
@@ -188,24 +197,129 @@ class Google:
         return _claims(self.name, verify_id_token(token, self.client_id, nonce))
 
 
+# --- Apple -------------------------------------------------------------------------------
+
+APPLE_AUTHORIZE = "https://appleid.apple.com/auth/authorize"
+APPLE_TOKEN = "https://appleid.apple.com/auth/token"
+APPLE_ISSUER = "https://appleid.apple.com"  # also the client secret's audience
+APPLE_ISSUERS = [APPLE_ISSUER]
+CLIENT_SECRET_TTL = (
+    24 * 3600
+)  # seconds; Apple allows up to 6 months, one is minted per call
+# Apple's signing keys, cached as Google's are; tests replace it
+APPLE_JWKS = jwt.PyJWKClient(
+    "https://appleid.apple.com/auth/keys", cache_keys=True, timeout=TIMEOUT
+)
+
+
+class Apple:
+    name = "apple"
+
+    def __init__(self, client_id, team_id, key_id, private_key_pem):
+        """RuntimeError (main.py refuses to start) unless the key is an EC P-256 private
+        key, as the .p8 file Apple issues is. The error never quotes the key."""
+        self.client_id, self.team_id, self.key_id = client_id, team_id, key_id
+        try:
+            key = serialization.load_pem_private_key(private_key_pem.encode(), None)
+        except (ValueError, TypeError):
+            key = None
+        p256 = isinstance(key, ec.EllipticCurvePrivateKey) and isinstance(
+            key.curve, ec.SECP256R1
+        )
+        if not p256:
+            raise RuntimeError(
+                "APPLE_PRIVATE_KEY must be Apple's .p8 key (EC P-256 PEM)"
+            )
+        self._key = key
+
+    def authorize_url(self, redirect_uri, state, nonce, code_challenge):
+        """Apple's consent page; it posts back cross-site (form_post). No PKCE."""
+        return f"{APPLE_AUTHORIZE}?" + urlencode(
+            {
+                "client_id": self.client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "response_mode": "form_post",
+                "scope": "name email",
+                "state": state,
+                "nonce": nonce,
+            }
+        )
+
+    def client_secret(self, now=None):
+        """The ES256 JWT Apple takes as the client secret, valid CLIENT_SECRET_TTL."""
+        now = int(now or time.time())
+        return jwt.encode(
+            {
+                "iss": self.team_id,
+                "sub": self.client_id,
+                "aud": APPLE_ISSUER,
+                "iat": now,
+                "exp": now + CLIENT_SECRET_TTL,
+            },
+            self._key,
+            algorithm="ES256",
+            headers={"kid": self.key_id},
+        )
+
+    def finish(self, code, verifier, redirect_uri, nonce):
+        """Exchange the code (the verifier is unused) and verify the ID token: Claims."""
+        try:
+            r = httpx.post(
+                APPLE_TOKEN,
+                data={
+                    "code": code,
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret(),
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+                timeout=TIMEOUT,
+            )
+            r.raise_for_status()
+            token = r.json()["id_token"]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            raise Unavailable(type(e).__name__) from None
+        claims = verify_id_token(
+            token, self.client_id, nonce, APPLE_JWKS, APPLE_ISSUERS
+        )
+        return _claims(self.name, claims)
+
+
+def apple_names(raw):
+    """(given, family) from the `user` field Apple posts on first consent only, JSON like
+    {"name": {"firstName": .., "lastName": ..}, "email": ..}; ("", "") for anything else.
+    The field isn't signed: it only ever names the person signing in themselves."""
+    try:
+        name = json.loads(raw).get("name")
+        given, family = name.get("firstName"), name.get("lastName")
+    except (ValueError, AttributeError, TypeError):
+        return "", ""
+    return (
+        given if isinstance(given, str) else "",
+        family if isinstance(family, str) else "",
+    )
+
+
 # --- the fake ----------------------------------------------------------------------------
 
 
 class Fake:
-    """Stands in for Google, driving the real start and callback: its authorize URL is a
-    local consent page (app/routes/oauth.py) whose form mints a one-time code bound to the
-    flow's nonce and PKCE challenge. Nothing leaves the app."""
+    """Stands in for Google or Apple, driving the real start and callback: its authorize
+    URL is a local consent page (app/routes/oauth.py) whose form mints a one-time code
+    bound to the flow's nonce and, for Google, its PKCE challenge. Nothing leaves the app."""
 
-    name = "google"  # it serves Google's routes
-
-    def __init__(self):
+    def __init__(self, name):
+        self.name = name  # it serves this provider's routes
+        self.pkce = name != "apple"  # as the real one: Apple has none
         self._codes = {}  # code -> (Claims, nonce, code_challenge)
         self._lock = threading.Lock()
 
     def authorize_url(self, redirect_uri, state, nonce, code_challenge):
-        return "/auth/fake/consent?" + urlencode(
-            {"state": state, "nonce": nonce, "code_challenge": code_challenge}
-        )
+        flow = {"provider": self.name, "state": state, "nonce": nonce}
+        if self.pkce:
+            flow["code_challenge"] = code_challenge
+        return "/auth/fake/consent?" + urlencode(flow)
 
     def mint(self, claims, nonce, code_challenge):
         code = secrets.token_urlsafe(16)
@@ -221,14 +335,14 @@ class Fake:
         if found is None:
             raise AuthError("unknown or used code")
         claims, bound_nonce, code_challenge = found
-        if not hmac.compare_digest(challenge(verifier), code_challenge):
+        if self.pkce and not hmac.compare_digest(challenge(verifier), code_challenge):
             raise AuthError("PKCE mismatch")
         if not nonce or not hmac.compare_digest(bound_nonce, nonce):
             raise AuthError("nonce mismatch")
         return claims
 
 
-_fake = Fake()
+_fakes = {name: Fake(name) for name in LABELS}
 
 
 def fake_enabled(env=os.environ):
@@ -243,13 +357,23 @@ def fake_enabled(env=os.environ):
     return True
 
 
-def get_google(env=os.environ):
-    """The provider behind the Google button: the fake, Google, or None (no button)."""
+def get_provider(name, env=os.environ):
+    """The provider behind a sign-in button: the fake, the real one, or None (no button,
+    and its routes answer 404) for one not configured or not known."""
+    if name not in LABELS:
+        return None
     if fake_enabled(env):
-        return _fake
-    if creds := google_oauth(env):
+        return _fakes[name]
+    if name == "google" and (creds := google_oauth(env)):
         return Google(*creds)
+    if name == "apple" and (creds := apple_oauth(env)):
+        return Apple(*creds)
     return None
+
+
+def enabled_providers(env=os.environ):
+    """[(name, label)] of the configured providers, in the login page's order."""
+    return [(n, label) for n, label in LABELS.items() if get_provider(n, env)]
 
 
 # --- the profile picture -----------------------------------------------------------------

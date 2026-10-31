@@ -6,8 +6,10 @@ import re
 
 import pytest
 from conftest import FORM, uid_of
+from test_oauth import EMAIL as OAUTH_EMAIL
+from test_oauth import google_sign_in
 
-from app import data
+from app import data, notify
 from app.choices import INTERESTS, MAX_INTERESTS
 from app.db import profiles
 from app.forms import HIDDEN_CHARS_MESSAGE
@@ -293,3 +295,38 @@ def test_email_and_other_causes_are_edited_in_the_profile(user):
     p = profiles[uid_of(user)]
     assert (p.email, p.other_causes) == ("sam@example.com", "owls")
     assert save(user, email="nope").status_code == 400
+
+
+# --- Me: add a mobile number ----------------------------------------------------------
+
+
+def _phoneless(anon):
+    """A volunteer who signed in with Google: no number yet."""
+    google_sign_in(anon)
+    (p,) = profiles(where="email = ?", where_args=[OAUTH_EMAIL])
+    profiles.update(id=p.id, onboarded_at="2026-01-01T00:00:00", heard_from="skipped")
+    return p.id
+
+
+def test_a_volunteer_adds_and_verifies_a_number_for_texts(anon):
+    uid = _phoneless(anon)
+    page = anon.get("/me/profile").text
+    assert "Add a mobile number for text reminders" in page
+    assert notify.channel(uid) == "email"
+    r = anon.post("/me/phone/send", data={"phone": "(310) 555-0177"})
+    assert "We texted a code to +13105550177" in r.text
+    assert ("+13105550177", "000000") in notify.get_verifier().sent
+    assert anon.post("/me/phone/verify", data={"code": "123456"}).status_code == 400
+    r = anon.post("/me/phone/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.headers["location"] == "/me/profile?notice=phone"
+    assert profiles[uid].phone == "+13105550177" and notify.channel(uid) == "sms"
+    assert "***0177" in anon.get("/me/profile").text
+
+
+def test_a_number_on_another_account_is_refused(anon, new_user):
+    uid = _phoneless(anon)
+    anon.post("/me/phone/send", data={"phone": new_user.phone})
+    r = anon.post("/me/phone/verify", data={"code": "000000"})
+    assert r.status_code == 400
+    assert "That number is already on another account" in r.text
+    assert profiles[uid].phone is None

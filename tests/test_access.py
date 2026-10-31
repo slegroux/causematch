@@ -64,6 +64,8 @@ ROUTES = {
     ("POST", "/org/login/demo"): ("public", None),  # the same
     ("GET", "/auth/google/start"): ("public", None),  # 404 without a provider
     ("GET", "/auth/google/callback"): ("public", None),  # the oauth cookie guards it
+    ("GET", "/auth/apple/start"): ("public", None),  # 404 without a provider
+    ("POST", "/auth/apple/callback"): ("public", None),  # cross-site; the oauth cookie
     ("GET", "/auth/fake/consent"): ("public", None),  # the fake provider only
     ("POST", "/auth/fake/consent"): ("public", None),
     ("POST", "/org/login/send"): ("public", None),
@@ -159,6 +161,8 @@ ROUTES = {
     ("POST", "/me/profile/photo"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo/remove"): ("volunteer", "own-record"),
     ("POST", "/me/profile/details"): ("volunteer", "own-record"),
+    ("POST", "/me/phone/send"): ("volunteer", "own-record"),  # 404 without Twilio
+    ("POST", "/me/phone/verify"): ("volunteer", "own-record"),
     ("POST", "/deck/photo-nudge/dismiss"): ("volunteer", "own-record"),
     ("POST", "/admin/reports/{report_id}/remove-photo"): ("admin", "own-record"),
     # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's

@@ -49,7 +49,9 @@ UPLOADS = (
 UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
 # Cloud Scheduler calls these with a bearer token and sends no Origin. Exact paths: a
 # future /tasks/ route isn't exempt until it is listed (and checks the token).
-ORIGIN_EXEMPT = frozenset({"/tasks/reminders", "/tasks/urgent"})
+# Apple posts its sign-in back from appleid.apple.com (form_post): instead of the Origin,
+# the flow cookie's state guards it (app/routes/oauth.py apple_callback).
+ORIGIN_EXEMPT = frozenset({"/tasks/reminders", "/tasks/urgent", "/auth/apple/callback"})
 # Static assets may be cached; every other response may hold someone's data.
 CACHEABLE = ("/static/", "/favicon.ico")
 STYLESHEETS = (

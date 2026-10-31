@@ -18,6 +18,7 @@ from app.config import (
     phone_hash_key,
     public_base_url,
     require_env,
+    require_volunteer_sign_in,
     sms_ceilings,
     tasks_token,
     trusted_proxy_hops,
@@ -46,10 +47,11 @@ from app.routes import oauth as oauth_routes
 from app.routes.safety import not_found
 
 require_env()  # an undeclared environment, or a preview without its password, never runs
-notify.get_verifier()  # refuse to start when sign-in codes can't be sent
+require_volunteer_sign_in()  # ... nor production with no Twilio, Google or Apple sign-in
+notify.get_verifier()  # ... or Twilio is half set (unset: no phone sign-in, email instead)
 notify.get_emailer()  # ... or sign-in links
 notify.get_sms()  # ... or texts
-oauth.get_google()  # ... or Google sign-in is half set, or faked outside dev and test
+oauth.enabled_providers()  # ... or Google is half set, Apple's key unreadable, or faked
 tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact

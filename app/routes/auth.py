@@ -31,17 +31,24 @@ INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 SUSPENDED = "This account can't sign in. Contact us if that is a mistake."
 
 
-def GoogleSignIn():
-    """Continue with Google, when a provider serves it (app/oauth.py get_google)."""
-    if oauth.get_google() is None:
+def ProviderSignIn():
+    """Continue with Apple, then Google: each when a provider serves it (app/oauth.py
+    enabled_providers)."""
+    providers = oauth.enabled_providers()
+    if not providers:
         return None
     return Div(
-        A(
-            "Continue with Google",
-            href="/auth/google/start",
-            cls="uk-btn uk-btn-primary w-full h-12 text-lg shadow-warm",
-        ),
-        H2("Or use your phone number", cls="pt-6 font-bold text-ink"),
+        *[
+            A(
+                f"Continue with {label}",
+                href=f"/auth/{name}/start",
+                cls="uk-btn uk-btn-primary w-full h-12 text-lg shadow-warm",
+            )
+            for name, label in providers
+        ],
+        H2("Or use your phone number", cls="pt-6 font-bold text-ink")
+        if notify.phone_sign_in_enabled()  # goes with PhoneForm's phone form
+        else None,
         cls="space-y-3",
     )
 
@@ -50,7 +57,7 @@ def PhoneForm(phone="", error=None):
     return SignInPage(
         "Sign in",
         DemoSignIn(),
-        GoogleSignIn(),
+        ProviderSignIn(),
         Form(
             Field(
                 "Mobile number",
@@ -70,7 +77,9 @@ def PhoneForm(phone="", error=None):
             action="/login/send",
             method="post",
             cls="space-y-4",
-        ),
+        )
+        if notify.phone_sign_in_enabled()  # off while Twilio is unset
+        else None,
         error=error,
         intro=INTRO,
         aside=Div(
@@ -115,6 +124,13 @@ def CodeForm(phone, error=None):
     )
 
 
+def phone_off():
+    """The phone-code routes' answer while Twilio is unset (notify.phone_sign_in_enabled)."""
+    return security.page(
+        404, "Not found", "That page isn't here. Go back and try again."
+    )
+
+
 @ar("/login", methods=["GET"])
 def login_page(sess):
     pending_phone(sess)  # an expired number leaves the cookie
@@ -130,6 +146,8 @@ async def send(req, sess):
 
 
 def _sync_send(req, form, sess):
+    if not notify.phone_sign_in_enabled():
+        return phone_off()
     phone = form.get("phone", "")
     e164 = normalize_phone(phone)
     if not e164:
@@ -159,6 +177,8 @@ async def verify(req, sess):
 
 
 def _sync_verify(req, form, sess):
+    if not notify.phone_sign_in_enabled():
+        return phone_off()
     e164 = pending_phone(sess)  # only the number a code was sent to, for 15 minutes
     if not e164:
         return PhoneForm(error="Enter your number to get a code.")

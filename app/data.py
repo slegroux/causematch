@@ -1868,6 +1868,33 @@ def phone_suspended(phone):
     )
 
 
+def add_volunteer_phone(uid, phone):
+    """Give a volunteer without a number the one they just verified (Me's add-a-number).
+    None when saved, else why not: "taken" when another live profile holds it (the unique
+    index decides, so a race can't give two profiles one number), "refused" when a deleted
+    account suspended with it left its hash, or the profile already has a number. A deleted
+    account's org blocks on the number apply to this profile, as at a phone sign-up."""
+    kept = _db.retained_phones(where="hash = ?", where_args=[_phone_hash(phone)])
+    if kept and kept[0].suspended:
+        return "refused"
+    try:
+        with _db.db.conn:
+            _db.db.execute(
+                "UPDATE profile SET phone = ? WHERE id = ? AND role = 'volunteer' "
+                "AND coalesce(phone, '') = '' AND deleted_at IS NULL",
+                [phone, uid],
+            )
+            if _db.db.conn.changes() != 1:
+                return "refused"
+            for blocker_id, org_id in json.loads(kept[0].blocks_json) if kept else []:
+                _add_block(
+                    blocker_id=blocker_id, blocked_user_id=uid, blocked_org_id=org_id
+                )
+    except apsw.ConstraintError:
+        return "taken"
+    return None
+
+
 def sign_out_everywhere(uid):
     """Invalidate every session cookie this profile holds."""
     _db.profiles.update(
