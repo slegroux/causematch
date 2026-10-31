@@ -65,7 +65,7 @@ main.py          app entry point (uvicorn flags match the Procfile)
 app/             data, ranking, security, UI components
 app/routes/      volunteer, nonprofit and admin pages
 static/          htmx, Franken UI, compiled Tailwind, theme tokens, Nunito
-scripts/         demo, screenshots, admin and import tools, CSS build
+scripts/         demo, demo video (scripts/video), screenshots, admin and import tools, CSS build
 tests/           pytest suite
 docs/            architecture and operations
 ```
