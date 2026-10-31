@@ -679,6 +679,32 @@ def test_the_access_log_drops_sign_in_tokens():
     assert "pass" not in rec.getMessage() and "abc" not in rec.getMessage()
 
 
+def test_the_logs_drop_a_certificates_id():
+    for path, shown in (
+        ("/check/AbC_-123", "/check/[redacted]"),
+        ("/hours/certificate/AbC_-123", "/hours/certificate/[redacted]"),
+        ("/hours/certificate/AbC_-123.pdf", "/hours/certificate/[redacted].pdf"),
+        (
+            "/hours/certificate/AbC_-123/withdraw",
+            "/hours/certificate/[redacted]/withdraw",
+        ),
+        ("/check/AbC_-123?x=1", "/check/[redacted]?x=1"),
+        ("/hours", "/hours"),
+    ):
+        assert security.redact_query(path) == shown
+    rec = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        "",
+        0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4:5", "GET", "/check/AbC_-123", "1.1", 200),
+        None,
+    )
+    security.RedactTokens().filter(rec)
+    assert "AbC" not in rec.getMessage()
+
+
 # --- client IP ------------------------------------------------------------------------------
 
 

@@ -280,7 +280,7 @@ class Guard:
                 "request %s: %s %s raised %s\n%s",
                 rid,
                 method,
-                path,
+                redact_query(path),
                 type(e).__name__,
                 frames,
             )
@@ -598,6 +598,7 @@ BUCKETS = {
     "safety": (10, 3600),  # report and block POSTs
     "upload": (10, 600),  # pictures (UPLOADS): 10 in a row, then one a minute
     "preview": (10, 600),  # wrong preview passwords, per client address
+    "pdf": (10, 600),  # certificate PDF downloads: each costs about 0.1 to 0.5 s of CPU
 }
 # POST paths and their bucket
 THROTTLED = (
@@ -646,14 +647,18 @@ def reset_buckets():
 
 
 REDACTED = ("token", "access")
+# a certificate's id is the credential for its check link and its owner's pages
+_CERTIFICATE_PATH = re.compile(r"^(/check|/hours/certificate)/[^/?.]+")
 
 
 def redact_query(target):
     """target ("/path?query") with the values of REDACTED parameters replaced, matched by
-    name as parse_qsl reads it, so "acc%65ss=" is caught too."""
+    name as parse_qsl reads it, so "acc%65ss=" is caught too, and a certificate's id in
+    /check/{id} or /hours/certificate/{id}[.pdf|/withdraw] too."""
     path, sep, query = target.partition("?")
+    path = _CERTIFICATE_PATH.sub(r"\1/[redacted]", path)
     if not sep:
-        return target
+        return path
     parts = []
     for part in query.split("&"):
         name, eq, _ = part.partition("=")

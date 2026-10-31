@@ -495,6 +495,18 @@ def _snapshot(name, shifts=1):
     }
 
 
+def test_certificate_pdf_downloads_are_limited_per_user():
+    a, cid, _ = _issued()
+    path = f"/hours/certificate/{cid}.pdf"
+    capacity = security.BUCKETS["pdf"][0]
+    assert all(a.get(path).status_code == 200 for _ in range(capacity))
+    r = a.get(path)
+    assert r.status_code == 429 and "retry-after" in r.headers
+    assert (
+        a.get(f"/hours/certificate/{cid}").status_code == 200
+    )  # the page is not limited
+
+
 def test_certificate_pdf_builder_runs_on_its_own_for_long_lists_and_any_name():
     check = "http://localhost:5001/check/abc"
     many = build_pdf(_snapshot("Sam Rivera", 60), "abc", check)

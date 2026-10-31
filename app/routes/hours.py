@@ -281,6 +281,8 @@ def _sync_pdf(uid, cert_id):
         return Response(NOT_FOUND, status_code=404)
     if not c["genuine"]:
         return Response(NOT_FOUND, status_code=404)
+    if not security.take_token("pdf", uid):
+        return security.too_many(retry_after=security.BUCKETS["pdf"][1])
     pdf = build_pdf(c["snapshot"], c["id"], f"{public_base_url()}/check/{c['id']}")
     return Response(
         pdf,
