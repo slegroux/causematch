@@ -112,7 +112,8 @@ def CertificateCard(o):
         ),
         P(
             "Its check link shows your full name, this nonprofit and its EIN, the "
-            "period and the total hours.",
+            "period, the total hours and the issue date. It works until you withdraw "
+            "the certificate or get a new one for the same period.",
             cls=TextPresets.muted_sm,
         ),
         PlainForm(

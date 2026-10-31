@@ -797,7 +797,8 @@ def test_privacy_says_what_a_certificate_check_link_shows_and_what_stays(anon):
     for words in (
         "Hours certificates",
         "check link or QR code",
-        "full name, the nonprofit and its EIN, the period, the total hours",
+        "full name, the nonprofit and its EIN, the period, the total hours, the issue date",
+        "or get a new one for the same nonprofit and period",
         "The link doesn't expire",
         "stay there after a coordinator's account is deleted",
         "erases the name, the shifts and the signature",

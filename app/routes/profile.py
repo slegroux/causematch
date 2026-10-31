@@ -151,6 +151,11 @@ def DetailsForm(p, f=None):
                 autocomplete="family-name",
             ),
         ),
+        P(
+            "If you change your name, hours confirmed before the change can't go on a "
+            "certificate.",
+            cls=TextPresets.muted_sm,
+        ),
         Field(
             "Pronouns (optional)",
             TextInput(

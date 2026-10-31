@@ -1671,8 +1671,8 @@ def certificate_options(uid):
     ]
 
 
-def _volunteer_full_name(uid):
-    p = _db.profiles[uid]
+def _full_name(p):
+    """A volunteer's first and last name from their profile row, as a certificate shows it."""
     return " ".join(
         x for x in ((p.display_name or "").strip(), (p.last_name or "").strip()) if x
     )
@@ -1704,13 +1704,15 @@ def issue_certificate(uid, org_id, period):
             raise LookupError("no confirmed hours there in that period")
         if not (p.last_name or "").strip():
             raise NameRequired("a certificate needs your last name")
-        # both are _now() strings (UTC, same format), so they compare as text
+        # both are _now() strings (UTC, same format), so they compare as text; hours
+        # confirmed in the second of the rename, or with no time recorded, are refused
         if p.name_changed_at and any(
-            r["confirmed_at"] and r["confirmed_at"] < p.name_changed_at for r in rows
+            not r["confirmed_at"] or r["confirmed_at"] <= p.name_changed_at
+            for r in rows
         ):
             raise NameChanged("hours confirmed before you changed your name")
         snapshot = {
-            "volunteer": _volunteer_full_name(uid),
+            "volunteer": _full_name(p),  # the row the name checks read, not a new read
             "org": {
                 "name": rows[0]["org"],
                 "ein": rows[0]["ein"] or "",
@@ -3894,7 +3896,7 @@ def delete_account(uid):
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
-            "free_dates = NULL, verified_hours = NULL, "
+            "free_dates = NULL, verified_hours = NULL, name_changed_at = NULL, "
             "last_name = NULL, pronouns = NULL, bio = NULL, interests = NULL, "
             "photo_key = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",

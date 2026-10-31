@@ -159,6 +159,7 @@ def test_deleting_the_account_withdraws_and_scrubs_its_certificates():
     data.delete_account(a.uid)
     (cert,) = certificates()
     assert cert.withdrawn_at and cert.snapshot is None and cert.signature is None
+    assert profiles[a.uid].name_changed_at is None
     with pytest.raises(LookupError):
         data.my_certificate(a.uid, cert.id)
 
@@ -227,6 +228,21 @@ def test_changing_a_name_before_any_confirmed_hours_is_fine():
     _shift(m, 3, 180, org.uid, marked_at="2999-01-01T00:00:00+00:00")
     _certify(a, orgs()[0].id, "all")
     assert data.check_certificate(certificates()[0].id)["volunteer"] == "Zed Lee"
+
+
+def test_hours_confirmed_in_the_second_of_a_rename_or_with_no_time_are_refused():
+    a, m, org = _hired("Zelda")
+    stamp = "2026-11-05T10:00:00+00:00"
+    _shift(m, 3, 180, org.uid, marked_at=stamp)
+    profiles.update(id=a.uid, name_changed_at=stamp)  # the same second
+    with pytest.raises(data.NameChanged):
+        data.issue_certificate(a.uid, orgs()[0].id, "all")
+    (done,) = shifts(where="status = 'completed'")
+    shifts.update(id=done.id, marked_at=None)  # no time recorded: not trusted
+    with pytest.raises(data.NameChanged):
+        data.issue_certificate(a.uid, orgs()[0].id, "all")
+    shifts.update(id=done.id, marked_at="2026-11-05T10:00:01+00:00")
+    data.issue_certificate(a.uid, orgs()[0].id, "all")  # a second later: fine
 
 
 def test_certificate_needs_a_last_name():
