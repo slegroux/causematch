@@ -22,6 +22,7 @@ from app.ui import (
     HEART,
     LIKE_SENT,
     MATCH_STATUS,
+    NEXT,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
@@ -166,8 +167,10 @@ def MatchRow(m):
         Details(  # the rarely wanted ways out, behind one tap (no script)
             Summary(
                 "More",
-                cls="inline-flex min-h-11 cursor-pointer list-none items-center "
-                "text-sm font-semibold text-ink-muted [&::-webkit-details-marker]:hidden",
+                Icon(NEXT, size=16, cls="rotate-90"),
+                cls="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 "
+                "text-sm font-semibold text-ink-muted underline underline-offset-4 "
+                "hover:text-ink [&::-webkit-details-marker]:hidden",
             ),
             Div(
                 A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
