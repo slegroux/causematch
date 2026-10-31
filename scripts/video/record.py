@@ -4,8 +4,8 @@ volunteer's hours get confirmed.
 python record.py BASE_URL SERVER_LOG BEATS.json DURATIONS.json DB OUT_DIR
 
 BASE_URL is scripts/video/serve.py's server and DB its throwaway database (one step edits
-it: "a few days later" moves the shift's start into the past). Three recordings (phone:
-Riley; jordan: the new coordinator; admin) and timeline.json. Each beat lasts at least as
+it: "a few days later" moves the shift's start into the past). Four recordings (phone:
+Riley; jordan: the new coordinator; admin; guest: a signed-out visitor) and timeline.json. Each beat lasts at least as
 long as its voice-over line. Any console error, page error, failed request, 5xx answer or
 server error makes the run fail, after the recordings are saved so you can look.
 """
@@ -17,6 +17,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
@@ -193,7 +194,7 @@ def beat(bid):
     need_until = start + DUR[bid] + GAP
 
 
-def story(vol, org, adm):
+def story(vol, org, adm, gst):
     # intro, under the title card: the admin signs in, every page is opened
     beat("intro")
     before = email_count()
@@ -485,7 +486,54 @@ def story(vol, org, adm):
     hold(1.0)
     smooth_to(vol, vol.get_by_text("Confirmed by").first)
 
-    # 16. Riley prefers nonprofits that confirm hours; the deck's cards say so
+    # 16. Riley adds a last name (a certificate carries the full name), then gets one for
+    # Silver Lake Garden Friends: every confirmed shift, the total, a signature code
+    beat("certificate")
+    tap(vol, vol.get_by_role("link", name="Me").last)
+    vol.wait_for_url("**/profile")
+    hold(0.5)
+    tap(vol, vol.get_by_role("link", name="Your profile").first)
+    vol.wait_for_url("**/me/profile")
+    hold(0.4)
+    last = vol.get_by_label("Last name (optional)")
+    smooth_to(vol, last)
+    type_in(vol, last, "Chen", 90)
+    tap(vol, vol.get_by_role("button", name="Save profile"))
+    vol.wait_for_url("**notice=details**")
+    hold(0.8)
+    tap(vol, vol.get_by_role("link", name="Me").last)
+    vol.wait_for_url("**/profile")
+    hold(0.4)
+    tap(vol, vol.get_by_role("link", name="Shifts and hours").first)
+    vol.wait_for_url("**/history")
+    certificates = vol.get_by_role("heading", name="Certificates")
+    smooth_to(vol, certificates)
+    period = vol.locator("select[name=period]").first
+    smooth_to(vol, period)
+    period.select_option("all")
+    hold(1.0)
+    tap(vol, vol.get_by_role("button", name="Get a certificate").first)
+    vol.wait_for_url("**/hours/certificate/**")
+    vol.get_by_text("Volunteer hours certificate").wait_for()
+    hold(1.2)
+    smooth_to(vol, vol.get_by_text("Signature code:"))
+    hold(0.8)
+    link = vol.get_by_text("/check/").first
+    smooth_to(vol, link)
+    check_path = urlsplit(link.inner_text().strip()).path
+    hold(0.8)
+
+    # 17. anyone with the link: a fresh browser, signed out, on the laptop side
+    beat("check")
+    gst.goto(check_path)
+    gst.get_by_role("heading", name="Genuine certificate").wait_for()
+    hold(1.0)
+    point(gst, gst.get_by_text("Total hours"))
+    hold(2.5)
+    point(gst, gst.get_by_text("Signature code"))
+    hold(1.0)
+
+    # 18. Riley needs hours confirmed (one checkbox); the deck shows only nonprofits that do
     beat("prefer")
     tap(vol, vol.get_by_role("link", name="Me").last)
     vol.wait_for_url("**/profile")
@@ -495,28 +543,21 @@ def story(vol, org, adm):
     hold(0.6)
     tap(vol, vol.locator("a[href='/me/preferences/causes']"))
     vol.wait_for_url("**/me/preferences/causes")
-    prefer = vol.locator("label:has(input[name=verified_hours][value=prefer])")
-    smooth_to(vol, prefer)
+    need = vol.locator("label:has(input[name=verified_hours])")
+    smooth_to(vol, need)
     hold(0.8)
-    tap(vol, prefer)
-    hold(0.8)
+    tap(vol, need)
+    if not need.locator("input").is_checked():
+        raise RuntimeError("the hours checkbox didn't tick")
+    hold(1.4)
     tap(vol, vol.get_by_role("button", name="Save", exact=True))
     vol.wait_for_url("**saved=1**")
     tap(vol, vol.get_by_role("link", name="Openings").last)
     vol.wait_for_url("**/deck**")
     hold(2.0)
-    for _ in range(12):
-        if (
-            vol.locator("[data-swipe-card]")
-            .first.get_by_text("Confirms your hours")
-            .count()
-        ):
-            break
-        tap(vol, vol.get_by_role("button", name="Pass").first)
-        hold(1.4)
-    else:
-        raise RuntimeError("no deck card says it confirms hours")
-    hold(1.0)
+    # only nonprofits that confirm hours are left: the top card says so
+    vol.locator("[data-swipe-card]").first.get_by_text("Confirms your hours").wait_for()
+    hold(1.5)
 
     beat("outro")  # waits for the last line; the outro itself is a card
     timeline.append({"id": "end", "t": round(time.monotonic() - t0, 2)})
@@ -543,28 +584,43 @@ def main():
         }
         jordan_ctx = ctx(record_video_dir=str(OUT / "raw-jordan"), **laptop)
         admin_ctx = ctx(record_video_dir=str(OUT / "raw-admin"), **laptop)
+        # a fresh browser, never signed in: it opens a certificate's check link
+        guest_ctx = ctx(record_video_dir=str(OUT / "raw-guest"), **laptop)
         vol = phone_ctx.new_page()
         t0 = time.monotonic()
         org = jordan_ctx.new_page()
         off_jordan = time.monotonic() - t0
         adm = admin_ctx.new_page()
         off_admin = time.monotonic() - t0
-        for name, page in (("riley", vol), ("jordan", org), ("admin", adm)):
+        gst = guest_ctx.new_page()
+        off_guest = time.monotonic() - t0
+        for name, page in (
+            ("riley", vol),
+            ("jordan", org),
+            ("admin", adm),
+            ("guest", gst),
+        ):
             watch(name, page)
 
         failure = None
         try:
-            story(vol, org, adm)
+            story(vol, org, adm, gst)
         except Exception as e:  # noqa: BLE001  keep the recordings and a still of each page to look at
             failure = e
-            for name, page in (("riley", vol), ("jordan", org), ("admin", adm)):
+            for name, page in (
+                ("riley", vol),
+                ("jordan", org),
+                ("admin", adm),
+                ("guest", gst),
+            ):
                 page.screenshot(path=str(OUT / f"failed-{name}.png"))
         paths = {
             "phone": vol.video.path(),
             "jordan": org.video.path(),
             "admin": adm.video.path(),
+            "guest": gst.video.path(),
         }
-        for c in (phone_ctx, jordan_ctx, admin_ctx):
+        for c in (phone_ctx, jordan_ctx, admin_ctx, guest_ctx):
             c.close()
         browser.close()
 
@@ -577,6 +633,7 @@ def main():
                     "phone": 0.0,
                     "jordan": round(off_jordan, 3),
                     "admin": round(off_admin, 3),
+                    "guest": round(off_guest, 3),
                 },
                 "beats": timeline,
             },

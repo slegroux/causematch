@@ -48,7 +48,6 @@ from app.choices import (
     SKILLS,
     URGENT_PER_WEEK,
     URGENT_WINDOWS,
-    VERIFIED_HOURS,
 )
 from app.forms import bad_request, query, str_form
 from app.geo import neighborhoods, shown_point
@@ -470,12 +469,17 @@ def CausesCards(f, error=None):
             Hidden(name="sections", value="causes"),
             *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
             OnlyShow(f, "causes", hint=True),
-            Group(
-                "Nonprofits that confirm my hours",
-                "grid grid-cols-3 gap-2",
+            Chip(
+                "checkbox",
                 "verified_hours",
-                VERIFIED_HOURS,
-                f["verified_hours"],
+                "only",
+                "I need my hours confirmed",
+                f["verified_hours"] == "only",
+            ),
+            P(
+                "For school, court or a work program: only nonprofits that confirm "
+                "hours are shown.",
+                cls="-mt-2 text-sm text-ink-muted",
             ),
             Chip(
                 "checkbox",
@@ -878,7 +882,9 @@ def _sync_save(req, form):
             if form.get(f"only_{key}", "only" if key in saved["dealbreakers"] else "")
             == "only"
         ],
-        "verified_hours": form.get("verified_hours", saved["verified_hours"]),
+        "verified_hours": ("only" if form.get("verified_hours") == "only" else "")
+        if "causes" in marks
+        else saved["verified_hours"],
         "surprise": form.get("surprise") == "1"
         if "causes" in marks
         else saved["surprise"],
@@ -942,7 +948,6 @@ def _sync_save(req, form):
             form.get(f"only_{key}", "prefer") not in ("prefer", "only")
             for key, _ in DEALBREAKERS
         )
-        or f["verified_hours"] not in {v for v, _ in VERIFIED_HOURS}
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):

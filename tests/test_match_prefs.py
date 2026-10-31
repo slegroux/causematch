@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import re
 from datetime import datetime, timedelta
 
 import pytest
@@ -1269,13 +1270,27 @@ def test_verified_hours_only_hides_nonprofits_that_do_not_confirm(bare):
     add("confirms", DOWNTOWN)
     save(bare, work_form(verified_hours="only"))
     assert set(cards(bare)) == {"confirms"}
-    for mode in ("", "prefer"):
-        save(bare, work_form(verified_hours=mode))
-        assert set(cards(bare)) == {"confirms", "does not"}
-    shown = cards(bare)  # prefer saved last: the confirming one is first, and says so
-    assert list(shown) == ["confirms", "does not"]
-    assert "Confirms your hours" in str(shown["confirms"]["why"])
+    assert "Confirms your hours" in str(cards(bare)["confirms"]["why"])
+    save(bare, work_form())  # unticked: nothing is posted
+    assert data.preferences(uid_of(bare))["verified_hours"] == ""
+    shown = cards(bare)
+    assert set(shown) == {"confirms", "does not"}
     assert "Confirms your hours" not in str(shown["does not"]["why"])
+
+
+def test_verified_hours_a_stored_prefer_reads_as_off_and_the_box_is_unticked(bare):
+    uid = uid_of(bare)
+    profiles.update(id=uid, verified_hours="prefer")
+    assert data.preferences(uid)["verified_hours"] == ""
+    page = bare.get("/me/preferences/causes").text
+    box = re.search(r'<input[^>]*name="verified_hours"[^>]*>', page).group(0)
+    assert 'value="only"' in box and "checked" not in box
+    profiles.update(id=uid, verified_hours="only")
+    box = re.search(
+        r'<input[^>]*name="verified_hours"[^>]*>',
+        bare.get("/me/preferences/causes").text,
+    ).group(0)
+    assert "checked" in box
 
 
 def test_verified_hours_only_cannot_be_liked_by_id_and_offers_a_way_out(bare):
@@ -1286,7 +1301,7 @@ def test_verified_hours_only_cannot_be_liked_by_id_and_offers_a_way_out(bare):
     assert data.relaxations(uid_of(bare))["key"] == "only_verified"
     data.apply_relaxation(uid_of(bare), "only_verified")
     assert [c["title"] for c in data.deck(uid_of(bare), 5)] == ["does not"]
-    assert data.preferences(uid_of(bare))["verified_hours"] == "prefer"
+    assert data.preferences(uid_of(bare))["verified_hours"] == ""
 
 
 def test_verified_hours_a_coordinator_sets_it_and_a_non_member_cannot(coord):
