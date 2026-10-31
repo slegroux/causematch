@@ -235,7 +235,7 @@ body:has(.cm-tabbar) .cm-savebar {
   /* a solid strip of the page's color, the width of the screen: a card taller than the
      space scrolls cleanly under it, never half-hidden behind the round buttons */
   margin-inline: -1rem;
-  padding: 0.5rem 1rem 0.75rem;
+  padding: 0.25rem 1rem; /* the count line under Pass and Like takes the rest */
   background-color: hsl(var(--cm-cream));
   box-shadow: 0 -10px 12px -10px rgb(43 30 22 / 0.18);
 }

@@ -321,6 +321,39 @@ def Pill(text, tone):
     )
 
 
+# One word per state, on every page. A table entry is (label, PILL tone), or one per side
+# ("volunteer" / "org") where the subject differs.
+MATCH_STATUS = {
+    "pending": {
+        "volunteer": ("Waiting for the nonprofit", "wait"),
+        "org": ("Waiting for you", "wait"),
+    },
+    "accepted": ("Accepted", "good"),
+    "declined": {
+        "volunteer": ("Not this time", "off"),
+        "org": ("Declined", "off"),
+    },
+    "withdrawn": ("Withdrawn", "off"),
+}
+SHIFT_STATUS = {
+    "upcoming": ("Upcoming", "info"),
+    "confirmed": ("Confirmed", "good"),  # "Still coming?" answered yes
+    "to_mark": {  # started, not marked by the nonprofit yet
+        "volunteer": ("Waiting for the nonprofit", "wait"),
+        "org": ("Not marked yet", "wait"),
+    },
+    "completed": ("Attended", "good"),
+    "no_show": ("No-show", "off"),
+}
+
+
+def status_pill(table, key, side):
+    """The Pill for a state in MATCH_STATUS or SHIFT_STATUS, worded for the "volunteer" or
+    "org" side."""
+    entry = table[key]
+    return Pill(*(entry[side] if isinstance(entry, dict) else entry))
+
+
 def AddToHomeScreen():
     """A one-line hint at the top of the deck, hidden until static/a2hs.js decides
     (iPhone Safari, in a tab, not dismissed). In the page's flow, never fixed: fixed, it

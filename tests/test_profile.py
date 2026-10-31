@@ -293,3 +293,7 @@ def test_email_and_other_causes_are_edited_in_the_profile(user):
     p = profiles[uid_of(user)]
     assert (p.email, p.other_causes) == ("sam@example.com", "owls")
     assert save(user, email="nope").status_code == 400
+    page = user.get("/me/profile").text
+    assert "Only we see" in page
+    assert page.index("Only we see") < page.index('name="email"')
+    assert page.index('name="interests"') < page.index("Only we see")

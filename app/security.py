@@ -117,7 +117,7 @@ def csp():
 
 
 # The pages whose "Use my location" button (static/geo.js) may ask for the device location.
-GEOLOCATION_PATHS = ("/me/preferences", "/onboarding")
+GEOLOCATION_PATHS = ("/me/preferences", "/me/preferences/causes", "/onboarding")
 
 
 def security_headers(path):

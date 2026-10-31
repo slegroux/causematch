@@ -256,7 +256,13 @@ def story(vol, org, adm):
     smooth_to(org, confirms)
     tap(org, confirms)
     hold(0.6)
-    tap(org, org.get_by_role("button", name="Save details"))
+    # the Organization page has two "Save details": the one in the confirms-hours form
+    tap(
+        org,
+        org.locator("form")
+        .filter(has=confirms)
+        .get_by_role("button", name="Save details"),
+    )
     org.wait_for_url("**notice=saved**")
     hold(1.0)
     tap(org, org.get_by_role("link", name="Openings").first)
@@ -336,6 +342,9 @@ def story(vol, org, adm):
     hold(0.6)
     tap(vol, vol.get_by_role("link", name="Preferences").first)
     vol.wait_for_url("**/me/preferences")
+    hold(0.6)
+    tap(vol, vol.locator("a[href='/me/preferences/when']"))
+    vol.wait_for_url("**/me/preferences/when")
     smooth_to(vol, vol.locator("input[name=availability]").first)
     for slot in ("sat_morning", "sun_morning", "wed_evening"):
         box = vol.locator(f"input[name=availability][value={slot}]")
@@ -344,7 +353,7 @@ def story(vol, org, adm):
         point(vol, target)
         target.click(force=True)
         hold(0.4)
-    tap(vol, vol.get_by_role("button", name="Save preferences"))
+    tap(vol, vol.get_by_role("button", name="Save", exact=True))
     vol.wait_for_url("**saved=1**")
 
     # 8. the deck: like Jordan's opening
@@ -447,13 +456,13 @@ def story(vol, org, adm):
     org.get_by_text(f"{SHIFT_HOURS} hours confirmed").wait_for()
     hold(0.8)
 
-    # 15. Riley's My hours
+    # 15. Riley's hours, at the foot of Shifts and hours
     beat("hours")
     tap(vol, vol.get_by_role("link", name="Me").last)
     vol.wait_for_url("**/profile")
     hold(0.8)
-    tap(vol, vol.get_by_role("link", name="My hours").first)
-    vol.wait_for_url("**/hours")
+    tap(vol, vol.get_by_role("link", name="Shifts and hours").first)
+    vol.wait_for_url("**/history")
     vol.get_by_text("Confirmed by").first.wait_for()
     hold(1.0)
     smooth_to(vol, vol.get_by_text("Confirmed by").first)
@@ -465,12 +474,15 @@ def story(vol, org, adm):
     hold(0.6)
     tap(vol, vol.get_by_role("link", name="Preferences").first)
     vol.wait_for_url("**/me/preferences")
+    hold(0.6)
+    tap(vol, vol.locator("a[href='/me/preferences/causes']"))
+    vol.wait_for_url("**/me/preferences/causes")
     prefer = vol.locator("label:has(input[name=verified_hours][value=prefer])")
     smooth_to(vol, prefer)
     hold(0.8)
     tap(vol, prefer)
     hold(0.8)
-    tap(vol, vol.get_by_role("button", name="Save preferences"))
+    tap(vol, vol.get_by_role("button", name="Save", exact=True))
     vol.wait_for_url("**saved=1**")
     tap(vol, vol.get_by_role("link", name="Openings").last)
     vol.wait_for_url("**/deck**")

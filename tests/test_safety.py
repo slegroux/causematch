@@ -688,8 +688,11 @@ def test_delete_account_scrubs_pii(w):
     )
     before_version = profiles[uid].session_version
 
-    page = w.vol.get("/profile")
-    assert "Delete my account" in page.text
+    assert (
+        "Delete my account" not in w.vol.get("/profile").text
+    )  # it lives in the profile
+    page = w.vol.get("/me/profile")
+    assert 'href="/profile/delete"' in page.text
     assert profiles[uid].deleted_at is None  # neither page deletes
     assert w.vol.get("/profile/delete").status_code == 200
     assert profiles[uid].deleted_at is None

@@ -639,10 +639,16 @@ def test_notes_and_calendar_show_once_accepted_only(chat):
     soon = datetime.now(ZoneInfo("America/Los_Angeles")) + timedelta(days=3)
     data.add_shift(chat.coord.uid, chat.id, soon.strftime("%Y-%m-%dT%H:%M"))
     shift = data.my_matches(chat.vol.uid)[0]["shift"]
-    for page in (chat.vol.get("/matches").text, chat.vol.get(f"/chat/{chat.id}").text):
-        assert "Closed-toe shoes, park on 5th" in page
-        assert f'href="/shifts/{shift["id"]}.ics"' in page
-        assert "https://calendar.google.com/calendar/render?action=TEMPLATE" in page
+    page = chat.vol.get("/matches").text
+    assert "Closed-toe shoes, park on 5th" in page
+    assert f'href="/shifts/{shift["id"]}.ics"' in page
+    assert "https://calendar.google.com/calendar/render?action=TEMPLATE" in page
+    # the chat header stays short: notes and calendar live on the match card
+    chat_page = chat.vol.get(f"/chat/{chat.id}").text
+    assert "Add to calendar" not in chat_page and "Closed-toe shoes" not in chat_page
+    assert f'href="/shifts/{shift["id"]}/cancel"' in chat_page
+    assert f'href="/matches/{chat.id}/report"' in chat_page
+    assert f'href="/matches/{chat.id}/block"' in chat_page
 
 
 def test_the_org_sees_a_chat_waiting_for_a_reply_until_anyone_there_answers(chat):

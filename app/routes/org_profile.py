@@ -36,6 +36,7 @@ from app.forms import (
     query,
     str_form,
 )
+from app.routes.org import DetailsForm
 from app.routes.profile import BAD_PHOTO, BUSY, PhotoForm, read_photo
 from app.ui import (
     CARD,
@@ -172,7 +173,7 @@ def OrgSection(org, f=None, error=None):
     )
 
 
-def OrganizationPage(uid, notice="", errors=None):
+def OrganizationPage(uid, notice="", errors=None, details_error=None):
     errors = errors or {}
     return OrgShell(
         "organization",
@@ -184,6 +185,12 @@ def OrganizationPage(uid, notice="", errors=None):
                 OrgSection(org, *errors.get(org.id, (None, None)))
                 for org, _ in data.coordinator_orgs(uid)
             ],
+            Div(
+                DetailsForm(
+                    data.get_profile(uid), details_error, back="/org/organization"
+                ),
+                cls="max-w-md",
+            ),
             cls="max-w-3xl space-y-10",
         ),
         Script(src="/static/photo.js", defer=True),

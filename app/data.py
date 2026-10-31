@@ -503,7 +503,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     active = {c.slug for c in _db.causes() if c.active}
     rated = {s: v for s, v in p["causes"].items() if s in active}
     loved = {s for s, v in rated.items() if v == _prefs.LOVE}
-    skills = json.loads(me.skills or "[]")
+    skills = _skills(me)
     spoken = _prefs.languages(me)
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
@@ -598,6 +598,13 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
             }
         )
     return cards, len(ranked)
+
+
+def _skills(me):
+    """A volunteer's skills as ranking reads them: one who speaks a language besides
+    English has the "language" skill an opening can ask for."""
+    skills = set(json.loads(me.skills or "[]"))
+    return sorted(skills | {"language"} if _prefs.languages(me) else skills)
 
 
 VERIFIED_WEIGHT = 0.15  # "Prefer" nonprofits that confirm hours: this share of the fit
@@ -1744,7 +1751,7 @@ def chat_header(uid, match_id):
     The volunteer sees the org name and the contact name of the coordinator who accepted
     them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
     photo when data.photo_for would serve it. Also whether the caller may still write,
-    the org's face (_face), and while accepted the opening's notes and next shift.
+    the org's face (_face), and while accepted the next shift.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
@@ -1784,7 +1791,6 @@ def chat_header(uid, match_id):
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
         "duration_minutes": o.duration_minutes,  # the opening's shift length, if said
-        "notes": o.notes if m.status == "accepted" else None,
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
         **_face(the_org, o),
     }
@@ -2629,7 +2635,7 @@ def urgent_recipients(call_id, limit, at):
         fit = _fit(
             p,
             rated,
-            json.loads(me.skills or "[]"),
+            _skills(me),
             _prefs.languages(me),
             o,
             slugs,

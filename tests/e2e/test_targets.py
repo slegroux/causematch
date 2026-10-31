@@ -77,6 +77,9 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
         f"/matches/{match_id}/block",
     ):
         found[path] = check(phone, path)
+    phone.goto("/matches")  # the card's More holds Withdraw, Report and Block
+    phone.evaluate("document.querySelectorAll('details').forEach(d => d.open = true)")
+    found["/matches (More open)"] = (phone.evaluate(SMALL), phone.evaluate(OVERFLOW))
     bad = {k: v for k, v in found.items() if v != ([], [])}
     assert bad == {}
     # positive controls: the checks do see a small link and text that runs over
