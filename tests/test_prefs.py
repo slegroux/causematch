@@ -490,7 +490,7 @@ def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
 
 
 def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
-    """Prefer / Only show sits under its own controls; surprise and verified hours save
+    """Only show sits under its own controls; surprise and verified hours save
     from the causes page, and a page that doesn't carry them leaves them alone."""
     pages = {
         "causes": ("only_causes", "only_distance"),
@@ -510,14 +510,14 @@ def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
             "only_causes": "only",
             "only_distance": "prefer",
             "surprise": "1",
-            "verified_hours": "prefer",
+            "verified_hours": "only",
         },
         follow_redirects=False,
     )
     assert r.status_code == 303, r.text
     saved = data.preferences(uid_of(user))
     assert saved["dealbreakers"] == ["causes"]
-    assert saved["surprise"] and saved["verified_hours"] == "prefer"
+    assert saved["surprise"] and saved["verified_hours"] == "only"
     for key, field in (("when", "only_when"), ("work", "only_work")):
         user.post(
             "/me/preferences",
@@ -525,4 +525,4 @@ def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
         )
     saved = data.preferences(uid_of(user))
     assert saved["dealbreakers"] == ["causes", "when", "work"]
-    assert saved["surprise"] and saved["verified_hours"] == "prefer"  # kept
+    assert saved["surprise"] and saved["verified_hours"] == "only"  # kept

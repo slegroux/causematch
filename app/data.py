@@ -268,7 +268,7 @@ def _relaxed(p, key):
     if key == "horizon":
         q["horizon_days"] = 0
     elif key == "only_verified":
-        q["verified_hours"] = "prefer"
+        q["verified_hours"] = ""
     elif key.startswith("widen:"):
         i, to = _widening(key)
         q["places"] = [
@@ -290,7 +290,7 @@ def _relaxation_labels(p):
     if p["horizon_days"]:
         out["horizon"] = "Look further ahead"
     if p["verified_hours"] == "only":
-        out["only_verified"] = "Show nonprofits that don't confirm hours"
+        out["only_verified"] = "Show nonprofits that don't confirm hours too"
     names = {
         "causes": "Show every cause you haven't ruled out",
         "when": "Show any time",
@@ -371,7 +371,7 @@ def apply_relaxation(uid, key):
         elif key == "horizon":
             _db.profiles.update(id=uid, horizon_days=0)
         elif key == "only_verified":
-            _db.profiles.update(id=uid, verified_hours="prefer")
+            _db.profiles.update(id=uid, verified_hours=None)
         else:
             _db.profiles.update(
                 id=uid, dealbreakers=json.dumps(_relaxed(p, key)["dealbreakers"])
@@ -518,7 +518,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     drawn = _deck_openings(uid, today, p, calls)
     for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
-        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming)
+        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates)
         if today:  # ignores fit: the soonest, then the nearest; remote after in-person
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
@@ -607,12 +607,9 @@ def _skills(me):
     return sorted(skills | {"language"} if _prefs.languages(me) else skills)
 
 
-VERIFIED_WEIGHT = 0.15  # "Prefer" nonprofits that confirm hours: this share of the fit
-
-
-def _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming):
+def _fit(p, rated, skills, spoken, o, slugs, near, rates):
     """match.score of an opening for a volunteer: the deck's order, and who an urgent call
-    notifies first. confirming: _confirming_orgs()."""
+    notifies first."""
     when = _match.availability_overlap(
         p["availability"], o.starts_at, o.recurrence, p["free_dates"]
     )
@@ -628,8 +625,6 @@ def _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming):
         work=_match.work_fit(p["work"], _work_of(o)),
         language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
     )
-    if p["verified_hours"] == "prefer":
-        fit = fit * (1 - VERIFIED_WEIGHT) + VERIFIED_WEIGHT * (o.org_id in confirming)
     return fit
 
 
@@ -2772,7 +2767,6 @@ def urgent_recipients(call_id, limit, at):
     active = {c.slug for c in _db.causes() if c.active}
     slugs = [s for s in json.loads(o.causes or "[]") if s in active]
     rates = _org_reply_rates()
-    confirming = _confirming_orgs()
     ranked = []
     for me in _db.profiles(
         where="role = 'volunteer' AND urgent_on = 1 AND deleted_at IS NULL "
@@ -2826,7 +2820,6 @@ def urgent_recipients(call_id, limit, at):
             slugs,
             near,
             rates,
-            confirming,
         )
         ranked.append((-round(fit, 6), me.id, channel))
     ranked.sort()
