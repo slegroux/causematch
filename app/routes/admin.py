@@ -357,7 +357,7 @@ def OrgRow(o, found=None, error=None):
         else "Not verified"
     )
     return Div(
-        P(f"{o['name']} - {status}", cls="font-semibold"),
+        P(f"{o['name']} · {status}", cls="font-semibold"),
         P(f"EIN {o['ein']}" if o["ein"] else "No EIN yet", cls=TextPresets.muted_sm),
         Alert(error, cls=AlertT.error) if error else None,
         Form(

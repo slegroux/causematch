@@ -38,13 +38,18 @@ def test_my_hours_counts_only_confirmed_hours_of_attended_shifts():
         mine, 6, 60, org.uid, status="scheduled", month=9
     )  # not attended: not listed
 
-    page = a.get("/hours").text
+    page = a.get("/history").text
     assert "October 2026" in page and "5.5 hours" in page
     assert "Confirmed by Pat Doe, coordinator" in page
     assert "September 2026" in page and "Confirmed by Bianca" in page
     assert page.index("October 2026") < page.index("September 2026")  # newest first
     assert "1 earlier shift has no confirmed hours" in page
     assert "2 hours" not in page and "7.5 hours" not in page and "8 hours" not in page
-    assert 'href="/hours"' in a.get("/history").text
-    assert 'href="/hours"' in a.get("/profile").text
-    assert "No confirmed hours yet" in volunteer("Nobody").get("/hours").text
+    assert 'href="/history"' in a.get("/profile").text
+    assert 'href="/hours"' not in a.get("/profile").text
+    assert "No confirmed hours yet" in volunteer("Nobody").get("/history").text
+
+
+def test_the_old_hours_link_lands_on_history():
+    r = volunteer("Zelda").get("/hours", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/history"

@@ -193,9 +193,9 @@ def test_the_homelessness_note_stands_out_only_for_that_cause(browser, live_url)
 
 def test_the_save_bar_covers_nothing_at_the_bottom_of_preferences(phone):
     sign_in_page(phone, "(310) 555-0163")
-    phone.goto("/me/preferences")
+    phone.goto("/me/preferences/work")
     phone.evaluate("window.scrollTo(0, document.scrollingElement.scrollHeight)")
-    save = phone.get_by_role("button", name="Save preferences").bounding_box()
+    save = phone.get_by_role("button", name="Save").bounding_box()
     bar = phone.get_by_role("navigation", name="Main").bounding_box()
     assert save["y"] + save["height"] <= bar["y"], (save, bar)
     # the last section's last control is above the save button, not under it

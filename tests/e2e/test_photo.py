@@ -37,7 +37,6 @@ def test_a_photo_is_previewed_then_uploaded_shrunk(phone_context):
     preview = page.get_by_role("img", name="Your new photo")
     preview.wait_for(state="visible")
     assert preview.get_attribute("src").startswith("blob:")  # the CSP allows it
-    page.get_by_role("button", name="Save photo").click()
     page.wait_for_url("**/me/profile?notice=saved")
     assert (
         sent and sent[0] < len(raw) / 2

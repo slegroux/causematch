@@ -18,6 +18,7 @@ from fasthtml.common import (
     Div,
     FtResponse,
     Img,
+    Label,
     Option,
     P,
     Redirect,
@@ -48,15 +49,17 @@ from app.forms import (
     str_form,
 )
 from app.routes.auth import phone_off
+from app.routes.prefs import Checks as ChipChecks
+from app.routes.safety import HubRow
 from app.ui import (
     CARD,
     ORG_SECTION,
     SMALL_LINK,
     TITLE,
+    TRASH,
     Avatar,
     BackLink,
     BigButton,
-    Checks,
     Field,
     Router,
     TextInput,
@@ -100,9 +103,9 @@ MAX_OTHER_CAUSES = 300
 ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif"
 
 
-def PhotoForm(action, label, button, ident="photo", shrink=True):
+def PhotoForm(action, label, button, ident="photo", shrink=True, auto=False):
     """A picture upload: static/photo.js previews it and, with shrink, sends a 1600 px
-    JPEG instead of the original."""
+    JPEG instead of the original. With auto, choosing the picture sends it."""
     return PlainForm(
         Div(
             FormLabel(label, fr=ident),
@@ -130,13 +133,14 @@ def PhotoForm(action, label, button, ident="photo", shrink=True):
         enctype="multipart/form-data",
         data_photo_form="1",
         data_shrink="1600" if shrink else None,
+        data_auto="1" if auto else None,
         cls="space-y-3",
     )
 
 
 def DetailsForm(p, f=None):
-    """Name, pronouns, bio, interests and the neighborhood nonprofits see; f: the values
-    just typed, after an error."""
+    """What nonprofits see about the volunteer, then what only we see; f: the values just
+    typed, after an error."""
     f = f or {
         "first_name": p.display_name or "",
         "last_name": p.last_name or "",
@@ -205,7 +209,13 @@ def DetailsForm(p, f=None):
             ),
         ),
         Field(
-            "Email (optional; only we see it, for last-minute calls when you have no texts)",
+            f"Interests (up to {MAX_INTERESTS})",
+            ChipChecks("interests", INTERESTS, f["interests"], "flex flex-wrap gap-2"),
+        ),
+        H2("Only we see", cls=ORG_SECTION + " pt-2"),
+        P("Never shown to nonprofits.", cls=TextPresets.muted_sm),
+        Field(
+            "Email (optional, for last-minute calls when you have no texts)",
             TextInput(
                 name="email",
                 type="email",
@@ -220,15 +230,6 @@ def DetailsForm(p, f=None):
                 name="other_causes",
                 value=f["other_causes"],
                 maxlength=str(MAX_OTHER_CAUSES),
-            ),
-        ),
-        Field(
-            f"Interests (up to {MAX_INTERESTS})",
-            Checks(
-                "interests",
-                INTERESTS,
-                f["interests"],
-                "grid grid-cols-1 gap-y-1 sm:grid-cols-2 sm:gap-x-4",
             ),
         ),
         BigButton("Save profile"),
@@ -349,14 +350,19 @@ def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
         Div(
             Div(
-                Avatar(p.display_name, p.photo_key, "lg", data_photo_current="1"),
-                # what the chosen photo will look like, filled in by static/photo.js
-                Img(
-                    alt="Your new photo",
-                    hidden=True,
-                    data_photo_preview="1",
-                    cls="h-28 w-28 rounded-full object-cover ring-2 ring-white "
-                    "shadow-warm",
+                # the picture is the tap target that opens the file picker
+                Label(
+                    Avatar(p.display_name, p.photo_key, "lg", data_photo_current="1"),
+                    # what the chosen photo will look like, filled in by static/photo.js
+                    Img(
+                        alt="Your new photo",
+                        hidden=True,
+                        data_photo_preview="1",
+                        cls="h-28 w-28 rounded-full object-cover ring-2 ring-white "
+                        "shadow-warm",
+                    ),
+                    fr="photo",
+                    cls="cursor-pointer",
                 ),
                 Div(
                     Span(
@@ -377,6 +383,7 @@ def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
                 "/me/profile/photo",
                 "Change your photo" if p.photo_key else "Add a photo",
                 "Save photo",
+                auto=True,
             ),
             PlainForm(
                 PlainButton(
@@ -395,6 +402,15 @@ def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
         Div(ReachCard(p, pending), cls="mt-4"),
         Div(SignInMethods(p), cls="mt-4"),
         Div(DetailsForm(p, f), cls="mt-4"),
+        Div(
+            HubRow(TRASH, "Delete my account", "/profile/delete", danger=True),
+            cls="mt-4 overflow-hidden " + CARD,
+        ),
+        P(
+            "Deleting your account removes your name, phone, email and location and "
+            "withdraws your matches.",
+            cls=TextPresets.muted_sm + " px-2 pt-2",
+        ),
         Script(src="/static/photo.js", defer=True),
         uid=uid,
     )

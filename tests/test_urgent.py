@@ -346,7 +346,7 @@ def test_optin_is_off_by_default(user):
         "quiet_to": 8,
         "per_week": 3,
     }
-    page = user.get("/me/preferences").text
+    page = user.get("/me/preferences/urgent").text
     assert "Last-minute calls" in page and "Tell me about last-minute calls" in page
     assert 'name="urgent_on" value="1" class' in page  # unchecked
     assert '<option value="21" selected>9 pm</option>' in page
@@ -355,7 +355,9 @@ def test_optin_is_off_by_default(user):
 
 def test_optin_saves_and_shows(user):
     r = save_prefs(user)
-    assert r.status_code == 303 and r.headers["location"] == "/me/preferences?saved=1"
+    # the whole form at once: it comes back on the first section page
+    assert r.status_code == 303
+    assert r.headers["location"] == "/me/preferences/causes?saved=1"
     assert data.preferences(uid_of(user))["urgent"] == {
         "on": True,
         "window": "today",
@@ -363,7 +365,7 @@ def test_optin_saves_and_shows(user):
         "quiet_to": 7,
         "per_week": 2,
     }
-    page = user.get("/me/preferences").text
+    page = user.get("/me/preferences/urgent").text
     assert 'name="urgent_on" value="1" checked' in page
     assert '<option value="22" selected>10 pm</option>' in page
     # turned off again

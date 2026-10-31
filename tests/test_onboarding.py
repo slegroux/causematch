@@ -132,7 +132,9 @@ def test_onboarding_saves_home_ratings_and_days(new_user):
         30,
     )
     assert (p.lat, p.lon) == (home.lat, home.lon)
-    page = new_user.get("/me/preferences").text  # the same answers, editable in Me
+    page = new_user.get(
+        "/me/preferences/causes"
+    ).text  # the same answers, editable in Me
     assert 'name="place1_where" value="90012"' in page
     assert 'name="cause_animal-shelters" value="no" checked' in page
 

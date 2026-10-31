@@ -1,6 +1,6 @@
 import re
 
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Script, Span
+from fasthtml.common import H1, H2, A, Details, Div, P, Redirect, Script, Span, Summary
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -21,6 +21,8 @@ from app.ui import (
     CHAT,
     HEART,
     LIKE_SENT,
+    MATCH_STATUS,
+    NEXT,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
@@ -35,18 +37,11 @@ from app.ui import (
     Refusal,
     Router,
     VolunteerShell,
+    status_pill,
     when,
 )
 
 ar = Router()
-
-STATUS = {  # status: (label, PILL tone)
-    "pending": ("Waiting for the nonprofit", "wait"),
-    "accepted": ("Accepted", "good"),
-    "declined": ("Not this time", "off"),
-    "withdrawn": ("Withdrawn", "off"),
-}
-
 
 NOTICE = {
     "reported": "Thanks. We read every report.",
@@ -129,66 +124,67 @@ def _sync_swipe(req, form):
 
 def MatchRow(m):
     accepted = m["status"] == "accepted"
-    # an accepted card opens its chat (the link's ::after covers the card, the links
-    # below sit above it at z-10); a pending one has no dead tap
-    face = (
-        OrgFace(m["org"], m["logo"], m["photo"], m["slug"]),
-        Div(
-            H2(
-                m["title"],
-                cls="font-display text-lg font-extrabold leading-snug text-ink",
-            ),
-            P(m["org"], cls="text-sm font-semibold text-ink-muted"),
-            cls="min-w-0",
-        ),
-    )
-    row = "flex min-h-12 items-center gap-3"
-    head = (
-        A(*face, href=f"/chat/{m['id']}", cls=row + " after:absolute after:inset-0")
-        if accepted
-        else Div(*face, cls=row)
-    )
     return Div(
         Div(
-            Pill(*STATUS[m["status"]]),
+            status_pill(MATCH_STATUS, m["status"], "volunteer"),
             Pill("Blocked", "off") if m["blocked"] else None,
             cls="flex flex-wrap gap-1.5",
         ),
-        head,
-        Div(  # above the stretched link
+        Div(
+            OrgFace(m["org"], m["logo"], m["photo"], m["slug"]),
+            Div(
+                H2(
+                    m["title"],
+                    cls="font-display text-lg font-extrabold leading-snug text-ink",
+                ),
+                P(m["org"], cls="text-sm font-semibold text-ink-muted"),
+                cls="min-w-0",
+            ),
+            cls="flex min-h-12 items-center gap-3",
+        ),
+        Div(
             Meta(
                 CALENDAR,
                 f"{when(m['starts_at'], m['duration_minutes'])} · {m['neighborhood']}",
             ),
             Notes(m["notes"]),
-            cls="relative z-10 space-y-1.5",
+            cls="space-y-1.5",
         ),
         Div(
             NextShift(m["shift"]) if m["shift"] else None,
             AddToCalendar(m["shift"]) if m["shift"] else None,
             EventLink(m.get("event_url")),
-            cls="relative z-10 space-y-1.5",
+            cls="space-y-1.5",
         ),
         A(
             Icon(CHAT, size=18),
             "Chat",
             href=f"/chat/{m['id']}",
-            cls="uk-btn uk-btn-primary relative z-10 mt-2 w-full gap-2",
+            cls="uk-btn uk-btn-primary mt-2 w-full gap-2",
         )
         if accepted
         else None,
-        Div(
-            A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
-            if m["status"] in ("pending", "accepted")
-            else None,
-            A("Report", href=f"/matches/{m['id']}/report", cls=SMALL_LINK),
-            None
-            if m["blocked"]
-            else A("Block", href=f"/matches/{m['id']}/block", cls=SMALL_LINK),
-            cls="relative z-10 mt-1 flex flex-wrap gap-x-5 border-t border-line pt-1 "
-            "text-sm",
+        Details(  # the rarely wanted ways out, behind one tap (no script)
+            Summary(
+                "More",
+                Icon(NEXT, size=16, cls="rotate-90"),
+                cls="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 "
+                "text-sm font-semibold text-ink-muted underline underline-offset-4 "
+                "hover:text-ink [&::-webkit-details-marker]:hidden",
+            ),
+            Div(
+                A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
+                if m["status"] in ("pending", "accepted")
+                else None,
+                A("Report", href=f"/matches/{m['id']}/report", cls=SMALL_LINK),
+                None
+                if m["blocked"]
+                else A("Block", href=f"/matches/{m['id']}/block", cls=SMALL_LINK),
+                cls="flex flex-wrap gap-x-5 text-sm",
+            ),
+            cls="border-t border-line",
         ),
-        cls="relative w-full space-y-1.5 p-4 " + CARD,
+        cls="w-full space-y-1.5 p-4 " + CARD,
     )
 
 
@@ -218,7 +214,7 @@ def matches_page(req):
         "matches",
         Div(
             H1("Your matches", cls=TITLE),
-            A("History", href="/history", cls=SMALL_LINK + " text-sm"),
+            A("Shifts and hours", href="/history", cls=SMALL_LINK + " text-sm"),
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
