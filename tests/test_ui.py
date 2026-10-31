@@ -116,6 +116,8 @@ def pages(anon, user, coord):
         (anon, "/org/claim"),
         (anon, "/privacy"),
         (anon, f"/urgent/off/{data.urgent_off_key(uid)}"),
+        (anon, f"/check/{certificate}"),
+        (user, f"/hours/certificate/{certificate}/withdraw"),
         (newcomer, "/onboarding"),
         (liker, "/onboarding/more"),
         (user, "/deck"),

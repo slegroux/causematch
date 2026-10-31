@@ -5,9 +5,11 @@ import re
 
 import pytest
 from conftest import coordinator, pantry_opening, volunteer
+from starlette.testclient import TestClient
 
-from app import data, signing
+from app import data, security, signing
 from app.db import certificates, openings, orgs, profiles, shifts
+from main import app
 
 
 def _shift(match, day, minutes, by, status="completed", month=10, **more):
@@ -166,3 +168,115 @@ def test_certificate_signature_fails_when_the_snapshot_is_changed():
     assert not signing.verify(snap, "another-id", cert.signature)
     assert not signing.verify(snap, cert.id, "")
     assert data.my_certificate(a.uid, cert.id)["genuine"]
+
+
+# --- the check link -----------------------------------------------------------------------
+
+
+def _issued(name="Zelda", **profile):
+    """A volunteer with a 5.5 hour certificate at the first nonprofit: (client, id, shifts)."""
+    a, m, org = _hired(name)
+    profiles.update(id=a.uid, last_name="Lee", email="zelda@example.com", **profile)
+    orgs.update(id=orgs()[0].id, ein="12-3456789")
+    _shift(m, 3, 180, org.uid)
+    _shift(m, 10, 150, org.uid)
+    cert_id = _certify(a, orgs()[0].id, "all").rsplit("/", 1)[1]
+    return a, cert_id, shifts(where="match_id = ?", where_args=[m.id])
+
+
+def test_check_link_shows_what_the_certificate_says_and_no_more(anon):
+    a, cid, _ = _issued()
+    owner_page = a.get(f"/hours/certificate/{cid}").text
+    assert f"/check/{cid}" in owner_page and "Anyone with this link" in owner_page
+
+    r = anon.get(f"/check/{cid}")  # signed out
+    assert r.status_code == 200
+    assert "genuine Causematch certificate, unchanged since it was issued" in r.text
+    assert "5.5 hours" in r.text and "Zelda Lee" in r.text and "12-3456789" in r.text
+    assert re.search(r"[0-9A-F]{4}(-[0-9A-F]{4}){3}", r.text)
+    assert certificates()[0].signature[:4].upper() in r.text
+    assert (
+        "Oct 3, 2026" not in r.text and "zelda@example.com" not in r.text
+    )  # no shifts, no contact
+    assert 'name="robots" content="noindex"' in r.text
+    assert r.headers["x-robots-tag"].startswith("noindex")
+    assert r.headers["cache-control"] == "no-store"
+
+    # one changed character, other lengths and odd inputs: never an error, never a record
+    flipped = cid[:-1] + ("A" if cid[-1] != "A" else "B")
+    for odd in (
+        flipped,
+        cid[:-1],
+        cid + "x",
+        "%20",
+        "a" * 5000,
+        "%E2%98%83",
+        "%27%20OR%201=1--",
+        "%00",
+    ):
+        r = anon.get(f"/check/{odd}")
+        assert r.status_code == 404 and "not a Causematch record" in r.text, odd
+        assert "Zelda" not in r.text and "5.5 hours" not in r.text
+
+    # a stored snapshot edited in the database no longer verifies
+    snap = json.loads(certificates()[0].snapshot)
+    snap["minutes"] += 60
+    certificates.update(id=cid, snapshot=json.dumps(snap, sort_keys=True))
+    r = anon.get(f"/check/{cid}")
+    assert r.status_code == 404 and "not a Causematch record" in r.text
+    assert "6.5 hours" not in r.text and "genuine" not in r.text
+
+
+def test_check_link_says_when_the_nonprofit_changed_the_hours(anon):
+    _a, cid, rows = _issued()
+    (three_hours,) = (r for r in rows if r.confirmed_minutes == 180)
+    shifts.update(id=three_hours.id, confirmed_minutes=120)  # a correction: 3 h to 2 h
+    r = anon.get(f"/check/{cid}")
+    assert "has since changed the hours it confirmed" in r.text
+    assert "5.5 hours" in r.text and "4.5 hours" in r.text  # as issued, and now
+    assert "unchanged since it was issued" not in r.text
+
+
+def test_check_link_says_withdrawn_and_nothing_else(anon):
+    a, cid, _ = _issued()
+    b = volunteer("Bianca")
+    assert b.get(f"/hours/certificate/{cid}/withdraw").status_code == 404
+    assert b.post(f"/hours/certificate/{cid}/withdraw").status_code == 404
+    assert "genuine" in anon.get(f"/check/{cid}").text  # not Bianca's to withdraw
+
+    assert "Withdraw this certificate" in a.get(f"/hours/certificate/{cid}").text
+    assert a.get(f"/hours/certificate/{cid}/withdraw").status_code == 200  # asks first
+    assert "genuine" in anon.get(f"/check/{cid}").text  # a GET withdraws nothing
+    for _ in range(2):  # twice: the same answer
+        r = a.post(f"/hours/certificate/{cid}/withdraw", follow_redirects=False)
+        assert r.status_code == 303
+    cert = certificates()[0]
+    assert cert.withdrawn_at and cert.snapshot is None and cert.signature is None
+
+    r = anon.get(f"/check/{cid}")
+    assert r.status_code == 200 and "This certificate was withdrawn." in r.text
+    for text in (
+        "Zelda",
+        orgs()[0].name,
+        "5.5 hours",
+        "12-3456789",
+        "genuine",
+        "Total",
+    ):
+        assert text not in r.text, text
+    assert a.get(f"/hours/certificate/{cid}").status_code == 404
+    assert "Get a certificate" in a.get("/hours").text
+    assert _certify(a, orgs()[0].id, "all").rsplit("/", 1)[1] != cid  # a new one
+
+    # deleting the account withdraws the rest the same way
+    other = anon.get(f"/check/{certificates(where='withdrawn_at IS NULL')[0].id}")
+    assert "genuine" in other.text
+    data.delete_account(a.uid)
+    assert "was withdrawn" in anon.get(f"/check/{certificates()[-1].id}").text
+
+
+def test_check_link_is_limited_per_address(monkeypatch):
+    monkeypatch.setattr(security, "CHECK_PER_IP", (("check-ip", 3, 600),))
+    visitor = TestClient(app, client=("198.51.100.40", 1))
+    codes = [visitor.get("/check/nothing").status_code for _ in range(4)]
+    assert codes == [404, 404, 404, 429]

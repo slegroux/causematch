@@ -25,6 +25,7 @@ def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(phone):
         ("/history", "Me"),
         ("/hours", "Me"),
         (f"/hours/certificate/{cert}", "Me"),
+        (f"/hours/certificate/{cert}/withdraw", "Me"),
         ("/profile", "Me"),
         ("/me/preferences", "Me"),
         ("/me/profile", "Me"),

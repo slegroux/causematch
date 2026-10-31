@@ -133,6 +133,10 @@ ROUTES = {
     ("GET", "/hours"): ("volunteer", "own-record"),
     ("POST", "/hours/orgs/{org_id}/certificate"): ("volunteer", "own-record"),
     ("GET", "/hours/certificate/{cert_id}"): ("volunteer", "own-record"),
+    ("GET", "/hours/certificate/{cert_id}/withdraw"): ("volunteer", "own-record"),
+    ("POST", "/hours/certificate/{cert_id}/withdraw"): ("volunteer", "own-record"),
+    # a certificate's check link: the random id is the credential, answers rate-limited
+    ("GET", "/check/{code}"): ("public", "own-record"),
     ("GET", "/shifts/{shift_id}.ics"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
     ("POST", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
@@ -213,6 +217,7 @@ def concrete(path, match_id, opening_id):
         org_id=match_id,
         cert_id="A" * 22,
         key="A" * 22,
+        code="A" * 22,
     )
 
 
@@ -713,6 +718,43 @@ def check_certificate_page(w):
     assert w.a.get(f"/hours/certificate/{cid}").status_code == 200
 
 
+def check_certificate_withdraw(method):
+    """B can't withdraw A's certificate, whatever the id; A can, and the GET only asks."""
+
+    def check(w):
+        data.issue_certificate(w.a.uid, confirmed_hours(w), "all")
+        cid = certificates()[0].id
+        for i in (cid, *map(str, GONE), "nope"):
+            path = f"/hours/certificate/{i}/withdraw"
+            assert_refused(
+                w.b.get(path, follow_redirects=False)
+                if method == "GET"
+                else w.b.post(path, follow_redirects=False)
+            )
+        assert certificates()[0].withdrawn_at is None and certificates()[0].snapshot
+        path = f"/hours/certificate/{cid}/withdraw"
+        r = (w.a.get if method == "GET" else w.a.post)(path, follow_redirects=False)
+        assert r.status_code == (200 if method == "GET" else 303)
+        assert bool(certificates()[0].withdrawn_at) == (method == "POST")
+
+    return check
+
+
+def check_check_link(w):
+    """Anyone may ask; only the real id answers with a record, and a garbled one is the
+    same page as an unknown one."""
+    data.issue_certificate(w.a.uid, confirmed_hours(w), "all")
+    cid = certificates()[0].id
+    unknown = w.anon.get("/check/" + "B" * 22)
+    for who in (w.anon, w.b):
+        assert "genuine" in who.get(f"/check/{cid}").text
+        r = who.get(f"/check/{cid[:-1]}x")
+        assert r.status_code == unknown.status_code == 404
+        # the page repeats its own address in a meta tag; nothing else differs
+        assert r.text.replace(cid[:-1] + "x", "B" * 22) == unknown.text
+        no_secrets(r)
+
+
 def check_shift_ics(w):
     """B gets 404 for A's shift's calendar file, whatever the id; A gets it."""
     sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
@@ -976,6 +1018,11 @@ OWNERSHIP = {
     ("GET", "/shifts/{shift_id}.ics"): check_shift_ics,
     ("POST", "/hours/orgs/{org_id}/certificate"): check_issue_certificate,
     ("GET", "/hours/certificate/{cert_id}"): check_certificate_page,
+    ("GET", "/hours/certificate/{cert_id}/withdraw"): check_certificate_withdraw("GET"),
+    ("POST", "/hours/certificate/{cert_id}/withdraw"): check_certificate_withdraw(
+        "POST"
+    ),
+    ("GET", "/check/{code}"): check_check_link,
     **{
         (method, f"/shifts/{{shift_id}}/{action}"): own_shift_check(method, action)
         for method in ("GET", "POST")

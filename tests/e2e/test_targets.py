@@ -70,6 +70,8 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
         "/history",
         "/hours",
         f"/hours/certificate/{cert}",
+        f"/hours/certificate/{cert}/withdraw",
+        f"/check/{cert}",  # public; the same page signed out
         "/profile",
         "/me/preferences",
         "/me/profile",
