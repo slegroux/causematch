@@ -152,7 +152,7 @@ class Identity:
 
     id: int
     user_id: int
-    provider: str  # google
+    provider: str  # google|apple
     subject: str  # the ID token's sub: unique per provider, never reused
     email: str
     created_at: str
