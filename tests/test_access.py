@@ -33,6 +33,7 @@ from app.auth import (
 )
 from app.db import (
     blocks,
+    certificates,
     claim_requests,
     matches,
     messages,
@@ -130,6 +131,8 @@ ROUTES = {
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
     ("GET", "/history"): ("volunteer", "own-record"),
     ("GET", "/hours"): ("volunteer", "own-record"),
+    ("POST", "/hours/orgs/{org_id}/certificate"): ("volunteer", "own-record"),
+    ("GET", "/hours/certificate/{cert_id}"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}.ics"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
     ("POST", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
@@ -208,6 +211,7 @@ def concrete(path, match_id, opening_id):
         block_id=match_id,
         claim_id=match_id,
         org_id=match_id,
+        cert_id="A" * 22,
         key="A" * 22,
     )
 
@@ -664,6 +668,51 @@ def check_mark_shift(w):
     assert r.status_code == 303 and shifts[sid].status == "completed"
 
 
+def confirmed_hours(w):
+    """A's attended shift with 3 confirmed hours at org 0; the org's id."""
+    shifts.insert(
+        match_id=accepted_match(w),
+        starts_at="2026-10-03T09:00",
+        status="completed",
+        kind="added",
+        created_by=w.org0_uid,
+        confirmed_minutes=180,
+        marked_by=w.org0_uid,
+        marked_at="2026-10-30T10:00:00",
+    )
+    return w.opening.org_id
+
+
+def check_issue_certificate(w):
+    """B can't get a certificate for A's hours or for a nonprofit he has none at, whatever
+    the id; A can."""
+    org_id = confirmed_hours(w)
+    for i in (org_id, *GONE):
+        assert_refused(
+            w.b.post(
+                f"/hours/orgs/{i}/certificate",
+                data={"period": "all"},
+                follow_redirects=False,
+            )
+        )
+    assert certificates.count == 0
+    r = w.a.post(
+        f"/hours/orgs/{org_id}/certificate",
+        data={"period": "all"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and certificates.count == 1
+
+
+def check_certificate_page(w):
+    """B gets 404 for A's certificate, whatever the id; A gets it."""
+    data.issue_certificate(w.a.uid, confirmed_hours(w), "all")
+    cid = certificates()[0].id
+    for i in (cid, *map(str, GONE), "nope"):
+        assert_refused(w.b.get(f"/hours/certificate/{i}", follow_redirects=False))
+    assert w.a.get(f"/hours/certificate/{cid}").status_code == 200
+
+
 def check_shift_ics(w):
     """B gets 404 for A's shift's calendar file, whatever the id; A gets it."""
     sid = shifts(where="match_id = ?", where_args=[accepted_match(w)])[0].id
@@ -925,6 +974,8 @@ OWNERSHIP = {
     ("POST", "/org/shifts/{shift_id}/cancel"): check_cancel_shift,
     ("POST", "/org/matches/{match_id}/shifts/repeat"): check_repeat_shift,
     ("GET", "/shifts/{shift_id}.ics"): check_shift_ics,
+    ("POST", "/hours/orgs/{org_id}/certificate"): check_issue_certificate,
+    ("GET", "/hours/certificate/{cert_id}"): check_certificate_page,
     **{
         (method, f"/shifts/{{shift_id}}/{action}"): own_shift_check(method, action)
         for method in ("GET", "POST")

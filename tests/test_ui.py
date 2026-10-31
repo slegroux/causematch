@@ -90,6 +90,17 @@ def pages(anon, user, coord):
     profiles.update(id=liker.uid, heard_from="")
     admin = admin_client()
     (shift,) = shifts(where="match_id = ? AND status = 'scheduled'", where_args=[m.id])
+    shifts.insert(  # confirmed hours, so My hours offers a certificate and one exists
+        match_id=m.id,
+        starts_at="2026-10-03T09:00",
+        status="completed",
+        kind="added",
+        created_by=shift.created_by,
+        confirmed_minutes=180,
+        marked_by=shift.created_by,
+        marked_at="2026-10-04T10:00:00+00:00",  # past the correction window
+    )
+    certificate = data.issue_certificate(uid, opening.org_id, "all")["id"]
     return [
         (anon, "/login"),
         (anon, "/org/login"),
@@ -103,6 +114,7 @@ def pages(anon, user, coord):
         (user, "/matches"),
         (user, "/history"),
         (user, "/hours"),
+        (user, f"/hours/certificate/{certificate}"),
         (user, "/profile"),
         (user, "/me/preferences"),
         (user, "/profile/delete"),
