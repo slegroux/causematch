@@ -15,6 +15,7 @@ def test_volunteer_pages_fit_a_small_phone_with_the_tab_bar_in_view(phone):
         ("/deck", "Openings"),
         ("/matches", "Matches"),
         ("/history", "Me"),
+        ("/hours", "Me"),
         ("/profile", "Me"),
         ("/me/preferences", "Me"),
         ("/me/profile", "Me"),

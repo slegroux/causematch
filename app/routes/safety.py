@@ -327,6 +327,7 @@ def profile_page(req):
             HubRow(PERSON, "Your profile", "/me/profile"),
             HubRow(HEART, "Preferences", "/me/preferences"),
             HubRow(CLOCK, "History", "/history"),
+            HubRow(CLOCK, "My hours", "/hours"),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),
             cls="mt-4 divide-y divide-line overflow-hidden " + CARD,

@@ -21,6 +21,8 @@ from app.choices import (
     INTERESTS,
     LANGUAGES,
     MAX_MINUTES,
+    SHIFT_HOURS,
+    SHIFT_LENGTHS,
 )
 from app.config import demo_matches, phone_hash_key
 from app.forms import BIDI, hidden_chars
@@ -126,6 +128,7 @@ def _deck_prefs(me):
         "places": _places(me),
         "horizon_days": _prefs.horizon_days(me),
         "dealbreakers": _prefs.dealbreakers(me),
+        "verified_hours": _prefs.verified_hours(me),
         "availability": json.loads(me.availability or "[]"),
         "free_dates": _prefs.free_dates(me, local_today()),
         "commitment": _prefs.commitment(me),
@@ -180,6 +183,7 @@ def _deck_openings(uid, today=False, p=None, calls=None):
         )
     }
     calls = _open_calls() if calls is None else calls
+    confirming = _confirming_orgs()
     out = []
     for o in _db.openings(
         where="status = ? AND starts_at >= ?", where_args=["open", _local_now()]
@@ -208,6 +212,8 @@ def _deck_openings(uid, today=False, p=None, calls=None):
             continue
         if "work" in only and not _match.work_allowed(p["work"], _work_of(o)):
             continue
+        if p["verified_hours"] == "only" and o.org_id not in confirming:
+            continue
         near = None
         if not o.remote:
             if None in (o.lat, o.lon):
@@ -218,6 +224,11 @@ def _deck_openings(uid, today=False, p=None, calls=None):
                     continue  # out of reach of every place
         out.append((o, cause_labels, near and near[1], near))
     return out
+
+
+def _confirming_orgs():
+    """The ids of the orgs that say they can confirm volunteer hours."""
+    return {g.id for g in _db.orgs(where="confirms_hours = 1")}
 
 
 def _when_ok(p, o):
@@ -256,6 +267,8 @@ def _relaxed(p, key):
     q = {**p, "dealbreakers": [d for d in p["dealbreakers"] if f"only_{d}" != key]}
     if key == "horizon":
         q["horizon_days"] = 0
+    elif key == "only_verified":
+        q["verified_hours"] = "prefer"
     elif key.startswith("widen:"):
         i, to = _widening(key)
         q["places"] = [
@@ -276,6 +289,8 @@ def _relaxation_labels(p):
                 out[f"widen:{i}:{to}"] = f"Widen{who} to {reach}"
     if p["horizon_days"]:
         out["horizon"] = "Look further ahead"
+    if p["verified_hours"] == "only":
+        out["only_verified"] = "Show nonprofits that don't confirm hours"
     names = {
         "causes": "Show every cause you haven't ruled out",
         "when": "Show any time",
@@ -355,6 +370,8 @@ def apply_relaxation(uid, key):
             _db.places.update(id=_saved_places(uid)[i].id, max_minutes=to)
         elif key == "horizon":
             _db.profiles.update(id=uid, horizon_days=0)
+        elif key == "only_verified":
+            _db.profiles.update(id=uid, verified_hours="prefer")
         else:
             _db.profiles.update(
                 id=uid, dealbreakers=json.dumps(_relaxed(p, key)["dealbreakers"])
@@ -463,6 +480,7 @@ def _full_weeks(me):
 
 
 WEEK_FULL = {"text": "Your week is full", "slug": None}
+CONFIRMS_HOURS = {"text": "Confirms your hours", "slug": None}
 
 
 def deck(uid, limit=20, today=False, view=None, first=None):
@@ -489,6 +507,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     spoken = _prefs.languages(me)
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
+    confirming = _confirming_orgs()
     ranked = []
     booked = [  # read once: a card within CLASH_HOURS of one of these clashes
         (datetime.fromisoformat(sh["starts_at"]), sh["org"])
@@ -499,7 +518,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     drawn = _deck_openings(uid, today, p, calls)
     for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
-        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates)
+        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming)
         if today:  # ignores fit: the soonest, then the nearest; remote after in-person
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
@@ -532,7 +551,14 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
         week_full = _week(o.starts_at) in full
         why, clash = _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)
         # the clash and a full week go after the cut: on an urgent card one Like books it
-        why = why[: cap - week_full - len(clash)] + clash + [WEEK_FULL] * week_full
+        # (the "confirms your hours" chip is the one that gives way when they don't all fit)
+        extra = clash + [CONFIRMS_HOURS] * (o.org_id in confirming)
+        extra = extra[: max(len(clash), cap - week_full)]
+        why = (
+            why[: max(0, cap - week_full - len(extra))]
+            + extra
+            + [WEEK_FULL] * week_full
+        )
         org = orgs.get(o.org_id)
         cards.append(
             {
@@ -543,6 +569,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 # the same active causes as slugs, in the same order (art and chips)
                 "slugs": slugs,
                 "starts_at": o.starts_at,
+                "duration_minutes": o.duration_minutes,
                 "neighborhood": o.neighborhood,
                 "slots": o.slots,
                 "remote": bool(o.remote),
@@ -573,16 +600,19 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     return cards, len(ranked)
 
 
-def _fit(p, rated, skills, spoken, o, slugs, near, rates):
+VERIFIED_WEIGHT = 0.15  # "Prefer" nonprofits that confirm hours: this share of the fit
+
+
+def _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming):
     """match.score of an opening for a volunteer: the deck's order, and who an urgent call
-    notifies first."""
+    notifies first. confirming: _confirming_orgs()."""
     when = _match.availability_overlap(
         p["availability"], o.starts_at, o.recurrence, p["free_dates"]
     )
     if not _match.commitment_fits(p["commitment"], o.recurrence):
         when /= 2
     km = near and near[1]
-    return _match.score(
+    fit = _match.score(
         causes=(rated, set(slugs)),
         skills=(skills, json.loads(o.skills or "[]")),
         distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
@@ -591,6 +621,9 @@ def _fit(p, rated, skills, spoken, o, slugs, near, rates):
         work=_match.work_fit(p["work"], _work_of(o)),
         language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
     )
+    if p["verified_hours"] == "prefer":
+        fit = fit * (1 - VERIFIED_WEIGHT) + VERIFIED_WEIGHT * (o.org_id in confirming)
+    return fit
 
 
 MAX_WHY = 4
@@ -860,11 +893,16 @@ def _auto_accept(m, call):
     _new_shift(m.id, call.starts_at, "accept", call.created_by)
 
 
-def _new_shift(match_id, starts_at, kind, by):
+def _new_shift(match_id, starts_at, kind, by, minutes=None):
+    """A scheduled shift; `minutes` is its length, else the match's opening's (NULL when the
+    opening has none)."""
+    if minutes is None:
+        minutes = _db.openings[_db.matches[match_id].opening_id].duration_minutes
     return _db.shifts.insert(
         _db.Shift(
             match_id=match_id,
             starts_at=starts_at,
+            duration_minutes=minutes,
             status="scheduled",
             kind=kind,
             created_by=by,
@@ -982,7 +1020,8 @@ def _face(org, o):
 
 # An upcoming shift for a calendar: ui.AddToCalendar and GET /shifts/{id}.ics read it.
 _EVENT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, s.confirmed_at, o.title, g.name AS org, "
+    "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.confirmed_at, o.title, "
+    "g.name AS org, "
     "o.neighborhood FROM shift s JOIN match m ON m.id = s.match_id "
     "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
     "WHERE m.status = 'accepted' AND s.status = 'scheduled' AND s.starts_at > ? "
@@ -1000,7 +1039,8 @@ def _next_shift(match_id):
 
 
 def shift_event(uid, shift_id):
-    """{"id", "match_id", "starts_at", "confirmed_at", "title", "org", "neighborhood"} of
+    """{"id", "match_id", "starts_at", "duration_minutes", "confirmed_at", "title", "org",
+    "neighborhood"} of
     this volunteer's own upcoming shift on an accepted match. PermissionError for anything
     else (another volunteer's shift, a cancelled or past one, an unknown id), so the caller
     answers 404."""
@@ -1108,6 +1148,7 @@ def my_matches(uid):
                 "title": o.title,
                 "org": org.name if org else "",
                 "starts_at": _like_starts_at(m, o),
+                "duration_minutes": o.duration_minutes,
                 "neighborhood": o.neighborhood,
                 "event_url": o.event_url,
                 "notes": o.notes if accepted else None,
@@ -1278,12 +1319,13 @@ def _shift_org(shift_id):
     return sh, o.org_id
 
 
-def add_shift(coordinator_uid, match_id, starts_at):
+def add_shift(coordinator_uid, match_id, starts_at, minutes=None):
     """Schedule another shift on an accepted match of the coordinator's org; the Shift.
 
     PermissionError unless a member of the org. ValueError unless the match is accepted
     and starts_at ("YYYY-MM-DDTHH:MM", LA time) is real, in the future, within 366 days,
-    and not already a shift of this match.
+    and not already a shift of this match. `minutes` is the shift's length, one of
+    choices.SHIFT_LENGTHS (ValueError otherwise); None takes the opening's.
     """
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
@@ -1291,6 +1333,8 @@ def add_shift(coordinator_uid, match_id, starts_at):
         raise PermissionError("this org is deactivated")
     if m.status != "accepted":
         raise ValueError("the match is not accepted")
+    if minutes is not None and str(minutes) not in dict(SHIFT_LENGTHS):
+        raise ValueError("pick how long the shift is")
     start = _parse_local(starts_at)
     now = datetime.strptime(_local_now(), _LOCAL_FORMAT)
     if start <= now:
@@ -1299,7 +1343,11 @@ def add_shift(coordinator_uid, match_id, starts_at):
         raise ValueError("the shift must be within the next 12 months")
     try:
         return _new_shift(
-            match_id, start.strftime(_LOCAL_FORMAT), "added", coordinator_uid
+            match_id,
+            start.strftime(_LOCAL_FORMAT),
+            "added",
+            coordinator_uid,
+            None if minutes is None else int(minutes),
         )
     except apsw.ConstraintError:
         raise ValueError("that shift is already scheduled") from None
@@ -1326,7 +1374,12 @@ def repeat_shift(coordinator_uid, match_id):
     if not latest:
         raise ValueError("there is no shift to repeat")
     nxt = datetime.strptime(latest[0].starts_at, _LOCAL_FORMAT) + timedelta(days=7)
-    return add_shift(coordinator_uid, match_id, nxt.strftime(_LOCAL_FORMAT))
+    return add_shift(
+        coordinator_uid,
+        match_id,
+        nxt.strftime(_LOCAL_FORMAT),
+        latest[0].duration_minutes,
+    )
 
 
 def cancel_shift(coordinator_uid, shift_id):
@@ -1349,22 +1402,55 @@ def cancel_shift(coordinator_uid, shift_id):
         return _db.shifts[shift_id]
 
 
-def complete_shift(coordinator_uid, shift_id, attended):
+class HoursRefused(ValueError):
+    """Attended with hours that can't be confirmed: none on a shift with no length (when
+    the caller requires them), or more than the shift's length and the time since it
+    started, whichever is longer."""
+
+
+def complete_shift(
+    coordinator_uid, shift_id, attended, minutes=None, require_hours=False
+):
     """Mark a started shift completed (attended) or no_show; the Shift.
+
+    Attended confirms the hours: `minutes` (one of choices.SHIFT_HOURS, ValueError
+    otherwise) or, when None, the shift's own length (NULL on an old shift: hours unknown,
+    or HoursRefused with require_hours). Hours above both the shift's length and the time
+    since it started raise HoursRefused, so nobody confirms 12 hours of a 1-hour shift at
+    its start. A no-show confirms none.
 
     PermissionError unless a member of the shift's org. ValueError before the shift
     starts, for a cancelled shift, and for a change after the one correction or more than
-    7 days after the first mark. Marking the same result again changes nothing.
+    7 days after the first mark. Marking the same result with the same minutes again
+    changes nothing; a different result, or different minutes on an attended shift, is
+    the one correction.
     """
     with _db.db.conn:
         sh, org_id = _shift_org(shift_id)
         _member_of(coordinator_uid, org_id)
         status = "completed" if attended else "no_show"
+        if attended and minutes is not None and str(minutes) not in dict(SHIFT_HOURS):
+            raise ValueError("pick the hours from the list")
+        confirmed = (
+            None
+            if not attended
+            else sh.duration_minutes
+            if minutes is None
+            else int(minutes)
+        )
         if sh.status == "cancelled":
             raise ValueError("this shift was cancelled")
         if sh.starts_at > _local_now():
             raise ValueError("this shift has not started")
-        if sh.status == status:
+        if attended and confirmed is None and require_hours:
+            raise HoursRefused("pick the hours: this shift has no length")
+        if confirmed is not None:
+            elapsed = _parse_local(_local_now()) - _parse_local(sh.starts_at)
+            if confirmed > max(sh.duration_minutes or 0, elapsed.total_seconds() // 60):
+                raise HoursRefused(
+                    "more hours than the shift and the time since it began"
+                )
+        if sh.status == status and sh.confirmed_minutes == confirmed:
             return sh
         if sh.status != "scheduled":
             if sh.corrected_at:
@@ -1377,12 +1463,17 @@ def complete_shift(coordinator_uid, shift_id, attended):
             _db.shifts.update(
                 id=shift_id,
                 status=status,
+                confirmed_minutes=confirmed,
                 corrected_at=_now(),
                 corrected_by=coordinator_uid,
             )
         else:
             _db.shifts.update(
-                id=shift_id, status=status, marked_at=_now(), marked_by=coordinator_uid
+                id=shift_id,
+                status=status,
+                confirmed_minutes=confirmed,
+                marked_at=_now(),
+                marked_by=coordinator_uid,
             )
         return _db.shifts[shift_id]
 
@@ -1393,8 +1484,9 @@ _BLOCKED = (
     "(b.blocked_user_id = p.id OR (b.blocker_id = p.id AND b.blocked_user_id IS NULL)))"
 )
 _SHIFT_SELECT = (
-    "SELECT s.id, s.match_id, s.starts_at, s.status, s.marked_at, s.corrected_at, "
-    "s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
+    "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.confirmed_minutes, "
+    "s.status, s.marked_at, "
+    "s.corrected_at, s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
     "p.last_name, p.photo_key, "
     "m.status AS match_status, " + _BLOCKED + " AS blocked, "
     "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
@@ -1420,13 +1512,64 @@ def my_shifts(uid):
         [uid],
     ):
         row = {
-            k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
+            k: r[k]
+            for k in (
+                "id",
+                "match_id",
+                "starts_at",
+                "duration_minutes",
+                "confirmed_minutes",
+                "status",
+                "title",
+                "org",
+            )
         }
         row["logo"], row["photo"] = r["org_logo"], r["opening_photo"]
         row["slug"] = next(iter(json.loads(r["causes"] or "[]")), None)
         upcoming = r["status"] == "scheduled" and r["starts_at"] > now
         out["upcoming" if upcoming else "past"].append(row)
     out["past"].reverse()
+    return out
+
+
+def my_hours(uid):
+    """{"months": [...], "unconfirmed": [...]}: this volunteer's attended shifts.
+
+    months, newest first: {"month": "2026-10", "minutes": total, "shifts": [...]} of the
+    shifts with hours a coordinator confirmed, latest first; each row has starts_at,
+    duration_minutes, title, org, minutes and by (the coordinator who last confirmed them, as their profile
+    names them, else the org's name). unconfirmed: attended shifts with no confirmed hours
+    (marked before hours were asked), which count toward nothing. Like my_shifts, a block
+    hides nothing: these are the volunteer's own record.
+    """
+    out = {"months": [], "unconfirmed": []}
+    by_month = {}
+    for r in _db.db.query(
+        "SELECT s.starts_at, s.duration_minutes, s.confirmed_minutes, o.title, "
+        "g.name AS org, c.display_name AS coordinator "
+        "FROM shift s JOIN match m ON m.id = s.match_id "
+        "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
+        "LEFT JOIN profile c ON c.id = coalesce(s.corrected_by, s.marked_by) "
+        "WHERE m.volunteer_id = ? AND s.status = 'completed' "
+        "ORDER BY s.starts_at DESC, s.id DESC",
+        [uid],
+    ):
+        row = {k: r[k] for k in ("starts_at", "duration_minutes", "title", "org")}
+        if r["confirmed_minutes"] is None:
+            out["unconfirmed"].append(row)
+            continue
+        row["minutes"] = r["confirmed_minutes"]
+        row["by"] = (r["coordinator"] or "").strip() or r["org"]
+        month = by_month.get(r["starts_at"][:7])
+        if month is None:
+            month = by_month[r["starts_at"][:7]] = {
+                "month": r["starts_at"][:7],
+                "minutes": 0,
+                "shifts": [],
+            }
+            out["months"].append(month)
+        month["minutes"] += row["minutes"]
+        month["shifts"].append(row)
     return out
 
 
@@ -1451,7 +1594,17 @@ def org_shifts(coordinator_uid):
         [coordinator_uid],
     ):
         row = {
-            k: r[k] for k in ("id", "match_id", "starts_at", "status", "title", "org")
+            k: r[k]
+            for k in (
+                "id",
+                "match_id",
+                "starts_at",
+                "duration_minutes",
+                "confirmed_minutes",
+                "status",
+                "title",
+                "org",
+            )
         }
         row["name"] = (
             BLOCKED_NAME
@@ -1630,6 +1783,7 @@ def chat_header(uid, match_id):
         "other": other,
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
+        "duration_minutes": o.duration_minutes,  # the opening's shift length, if said
         "notes": o.notes if m.status == "accepted" else None,
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
         **_face(the_org, o),
@@ -1766,6 +1920,7 @@ def preferences(uid):
         "orientation_ok": _prefs.orientation_ok(p),
         "languages": _prefs.languages(p),
         "dealbreakers": _prefs.dealbreakers(p),
+        "verified_hours": _prefs.verified_hours(p),
         "surprise": bool(p.surprise),
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
@@ -1793,6 +1948,7 @@ def save_preferences(
     orientation_ok=True,
     languages=(),
     dealbreakers=DEFAULT_DEALBREAKERS,
+    verified_hours="",
     surprise=False,
     urgent=None,
     weekly_limit=None,
@@ -1821,6 +1977,7 @@ def save_preferences(
             orientation_ok=orientation_ok,
             languages=json.dumps(sorted(set(languages))),
             dealbreakers=json.dumps(list(dealbreakers)),
+            verified_hours=verified_hours or None,
             surprise=surprise,
             skills=json.dumps(list(skills)),
             frequency=frequency,
@@ -2039,6 +2196,7 @@ def create_opening(
     orientation_required,
     notes,
     reply_channel,
+    duration_minutes=None,
     skills=(),
     setting="",
     effort="",
@@ -2068,6 +2226,7 @@ def create_opening(
             neighborhood=neighborhood,
             remote=False,
             starts_at=starts_at,
+            duration_minutes=duration_minutes,
             recurrence=recurrence,
             slots=slots,
             orientation_required=orientation_required,
@@ -2422,6 +2581,7 @@ def urgent_recipients(call_id, limit, at):
     active = {c.slug for c in _db.causes() if c.active}
     slugs = [s for s in json.loads(o.causes or "[]") if s in active]
     rates = _org_reply_rates()
+    confirming = _confirming_orgs()
     ranked = []
     for me in _db.profiles(
         where="role = 'volunteer' AND urgent_on = 1 AND deleted_at IS NULL "
@@ -2475,6 +2635,7 @@ def urgent_recipients(call_id, limit, at):
             slugs,
             near,
             rates,
+            confirming,
         )
         ranked.append((-round(fit, 6), me.id, channel))
     ranked.sort()
@@ -3419,7 +3580,7 @@ def delete_account(uid):
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
-            "free_dates = NULL, "
+            "free_dates = NULL, verified_hours = NULL, "
             "last_name = NULL, pronouns = NULL, bio = NULL, interests = NULL, "
             "photo_key = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
@@ -3515,11 +3676,14 @@ def set_org_picture(coordinator_uid, org_id, which, processed):
     return key
 
 
-def set_org_details(coordinator_uid, org_id, about, website):
-    """About text and website (https, or None) of an org this coordinator belongs to."""
+def set_org_details(coordinator_uid, org_id, about, website, confirms_hours):
+    """About text, website (https, or None) and whether the org can confirm volunteer
+    hours, of an org this coordinator belongs to."""
     with _db.db.conn:
         coordinator_org(coordinator_uid, org_id)
-        _db.orgs.update(id=org_id, about=about, website=website)
+        _db.orgs.update(
+            id=org_id, about=about, website=website, confirms_hours=confirms_hours
+        )
 
 
 def coordinator_opening(coordinator_uid, opening_id):

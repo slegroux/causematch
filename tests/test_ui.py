@@ -102,6 +102,7 @@ def pages(anon, user, coord):
         (user, "/deck"),
         (user, "/matches"),
         (user, "/history"),
+        (user, "/hours"),
         (user, "/profile"),
         (user, "/me/preferences"),
         (user, "/profile/delete"),

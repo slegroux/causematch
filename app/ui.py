@@ -193,7 +193,7 @@ def Checks(name, options, checked=(), cls="space-y-1"):
     )
 
 
-def Choice(name, options, selected="", placeholder=None):
+def Choice(name, options, selected="", placeholder=None, required=False):
     return Select(
         Option(placeholder or "Choose one", value="", selected=not selected),
         *[
@@ -201,6 +201,7 @@ def Choice(name, options, selected="", placeholder=None):
             for value, label in options
         ],
         name=name,
+        required=required,
         cls="uk-select",
     )
 
@@ -285,8 +286,19 @@ def Meta(icon, text):
     )
 
 
-def when(starts_at):
-    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
+def when(starts_at, minutes=None, sep=", "):
+    """ "Sun Nov 1, 9:00 AM"; with the shift's length in minutes, "... to 12:00 PM" (the end
+    carries its date when it falls on another day). A NULL length reads as the start only.
+    sep: between the date and the time (the deck card uses " · ")."""
+    start = datetime.fromisoformat(starts_at)
+    day = f"%a %b %-d{sep}%-I:%M %p"
+    text = start.strftime(day)
+    if not minutes:
+        return text
+    end = start + timedelta(minutes=minutes)
+    return (
+        f"{text} to {end.strftime('%-I:%M %p' if end.date() == start.date() else day)}"
+    )
 
 
 def BackLink(href, text):
@@ -624,7 +636,7 @@ def OrgFace(org, logo=None, photo=None, slug=None):
     )
 
 
-CALENDAR_HOURS = 2  # openings have no end time yet: a calendar gets this long
+CALENDAR_HOURS = 2  # a shift with no length known: a calendar gets this long
 CALENDAR_ZONE = "America/Los_Angeles"  # the wall clock starts_at is stored in
 
 
@@ -633,7 +645,11 @@ def calendar_event(s):
     end as CALENDAR_ZONE wall clock "YYYYMMDDTHHMMSS", title, place (the neighborhood: no
     address is stored), and a line with the link back to the chat."""
     start = datetime.fromisoformat(s["starts_at"])
-    end = start + timedelta(hours=CALENDAR_HOURS)
+    end = start + (
+        timedelta(minutes=s["duration_minutes"])
+        if s.get("duration_minutes")
+        else timedelta(hours=CALENDAR_HOURS)
+    )
     return {
         "start": start.strftime("%Y%m%dT%H%M%S"),
         "end": end.strftime("%Y%m%dT%H%M%S"),
@@ -683,7 +699,7 @@ def NextShift(s):
     return Div(
         Span(
             Icon(CALENDAR, size=16, cls="text-ink-muted"),
-            f"Next shift: {when(s['starts_at'])}",
+            f"Next shift: {when(s['starts_at'], s.get('duration_minutes'))}",
             cls="inline-flex items-center gap-2 font-semibold text-ink",
         ),
         A("Can't make this one", href=f"/shifts/{s['id']}/cancel", cls=SMALL_LINK),

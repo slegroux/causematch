@@ -40,6 +40,7 @@ from app.choices import (
     LANGUAGES,
     MAX_OPENING_SKILLS,
     SETTING,
+    SHIFT_LENGTHS,
     SKILLS,
 )
 from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
@@ -203,7 +204,7 @@ def OpeningRow(o, counts, urgent=None):
             cls="flex flex-wrap items-center gap-1.5",
         ),
         H3(o.title, cls="font-bold leading-snug text-ink"),
-        Meta(CALENDAR, when(o.starts_at)),
+        Meta(CALENDAR, when(o.starts_at, o.duration_minutes)),
         Meta(PIN, o.neighborhood),
         Div(
             P(
@@ -429,6 +430,15 @@ def OpeningForm(uid, f=None, error=None):
                 ),
             ),
             Field(
+                "How long is a shift?",
+                Choice(
+                    "duration_minutes",
+                    SHIFT_LENGTHS,
+                    f.get("duration_minutes", ""),
+                    required=True,
+                ),
+            ),
+            Field(
                 "Does it repeat?",
                 # no preset: it decides who the opening fits (match.commitment_fits)
                 Choice("recurrence", RECURRENCE, f.get("recurrence", "")),
@@ -590,6 +600,7 @@ def _sync_new_opening_save(req, form):
         "cause": text("cause"),
         "zip": text("zip"),
         "starts_at": text("starts_at"),
+        "duration_minutes": text("duration_minutes"),
         "recurrence": text("recurrence"),
         "slots": text("slots"),
         "orientation_required": text("orientation_required"),
@@ -635,6 +646,8 @@ def _sync_new_opening_save(req, form):
         return fail("The next shift has to be in the future.")
     if local > now + MAX_AHEAD:
         return fail("The next shift must be within the next 12 months.")
+    if f["duration_minutes"] not in {v for v, _ in SHIFT_LENGTHS}:
+        return fail("Please say how long a shift is.")
     if f["recurrence"] not in {v for v, _ in RECURRENCE}:
         return fail("Please say whether the opening repeats.")
     if not re.fullmatch(r"[0-9]{1,3}", f["slots"]) or not 1 <= int(f["slots"]) <= 200:
@@ -675,6 +688,7 @@ def _sync_new_opening_save(req, form):
             lon=latlon[1],
             neighborhood=f["neighborhood"],
             starts_at=start.isoformat(timespec="minutes"),
+            duration_minutes=int(f["duration_minutes"]),
             recurrence=f["recurrence"],
             slots=int(f["slots"]),
             orientation_required=f["orientation_required"],

@@ -156,7 +156,10 @@ def MatchRow(m):
         ),
         head,
         Div(  # above the stretched link
-            Meta(CALENDAR, f"{when(m['starts_at'])} · {m['neighborhood']}"),
+            Meta(
+                CALENDAR,
+                f"{when(m['starts_at'], m['duration_minutes'])} · {m['neighborhood']}",
+            ),
             Notes(m["notes"]),
             cls="relative z-10 space-y-1.5",
         ),

@@ -66,6 +66,7 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
         "/deck",
         "/matches",
         "/history",
+        "/hours",
         "/profile",
         "/me/preferences",
         "/me/profile",

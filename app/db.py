@@ -44,6 +44,7 @@ class Org:
     logo_key: str  # Photo (photos.process "logo"): a square badge on its own background
     photo_key: str  # Photo ("card"): a picture of the org's work, the cards' fallback
     website: str  # https only (forms.https_url)
+    confirms_hours: bool  # the org can confirm volunteer hours (NULL or 0: it doesn't)
 
 
 class Opening:
@@ -76,6 +77,9 @@ class Opening:
     languages: str  # JSON list of choices.LANGUAGES keys that help
     photo_key: str  # Photo ("card"), shown on the swipe card before the org's
     event_url: str  # https only (forms.https_url): the event as the org advertises it
+    duration_minutes: (
+        int  # how long a shift lasts (choices.SHIFT_LENGTHS); NULL: not said
+    )
 
 
 class Profile:
@@ -138,6 +142,8 @@ class Profile:
     urgent_per_week: int  # 1..3 (NULL: 3)
     # Up to this many shifts a week (app/prefs.py weekly_limit), 1..5; NULL or 0: off
     weekly_limit: int
+    # Private (app/prefs.py verified_hours): prefer|only the nonprofits that confirm hours
+    verified_hours: str
 
 
 class OrgMember:
@@ -216,6 +222,10 @@ class Shift:
     cancelled_by: int  # the coordinator, or the volunteer ("Can't make this one")
     created_at: str
     confirmed_at: str  # UTC; the volunteer answered "Still coming?" with yes
+    duration_minutes: int  # copied from the opening; NULL: no length known
+    # The hours a coordinator confirmed when marking it attended (choices.SHIFT_HOURS);
+    # NULL: not attended, or attended with the hours unknown
+    confirmed_minutes: int
 
 
 class Notification:
@@ -439,7 +449,7 @@ ORGS = [
     ),
 ]
 
-# (org index, title, causes, skills, neighborhood, lat, lon, starts_at, slots, status)
+# (org index, title, causes, skills, neighborhood, lat, lon, starts_at, slots, minutes, status)
 OPENINGS = [
     (
         0,
@@ -451,6 +461,7 @@ OPENINGS = [
         -118.4457,
         _soon(7, "09:00"),
         6,
+        180,
         "open",
     ),
     (
@@ -463,6 +474,7 @@ OPENINGS = [
         -118.2468,
         _soon(8, "11:00"),
         4,
+        180,
         "open",
     ),
     (
@@ -475,6 +487,7 @@ OPENINGS = [
         -118.1925,
         _soon(14, "08:30"),
         10,
+        240,
         "open",
     ),
     (
@@ -487,6 +500,7 @@ OPENINGS = [
         -118.2087,
         _soon(9, "10:00"),
         5,
+        120,
         "open",
     ),
     (
@@ -499,6 +513,7 @@ OPENINGS = [
         -118.3500,
         _soon(15, "09:30"),
         8,
+        240,
         "open",
     ),
     (
@@ -511,6 +526,7 @@ OPENINGS = [
         -118.2606,
         _soon(21, "13:00"),
         2,
+        120,
         "open",
     ),
     (
@@ -523,6 +539,7 @@ OPENINGS = [
         -118.4486,
         _soon(10, "14:00"),
         6,
+        180,
         "open",
     ),
     (
@@ -535,6 +552,7 @@ OPENINGS = [
         -118.4457,
         _soon(1, "09:00"),
         0,
+        180,
         "closed",
     ),
 ]
@@ -624,7 +642,19 @@ def _seed_demo():
             )
         )
         ids.append(org.id)
-    for oi, title, cs, skills, hood, lat, lon, starts, slots, status in OPENINGS:
+    for (
+        oi,
+        title,
+        cs,
+        skills,
+        hood,
+        lat,
+        lon,
+        starts,
+        slots,
+        minutes,
+        status,
+    ) in OPENINGS:
         openings.insert(
             Opening(
                 org_id=ids[oi],
@@ -638,6 +668,7 @@ def _seed_demo():
                 neighborhood=hood,
                 remote=False,
                 starts_at=starts,
+                duration_minutes=minutes,
                 recurrence="",
                 slots=slots,
                 orientation_required="",

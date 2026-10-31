@@ -12,6 +12,24 @@ AVAILABILITY = [
     ("weekend_evening", "Weekend evenings"),
 ]
 
+
+def minutes_label(minutes):
+    """30 -> "30 minutes", 60 -> "1 hour", 150 -> "2.5 hours"."""
+    if minutes < 60:
+        return f"{minutes} minutes"
+    hours = minutes / 60
+    return f"{hours:g} hour" + ("" if hours == 1 else "s")
+
+
+# How long a shift lasts, as Opening.duration_minutes and Shift.duration_minutes store it.
+SHIFT_LENGTHS = [
+    (str(m), minutes_label(m)) for m in (60, 90, 120, 150, 180, 240, 300, 360, 480)
+]
+
+# The hours a coordinator can confirm for a shift (Shift.confirmed_minutes): 30 minutes to
+# 12 hours, in 30-minute steps.
+SHIFT_HOURS = [(str(m), minutes_label(m)) for m in range(30, 12 * 60 + 1, 30)]
+
 # The day grid: 7 days x 3 parts, stored as "mon_morning" ... "sun_evening" (21 slots).
 # AVAILABILITY above is the weekday/weekend summary the nonprofit sees: the grid summed up
 # into it (app/match.py general_buckets).
@@ -68,6 +86,13 @@ DEALBREAKERS = [
     ("work", "The kind of work I picked"),
 ]
 DEFAULT_DEALBREAKERS = ["distance"]
+# Nonprofits that confirm volunteer hours: no preference, rank them first, or only them.
+# Neutral on purpose: nothing records why a volunteer wants it.
+VERIFIED_HOURS = [
+    ("", "No preference"),
+    ("prefer", "Prefer"),
+    ("only", "Only show"),
+]
 
 SKILLS = [
     ("physical", "Physical work / lifting"),

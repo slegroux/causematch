@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
-from conftest import close_all_openings, make_opening, uid_of
+from conftest import close_all_openings, coordinator, make_opening, uid_of
 
 from app import data, geo, match
 from app.db import (
@@ -13,6 +13,7 @@ from app.db import (
     db,
     deck_empties,
     matches,
+    orgs,
     places,
     profiles,
     shifts,
@@ -537,6 +538,14 @@ def test_when_free_dates_go_with_the_account(bare):
     uid = uid_of(bare)
     data.delete_account(uid)
     assert profiles[uid].free_dates is None
+
+
+def test_verified_hours_preference_goes_with_the_account(bare):
+    save(bare, work_form(verified_hours="only"))
+    uid = uid_of(bare)
+    assert profiles[uid].verified_hours
+    data.delete_account(uid)
+    assert profiles[uid].verified_hours is None
 
 
 # --- kind of work --------------------------------------------------------------------------
@@ -1239,3 +1248,43 @@ def test_a_rating_the_page_did_not_carry_is_kept(bare):
     form = {k: v for k, v in work_form().items() if k != "cause_animal-shelters"}
     save(bare, form)
     assert json.loads(profiles[uid_of(bare)].cause_prefs)[ANIMALS] == "no"
+
+
+# --- verified hours -----------------------------------------------------------------------
+
+
+def test_verified_hours_only_hides_nonprofits_that_do_not_confirm(bare):
+    orgs.update(id=orgs()[0].id, confirms_hours=True)
+    add("does not", DOWNTOWN, org_id=orgs()[1].id)  # first on a tie
+    add("confirms", DOWNTOWN)
+    save(bare, work_form(verified_hours="only"))
+    assert set(cards(bare)) == {"confirms"}
+    for mode in ("", "prefer"):
+        save(bare, work_form(verified_hours=mode))
+        assert set(cards(bare)) == {"confirms", "does not"}
+    shown = cards(bare)  # prefer saved last: the confirming one is first, and says so
+    assert list(shown) == ["confirms", "does not"]
+    assert "Confirms your hours" in str(shown["confirms"]["why"])
+    assert "Confirms your hours" not in str(shown["does not"]["why"])
+
+
+def test_verified_hours_only_cannot_be_liked_by_id_and_offers_a_way_out(bare):
+    save(bare, work_form(verified_hours="only"))
+    oid = add("does not", DOWNTOWN)
+    with pytest.raises(LookupError):
+        data.swipe(uid_of(bare), oid, True)
+    assert data.relaxations(uid_of(bare))["key"] == "only_verified"
+    data.apply_relaxation(uid_of(bare), "only_verified")
+    assert [c["title"] for c in data.deck(uid_of(bare), 5)] == ["does not"]
+    assert data.preferences(uid_of(bare))["verified_hours"] == "prefer"
+
+
+def test_verified_hours_a_coordinator_sets_it_and_a_non_member_cannot(coord):
+    org = coord.org_id
+    coord.post(f"/org/organization/{org}", data={"about": "", "confirms_hours": "1"})
+    assert orgs[org].confirms_hours
+    coord.post(f"/org/organization/{org}", data={"about": ""})
+    assert not orgs[org].confirms_hours
+    other = coordinator(1)
+    r = other.post(f"/org/organization/{org}", data={"confirms_hours": "1"})
+    assert r.status_code == 403 and not orgs[org].confirms_hours

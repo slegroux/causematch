@@ -14,6 +14,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
+from app.choices import SHIFT_HOURS, SHIFT_LENGTHS, minutes_label
 from app.config import public_base_url
 from app.forms import query, str_form
 from app.ui import (
@@ -22,6 +23,7 @@ from app.ui import (
     ORG_TITLE,
     SMALL_LINK,
     TITLE,
+    Choice,
     Field,
     OrgFace,
     OrgShell,
@@ -48,6 +50,10 @@ NOTICE = {
         "once within 7 days, and cancelled only before it starts."
     ),
     "repeat": "Couldn't add next week's shift (it needs a weekly opening, and a date still ahead).",
+    "hours": (
+        "Pick how many hours they volunteered: up to the shift's length, or longer once "
+        "that much time has passed since it started."
+    ),
 }
 
 
@@ -64,9 +70,17 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
                 P(s["title"], cls="font-bold leading-snug text-ink"),
                 VolunteerHeader(s["name"], s["photo_key"]) if for_org else None,
                 P(
-                    f"{when(s['starts_at'])}" + ("" if for_org else f" - {s['org']}"),
+                    f"{when(s['starts_at'], s['duration_minutes'])}"
+                    + ("" if for_org else f" - {s['org']}"),
                     cls=TextPresets.muted_sm,
                 ),
+                # the hours the nonprofit confirmed, on an attended shift
+                P(
+                    f"{minutes_label(s['confirmed_minutes'])} confirmed",
+                    cls=TextPresets.muted_sm,
+                )
+                if s["status"] == "completed" and s["confirmed_minutes"]
+                else None,
                 cls="min-w-0 space-y-2",
             ),
             cls="flex items-center gap-3",
@@ -77,17 +91,35 @@ def ShiftCard(s, *actions, for_org=True, status=None, tone=None):
 
 
 def MarkForm(s, corrected=False):
-    attended = Button("Attended", name="result", value="attended", cls=ButtonT.primary)
+    """One tap on "Attended" confirms the shift's own length; the select changes it.
+    The correction offers the hours again, and the other answer."""
+    done = s["status"] == "completed"
+    minutes = s["confirmed_minutes"] if corrected and done else s["duration_minutes"]
+    hours = Div(
+        Choice(
+            "minutes",
+            SHIFT_HOURS,
+            str(minutes or ""),
+            placeholder="Hours?",
+        ),
+        cls="w-36",
+    )
+    attended = Button(
+        "Update hours" if corrected and done else "Attended",
+        name="result",
+        value="attended",
+        cls=ButtonT.primary,
+    )
     no_show = Button("No-show", name="result", value="no_show", cls=ButtonT.default)
-    if corrected:  # the one correction: offer only the other answer
-        buttons = [no_show if s["status"] == "completed" else attended]
+    if corrected and not done:  # the one correction from no-show: only "Attended"
+        buttons = [hours, attended]
     else:
-        buttons = [attended, no_show]
+        buttons = [hours, attended, no_show]
     return PlainForm(
         *buttons,
         action=f"/org/shifts/{s['id']}/mark",
         method="post",
-        cls="flex gap-3",
+        cls="flex flex-wrap items-center gap-3",
     )
 
 
@@ -183,14 +215,25 @@ async def mark(req, shift_id: int):
     result = form.get("result") if form else None
     if result not in ("attended", "no_show"):
         return Refusal(400)
-    return await run_in_threadpool(_sync_mark, req, result, shift_id)
+    minutes = form.get("minutes", "").strip()  # "": the select was left on "Hours?"
+    if minutes and minutes not in dict(SHIFT_HOURS):
+        return Refusal(400)
+    return await run_in_threadpool(_sync_mark, req, result, shift_id, minutes or None)
 
 
-def _sync_mark(req, result, shift_id: int):
+def _sync_mark(req, result, shift_id: int, minutes):
     try:
-        data.complete_shift(req.scope["uid"], shift_id, result == "attended")
+        data.complete_shift(
+            req.scope["uid"],
+            shift_id,
+            result == "attended",
+            minutes,
+            require_hours=True,
+        )
     except PermissionError:
         return Refusal(403)
+    except data.HoursRefused:
+        return Redirect("/org/shifts?notice=hours")
     except ValueError:
         return Redirect("/org/shifts?notice=unavailable")
     return Redirect("/org/shifts")
@@ -218,7 +261,7 @@ def repeat(req, match_id: int):
     return Redirect("/org/shifts")
 
 
-def ShiftForm(uid, match_id, head, error=None, value=""):
+def ShiftForm(uid, match_id, head, error=None, value="", minutes=None):
     return OrgShell(
         "inbox",
         data.org_waiting(uid),
@@ -237,6 +280,17 @@ def ShiftForm(uid, match_id, head, error=None, value=""):
                         type="datetime-local",
                         value=value,
                         required=True,
+                    ),
+                ),
+                Field(
+                    "How long is the shift?",
+                    Choice(
+                        "duration_minutes",
+                        SHIFT_LENGTHS,
+                        # the opening's length unless the coordinator chose another
+                        minutes
+                        if minutes is not None
+                        else str(head["duration_minutes"] or ""),
                     ),
                 ),
                 Div(
@@ -281,14 +335,15 @@ async def new_shift_save(req, match_id: int):
 def _sync_new_shift_save(req, form, match_id: int):
     uid = req.scope["uid"]
     starts_at = form.get("starts_at", "").strip()
+    minutes = form.get("duration_minutes", "").strip()
     try:
         head = _writable_head(uid, match_id)
-        data.add_shift(uid, match_id, starts_at)
+        data.add_shift(uid, match_id, starts_at, minutes or None)
     except PermissionError:
         return Refusal(403)
     except ValueError as e:
         return ShiftForm(
-            uid, match_id, head, f"Couldn't schedule that: {e}.", starts_at
+            uid, match_id, head, f"Couldn't schedule that: {e}.", starts_at, minutes
         )
     return Redirect("/org/shifts")
 
@@ -321,6 +376,7 @@ def history(req):
             ],
             "Nothing yet.",
         ),
+        A("My hours", href="/hours", cls=SMALL_LINK),
         uid=req.scope["uid"],
     )
 
@@ -341,7 +397,10 @@ def ShiftQuestion(uid, s, title, *body):
         "matches",
         Div(
             H1(title, cls="font-display text-xl font-extrabold leading-snug text-ink"),
-            P(f"{when(s['starts_at'])} with {s['org']}", cls=TextPresets.muted_sm),
+            P(
+                f"{when(s['starts_at'], s['duration_minutes'])} with {s['org']}",
+                cls=TextPresets.muted_sm,
+            ),
             *body,
             cls="mt-4 space-y-3 p-5 " + CARD,
         ),
