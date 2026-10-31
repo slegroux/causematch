@@ -575,6 +575,32 @@ OPENINGS = [
         "open",
     ),
     (
+        1,
+        "Play a set at the Sunday community lunch",
+        ["food-insecurity"],
+        ["music"],
+        "Little Tokyo",
+        34.0500,
+        -118.2400,
+        _soon(12, "12:00"),
+        2,
+        90,
+        "open",
+    ),
+    (
+        5,
+        "Paint the garden's mural with neighborhood kids",
+        ["environment-parks"],
+        ["arts", "physical"],
+        "Baldwin Hills",
+        34.0105,
+        -118.3490,
+        _soon(18, "10:00"),
+        4,
+        180,
+        "open",
+    ),
+    (
         0,
         "Holiday pantry drive (past sign-up deadline)",
         ["food-insecurity"],
@@ -630,6 +656,14 @@ ABOUT = {
             "week."
         ),
         "",
+    ),
+    "Play a set at the Sunday community lunch": (
+        "Play or sing for guests while they eat. Bring your own instrument; 45 minutes is plenty.",
+        "We have a small speaker and a mic. Acoustic is fine.",
+    ),
+    "Paint the garden's mural with neighborhood kids": (
+        "Help children sketch and paint a mural on the garden wall, one panel each.",
+        "Wear clothes that can get paint on them. We supply paint and brushes.",
     ),
     "Holiday pantry drive (past sign-up deadline)": (
         "Collect and sort holiday food donations at the pantry.",

@@ -437,6 +437,14 @@ def test_posted_skills_are_stored_and_ranked(coord, user):
     assert o.skills == '["admin", "car"]'
 
 
+def test_an_opening_can_ask_for_a_creative_skill(coord):
+    r = post(coord, skills=["music"], starts_at=future(2))
+    assert r.status_code == 303
+    o = openings(where="title = ?", where_args=["Saturday fridge restock"])[0]
+    assert o.skills == '["music"]'
+    assert 'name="skills" value="music"' in coord.get("/org/openings/new").text
+
+
 def test_posted_opening_without_skills_stores_none(coord):
     post(coord)
     (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
