@@ -17,8 +17,14 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+import demo  # scripts/demo.py: refuse_production
 
 BASE, LOG = sys.argv[1], Path(sys.argv[2])
 BEATS = json.loads(Path(sys.argv[3]).read_text())
@@ -139,17 +145,36 @@ def link_after(before, masked):
 
 def days_pass():
     """Time can't pass during a live recording: move Riley's shift at Silver Lake Garden
-    Friends to two days ago (Los Angeles wall clock, 9 am), in the throwaway database."""
-    started = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%dT09:00")
-    with sqlite3.connect(DB, timeout=10) as db:
-        done = db.execute(
-            "UPDATE shift SET starts_at = ? WHERE status = 'scheduled' AND match_id IN "
-            "(SELECT m.id FROM match m JOIN opening o ON o.id = m.opening_id "
-            "JOIN org g ON g.id = o.org_id WHERE g.name = 'Silver Lake Garden Friends')",
-            [started],
-        ).rowcount
-    if done != 1:
-        raise RuntimeError(f"expected to move 1 shift, moved {done}")
+    Friends to two days ago, 9 am Los Angeles time (the app's clock), in the throwaway
+    database. Refuses production, a database outside the demo seed, and a path in the repo."""
+    demo.refuse_production()
+    from app import demo_seed
+
+    path = Path(DB).resolve()
+    if path.is_relative_to(ROOT):
+        raise RuntimeError(
+            f"{path} is inside the repo: only a throwaway database is edited"
+        )
+    started = (
+        datetime.now(ZoneInfo("America/Los_Angeles")) - timedelta(days=2)
+    ).strftime("%Y-%m-%dT09:00")
+    db = sqlite3.connect(f"file:{path}?mode=rw", uri=True, timeout=10)
+    try:
+        with db:  # one transaction: committed on success, rolled back on any error
+            if not db.execute(
+                "SELECT 1 FROM profile WHERE email = ?", [demo_seed.ADMIN[0]]
+            ).fetchone():
+                raise RuntimeError(f"{path} doesn't hold the demo seed: not editing it")
+            done = db.execute(
+                "UPDATE shift SET starts_at = ? WHERE status = 'scheduled' AND match_id IN "
+                "(SELECT m.id FROM match m JOIN opening o ON o.id = m.opening_id "
+                "JOIN org g ON g.id = o.org_id WHERE g.name = 'Silver Lake Garden Friends')",
+                [started],
+            ).rowcount
+            if done != 1:
+                raise RuntimeError(f"expected to move 1 shift, moved {done}")
+    finally:
+        db.close()
 
 
 timeline = []
@@ -336,6 +361,8 @@ def story(vol, org, adm):
             break
         tap(vol, vol.get_by_role("button", name="Pass").first)
         hold(1.4)
+    else:
+        raise RuntimeError("Jordan's opening never came up in Riley's deck")
     hold(1.6)
     tap(vol, vol.get_by_role("button", name="Like").first)
     # a first like asks two optional questions: skip them, back to the deck
@@ -382,12 +409,12 @@ def story(vol, org, adm):
     tap(vol, vol.get_by_role("link", name="Say hi").first)
     vol.wait_for_url("**/chat/**")
     hold(1.0)
-    type_in(vol, vol.locator("input[name=msg]"), "Great, see you Sunday!", 55)
+    type_in(vol, vol.locator("input[name=msg]"), "Great, see you then!", 55)
     tap(vol, vol.get_by_role("button", name="Send"))
 
     # 12. the reply lands; the dashboard flags it
     beat("answer")
-    org.get_by_text("see you Sunday").wait_for()
+    org.get_by_text("see you then").wait_for()
     hold(1.6)
     tap(org, org.get_by_role("link", name="Openings").first)
     org.wait_for_url("**/org")
@@ -471,7 +498,7 @@ def main():
         browser = pw.chromium.launch()
 
         def ctx(**kw):
-            c = browser.new_context(base_url=BASE, bypass_csp=True, **kw)
+            c = browser.new_context(base_url=BASE, **kw)
             c.add_init_script(CURSOR)
             return c
 
