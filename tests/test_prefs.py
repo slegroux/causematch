@@ -164,6 +164,15 @@ def test_saving_stores_every_answer(user):
     assert f'name="cause_{ANIMALS}" value="no" checked' in html
 
 
+def test_creative_skills_are_saved_and_shown_checked_on_the_work_page(user):
+    user.post("/me/preferences", data={**SAVE, "skills": ["music", "arts"]})
+    assert json.loads(profile_of(user).skills) == ["music", "arts"]
+    html = user.get("/me/preferences/work").text
+    for skill in ("music", "arts"):
+        assert f'name="skills" value="{skill}" checked' in html
+    assert 'name="skills" value="performing" checked' not in html
+
+
 def test_a_cause_left_unrated_is_not_stored(user):
     form = {k: v for k, v in SAVE.items() if k != f"cause_{PARKS}"}
     user.post("/me/preferences", data=form)
