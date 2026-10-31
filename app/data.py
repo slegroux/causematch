@@ -1595,13 +1595,14 @@ def _is_period(period):
 
 def _confirmed_rows(uid, org_id=None):
     """This volunteer's attended shifts with confirmed hours, oldest first, one dict each:
-    org_id, org, ein, website, starts_at, title, minutes and by (the coordinator who last
+    shift_id, org_id, org, ein, website, starts_at, title, minutes and by (the coordinator who last
     confirmed them, as their profile names them, else the org's name; as my_hours says)."""
     where, args = "", [uid]
     if org_id is not None:
         where, args = "AND g.id = ? ", [uid, org_id]
     return [
         {
+            "shift_id": r["shift_id"],
             "org_id": r["org_id"],
             "org": r["org"],
             "ein": r["ein"],
@@ -1612,7 +1613,7 @@ def _confirmed_rows(uid, org_id=None):
             "by": (r["coordinator"] or "").strip() or r["org"],
         }
         for r in _db.db.query(
-            "SELECT g.id AS org_id, g.name AS org, g.ein, g.website, s.starts_at, "
+            "SELECT s.id AS shift_id, g.id AS org_id, g.name AS org, g.ein, g.website, s.starts_at, "
             "s.confirmed_minutes, o.title, c.display_name AS coordinator "
             "FROM shift s JOIN match m ON m.id = s.match_id "
             "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
@@ -1697,6 +1698,7 @@ def issue_certificate(uid, org_id, period):
             "coordinators": sorted({r["by"] for r in rows}, key=str.lower),
             "shifts": [
                 {
+                    "id": r["shift_id"],
                     "date": r["starts_at"][:10],
                     "minutes": r["minutes"],
                     "role": r["title"],
@@ -1804,8 +1806,8 @@ def check_certificate(code):
     {"state": "withdrawn"}: and nothing else;
     {"state": "genuine" or "changed", "volunteer", "org", "ein", "period", "minutes",
         "issued", "code"}: signed as issued; "changed" when that nonprofit has since
-        changed the hours it confirmed for this volunteer in the period, and then also
-        "current_minutes" (0 when none are left).
+        corrected hours of the shifts that are on it (hours changed, or a shift no longer
+        attended); shifts worked since are not on it and change nothing.
     Only what the certificate itself says: no shifts, no contact details."""
     c = _certificate(code)
     if c is None:
@@ -1815,10 +1817,16 @@ def check_certificate(code):
     snapshot = _verified_snapshot(c)
     if snapshot is None:
         return {"state": "unknown"}
-    current = sum(
-        r["minutes"] for r in _period_rows(c.volunteer_id, c.org_id, c.period)
-    )
-    out = {
+    # changed only by a correction to a shift that is on the certificate; a shift worked
+    # since is not on it and changes nothing
+    ids = [x["id"] for x in snapshot["shifts"]]
+    marks = ",".join("?" * len(ids))  # placeholders only: the ids are bound, not pasted
+    (current,) = _db.db.execute(
+        "SELECT coalesce(sum(confirmed_minutes), 0) FROM shift WHERE status = 'completed' "
+        f"AND confirmed_minutes > 0 AND id IN ({marks})",
+        ids,
+    ).fetchone()
+    return {
         "state": "genuine" if current == snapshot["minutes"] else "changed",
         "volunteer": snapshot["volunteer"],
         "org": snapshot["org"]["name"],
@@ -1828,9 +1836,6 @@ def check_certificate(code):
         "issued": snapshot["issued"],
         "code": _signing.code(c.signature),
     }
-    if out["state"] == "changed":
-        out["current_minutes"] = current
-    return out
 
 
 def org_shifts(coordinator_uid):

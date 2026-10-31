@@ -363,8 +363,8 @@ def CheckPage(r):
         "Hours have changed" if changed else "Genuine certificate",
         P(
             "This is a genuine Causematch certificate as it was issued, but "
-            f"{r['org']} has since changed the hours it confirmed for this volunteer "
-            "in this period."
+            f"{r['org']} has corrected the hours it confirmed since then. "
+            "The figures below are as issued."
             if changed
             else "This is a genuine Causematch certificate, unchanged since it was issued.",
             cls="mt-2 text-ink",
@@ -377,11 +377,6 @@ def CheckPage(r):
             CheckRow(
                 "Hours when issued" if changed else "Total hours",
                 minutes_label(r["minutes"]),
-            ),
-            *(
-                [CheckRow("Hours confirmed now", minutes_label(r["current_minutes"]))]
-                if changed
-                else []
             ),
             CheckRow("Issued", long_date(r["issued"])),
             CheckRow("Signature code", Span(r["code"], cls="font-mono")),
@@ -402,5 +397,9 @@ def _sync_check(req, code):
     return FtResponse(
         (Meta(name="robots", content="noindex"), *page),
         status_code=status,
-        headers={"X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store"},
+        headers={
+            "X-Robots-Tag": "noindex, nofollow",
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+        },
     )

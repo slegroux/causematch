@@ -8,7 +8,7 @@ from conftest import coordinator, pantry_opening, volunteer
 from starlette.testclient import TestClient
 
 from app import data, security, signing
-from app.db import certificates, openings, orgs, profiles, shifts
+from app.db import certificates, matches, openings, orgs, profiles, shifts
 from main import app
 
 
@@ -201,6 +201,7 @@ def test_check_link_shows_what_the_certificate_says_and_no_more(anon):
     assert 'name="robots" content="noindex"' in r.text
     assert r.headers["x-robots-tag"].startswith("noindex")
     assert r.headers["cache-control"] == "no-store"
+    assert r.headers["referrer-policy"] == "no-referrer"
 
     # one changed character, other lengths and odd inputs: never an error, never a record
     flipped = cid[:-1] + ("A" if cid[-1] != "A" else "B")
@@ -227,14 +228,22 @@ def test_check_link_shows_what_the_certificate_says_and_no_more(anon):
     assert "6.5 hours" not in r.text and "genuine" not in r.text
 
 
-def test_check_link_says_when_the_nonprofit_changed_the_hours(anon):
+def test_check_link_says_changed_only_for_a_correction_to_its_own_shifts(anon):
     _a, cid, rows = _issued()
+    later = matches[rows[0].match_id]
+    _shift(later, 20, 240, rows[0].created_by)  # worked after issuing: not on it
+    r = anon.get(f"/check/{cid}")
+    assert "Genuine certificate" in r.text and "Hours have changed" not in r.text
+    assert "9.5 hours" not in r.text
+
     (three_hours,) = (r for r in rows if r.confirmed_minutes == 180)
     shifts.update(id=three_hours.id, confirmed_minutes=120)  # a correction: 3 h to 2 h
     r = anon.get(f"/check/{cid}")
-    assert "has since changed the hours it confirmed" in r.text
-    assert "5.5 hours" in r.text and "4.5 hours" in r.text  # as issued, and now
-    assert "unchanged since it was issued" not in r.text
+    assert "Hours have changed" in r.text and "corrected the hours" in r.text
+    assert "5.5 hours" in r.text  # the total as issued, and no current total
+    for now in ("4.5 hours", "8.5 hours", "6.5 hours", "confirmed now"):
+        assert now not in r.text, now
+    assert "Genuine certificate" not in r.text
 
 
 def test_check_link_says_withdrawn_and_nothing_else(anon):
