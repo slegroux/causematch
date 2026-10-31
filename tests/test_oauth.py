@@ -4,12 +4,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
-from conftest import FORM, coordinator_for, jpeg, volunteer
+from conftest import FORM, coordinator_for, jpeg, orgs, volunteer
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
 from app import data, notify, oauth, security
-from app.db import identities, photos, profiles
+from app.db import blocks, identities, photos, profiles, retained_identities
 from app.routes import oauth as oauth_routes
 from main import app
 
@@ -297,3 +297,36 @@ def test_junk_callbacks_do_not_use_up_a_shared_address_budget(anon):
         assert r.status_code == 400  # refused on the missing flow cookie, never 429
     r, _ = google_sign_in(anon)  # a real flow from the same address still works
     assert r.status_code == 303
+
+
+def test_disconnect_signs_other_sessions_out_but_not_this_one(anon):
+    vol = volunteer()
+    connect(vol)
+    other = TestClient(app)  # the same account, signed in on another device
+    other.cookies.update(vol.cookies)
+    assert other.get("/deck", follow_redirects=False).status_code == 200
+    vol.post("/me/identity/google/disconnect", follow_redirects=False)
+    assert vol.get("/deck", follow_redirects=False).status_code == 200
+    assert other.get("/deck", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_disconnecting_does_not_shed_a_block(anon):
+    vol = volunteer()
+    connect(vol, sub="g-blocked")
+    coordinator_uid, _ = coordinator_for(0)
+    data._add_block(
+        blocker_id=coordinator_uid, blocked_user_id=vol.uid, blocked_org_id=orgs()[0].id
+    )
+    vol.post("/me/identity/google/disconnect", follow_redirects=False)
+    assert len(retained_identities()) == 1  # a hash, never the subject
+    google_sign_in(anon, sub="g-blocked")  # a new profile, same Google account
+    (i,) = identities(where="subject = ?", where_args=["g-blocked"])
+    assert i.user_id != vol.uid
+    assert blocks.count_where("blocked_user_id = ?", [i.user_id]) == 1
+
+
+def test_disconnecting_with_nothing_against_the_account_keeps_no_hash(anon):
+    vol = volunteer()
+    connect(vol)
+    vol.post("/me/identity/google/disconnect", follow_redirects=False)
+    assert retained_identities() == []

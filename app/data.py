@@ -1924,10 +1924,14 @@ def unlink_identity(uid, provider, phone_works, working_providers):
     it is the last way in that works: its phone only counts when `phone_works` (codes can
     be texted), another provider only when it is in `working_providers` (configured). The
     check and the delete are one statement, so two disconnects at once can't both pass.
-    Nobody is signed out."""
+    When a block, an open or actioned report or a suspension stands against this profile,
+    the disconnected identity's hash is kept, as at a deletion (_retain), so signing in
+    with it again, as a new profile or on another, brings them back. Nobody is signed out
+    here: the route does that (routes/oauth.py)."""
     with _db.db.conn:
         mine = "user_id = ? AND provider = ?"
-        if not _db.identities.count_where(mine, [uid, provider]):
+        gone = _db.identities(where=mine, where_args=[uid, provider])
+        if not gone:
             return True  # nothing to disconnect
         working = ",".join("?" * len(working_providers))
         _db.db.execute(
@@ -1938,7 +1942,12 @@ def unlink_identity(uid, provider, phone_works, working_providers):
             [uid, provider, int(bool(phone_works)), uid, uid, provider]
             + list(working_providers),
         )
-        return _db.db.conn.changes() == 1
+        if _db.db.conn.changes() != 1:
+            return False
+        suspended = bool(_db.profiles[uid].suspended_at)
+        for i in gone:
+            _retain_identity(uid, i.provider, i.subject, suspended)
+        return True
 
 
 def phone_suspended(phone):

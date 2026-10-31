@@ -103,13 +103,20 @@ def _connect(req, name):
     return _start(name, "link", profile.id, profile.session_version or 1)
 
 
-def _disconnect(req, name):
+def _disconnect(req, sess, name):
     """Only ways in that work now count as another: the phone while codes can be texted,
-    a provider while it is configured."""
+    a provider while it is configured. A disconnect ends every other session and open
+    chat, because a reason to disconnect is often that the provider account is no longer
+    only theirs; this browser stays signed in."""
+    uid = req.scope["uid"]
     providers = [n for n, _ in oauth.enabled_providers()]
     phone_works = notify.phone_sign_in_enabled()
-    if not data.unlink_identity(req.scope["uid"], name, phone_works, providers):
+    had = name in data.identities_of(uid)
+    if not data.unlink_identity(uid, name, phone_works, providers):
         return Redirect("/me/profile?error=last")
+    if had:
+        data.sign_out_everywhere(uid)
+        sess["sv"] = data.get_profile(uid).session_version or 1
     return Redirect("/me/profile?notice=disconnected")
 
 
@@ -124,13 +131,13 @@ def apple_connect(req):
 
 
 @ar("/me/identity/google/disconnect", methods=["POST"])
-def google_disconnect(req):
-    return _disconnect(req, "google")
+def google_disconnect(req, sess):
+    return _disconnect(req, sess, "google")
 
 
 @ar("/me/identity/apple/disconnect", methods=["POST"])
-def apple_disconnect(req):
-    return _disconnect(req, "apple")
+def apple_disconnect(req, sess):
+    return _disconnect(req, sess, "apple")
 
 
 @ar("/auth/google/callback", methods=["GET"])
