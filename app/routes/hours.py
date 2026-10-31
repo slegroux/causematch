@@ -20,7 +20,13 @@ from monsterui.all import Alert, AlertT, Button, ButtonT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
 from app import data, security
-from app.certificate import ein_label, long_date, month_name
+from app.certificate import (
+    build_pdf,
+    ein_label,
+    long_date,
+    month_name,
+    pdf_filename,
+)
 from app.choices import minutes_label
 from app.config import public_base_url
 from app.forms import query, str_form
@@ -247,6 +253,31 @@ def Certificate(c):
     )
 
 
+@ar("/hours/certificate/{cert_id}.pdf", methods=["GET"])
+async def certificate_pdf(req, cert_id: str):
+    return await run_in_threadpool(_sync_pdf, req.scope["uid"], cert_id)
+
+
+def _sync_pdf(uid, cert_id):
+    """The owner's certificate as a PDF, built from the stored snapshot. A snapshot that
+    no longer matches its signature is not offered."""
+    try:
+        c = data.my_certificate(uid, cert_id)
+    except (LookupError, PermissionError):
+        return Response(NOT_FOUND, status_code=404)
+    if not c["genuine"]:
+        return Response(NOT_FOUND, status_code=404)
+    pdf = build_pdf(c["snapshot"], c["id"], f"{public_base_url()}/check/{c['id']}")
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{pdf_filename(c["snapshot"])}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @ar("/hours/certificate/{cert_id}", methods=["GET"])
 def certificate_page(req, cert_id: str):
     uid = req.scope["uid"]
@@ -265,6 +296,11 @@ def certificate_page(req, cert_id: str):
                 cls="break-words font-mono text-sm font-bold text-ink",
             ),
             cls="space-y-1 pt-3",
+        ),
+        A(
+            "Download PDF",
+            href=f"/hours/certificate/{c['id']}.pdf",
+            cls="uk-btn uk-btn-primary cm-noprint mt-3 inline-flex h-12 items-center",
         ),
         P(
             "To keep a copy, print this page or save it as a PDF from your browser.",
