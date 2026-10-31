@@ -700,21 +700,19 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
     )
 
 
-def has_match_news(uid):
-    """The Matches tab's dot: since the volunteer last opened Matches, a like of theirs
-    is waiting or a nonprofit decided one (never seen: any of those)."""
+def match_news_count(uid):
+    """The number on the Matches tab: matches a nonprofit accepted or declined since the
+    volunteer last opened Matches (never opened: all of them). Their own pending likes
+    don't count."""
     seen = _db.profiles[uid].matches_seen_at or ""
-    return bool(
-        _db.matches.count_where(
-            "volunteer_id = ? AND ((status = 'pending' AND created_at > ?) "
-            "OR (decided_at IS NOT NULL AND decided_at > ?))",
-            [uid, seen, seen],
-        )
+    return _db.matches.count_where(
+        "volunteer_id = ? AND status IN ('accepted', 'declined') AND decided_at > ?",
+        [uid, seen],
     )
 
 
 def saw_matches(uid):
-    """They opened Matches: the dot goes until something new happens."""
+    """They opened Matches: the count goes until a nonprofit decides another."""
     _db.profiles.update(id=uid, matches_seen_at=_now())
 
 

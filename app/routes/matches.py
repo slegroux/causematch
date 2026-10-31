@@ -119,7 +119,7 @@ def _sync_swipe(req, form):
                 return Redirect(more)
     if req.headers.get("HX-Request"):
         return DeckArea(uid, today, view, notice, sheet=MatchSheet(uid)), MatchesDot(
-            data.has_match_news(uid), oob=True
+            data.match_news_count(uid), oob=True
         )
     return Redirect("/deck?today=1" if today else "/deck")
 

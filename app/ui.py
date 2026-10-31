@@ -394,21 +394,22 @@ TABS = (
 LIKE_SENT = "Liked! When {} says yes, it's a match. We'll text you."
 
 
-def MatchesDot(on, oob=False):
-    """The small dot on the Matches tab: news since they last looked (data.has_match_news).
-    Always in the page (hidden when off), so a like's response can swap it in without a
-    reload."""
+def MatchesDot(n, oob=False):
+    """The badge on the Matches tab's heart: how many matches a nonprofit decided since the
+    volunteer last looked (data.match_news_count), "9+" past nine. Always in the page
+    (hidden at 0), so a like's response can swap it in without a reload."""
     return Span(
-        Span(" (something new)", cls="sr-only"),
+        str(n) if n < 10 else "9+",
+        Span(f" {n} new", cls="sr-only"),
         id="matches-dot",
-        hidden=not on,
+        hidden=not n,
         hx_swap_oob="true" if oob else None,
-        cls="absolute left-1/2 top-2 ml-3 h-2.5 w-2.5 rounded-full bg-brand "
-        "ring-2 ring-white",
+        cls="absolute left-1/2 top-1 ml-1 min-w-[18px] rounded-full bg-brand px-1 "
+        "text-center text-[11px] font-bold leading-[18px] text-white ring-2 ring-white",
     )
 
 
-def TabBar(active, dot=False):
+def TabBar(active, news=0):
     def tab(key, label, href, icon):
         on = key == active
         # the current tab differs by more than hue: a brand bar on top, a heavier label
@@ -422,7 +423,7 @@ def TabBar(active, dot=False):
                 + ("bg-brand-soft" if on else ""),
             ),
             Span(label),
-            MatchesDot(dot) if key == "matches" else None,
+            MatchesDot(news) if key == "matches" else None,
             href=href,
             aria_current="page" if on else None,
             cls="relative flex h-16 flex-col items-center justify-center gap-0.5 text-xs "
@@ -442,8 +443,8 @@ def TabBar(active, dot=False):
 
 
 def VolunteerNav(active, uid):
-    """The volunteer's header and bottom tab bar, with the Matches dot while a like of
-    theirs waits. The bar is fixed, so it can sit anywhere in the page; static/theme.css
+    """The volunteer's header and bottom tab bar, with the count of new matches on the
+    Matches tab. The bar is fixed, so it can sit anywhere in the page; static/theme.css
     pads the body above it."""
     return Div(
         Div(
@@ -454,13 +455,13 @@ def VolunteerNav(active, uid):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        TabBar(active, data.has_match_news(uid)),
+        TabBar(active, data.match_news_count(uid)),
     )
 
 
 def VolunteerShell(active, *content, uid):
     """A volunteer page: the header and tab bar, then the content in one narrow column.
-    uid is required, so no page leaves out the Matches dot."""
+    uid is required, so no page leaves out the Matches count."""
     return Container(VolunteerNav(active, uid), *content, cls="max-w-md pb-8")
 
 

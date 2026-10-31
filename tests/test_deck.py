@@ -130,10 +130,9 @@ def test_card_clamps_about_and_its_sheet_holds_the_rest(user):
     assert "Orientation: done the same day" in html
 
 
-def test_a_like_says_where_it_went_and_lights_the_matches_dot(user):
+def test_a_like_says_where_it_went_and_does_not_light_the_matches_badge(user):
     close_all_openings()
     oid = add_opening("Greet guests", ["food-insecurity"]).id
-    assert '<span hidden id="matches-dot"' in user.get("/deck").text
     r = user.post(
         "/swipe", data={"opening_id": str(oid), "liked": "1"},
         headers={"HX-Request": "true"},
@@ -141,28 +140,27 @@ def test_a_like_says_where_it_went_and_lights_the_matches_dot(user):
     org = data.org_name_of(oid)
     assert f"When {org} says yes" in r.text and "text you" in r.text
     dot = re.search(r'<span[^>]*id="matches-dot"[^>]*>', r.text).group(0)
-    assert "hidden" not in dot and 'hx-swap-oob="true"' in dot
-    for page in ("/deck", "/history", "/profile", "/me/preferences"):
-        html = user.get(page).text  # every volunteer page, not only the deck
-        assert (
-            '<span id="matches-dot"' in html
-            and '<span hidden id="matches-dot"' not in html
-        ), page
+    assert "hidden" in dot and 'hx-swap-oob="true"' in dot  # a pending like: nothing
+    assert '<span hidden id="matches-dot"' in user.get("/deck").text
 
 
-def test_the_matches_dot_is_news_since_the_last_look(user):
+def test_the_matches_badge_counts_decisions_since_the_last_look(user):
     close_all_openings()
-    oid = add_opening("Greet guests", ["food-insecurity"]).id
-    m = data.swipe(uid_of(user), oid, True)
-    off = '<span hidden id="matches-dot"'
-    assert off not in user.get("/deck").text
-    assert off in user.get("/matches").text  # looked: still pending, nothing new
-    assert off in user.get("/deck").text
+    coord = coordinator_for(0)[0]
+    won = data.swipe(uid_of(user), add_opening("Won one", ["food-insecurity"]).id, True)
+    lost = data.swipe(
+        uid_of(user), add_opening("Lost one", ["food-insecurity"]).id, True
+    )
+    badge = lambda page: re.search(
+        r'<span( hidden|) id="matches-dot"[^>]*>([^<]*)', user.get(page).text
+    ).groups()
+    assert badge("/deck") == (" hidden", "0")  # both still waiting
     profiles.update(id=uid_of(user), matches_seen_at="2000-01-01T00:00:00+00:00")
-    matches.update(id=m.id, created_at="1999-01-01T00:00:00+00:00")  # an old like
-    assert off in user.get("/deck").text
-    data.decide(coordinator_for(0)[0], m.id, True)  # decided after their last look
-    assert off not in user.get("/deck").text
+    data.decide(coord, won.id, True)
+    data.decide(coord, lost.id, False)
+    assert badge("/deck") == ("", "2")  # the deck's tab bar, on any volunteer page
+    user.get("/matches")  # they look
+    assert badge("/deck") == (" hidden", "0")
 
 
 def test_one_nudge_at_a_time_photo_first_then_home_screen(user):

@@ -591,7 +591,7 @@ def deck_news(req):
     stays as it is (an empty 200 would swap it away)."""
     uid = req.scope["uid"]
     sheet = MatchSheet(uid)
-    dot = MatchesDot(data.has_match_news(uid), oob=True)
+    dot = MatchesDot(data.match_news_count(uid), oob=True)
     if sheet is None:
         return dot, HttpHeader("HX-Reswap", "none")
     return sheet, dot
