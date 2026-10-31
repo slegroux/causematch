@@ -214,7 +214,7 @@ def matches_page(req):
         "matches",
         Div(
             H1("Your matches", cls=TITLE),
-            A("History", href="/history", cls=SMALL_LINK + " text-sm"),
+            A("Shifts and hours", href="/history", cls=SMALL_LINK + " text-sm"),
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
