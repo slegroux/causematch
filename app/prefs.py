@@ -74,6 +74,11 @@ def dealbreakers(profile):
     return json.loads(profile.dealbreakers)
 
 
+def verified_hours(profile):
+    """ "" (no preference), "prefer" or "only": the nonprofits that confirm hours."""
+    return profile.verified_hours or ""
+
+
 def work(profile):
     """The kind of work a volunteer prefers, as match.work_fit takes it."""
     return {

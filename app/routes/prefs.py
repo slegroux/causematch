@@ -48,6 +48,7 @@ from app.choices import (
     SKILLS,
     URGENT_PER_WEEK,
     URGENT_WINDOWS,
+    VERIFIED_HOURS,
 )
 from app.forms import bad_request, query, str_form
 from app.geo import neighborhoods, shown_point
@@ -560,6 +561,13 @@ def PrefsPage(uid, f, error=None, saved=False):
                     )
                     for key, label in DEALBREAKERS
                 ],
+                Group(
+                    "Nonprofits that confirm my hours",
+                    "grid grid-cols-3 gap-2",
+                    "verified_hours",
+                    VERIFIED_HOURS,
+                    f["verified_hours"],
+                ),
                 Chip(
                     "checkbox",
                     "surprise",
@@ -668,6 +676,7 @@ def _sync_save(req, form):
             if form.get(f"only_{key}", "only" if key in saved["dealbreakers"] else "")
             == "only"
         ],
+        "verified_hours": form.get("verified_hours", saved["verified_hours"]),
         "surprise": form.get("surprise") == "1"
         if "only" in form.getlist("sections")
         else saved["surprise"],
@@ -728,6 +737,7 @@ def _sync_save(req, form):
             form.get(f"only_{key}", "prefer") not in ("prefer", "only")
             for key, _ in DEALBREAKERS
         )
+        or f["verified_hours"] not in {v for v, _ in VERIFIED_HOURS}
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):

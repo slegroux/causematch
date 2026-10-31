@@ -44,6 +44,7 @@ class Org:
     logo_key: str  # Photo (photos.process "logo"): a square badge on its own background
     photo_key: str  # Photo ("card"): a picture of the org's work, the cards' fallback
     website: str  # https only (forms.https_url)
+    confirms_hours: bool  # the org can confirm volunteer hours (NULL or 0: it doesn't)
 
 
 class Opening:
@@ -141,6 +142,8 @@ class Profile:
     urgent_per_week: int  # 1..3 (NULL: 3)
     # Up to this many shifts a week (app/prefs.py weekly_limit), 1..5; NULL or 0: off
     weekly_limit: int
+    # Private (app/prefs.py verified_hours): prefer|only the nonprofits that confirm hours
+    verified_hours: str
 
 
 class OrgMember:

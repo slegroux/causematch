@@ -86,6 +86,13 @@ DEALBREAKERS = [
     ("work", "The kind of work I picked"),
 ]
 DEFAULT_DEALBREAKERS = ["distance"]
+# Nonprofits that confirm volunteer hours: no preference, rank them first, or only them.
+# Neutral on purpose: nothing records why a volunteer wants it.
+VERIFIED_HOURS = [
+    ("", "No preference"),
+    ("prefer", "Prefer"),
+    ("only", "Only show"),
+]
 
 SKILLS = [
     ("physical", "Physical work / lifting"),

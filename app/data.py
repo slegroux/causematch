@@ -128,6 +128,7 @@ def _deck_prefs(me):
         "places": _places(me),
         "horizon_days": _prefs.horizon_days(me),
         "dealbreakers": _prefs.dealbreakers(me),
+        "verified_hours": _prefs.verified_hours(me),
         "availability": json.loads(me.availability or "[]"),
         "free_dates": _prefs.free_dates(me, local_today()),
         "commitment": _prefs.commitment(me),
@@ -182,6 +183,7 @@ def _deck_openings(uid, today=False, p=None, calls=None):
         )
     }
     calls = _open_calls() if calls is None else calls
+    confirming = _confirming_orgs()
     out = []
     for o in _db.openings(
         where="status = ? AND starts_at >= ?", where_args=["open", _local_now()]
@@ -210,6 +212,8 @@ def _deck_openings(uid, today=False, p=None, calls=None):
             continue
         if "work" in only and not _match.work_allowed(p["work"], _work_of(o)):
             continue
+        if p["verified_hours"] == "only" and o.org_id not in confirming:
+            continue
         near = None
         if not o.remote:
             if None in (o.lat, o.lon):
@@ -220,6 +224,11 @@ def _deck_openings(uid, today=False, p=None, calls=None):
                     continue  # out of reach of every place
         out.append((o, cause_labels, near and near[1], near))
     return out
+
+
+def _confirming_orgs():
+    """The ids of the orgs that say they can confirm volunteer hours."""
+    return {g.id for g in _db.orgs(where="confirms_hours = 1")}
 
 
 def _when_ok(p, o):
@@ -258,6 +267,8 @@ def _relaxed(p, key):
     q = {**p, "dealbreakers": [d for d in p["dealbreakers"] if f"only_{d}" != key]}
     if key == "horizon":
         q["horizon_days"] = 0
+    elif key == "only_verified":
+        q["verified_hours"] = "prefer"
     elif key.startswith("widen:"):
         i, to = _widening(key)
         q["places"] = [
@@ -278,6 +289,8 @@ def _relaxation_labels(p):
                 out[f"widen:{i}:{to}"] = f"Widen{who} to {reach}"
     if p["horizon_days"]:
         out["horizon"] = "Look further ahead"
+    if p["verified_hours"] == "only":
+        out["only_verified"] = "Show nonprofits that don't confirm hours"
     names = {
         "causes": "Show every cause you haven't ruled out",
         "when": "Show any time",
@@ -357,6 +370,8 @@ def apply_relaxation(uid, key):
             _db.places.update(id=_saved_places(uid)[i].id, max_minutes=to)
         elif key == "horizon":
             _db.profiles.update(id=uid, horizon_days=0)
+        elif key == "only_verified":
+            _db.profiles.update(id=uid, verified_hours="prefer")
         else:
             _db.profiles.update(
                 id=uid, dealbreakers=json.dumps(_relaxed(p, key)["dealbreakers"])
@@ -465,6 +480,7 @@ def _full_weeks(me):
 
 
 WEEK_FULL = {"text": "Your week is full", "slug": None}
+CONFIRMS_HOURS = {"text": "Confirms your hours", "slug": None}
 
 
 def deck(uid, limit=20, today=False, view=None, first=None):
@@ -491,6 +507,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     spoken = _prefs.languages(me)
     orgs = {g.id: g for g in _db.orgs()}
     rates = _org_reply_rates()
+    confirming = _confirming_orgs()
     ranked = []
     booked = [  # read once: a card within CLASH_HOURS of one of these clashes
         (datetime.fromisoformat(sh["starts_at"]), sh["org"])
@@ -501,7 +518,7 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     drawn = _deck_openings(uid, today, p, calls)
     for o, cause_labels, km, near in drawn:
         slugs = [s for s in json.loads(o.causes or "[]") if s in active]
-        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates)
+        fit = _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming)
         if today:  # ignores fit: the soonest, then the nearest; remote after in-person
             key = (o.starts_at, km if km is not None else float("inf"), o.id)
         else:
@@ -534,7 +551,12 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
         week_full = _week(o.starts_at) in full
         why, clash = _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)
         # the clash and a full week go after the cut: on an urgent card one Like books it
-        why = why[: cap - week_full - len(clash)] + clash + [WEEK_FULL] * week_full
+        extra = clash + [CONFIRMS_HOURS] * (o.org_id in confirming)
+        why = (
+            why[: max(0, cap - week_full - len(extra))]
+            + extra
+            + [WEEK_FULL] * week_full
+        )
         org = orgs.get(o.org_id)
         cards.append(
             {
@@ -576,16 +598,19 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
     return cards, len(ranked)
 
 
-def _fit(p, rated, skills, spoken, o, slugs, near, rates):
+VERIFIED_WEIGHT = 0.15  # "Prefer" nonprofits that confirm hours: this share of the fit
+
+
+def _fit(p, rated, skills, spoken, o, slugs, near, rates, confirming):
     """match.score of an opening for a volunteer: the deck's order, and who an urgent call
-    notifies first."""
+    notifies first. confirming: _confirming_orgs()."""
     when = _match.availability_overlap(
         p["availability"], o.starts_at, o.recurrence, p["free_dates"]
     )
     if not _match.commitment_fits(p["commitment"], o.recurrence):
         when /= 2
     km = near and near[1]
-    return _match.score(
+    fit = _match.score(
         causes=(rated, set(slugs)),
         skills=(skills, json.loads(o.skills or "[]")),
         distance=_match.distance_score(km, near and near[0]["scale_km"], o.remote),
@@ -594,6 +619,9 @@ def _fit(p, rated, skills, spoken, o, slugs, near, rates):
         work=_match.work_fit(p["work"], _work_of(o)),
         language=_match.language_fit(spoken, json.loads(o.languages or "[]")),
     )
+    if p["verified_hours"] == "prefer":
+        fit = fit * (1 - VERIFIED_WEIGHT) + VERIFIED_WEIGHT * (o.org_id in confirming)
+    return fit
 
 
 MAX_WHY = 4
@@ -1890,6 +1918,7 @@ def preferences(uid):
         "orientation_ok": _prefs.orientation_ok(p),
         "languages": _prefs.languages(p),
         "dealbreakers": _prefs.dealbreakers(p),
+        "verified_hours": _prefs.verified_hours(p),
         "surprise": bool(p.surprise),
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
@@ -1917,6 +1946,7 @@ def save_preferences(
     orientation_ok=True,
     languages=(),
     dealbreakers=DEFAULT_DEALBREAKERS,
+    verified_hours="",
     surprise=False,
     urgent=None,
     weekly_limit=None,
@@ -1945,6 +1975,7 @@ def save_preferences(
             orientation_ok=orientation_ok,
             languages=json.dumps(sorted(set(languages))),
             dealbreakers=json.dumps(list(dealbreakers)),
+            verified_hours=verified_hours or None,
             surprise=surprise,
             skills=json.dumps(list(skills)),
             frequency=frequency,
@@ -2548,6 +2579,7 @@ def urgent_recipients(call_id, limit, at):
     active = {c.slug for c in _db.causes() if c.active}
     slugs = [s for s in json.loads(o.causes or "[]") if s in active]
     rates = _org_reply_rates()
+    confirming = _confirming_orgs()
     ranked = []
     for me in _db.profiles(
         where="role = 'volunteer' AND urgent_on = 1 AND deleted_at IS NULL "
@@ -2601,6 +2633,7 @@ def urgent_recipients(call_id, limit, at):
             slugs,
             near,
             rates,
+            confirming,
         )
         ranked.append((-round(fit, 6), me.id, channel))
     ranked.sort()
@@ -3641,11 +3674,14 @@ def set_org_picture(coordinator_uid, org_id, which, processed):
     return key
 
 
-def set_org_details(coordinator_uid, org_id, about, website):
-    """About text and website (https, or None) of an org this coordinator belongs to."""
+def set_org_details(coordinator_uid, org_id, about, website, confirms_hours):
+    """About text, website (https, or None) and whether the org can confirm volunteer
+    hours, of an org this coordinator belongs to."""
     with _db.db.conn:
         coordinator_org(coordinator_uid, org_id)
-        _db.orgs.update(id=org_id, about=about, website=website)
+        _db.orgs.update(
+            id=org_id, about=about, website=website, confirms_hours=confirms_hours
+        )
 
 
 def coordinator_opening(coordinator_uid, opening_id):

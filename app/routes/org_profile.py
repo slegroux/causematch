@@ -22,6 +22,7 @@ from monsterui.all import (
     AlertT,
     Button,
     ButtonT,
+    LabelCheckboxX,
     TextPresets,
 )
 from starlette.concurrency import run_in_threadpool
@@ -54,6 +55,7 @@ ar = Router()
 
 MAX_ABOUT = 1000
 BAD_LINK = "Enter a full https:// address, like https://example.org/volunteer."
+CONFIRMS_HOURS = "We can confirm volunteer hours"
 NOTICE = {
     "saved": "Saved. Volunteers see it on your cards now.",
 }
@@ -103,7 +105,11 @@ def PictureCard(title, intro, key, action, ident, logo=False):
 
 
 def OrgSection(org, f=None, error=None):
-    f = f or {"about": org.about or "", "website": org.website or ""}
+    f = f or {
+        "about": org.about or "",
+        "website": org.website or "",
+        "confirms_hours": bool(org.confirms_hours),
+    }
     base = f"/org/organization/{org.id}"
     return Div(
         H2(org.name, cls=ORG_TITLE),
@@ -141,6 +147,21 @@ def OrgSection(org, f=None, error=None):
                     value=f["website"],
                     placeholder="https://",
                 ),
+            ),
+            Div(
+                LabelCheckboxX(
+                    CONFIRMS_HOURS,
+                    name="confirms_hours",
+                    value="1",
+                    checked=bool(f["confirms_hours"]),
+                ),
+                P(
+                    "Volunteers who need proof of their hours can ask for nonprofits "
+                    "that do. You confirm each shift's hours when you mark it attended; "
+                    "your cards say so.",
+                    cls=TextPresets.muted_sm,
+                ),
+                cls="space-y-1",
             ),
             Button("Save details", cls=ButtonT.primary),
             action=base,
@@ -186,6 +207,7 @@ def _sync_save_details(uid, org_id, form):
     f = {
         "about": form.get("about", "").strip(),
         "website": form.get("website", "").strip(),
+        "confirms_hours": form.get("confirms_hours") == "1",
     }
     website = https_url(f["website"]) if f["website"] else None
     error = None
@@ -202,7 +224,7 @@ def _sync_save_details(uid, org_id, form):
             return FtResponse(
                 OrganizationPage(uid, errors={org_id: (f, error)}), status_code=400
             )
-        data.set_org_details(uid, org_id, f["about"], website)
+        data.set_org_details(uid, org_id, f["about"], website, f["confirms_hours"])
     except PermissionError:
         return Refusal(403)
     return Redirect("/org/organization?notice=saved")
