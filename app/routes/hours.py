@@ -53,6 +53,11 @@ NOTICE = {
         "Try again tomorrow."
     ),
     "period": "Pick a month, or all your hours there.",
+    "renamed": (
+        "Hours confirmed before you changed your name can't go on a certificate. "
+        "Pick a later month."
+    ),
+    "name": "Add your last name on your profile first: a certificate carries your full name.",
     "withdrawn": "Certificate withdrawn. Its check link now says so.",
 }
 
@@ -189,6 +194,10 @@ def _sync_issue(uid, org_id, period):
         done = data.issue_certificate(uid, org_id, period)
     except data.CertificateLimit:
         return Redirect("/hours?notice=limit")
+    except data.NameChanged:
+        return Redirect("/hours?notice=renamed")
+    except data.NameRequired:
+        return Redirect("/hours?notice=name")
     except ValueError:
         return Redirect("/hours?notice=period")
     except (LookupError, PermissionError):

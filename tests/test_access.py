@@ -676,6 +676,7 @@ def check_mark_shift(w):
 
 def confirmed_hours(w):
     """A's attended shift with 3 confirmed hours at org 0; the org's id."""
+    profiles.update(id=w.a.uid, last_name="Lee")  # a certificate carries the full name
     shifts.insert(
         match_id=accepted_match(w),
         starts_at="2026-10-03T09:00",

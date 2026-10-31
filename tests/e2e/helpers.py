@@ -104,6 +104,7 @@ def accepted_match(uid):
 
 def certificate_id(uid, match_id):
     """The id of a certificate for 3 confirmed hours at the match's nonprofit."""
+    profiles.update(id=uid, last_name="Lee")
     shifts.insert(
         match_id=match_id,
         starts_at="2026-10-03T09:00",

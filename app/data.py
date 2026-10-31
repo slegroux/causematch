@@ -1579,6 +1579,14 @@ def my_hours(uid):
 CERTIFICATES_PER_DAY = 20  # issued by one volunteer in any rolling 24 hours
 
 
+class NameChanged(ValueError):
+    """Some of the hours were confirmed before the volunteer changed their name."""
+
+
+class NameRequired(ValueError):
+    """The volunteer has no last name yet: a certificate carries their full name."""
+
+
 class CertificateLimit(ValueError):
     """Too many certificates issued by this volunteer in the last 24 hours."""
 
@@ -1595,7 +1603,8 @@ def _is_period(period):
 
 def _confirmed_rows(uid, org_id=None):
     """This volunteer's attended shifts with confirmed hours, oldest first, one dict each:
-    shift_id, org_id, org, ein, website, starts_at, title, minutes and by (the coordinator who last
+    shift_id, org_id, org, ein, website, starts_at, title, minutes, confirmed_at (UTC, when the
+    hours were last confirmed) and by (the coordinator who last
     confirmed them, as their profile names them, else the org's name; as my_hours says)."""
     where, args = "", [uid]
     if org_id is not None:
@@ -1610,11 +1619,13 @@ def _confirmed_rows(uid, org_id=None):
             "starts_at": r["starts_at"],
             "title": r["title"],
             "minutes": r["confirmed_minutes"],
+            "confirmed_at": r["confirmed_at"],
             "by": (r["coordinator"] or "").strip() or r["org"],
         }
         for r in _db.db.query(
             "SELECT s.id AS shift_id, g.id AS org_id, g.name AS org, g.ein, g.website, s.starts_at, "
-            "s.confirmed_minutes, o.title, c.display_name AS coordinator "
+            "s.confirmed_minutes, o.title, c.display_name AS coordinator, "
+            "coalesce(s.corrected_at, s.marked_at) AS confirmed_at "
             "FROM shift s JOIN match m ON m.id = s.match_id "
             "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
             "LEFT JOIN profile c ON c.id = coalesce(s.corrected_by, s.marked_by) "
@@ -1673,9 +1684,12 @@ def issue_certificate(uid, org_id, period):
     and not withdrawn, so that one comes back.
 
     Lists only hours that nonprofit confirmed for this volunteer. LookupError when there
-    are none in the period or no such nonprofit; ValueError for a bad period; CertificateLimit after
-    CERTIFICATES_PER_DAY issued in 24 hours. The snapshot stores the names and shifts as
-    they are now, so the document never changes with a profile.
+    are none in the period or no such nonprofit; ValueError for a bad period; NameRequired
+    without a last name; NameChanged when any of the hours were confirmed before the last
+    change of the volunteer's name (one person's hours never appear under two names);
+    CertificateLimit after CERTIFICATES_PER_DAY issued in 24 hours. The snapshot stores the
+    names and shifts as they are now, so the document never changes with a profile. A new
+    certificate for the same nonprofit and period withdraws the earlier one still active.
     """
     if not _is_period(period):
         raise ValueError("pick a month or all hours")
@@ -1688,6 +1702,13 @@ def issue_certificate(uid, org_id, period):
         rows = _period_rows(uid, org_id, period)
         if not rows:
             raise LookupError("no confirmed hours there in that period")
+        if not (p.last_name or "").strip():
+            raise NameRequired("a certificate needs your last name")
+        # both are _now() strings (UTC, same format), so they compare as text
+        if p.name_changed_at and any(
+            r["confirmed_at"] and r["confirmed_at"] < p.name_changed_at for r in rows
+        ):
+            raise NameChanged("hours confirmed before you changed your name")
         snapshot = {
             "volunteer": _volunteer_full_name(uid),
             "org": {
@@ -1714,7 +1735,7 @@ def issue_certificate(uid, org_id, period):
             where="volunteer_id = ? AND org_id = ? AND period = ? AND withdrawn_at IS NULL",
             where_args=[uid, org_id, period],
         ):
-            old = json.loads(c.snapshot or "null") or {}
+            old = _verified_snapshot(c) or {}  # one that no longer verifies is no match
             if {k: v for k, v in old.items() if k != "issued"} == same:
                 return {"id": c.id, "created": False}
         since = (datetime.now(UTC) - timedelta(hours=24)).isoformat(timespec="seconds")
@@ -1727,6 +1748,11 @@ def issue_certificate(uid, org_id, period):
                 f"You can issue {CERTIFICATES_PER_DAY} certificates a day. "
                 "Try again tomorrow."
             )
+        _db.db.execute(
+            "UPDATE certificate SET withdrawn_at = ?, snapshot = NULL, signature = NULL "
+            "WHERE volunteer_id = ? AND org_id = ? AND period = ? AND withdrawn_at IS NULL",
+            [_now(), uid, org_id, period],
+        )
         cert_id = secrets.token_urlsafe(16)
         _db.certificates.insert(
             id=cert_id,
@@ -2272,10 +2298,20 @@ def save_profile_details(
     """A volunteer's own name, pronouns, bio, interests and, unless None, the neighborhood
     nonprofits see, the email and the other causes they asked for (checked by the caller)."""
     _volunteer(uid)
+    old = _db.profiles[uid]
+    # a rename is a change of a name that was set; filling one in for the first time is not
+    renamed = any(
+        (before or "") not in ("", after or "")
+        for before, after in (
+            (old.display_name, first_name),
+            (old.last_name, last_name),
+        )
+    )
     _db.profiles.update(
         id=uid,
         display_name=first_name,
         last_name=last_name or None,
+        **({"name_changed_at": _now()} if renamed else {}),
         pronouns=pronouns or None,
         bio=bio or None,
         interests=json.dumps(list(interests)),

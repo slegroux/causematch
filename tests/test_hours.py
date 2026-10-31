@@ -15,7 +15,16 @@ from app.db import certificates, matches, openings, orgs, profiles, shifts
 from main import app
 
 
-def _shift(match, day, minutes, by, status="completed", month=10, **more):
+def _shift(
+    match,
+    day,
+    minutes,
+    by,
+    status="completed",
+    month=10,
+    marked_at="2026-10-30T10:00:00",
+    **more,
+):
     shifts.insert(
         match_id=match.id,
         starts_at=f"2026-{month:02d}-{day:02d}T09:00",
@@ -24,7 +33,7 @@ def _shift(match, day, minutes, by, status="completed", month=10, **more):
         created_by=by,
         confirmed_minutes=minutes,
         marked_by=by,
-        marked_at="2026-10-30T10:00:00",
+        marked_at=marked_at,
         **more,
     )
 
@@ -65,6 +74,7 @@ def test_my_hours_counts_only_confirmed_hours_of_attended_shifts():
 def _hired(name, org_index=0):
     """A volunteer accepted by the nth seeded org, with its coordinator: (client, match, org)."""
     v, org = volunteer(name), coordinator(org_index)
+    profiles.update(id=v.uid, last_name="Lee")  # a certificate carries the full name
     opening = openings(where="org_id = ?", where_args=[orgs()[org_index].id])[0]
     m = data.swipe(v.uid, opening.id, True)
     data.decide(org.uid, m.id, True)
@@ -171,6 +181,72 @@ def test_certificate_signature_fails_when_the_snapshot_is_changed():
     assert not signing.verify(snap, "another-id", cert.signature)
     assert not signing.verify(snap, cert.id, "")
     assert data.my_certificate(a.uid, cert.id)["genuine"]
+
+
+def _rename(a, first, last="Lee"):
+    data.save_profile_details(
+        a.uid,
+        first_name=first,
+        last_name=last,
+        pronouns="",
+        bio="",
+        interests=[],
+    )
+
+
+def test_one_persons_hours_are_certified_under_one_name_only(anon):
+    a, m, org = _hired("Zelda")
+    _shift(m, 3, 180, org.uid, marked_at="2000-01-01T00:00:00+00:00")
+    org_id = orgs()[0].id
+    first = _certify(a, org_id, "all")  # as Zelda Lee
+    for new_name in ("Zed", "Zelda Q"):
+        _rename(a, new_name)
+        r = a.post(
+            f"/hours/orgs/{org_id}/certificate",
+            data={"period": "all"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303 and r.headers["location"] == "/hours?notice=renamed"
+    assert "before you changed your name" in a.get("/hours?notice=renamed").text
+    assert [c.withdrawn_at for c in certificates()] == [None]  # still the one
+    assert "Zelda Lee" in a.get(first).text
+    # hours confirmed after the change are theirs under the new name
+    _shift(m, 10, 150, org.uid, month=11, marked_at="2999-01-01T00:00:00+00:00")
+    new = _certify(a, org_id, "2026-11").rsplit("/", 1)[1]
+    assert data.check_certificate(new)["volunteer"] == "Zelda Q Lee"
+
+
+def test_changing_a_name_before_any_confirmed_hours_is_fine():
+    a, m, org = _hired("Zelda")
+    _rename(a, "Zed")
+    _shift(m, 3, 180, org.uid, marked_at="2999-01-01T00:00:00+00:00")
+    _certify(a, orgs()[0].id, "all")
+    assert data.check_certificate(certificates()[0].id)["volunteer"] == "Zed Lee"
+
+
+def test_certificate_needs_a_last_name():
+    a, m, org = _hired("Zelda")
+    profiles.update(id=a.uid, last_name=None)
+    _shift(m, 3, 180, org.uid)
+    r = a.post(
+        f"/hours/orgs/{orgs()[0].id}/certificate",
+        data={"period": "all"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/hours?notice=name" and certificates.count == 0
+    assert "last name" in a.get("/hours?notice=name").text
+
+
+def test_a_new_certificate_for_the_same_period_replaces_the_earlier_one(anon):
+    a, cid, _ = _issued()
+    (m,) = matches()
+    _shift(m, 12, 60, coordinator(0).uid)
+    new = _certify(a, orgs()[0].id, "all").rsplit("/", 1)[1]
+    assert new != cid
+    assert "This certificate was withdrawn." in anon.get(f"/check/{cid}").text
+    assert "Genuine certificate" in anon.get(f"/check/{new}").text
+    assert [c.id for c in certificates() if not c.withdrawn_at] == [new]
+    assert a.get(f"/hours/certificate/{cid}").status_code == 404
 
 
 # --- the check link -----------------------------------------------------------------------

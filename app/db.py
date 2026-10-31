@@ -128,6 +128,9 @@ class Profile:
     last_name: (
         str  # volunteers, optional: nonprofits see its initial, all of it once accepted
     )
+    name_changed_at: (
+        str  # UTC; the last time the first or last name changed (NULL: never)
+    )
     pronouns: str  # optional, free text (choices.PRONOUNS are suggestions)
     bio: str  # optional, up to choices.MAX_BIO characters
     interests: str  # JSON list of choices.INTERESTS values

@@ -109,6 +109,7 @@ def pages(anon, user, coord):
         created_by=shift.created_by,
         duration_minutes=120,
     )
+    profiles.update(id=uid, last_name="Lee")
     certificate = data.issue_certificate(uid, opening.org_id, "all")["id"]
     return [
         (anon, "/login"),
