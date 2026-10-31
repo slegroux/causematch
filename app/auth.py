@@ -20,6 +20,7 @@ PUBLIC = [
     r"/login/send",
     r"/login/verify",
     r"/login/demo",  # a demo's one-tap sign-in (config.demo_matches; 403 elsewhere)
+    r"/auth/.*",  # Google sign-in (app/routes/oauth.py): 404 when no provider is set
     r"/org/login",
     r"/org/login/send",
     r"/org/login/verify",
@@ -95,6 +96,15 @@ def pending_phone(sess):
     sess.pop("pending_phone", None)
     sess.pop("pending_at", None)
     return None
+
+
+def sign_in(sess, profile):
+    """Every sign-in method ends here, with a live profile: a fresh session for it, then
+    the deck, or onboarding when it hasn't been done."""
+    sess.clear()
+    sess["uid"] = profile.id
+    sess["sv"] = profile.session_version or 1
+    return Redirect("/deck" if profile.onboarded_at else "/onboarding")
 
 
 def check_session(req, sess):

@@ -7,7 +7,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app import data, demo_seed, notify, security, ui
+from app import data, demo_seed, notify, oauth, security, ui
 from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
     contact_email,
@@ -42,12 +42,14 @@ from app.routes import (
     tasks,
 )
 from app.routes import auth as auth_routes
+from app.routes import oauth as oauth_routes
 from app.routes.safety import not_found
 
 require_env()  # an undeclared environment, or a preview without its password, never runs
 notify.get_verifier()  # refuse to start when sign-in codes can't be sent
 notify.get_emailer()  # ... or sign-in links
 notify.get_sms()  # ... or texts
+oauth.get_google()  # ... or Google sign-in is half set, or faked outside dev and test
 tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact
@@ -139,6 +141,7 @@ app.mount(
 auth_routes.demo_volunteer = demo_seed.demo_volunteer
 for routes in (
     auth_routes,
+    oauth_routes,
     org_auth,
     claim,
     admin,

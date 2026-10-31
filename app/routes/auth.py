@@ -2,12 +2,12 @@ import logging
 import re
 
 import httpx
-from fasthtml.common import A, Div, Form, P, Redirect
+from fasthtml.common import H2, A, Div, Form, P, Redirect
 from monsterui.all import AT, TextPresets
 from starlette.concurrency import run_in_threadpool
 
-from app import data, notify, security
-from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
+from app import data, notify, oauth, security
+from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending, sign_in
 from app.config import DEMO_PHONE, demo_matches
 from app.forms import bad_request, str_form
 from app.ui import (
@@ -28,12 +28,29 @@ log = logging.getLogger("causematch")
 demo_volunteer = None
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
+SUSPENDED = "This account can't sign in. Contact us if that is a mistake."
+
+
+def GoogleSignIn():
+    """Continue with Google, when a provider serves it (app/oauth.py get_google)."""
+    if oauth.get_google() is None:
+        return None
+    return Div(
+        A(
+            "Continue with Google",
+            href="/auth/google/start",
+            cls="uk-btn uk-btn-primary w-full h-12 text-lg shadow-warm",
+        ),
+        H2("Or use your phone number", cls="pt-6 font-bold text-ink"),
+        cls="space-y-3",
+    )
 
 
 def PhoneForm(phone="", error=None):
     return SignInPage(
         "Sign in",
         DemoSignIn(),
+        GoogleSignIn(),
         Form(
             Field(
                 "Mobile number",
@@ -171,9 +188,7 @@ def _sync_verify(req, form, sess):
         return PhoneForm(
             error="This number can't sign in. Contact us if that is a mistake."
         )
-    sess["uid"] = uid
-    sess["sv"] = profile.session_version or 1
-    return Redirect("/deck" if profile.onboarded_at else "/onboarding")
+    return sign_in(sess, profile)
 
 
 @ar("/login/demo", methods=["POST"])
@@ -189,11 +204,7 @@ def demo_sign_in(req, sess):
         (security.SMS_PER_NET, security.ip_subject(req, 48)),
     ):
         return security.too_many()
-    uid = demo_volunteer(DEMO_PHONE)
-    sess.clear()
-    sess["uid"] = uid
-    sess["sv"] = data.get_profile(uid).session_version or 1
-    return Redirect("/deck")
+    return sign_in(sess, data.get_profile(demo_volunteer(DEMO_PHONE)))
 
 
 @ar("/logout", methods=["POST"])

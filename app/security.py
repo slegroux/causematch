@@ -642,7 +642,8 @@ def reset_buckets():
 # --- logs ----------------------------------------------------------------------------
 
 
-REDACTED = ("token", "access")
+# code: an OAuth callback's (app/routes/oauth.py)
+REDACTED = ("token", "access", "code")
 
 
 def redact_query(target):
@@ -661,8 +662,8 @@ def redact_query(target):
 
 
 class RedactTokens(logging.Filter):
-    """Drop the sign-in token (the emailed link's query) and a preview's access key from
-    uvicorn's access log lines."""
+    """Drop the sign-in token (the emailed link's query), an OAuth callback's code and a
+    preview's access key from uvicorn's access log lines."""
 
     def filter(self, record):
         if isinstance(record.args, tuple) and len(record.args) >= 3:

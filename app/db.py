@@ -85,7 +85,7 @@ class Opening:
 class Profile:
     id: int
     role: str  # volunteer|coordinator|admin
-    phone: str  # E.164
+    phone: str  # E.164; NULL for a volunteer who signed up with Google (app/oauth.py)
     email: str
     display_name: str  # volunteer first name, or a coordinator's name and role
     contact_phone: str  # coordinators only, E.164; never a sign-in phone
@@ -144,6 +144,18 @@ class Profile:
     weekly_limit: int
     # Private (app/prefs.py verified_hours): prefer|only the nonprofits that confirm hours
     verified_hours: str
+
+
+class Identity:
+    """A sign-in with an outside provider (app/oauth.py): the provider's stable subject id,
+    linked to one profile. The verified email is kept as the provider gave it."""
+
+    id: int
+    user_id: int
+    provider: str  # google
+    subject: str  # the ID token's sub: unique per provider, never reused
+    email: str
+    created_at: str
 
 
 class OrgMember:
@@ -267,6 +279,12 @@ orgs = db.create(Org, pk="id", transform=True)
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
 openings = db.create(Opening, pk="id", transform=True)
 profiles = db.create(Profile, pk="id", transform=True)
+identities = db.create(Identity, pk="id", transform=True)
+identities.create_index(["user_id"], if_not_exists=True)
+db.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS identity_provider_subject "
+    "ON identity(provider, subject)"
+)
 org_members = db.create(OrgMember, pk="id", transform=True)
 org_members.create_index(["org_id", "user_id"], unique=True, if_not_exists=True)
 login_tokens = db.create(LoginToken, pk="token_hash", transform=True)

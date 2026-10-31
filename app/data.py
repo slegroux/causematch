@@ -1822,6 +1822,43 @@ def get_or_create_volunteer(phone):
         return _db.profiles(**where)[0].id
 
 
+def volunteer_for_identity(claims):
+    """Profile id for this provider sign-in (app/oauth.py Claims), creating a volunteer on
+    the first one: no phone, the provider's verified email, the given name as first name.
+    An identity whose profile was deleted reads as absent. A suspended profile's id is
+    returned too: get_profile is None for it, and the caller refuses the sign-in."""
+    where = {
+        "where": "provider = ? AND subject = ?",
+        "where_args": [claims.provider, claims.subject],
+    }
+    with _db.db.conn:
+        for found in _db.identities(**where):
+            live = "id = ? AND deleted_at IS NULL"
+            if _db.profiles.count_where(live, [found.user_id]):
+                return found.user_id
+            _db.identities.delete(found.id)  # a deleted account's: never signs in
+        uid = _db.profiles.insert(
+            _db.Profile(
+                role="volunteer",
+                phone=None,
+                email=claims.email,
+                display_name=" ".join(claims.given_name.split())[:80] or None,
+                session_version=1,
+                created_at=_now(),
+            )
+        ).id
+        _db.identities.insert(
+            _db.Identity(
+                user_id=uid,
+                provider=claims.provider,
+                subject=claims.subject,
+                email=claims.email,
+                created_at=_now(),
+            )
+        )
+    return uid
+
+
 def phone_suspended(phone):
     """True when a live profile holds this number and an admin suspended it."""
     return bool(
@@ -3572,6 +3609,7 @@ def delete_account(uid):
             [uid],
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        _db.db.execute("DELETE FROM identity WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         _db.db.execute(
             "DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", [uid]

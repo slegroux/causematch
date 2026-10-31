@@ -62,6 +62,10 @@ ROUTES = {
     ("GET", "/org/login"): ("public", None),
     ("POST", "/login/demo"): ("public", None),  # a demo's one tap; 403 elsewhere
     ("POST", "/org/login/demo"): ("public", None),  # the same
+    ("GET", "/auth/google/start"): ("public", None),  # 404 without a provider
+    ("GET", "/auth/google/callback"): ("public", None),  # the oauth cookie guards it
+    ("GET", "/auth/fake/consent"): ("public", None),  # the fake provider only
+    ("POST", "/auth/fake/consent"): ("public", None),
     ("POST", "/org/login/send"): ("public", None),
     ("GET", "/org/login/verify"): ("public", None),
     ("POST", "/org/login/verify"): ("public", None),
@@ -1076,7 +1080,7 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 TABLES = {
     "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
     "messages", "orgs", "profiles", "swipes", "shifts", "notifications",
-    "blocks", "reports",
+    "blocks", "reports", "identities",
 }  # fmt: skip
 
 

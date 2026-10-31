@@ -138,6 +138,20 @@ def phone_hash_key(env=os.environ):
     return strong_secret("PHONE_HASH_KEY", key, env)
 
 
+def google_oauth(env=os.environ):
+    """(client id, client secret) of the Google OAuth client, or None when neither is set:
+    then there is no Google button. One without the other refuses to start."""
+    client_id = (env.get("GOOGLE_CLIENT_ID") or "").strip()
+    secret = (env.get("GOOGLE_CLIENT_SECRET") or "").strip()
+    if not client_id and not secret:
+        return None
+    if not (client_id and secret):
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together"
+        )
+    return client_id, strong_secret("GOOGLE_CLIENT_SECRET", secret, env)
+
+
 def db_path(env=os.environ):
     """The SQLite file: CAUSEMATCH_DB, else data/causematch.db in the repo (not the cwd)."""
     return Path(env.get("CAUSEMATCH_DB") or ROOT / "data" / "causematch.db").resolve()

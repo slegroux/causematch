@@ -1,5 +1,7 @@
+import logging
 import re
 
+import httpx
 from fasthtml.common import (
     H1,
     A,
@@ -15,7 +17,7 @@ from fasthtml.common import (
 from monsterui.all import AT, Alert, AlertT, Button, ButtonT, Container, LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 
-from app import data, match, prefs
+from app import data, match, oauth, photos, prefs
 from app.choices import ANY_DISTANCE_KM
 from app.forms import (
     HIDDEN_CHARS_MESSAGE,
@@ -38,6 +40,7 @@ from app.ui import (
 )
 
 ar = Router()
+log = logging.getLogger("causematch")
 
 ADULTS_ONLY = "Causematch is for adults 18+"
 LA_ONLY = "Causematch is only in Los Angeles County for now"
@@ -70,7 +73,8 @@ HOME = {
 }
 
 
-def OnboardingForm(f=None, error=None):
+def OnboardingForm(f=None, error=None, google_photo=False):
+    """google_photo: the sign-in brought a Google picture, offered here unticked."""
     f = f or {}
     return Container(
         H1("Welcome to Causematch", cls=TITLE),
@@ -96,6 +100,14 @@ def OnboardingForm(f=None, error=None):
                     value="1",
                     checked=bool(f.get("adult")),
                 ),
+                LabelCheckboxX(
+                    "Use my Google photo",
+                    name="google_photo",
+                    value="1",
+                    checked=bool(f.get("google_photo")),
+                )
+                if google_photo
+                else None,
             ),
             Section(
                 "Where",
@@ -131,23 +143,39 @@ def OnboardingForm(f=None, error=None):
 
 
 @ar("/onboarding", methods=["GET"])
-def onboarding_page(req):
-    if data.get_profile(req.scope["uid"]).onboarded_at:
+def onboarding_page(req, sess):
+    p = data.get_profile(req.scope["uid"])
+    if p.onboarded_at:
         return Redirect("/deck")
-    return OnboardingForm()
+    # a Google sign-in's given name
+    return OnboardingForm(
+        {"first_name": p.display_name or ""},
+        google_photo=bool(sess.get("oauth_picture")),
+    )
 
 
 @ar("/onboarding", methods=["POST"])
-async def onboarding_save(req):
+async def onboarding_save(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
-    return await run_in_threadpool(_sync_onboarding_save, req, form)
+    return await run_in_threadpool(_sync_onboarding_save, req, form, sess)
 
 
-def _sync_onboarding_save(req, form):
-    if data.get_profile(req.scope["uid"]).onboarded_at:
+def _import_google_photo(uid, url):
+    """Onboarding's "Use my Google photo": fetched, then re-encoded and stored as an upload
+    is. A failure only means no photo yet: Me can add one."""
+    try:
+        data.set_volunteer_photo(uid, photos.process(oauth.fetch_picture(url)))
+    except (photos.BadPhoto, photos.Busy, httpx.HTTPError) as e:
+        log.warning("importing a Google photo failed: %s", type(e).__name__)
+
+
+def _sync_onboarding_save(req, form, sess):
+    me = data.get_profile(req.scope["uid"])
+    if me.onboarded_at:
         return Redirect("/deck")  # later edits go through /me/preferences, /me/profile
+    picture = sess.get("oauth_picture")
     text = lambda k: form.get(k, "").strip()
     active = [c.slug for c in data.active_causes()]
     posted = {k: form.get(f"place1_{k}", v) for k, v in HOME.items() if k != "label"}
@@ -158,10 +186,11 @@ def _sync_onboarding_save(req, form):
         "place": {**HOME, **posted, "lat": shown_lat, "lon": shown_lon},
         "causes": {s: form.get(f"cause_{s}") for s in active if form.get(f"cause_{s}")},
         "consent": form.get("consent"),
+        "google_photo": form.get("google_photo"),
     }
 
     def fail(msg):
-        return OnboardingForm(f, msg)
+        return OnboardingForm(f, msg, google_photo=bool(picture))
 
     if f["adult"] != "1":
         return fail(ADULTS_ONLY)
@@ -192,6 +221,7 @@ def _sync_onboarding_save(req, form):
     data.save_onboarding(
         req.scope["uid"],
         display_name=f["first_name"],
+        email=me.email or "",  # a Google sign-in's verified address
         # the Home place, also as the profile's point and radius (metrics, old readers)
         lat=place["lat"],
         lon=place["lon"],
@@ -200,6 +230,9 @@ def _sync_onboarding_save(req, form):
         cause_prefs=f["causes"],
         place=place,
     )
+    if picture and f["google_photo"] == "1":
+        _import_google_photo(req.scope["uid"], picture)
+    sess.pop("oauth_picture", None)
     return Redirect("/deck")
 
 
