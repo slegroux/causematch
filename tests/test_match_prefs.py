@@ -540,6 +540,14 @@ def test_when_free_dates_go_with_the_account(bare):
     assert profiles[uid].free_dates is None
 
 
+def test_verified_hours_preference_goes_with_the_account(bare):
+    save(bare, work_form(verified_hours="only"))
+    uid = uid_of(bare)
+    assert profiles[uid].verified_hours
+    data.delete_account(uid)
+    assert profiles[uid].verified_hours is None
+
+
 # --- kind of work --------------------------------------------------------------------------
 
 

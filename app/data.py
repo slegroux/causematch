@@ -551,7 +551,9 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
         week_full = _week(o.starts_at) in full
         why, clash = _why(p, rated, spoken, o, cause_labels, slugs, near, odd, booked)
         # the clash and a full week go after the cut: on an urgent card one Like books it
+        # (the "confirms your hours" chip is the one that gives way when they don't all fit)
         extra = clash + [CONFIRMS_HOURS] * (o.org_id in confirming)
+        extra = extra[: max(len(clash), cap - week_full)]
         why = (
             why[: max(0, cap - week_full - len(extra))]
             + extra
@@ -3578,7 +3580,7 @@ def delete_account(uid):
             "UPDATE profile SET deleted_at = ?, phone = NULL, email = NULL, "
             "display_name = NULL, contact_phone = NULL, lat = NULL, lon = NULL, "
             "neighborhood = NULL, other_causes = NULL, language_other = NULL, "
-            "free_dates = NULL, "
+            "free_dates = NULL, verified_hours = NULL, "
             "last_name = NULL, pronouns = NULL, bio = NULL, interests = NULL, "
             "photo_key = NULL, "
             "session_version = coalesce(session_version, 1) + 1 WHERE id = ?",
