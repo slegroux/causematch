@@ -92,7 +92,7 @@ Who uses Causematch, and which outside services it talks to.
 Levels 1 to 3 use [C4 notation](https://c4model.com): each box gives an element's name, its kind (`[Person]`, `[Software System]`, `[Container]` or `[Component]`, with its technology) and what it does in a few words. Each arrow says what flows, with the protocol in brackets. The shape says the kind too: people are stadiums, external systems are rounded, data stores are cylinders, and a separate process has double sides.
 
 ```mermaid
-%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 60}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif"}}}%%
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 60}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "14px"}}}%%
 flowchart TB
     vol(["<b>Volunteer</b><br/><small>[Person]</small><br/><br/>Swipes openings, chats,<br/>sees shifts and hours"])
     coord(["<b>Nonprofit coordinator</b><br/><small>[Person]</small><br/><br/>Posts openings, answers likes,<br/>marks shifts"])
@@ -144,7 +144,7 @@ The public website (`site/`, published to GitHub Pages by `.github/workflows/pag
 In C4, a "container" is something that runs or holds data. Causematch has very few.
 
 ```mermaid
-%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 60}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif"}}}%%
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 60}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "14px"}}}%%
 flowchart TB
     vol(["<b>Volunteer</b><br/><small>[Person]</small><br/><br/>Swipes openings, chats,<br/>sees shifts and hours"])
     staff(["<b>Coordinator or admin</b><br/><small>[Person]</small><br/><br/>Runs openings, or<br/>verifies nonprofits"])
@@ -201,7 +201,7 @@ _Legend: blue = containers inside the dashed Causematch boundary (cylinder = dat
 Every request passes the same layers, top to bottom.
 
 ```mermaid
-%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 90}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif"}}}%%
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 90}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "14px"}}}%%
 flowchart TB
     ui["<b>Web pages</b><br/><small>[Container: HTML, htmx, small JS]</small><br/><br/>Server-rendered pages<br/>in the browser"]
 
