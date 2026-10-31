@@ -147,11 +147,14 @@ def OpeningCard(c):
             # is on the span, so the padding shows no third line.
             Div(
                 Button(
-                    Span(c["about"], cls="cm-about line-clamp-2"),
+                    Span(c["about"], cls="cm-about line-clamp-2 min-w-0 flex-1"),
+                    # beside the clamp's last line, so it takes no height; it says a tap
+                    # shows the rest
+                    Span("More", cls="shrink-0 text-sm font-bold text-brand-ink"),
                     type="button",
                     data_open_sheet="1",
                     aria_haspopup="dialog",
-                    cls="-my-3 block w-full py-3 text-left text-sm leading-snug "
+                    cls="-my-3 flex w-full items-end gap-2 py-3 text-left text-sm leading-snug "
                     "text-ink",
                 ),
                 cls="flow-root",
@@ -326,7 +329,7 @@ def EmptyDeck(today=False, relax=None):
 
 
 def TodaySwitch(today):
-    """ "Free in the next 48h": only shifts starting in the next 48 hours, soonest first. A plain
+    """ "Next 48h": only shifts starting in the next 48 hours, soonest first. A plain
     GET form, so it works without script; the button says whether it is on."""
     return PlainForm(
         Hidden(name="today", value="0" if today else "1"),
@@ -340,7 +343,8 @@ def TodaySwitch(today):
                 + ("bg-brand" if today else "bg-gray-500"),
                 aria_hidden="true",
             ),
-            Span("Free in the next 48h"),
+            Span("Next 48h", aria_hidden="true"),
+            Span("Only shifts starting within 48 hours", cls="sr-only"),
             type="submit",
             aria_pressed="true" if today else "false",
             cls="flex min-h-11 items-center gap-2.5 rounded-full px-1 text-sm font-bold "
@@ -376,7 +380,7 @@ def FilterSheet(uid, today, count, view):
     bar, whatever the card's height, so all of it is on screen:
     the main place's travel time, which causes show, and this week only. They hold until
     cleared and change no saved preference. Its button says how many cards the deck
-    holds."""
+    holds, in words for a screen reader."""
     view = view or {}
     f = data.preferences(uid)
     main = f["places"][0] if f["places"] else None
@@ -386,17 +390,11 @@ def FilterSheet(uid, today, count, view):
     return Details(
         Summary(
             Icon(SLIDERS, size=20),
-            # the count as a badge; its full words for a screen reader
-            Span(
-                str(count),
-                aria_hidden="true",
-                cls="absolute -right-1 -top-1 grid h-6 min-w-6 place-items-center "
-                "rounded-full bg-ink px-1.5 text-xs font-bold text-cream",
-            ),
+            # the count is under Pass and Like (DeckArea); its words here for a screen reader
             Span(f"{count} opening{'' if count == 1 else 's'}", cls="sr-only"),
             Span(" (Filtered)", cls="sr-only") if view else None,
             Span(", filters", cls="sr-only"),
-            cls="relative grid h-12 w-12 cursor-pointer list-none place-items-center "
+            cls="grid h-12 w-12 cursor-pointer list-none place-items-center "
             "rounded-full border bg-white text-ink shadow-warm "
             "[&::-webkit-details-marker]:hidden "
             + ("border-2 border-brand text-brand-ink" if view else "border-line"),
@@ -570,13 +568,23 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
         # and Like stay in reach above the tab bar; the gaps between them still drag
         Div(
             Div(
-                FilterSheet(uid, today, count, view),
-                cls="pointer-events-auto",
+                Div(
+                    FilterSheet(uid, today, count, view),
+                    cls="pointer-events-auto",
+                ),
+                SwipeButtons(c["id"], today, c["call_id"]),
+                Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
+                cls="flex items-center justify-center gap-6",
             ),
-            SwipeButtons(c["id"], today, c["call_id"]),
-            Span(cls="w-12", aria_hidden="true"),  # keeps Pass and Like centred
-            cls="cm-swipe-buttons pointer-events-none mt-2 flex items-center "
-            "justify-center gap-6",
+            # with the 48-hour switch on, the line above the card says it
+            None
+            if today
+            else P(
+                f"{count} opening{'' if count == 1 else 's'}"
+                + (" · filtered" if view else ""),
+                cls="text-center text-xs font-semibold text-ink-muted",
+            ),
+            cls="cm-swipe-buttons pointer-events-none mt-2",
         ),
         P(
             "Couldn't save that. Try again.",

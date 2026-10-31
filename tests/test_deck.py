@@ -122,6 +122,10 @@ def test_card_clamps_about_and_its_sheet_holds_the_rest(user):
     )
     html = user.get("/deck").text
     assert "line-clamp-2" in html and "We greet guests at the door" in html
+    assert ">More<" in html  # what the clamp hides is a tap away
+    assert re.search(
+        r"text-center[^>]*>1 opening<", html
+    )  # the count under Pass and Like
     assert "<dialog" in html and "Bring closed shoes." in html
     assert "Orientation: done the same day" in html
 
