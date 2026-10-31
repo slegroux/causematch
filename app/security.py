@@ -112,7 +112,9 @@ def csp():
             "font-src 'self'",
             "frame-ancestors 'none'",
             "base-uri 'self'",
-            "form-action 'self'",
+            # Me's Connect is a form whose answer is a 303 to Google's or Apple's consent
+            # page, and browsers apply form-action to that redirect too
+            "form-action 'self' https://accounts.google.com https://appleid.apple.com",
             "object-src 'none'",
         )
     )
@@ -506,6 +508,8 @@ def verify_limits(phone):
 
 
 LINK_PER_IP = (("link-ip", 20, 3600),)
+# OAuth callbacks: each may call the provider's token endpoint with our client secret
+OAUTH_PER_IP = (("oauth-ip", 30, 600),)
 CLAIM_PER_IP = (("claim-ip", 5, 3600),)
 CLAIM_PER_EMAIL = (("claim-email", 3, 24 * 3600),)
 PROPUBLICA = (
@@ -520,6 +524,7 @@ assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
     + (VERIFY_PER_PHONE, LINK_PER_EMAIL, LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL)
+    + (OAUTH_PER_IP,)
     + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL)
     for _, _, w in rules
 )

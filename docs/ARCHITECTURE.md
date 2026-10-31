@@ -813,7 +813,7 @@ The child process runs as the same user as the app: it limits resources but does
 
 - **Same-origin writes.** Every unsafe method needs `Origin` equal to `PUBLIC_BASE_URL`'s origin or, when the browser sends no `Origin`, a `Referer` on it. The only exemptions are `/tasks/reminders`, `/tasks/urgent` and `/auth/apple/callback`, which Apple posts from its own origin and which acts only with a flow cookie whose state matches (6f). Websockets need the exact `Origin`.
 - **Headers on every response:**
-  - A CSP of `default-src 'self'`, `script-src 'self'`, `style-src 'self'` with no inline code, `img-src 'self' data: blob:`, `connect-src 'self'` plus the ws origin, `font-src 'self'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`.
+  - A CSP of `default-src 'self'`, `script-src 'self'`, `style-src 'self'` with no inline code, `img-src 'self' data: blob:`, `connect-src 'self'` plus the ws origin, `font-src 'self'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` plus `https://accounts.google.com` and `https://appleid.apple.com` (Me's Connect form answers with a redirect to them) and `object-src 'none'`.
   - `X-Frame-Options: DENY`, `nosniff`, `strict-origin-when-cross-origin`.
   - A permissions policy that allows geolocation only on `/onboarding` and `/me/preferences`.
   - `Cache-Control: no-store`, except on `/static` and `/favicon.ico`, unless the route sets its own (photos do).

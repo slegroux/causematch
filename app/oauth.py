@@ -4,8 +4,10 @@ in development and tests (CAUSEMATCH_FAKE_OAUTH=1).
 Authorization code flow with `state` and `nonce`, and PKCE (S256) for Google. Apple ignores
 PKCE: its proof is the client secret, a JWT signed with our key. /auth/{provider}/start
 keeps all three in a short-lived signed cookie (oauth_cookie, never the session); the
-callback reads and deletes it, so a callback works once. The ID token is verified here,
-against the provider's published keys: signature, iss, aud, exp and nonce.
+callback reads it and asks the browser to delete it. Nothing server-side records a used
+state: a client that keeps the cookie can present it again for 10 minutes, and what stops
+a replay is the provider's one-time code (the fake's is one-time too). The ID token is
+verified here, against the provider's published keys: signature, iss, aud, exp and nonce.
 
 fasthtml.oauth is not used: it derives the redirect URI from the request's Host header,
 sends no state, PKCE or nonce, and never verifies the ID token.
@@ -60,6 +62,7 @@ class Claims:
     given_name: str
     family_name: str
     picture_url: str  # Google only; imported on opt-in (fetch_picture)
+    hosted_domain: str = ""  # Google's hd: set only for a Workspace account
 
 
 # --- the oauth cookie --------------------------------------------------------------------
@@ -109,7 +112,9 @@ def seal(provider, state, nonce, verifier, intent="volunteer", uid=None, sv=None
 
 def unseal(value, provider, state):
     """The Flow in the cookie when it is ours, under 10 minutes old, for this provider and
-    this state; else AuthError."""
+    this state; else AuthError. Not single use on its own: no used state is recorded, so
+    the same cookie and state pass again until they expire. The callback's cookie deletion
+    (in a cooperating browser) and the provider's one-time code make a callback work once."""
     if not value or not state:
         raise AuthError("missing")
     try:
@@ -118,7 +123,8 @@ def unseal(value, provider, state):
         raise AuthError("bad or expired cookie") from None
     if not isinstance(flow, dict) or flow.get("p") != provider:
         raise AuthError("wrong provider")
-    if not hmac.compare_digest(str(flow.get("s", "")), state):
+    # bytes: compare_digest refuses a str with non-ASCII characters (a 500, not a 400)
+    if not hmac.compare_digest(str(flow.get("s", "")).encode(), state.encode()):
         raise AuthError("state mismatch")
     intent, uid, sv = flow.get("i"), flow.get("u"), flow.get("sv")
     if intent not in INTENTS:
@@ -175,7 +181,26 @@ def _claims(provider, c):
         given_name=str(c.get("given_name") or ""),
         family_name=str(c.get("family_name") or ""),
         picture_url=str(c.get("picture") or ""),
+        hosted_domain=str(c.get("hd") or ""),
     )
+
+
+GOOGLE_HOSTED = ("gmail.com", "googlemail.com")
+APPLE_HOSTED = ("icloud.com", "me.com", "mac.com")
+
+
+def authoritative(claims):
+    """True when the provider hosts this mailbox, so a verified email means the person
+    controls it now, as the emailed link proves: Gmail, a Google Workspace account whose
+    hd is the email's domain, or an iCloud address. Elsewhere a provider keeps an address
+    verified long after the mailbox has moved on to someone else."""
+    domain = claims.email.rpartition("@")[2].lower()
+    if claims.provider == "google":
+        hd = claims.hosted_domain.lower()
+        return domain in GOOGLE_HOSTED or bool(hd and hd == domain)
+    if claims.provider == "apple":
+        return domain in APPLE_HOSTED
+    return False
 
 
 class Google:
@@ -314,10 +339,12 @@ def apple_names(raw):
     """(given, family) from the `user` field Apple posts on first consent only, JSON like
     {"name": {"firstName": .., "lastName": ..}, "email": ..}; ("", "") for anything else.
     The field isn't signed: it only ever names the person signing in themselves."""
+    if len(raw) > 2000:  # far past any name; deep nesting would raise RecursionError
+        return "", ""
     try:
         name = json.loads(raw).get("name")
         given, family = name.get("firstName"), name.get("lastName")
-    except (ValueError, AttributeError, TypeError):
+    except (ValueError, AttributeError, TypeError, RecursionError):
         return "", ""
     return (
         given if isinstance(given, str) else "",

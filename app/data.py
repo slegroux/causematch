@@ -1833,25 +1833,30 @@ def volunteer_for_identity(claims):
         "where_args": [claims.provider, claims.subject],
     }
     kept = _retained_identity(claims)
-    with _db.db.conn:
-        for found in _db.identities(**where):
-            live = "id = ? AND deleted_at IS NULL"
-            if _db.profiles.count_where(live, [found.user_id]):
-                return found.user_id
-            _db.identities.delete(found.id)  # a deleted account's: never signs in
-        uid = _db.profiles.insert(
-            _db.Profile(
-                role="volunteer",
-                phone=None,
-                email=claims.email,
-                display_name=" ".join(claims.given_name.split())[:80] or None,
-                session_version=1,
-                created_at=_now(),
-                suspended_at=_now() if kept and kept.suspended else None,
-            )
-        ).id
-        _insert_identity(uid, claims)
-        _reapply_blocks(uid, kept)
+    # onboarding's check on the first name: a name that fails it is dropped, not kept
+    name = " ".join(claims.given_name.split())[:80]
+    try:
+        with _db.db.conn:
+            for found in _db.identities(**where):
+                live = "id = ? AND deleted_at IS NULL"
+                if _db.profiles.count_where(live, [found.user_id]):
+                    return found.user_id
+                _db.identities.delete(found.id)  # a deleted account's: never signs in
+            uid = _db.profiles.insert(
+                _db.Profile(
+                    role="volunteer",
+                    phone=None,
+                    email=claims.email,
+                    display_name=name if name and not hidden_chars(name) else None,
+                    session_version=1,
+                    created_at=_now(),
+                    suspended_at=_now() if kept and kept.suspended else None,
+                )
+            ).id
+            _insert_identity(uid, claims)
+            _reapply_blocks(uid, kept)
+    except apsw.ConstraintError:  # a concurrent first sign-in won the race
+        return _db.identities(**where)[0].user_id
     return uid
 
 
@@ -1914,20 +1919,26 @@ def link_identity(uid, claims):
     return None
 
 
-def unlink_identity(uid, provider):
+def unlink_identity(uid, provider, phone_works, working_providers):
     """Disconnect this profile's sign-in with `provider`. False, and nothing changed, when
-    it is the last way in: no phone and no other provider. Nobody is signed out."""
+    it is the last way in that works: its phone only counts when `phone_works` (codes can
+    be texted), another provider only when it is in `working_providers` (configured). The
+    check and the delete are one statement, so two disconnects at once can't both pass.
+    Nobody is signed out."""
     with _db.db.conn:
         mine = "user_id = ? AND provider = ?"
         if not _db.identities.count_where(mine, [uid, provider]):
             return True  # nothing to disconnect
-        others = _db.identities.count_where(
-            "user_id = ? AND provider != ?", [uid, provider]
+        working = ",".join("?" * len(working_providers))
+        _db.db.execute(
+            "DELETE FROM identity WHERE user_id = ? AND provider = ? AND ("
+            " (? AND (SELECT coalesce(phone, '') FROM profile WHERE id = ?) != '')"
+            " OR EXISTS (SELECT 1 FROM identity WHERE user_id = ? AND provider != ?"
+            f" AND provider IN ({working})))",
+            [uid, provider, int(bool(phone_works)), uid, uid, provider]
+            + list(working_providers),
         )
-        if not (_db.profiles[uid].phone or others):
-            return False
-        _db.identities.delete_where(mine, [uid, provider])
-    return True
+        return _db.db.conn.changes() == 1
 
 
 def phone_suspended(phone):
@@ -2286,7 +2297,10 @@ def admin_by_email(email):
 def staff_by_email(email):
     """(profile, is_coordinator) for whoever signs in to staff pages with this address:
     a coordinator with an org, else an admin. (None, False) when neither is live
-    (unknown, deleted or suspended)."""
+    (unknown, deleted or suspended), and for any address that isn't ASCII: Python and
+    SQLite lowercase those differently (the Kelvin sign is a "k" only to Python)."""
+    if not email.isascii():
+        return None, False
     uid = coordinator_by_email(email)
     is_coordinator = bool(uid and coordinator_org_ids(uid))
     if not is_coordinator:

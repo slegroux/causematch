@@ -517,7 +517,9 @@ def test_tasks_take_the_token_without_an_origin(monkeypatch):
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
     "connect-src 'self' wss://causematch.test; font-src 'self'; frame-ancestors 'none'; "
-    "base-uri 'self'; form-action 'self'; object-src 'none'"
+    "base-uri 'self'; "
+    "form-action 'self' https://accounts.google.com https://appleid.apple.com; "
+    "object-src 'none'"
 )
 
 

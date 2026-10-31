@@ -98,6 +98,14 @@ def _sync_org_login_send(req, form):
     email = form.get("email", "").strip().lower()
     if len(email) > 254 or not EMAIL.fullmatch(email):
         return EmailForm(email[:254], BAD_EMAIL)
+    return link_sent(req, email)
+
+
+def link_sent(req, email):
+    """What a request for a sign-in link to this (lowercased) address answers: the
+    "check your email" page, the link sent after the response, under the link limits. Also
+    a staff provider sign-in's answer when the provider doesn't host the mailbox
+    (app/routes/oauth.py). A page, a (page, BackgroundTask), or the 429 response."""
     # every valid-shape address is counted, so a refusal says nothing about the account
     if not security.allow(
         (security.LINK_PER_EMAIL, email),

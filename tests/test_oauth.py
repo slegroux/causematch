@@ -8,8 +8,9 @@ from conftest import FORM, coordinator_for, jpeg, volunteer
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from app import data, oauth
+from app import data, notify, oauth
 from app.db import identities, photos, profiles
+from app.routes import oauth as oauth_routes
 from main import app
 
 EMAIL = "robin@example.com"
@@ -25,7 +26,7 @@ def start(client, path="/auth/google/start", method="GET"):
     return {k: q[k][0] for k in ("state", "nonce", "code_challenge")}
 
 
-def consent(client, flow, sub="g-1", verified=True, picture="", email=EMAIL):
+def consent(client, flow, sub="g-1", verified=True, picture="", email=EMAIL, hd=""):
     """The fake's consent form, as the browser posts it: the callback URL it sends to."""
     form = {
         **flow,
@@ -34,6 +35,7 @@ def consent(client, flow, sub="g-1", verified=True, picture="", email=EMAIL):
         "given_name": "Robin",
         "family_name": "Lee",
         "picture_url": picture,
+        "hd": hd,
         **({"email_verified": "1"} if verified else {}),
     }
     r = client.post("/auth/fake/consent", data=form, follow_redirects=False)
@@ -166,31 +168,52 @@ def test_no_provider_means_no_button_and_404(anon, monkeypatch):
 # --- coordinators and admins (?for=org): the verified email is the key ------------------
 
 STAFF = "/auth/google/start?for=org"
+NO_ACCOUNT = "No nonprofit account uses this email"
+SENT = "If that address belongs to a coordinator, a sign-in link is on its way"
 
 
 def counts():
     return profiles.count, identities.count
 
 
-@pytest.mark.parametrize("who", ["coordinator", "admin"])
-def test_coordinator_or_admin_signs_in_by_verified_email(anon, who):
+@pytest.mark.parametrize(
+    "who, email, hd",
+    [
+        ("coordinator", "coord0@example.org", "example.org"),  # Workspace: Google's own
+        ("admin", "boss@gmail.com", ""),
+        ("coordinator", "coord0@example.org", ""),  # Google doesn't host this mailbox
+    ],
+)
+def test_staff_sign_in_needs_the_provider_to_host_the_mailbox(
+    anon, monkeypatch, who, email, hd
+):
     if who == "coordinator":
-        _, email = coordinator_for(0)
+        coordinator_for(0, email)
     else:
-        email = "boss@example.org"
         data.add_admin(email, "Boss Person")
     assert STAFF in anon.get("/org/login").text
-    before = counts()
-    r, _ = google_sign_in(anon, STAFF, email=email.upper())  # matched lowercased
+    before, mails = counts(), len(notify.get_emailer().sent)
+    r, _ = google_sign_in(anon, STAFF, email=email.upper(), hd=hd)  # lowercased
+    assert counts() == before  # a staff sign-in creates no profile and no identity
+    if not hd and not email.endswith("@gmail.com"):  # the emailed link's answer instead
+        assert r.status_code == 200 and SENT in r.text
+        assert len(notify.get_emailer().sent) == mails + 1
+        assert (
+            anon.get("/org", follow_redirects=False).headers["location"] == "/org/login"
+        )
+        return
     lands = "/org" if who == "coordinator" else "/admin"
     assert r.status_code == 303 and r.headers["location"] == lands
     assert anon.get(lands).status_code == 200
-    assert counts() == before  # a staff sign-in creates no profile and no identity
+    monkeypatch.setattr(oauth_routes, "is_preview", lambda: True)
+    c = TestClient(app)  # on a preview the fake signs in coordinators, never an admin
+    r, _ = google_sign_in(c, STAFF, email=email, hd=hd)
+    assert (NO_ACCOUNT in r.text and signed_out(c)) is (who == "admin")
 
 
 def test_coordinator_sign_in_with_an_unknown_email_creates_nothing(anon):
     before = counts()
-    r, _ = google_sign_in(anon, STAFF, email="nobody@example.org")
+    r, _ = google_sign_in(anon, STAFF, email="nobody@example.org", hd="example.org")
     assert r.status_code == 200
     assert "No nonprofit account uses this email" in r.text
     assert 'href="/org/claim"' in r.text
@@ -207,7 +230,8 @@ def test_coordinator_and_volunteer_intents_never_cross(anon):
     assert anon.get("/org", follow_redirects=False).status_code == 403
 
     staff = TestClient(app)
-    r, _ = google_sign_in(staff, STAFF, sub="g-coord")  # a volunteer's email, as staff
+    # a volunteer's email, as staff, from a Workspace account that hosts it
+    r, _ = google_sign_in(staff, STAFF, sub="g-coord", hd="example.com")
     assert r.status_code == 200 and "Claim your nonprofit" in r.text
     assert signed_out(staff)
     assert staff.get("/org", follow_redirects=False).headers["location"] == "/org/login"

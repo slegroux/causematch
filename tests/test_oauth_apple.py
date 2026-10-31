@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
+from conftest import volunteer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from starlette.testclient import TestClient
@@ -104,9 +105,10 @@ def test_token_exchange_verifies_the_id_token_against_apples_keys(ec_key, monkey
             apple.finish("code-1", "unused", "https://x/cb", "n1")
 
 
-def apple_form(client):
-    """Start, then the fake's consent: the form Apple would post back cross-site."""
-    r = client.get("/auth/apple/start", follow_redirects=False)
+def apple_form(client, path="/auth/apple/start", method="GET", sub="001.robin"):
+    """Start (or Me's Connect POST), then the fake's consent: the form Apple would post
+    back cross-site."""
+    r = client.request(method, path, follow_redirects=False)
     assert r.status_code == 303
     cookie = r.headers["set-cookie"].lower()
     assert "samesite=none" in cookie and "secure" in cookie
@@ -116,7 +118,7 @@ def apple_form(client):
         "provider": "apple",
         "state": q["state"][0],
         "nonce": q["nonce"][0],
-        "sub": "001.robin",
+        "sub": sub,
         "email": RELAY,
         "email_verified": "1",
         "given_name": "Robin",
@@ -153,6 +155,28 @@ def test_cross_site_form_post_signs_in_only_with_the_flow_cookie():
     assert callback(c, form).status_code == 400  # the cookie went with the first one
 
 
+def test_sessionless_apple_connect_needs_the_sealed_session_version():
+    """Apple's post brings no session cookie: the sealed session version alone decides."""
+    vol = volunteer()
+    vol.base_url = HTTPS  # so the Secure flow cookie comes back
+    connect = "/me/identity/apple/connect"
+
+    def flow_only():  # the flow cookie and nothing else, as on Apple's cross-site post
+        return TestClient(
+            app, base_url=HTTPS, cookies={"cm_oauth": vol.cookies["cm_oauth"]}
+        )
+
+    form = apple_form(vol, connect, "POST", sub="001.current")
+    assert (
+        callback(flow_only(), form).headers["location"]
+        == "/me/profile?notice=connected"
+    )
+    form = apple_form(vol, connect, "POST", sub="001.stale")
+    vol.post("/logout")  # bumps the session version the flow was sealed with
+    assert callback(flow_only(), form).status_code == 400
+    assert identities.count_where("subject = ?", ["001.stale"]) == 0
+
+
 def test_other_cross_site_posts_are_still_refused():
     c = TestClient(app, base_url=HTTPS)
     r = c.post("/login/send", data={"phone": "3105550131"}, headers=CROSS_SITE)
@@ -160,6 +184,8 @@ def test_other_cross_site_posts_are_still_refused():
 
 
 def test_bad_user_field_means_no_names():
-    for raw in ("not json", "[]", '{"name": "Robin"}', '{"name": {"firstName": 7}}'):
+    nested = "[" * 100_000 + "]" * 100_000  # past the length cap, and past recursion
+    bad = ("not json", "[]", '{"name": "Robin"}', '{"name": {"firstName": 7}}', nested)
+    for raw in bad:
         assert oauth.apple_names(raw) == ("", "")
     assert oauth.apple_names('{"name": {"firstName": "Ana"}}') == ("Ana", "")

@@ -385,7 +385,7 @@ def delete_save(req, sess):
 
 # --- privacy ---------------------------------------------------------------------------------
 
-EFFECTIVE = "October 15, 2026"
+EFFECTIVE = "October 31, 2026"
 
 
 def Section(title, *paras):

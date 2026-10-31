@@ -5,8 +5,9 @@ through a local consent page, /auth/fake/consent.
 
 One flow, three intents, sealed in the flow cookie: a volunteer signing in (/login), a
 coordinator or admin signing in (?for=org, from /org/login: the verified email must be the
-one on file, as the emailed link trusts it) and a signed-in volunteer connecting a provider
-(Me's Connect, a same-origin POST). A callback acts only on its own intent."""
+one on file, and the provider must host that mailbox, else the emailed link is sent) and a
+signed-in volunteer connecting a provider (Me's Connect, a same-origin POST). A callback
+acts only on its own intent."""
 
 import dataclasses
 import json
@@ -18,12 +19,12 @@ from monsterui.all import LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
-from app import data, oauth
+from app import data, notify, oauth, security
 from app.auth import sign_in, sign_in_staff
-from app.config import is_production, public_base_url
+from app.config import is_preview, is_production, public_base_url
 from app.forms import bad_request, query, str_form
 from app.routes.auth import SUSPENDED, PhoneForm
-from app.routes.org_auth import EmailForm
+from app.routes.org_auth import EmailForm, link_sent
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
 ar = Router()
@@ -103,7 +104,11 @@ def _connect(req, name):
 
 
 def _disconnect(req, name):
-    if not data.unlink_identity(req.scope["uid"], name):
+    """Only ways in that work now count as another: the phone while codes can be texted,
+    a provider while it is configured."""
+    providers = [n for n, _ in oauth.enabled_providers()]
+    phone_works = notify.phone_sign_in_enabled()
+    if not data.unlink_identity(req.scope["uid"], name, phone_works, providers):
         return Redirect("/me/profile?error=last")
     return Redirect("/me/profile?notice=disconnected")
 
@@ -152,7 +157,8 @@ async def _callback(req, sess, name, params):
     resp = await run_in_threadpool(_sync_callback, req, sess, provider, params)
     if hasattr(resp, "__response__"):
         resp = resp.__response__(req)
-    # single use, whatever happened: a replay of this callback finds no cookie
+    # whatever happened: a cooperating browser's replay finds no cookie, and the
+    # provider's code works once anyway (app/oauth.py unseal)
     resp.delete_cookie(oauth.oauth_cookie(), **_cookie_options(name))
     return resp
 
@@ -172,6 +178,9 @@ def _login(error, status, intent="volunteer", name=""):
 
 
 def _sync_callback(req, sess, provider, params):
+    # each callback can call the provider with our client secret: counted before anything
+    if not security.allow((security.OAUTH_PER_IP, security.ip_subject(req))):
+        return security.too_many()
     name, label = provider.name, oauth.LABELS[provider.name]
     try:
         flow = oauth.unseal(
@@ -200,7 +209,7 @@ def _sync_callback(req, sess, provider, params):
         other = "get an emailed link" if intent == "staff" else "use your phone number"
         return _login(UNVERIFIED.format(label, label, other), 400, intent, name)
     if intent == "staff":
-        return _staff_sign_in(sess, claims)
+        return _staff_sign_in(req, sess, claims)
     if intent == "link":
         return _link(sess, name, flow, claims)
     if params.get("user"):  # Apple's names, sent on first consent only
@@ -220,10 +229,22 @@ def _sync_callback(req, sess, provider, params):
     return RedirectResponse(loc, status_code=303)
 
 
-def _staff_sign_in(sess, claims):
+def _staff_sign_in(req, sess, claims):
     """A coordinator or admin by the verified provider email, found as the emailed link
-    finds them (data.staff_by_email). Creates nothing: no profile, no identity row."""
-    profile, is_coordinator = data.staff_by_email(claims.email.strip().lower())
+    finds them (data.staff_by_email), when the provider hosts that mailbox
+    (oauth.authoritative). Otherwise the verified email may be stale, so the answer is the
+    emailed link's, for known and unknown addresses alike. Creates nothing: no profile,
+    no identity row."""
+    email = claims.email.strip().lower()
+    if not oauth.authoritative(claims):
+        sent = link_sent(req, email)
+        return sent if isinstance(sent, Response) else FtResponse(sent)
+    profile, is_coordinator = data.staff_by_email(email)
+    # A preview's fake consent page takes any typed email as verified, so there it never
+    # signs in an admin: as on /org/login, where a preview shows a coordinator's link on
+    # the page but an admin's stays in the log (org_auth.link_sent)
+    if profile and not is_coordinator and is_preview() and oauth.fake_enabled():
+        profile = None
     if profile is None:
         no_org = Span(NO_ORG, A("start a claim", href="/org/claim", cls="font-bold"))
         return FtResponse(EmailForm(error=no_org), status_code=200)
@@ -250,7 +271,7 @@ def _link(sess, name, flow, claims):
 
 # --- the fake provider's consent page (CAUSEMATCH_FAKE_OAUTH=1 only) ----------------------
 
-FIELDS = ("sub", "email", "given_name", "family_name", "picture_url")
+FIELDS = ("sub", "email", "given_name", "family_name", "picture_url", "hd")
 
 
 def _fake(name):
@@ -281,6 +302,10 @@ def fake_consent(req):
             Field("Given name", TextInput(name="given_name", value="")),
             Field("Family name", TextInput(name="family_name", value="")),
             Field("Picture URL", TextInput(name="picture_url", value="")),
+            # Google's hd, a Workspace account's domain: staff sign-in needs it to match
+            Field("Hosted domain", TextInput(name="hd", value=""))
+            if fake.name == "google"
+            else None,
             BigButton("Continue"),
             action="/auth/fake/consent",
             method="post",
@@ -312,6 +337,7 @@ async def fake_consent_post(req):
         given_name="" if apple else f["given_name"],
         family_name="" if apple else f["family_name"],
         picture_url="" if apple else f["picture_url"],
+        hosted_domain="" if apple else f["hd"],  # Apple has no hd
     )
     code = fake.mint(claims, f["nonce"], f.get("code_challenge", ""))
     if not apple:

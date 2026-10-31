@@ -53,7 +53,7 @@ def ProviderSignIn(for_org=False):
             for name, label in providers
         ],
         then,
-        cls="space-y-3",
+        cls="flex flex-col gap-3",  # one button per line, apart: they never run together
     )
 
 
