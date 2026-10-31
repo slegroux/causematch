@@ -86,13 +86,30 @@ def challenge(verifier):
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
-def seal(provider, state, nonce, verifier):
-    return _serializer().dumps({"p": provider, "s": state, "n": nonce, "v": verifier})
+# Why the flow was started: a volunteer signing in (/login), a coordinator or admin
+# signing in (/org/login), or a signed-in volunteer connecting a provider (Me)
+INTENTS = ("volunteer", "staff", "link")
+
+
+@dataclass(frozen=True)
+class Flow:
+    nonce: str
+    verifier: str
+    intent: str
+    uid: int | None  # link only: the volunteer who pressed Connect
+    sv: int | None  # link only: their session version then
+
+
+def seal(provider, state, nonce, verifier, intent="volunteer", uid=None, sv=None):
+    flow = {"p": provider, "s": state, "n": nonce, "v": verifier, "i": intent}
+    if intent == "link":
+        flow |= {"u": uid, "sv": sv}
+    return _serializer().dumps(flow)
 
 
 def unseal(value, provider, state):
-    """(nonce, verifier) from the cookie when it is ours, under 10 minutes old, for this
-    provider and this state; else AuthError."""
+    """The Flow in the cookie when it is ours, under 10 minutes old, for this provider and
+    this state; else AuthError."""
     if not value or not state:
         raise AuthError("missing")
     try:
@@ -103,7 +120,14 @@ def unseal(value, provider, state):
         raise AuthError("wrong provider")
     if not hmac.compare_digest(str(flow.get("s", "")), state):
         raise AuthError("state mismatch")
-    return str(flow.get("n", "")), str(flow.get("v", ""))
+    intent, uid, sv = flow.get("i"), flow.get("u"), flow.get("sv")
+    if intent not in INTENTS:
+        raise AuthError("bad intent")
+    if intent == "link" and not (type(uid) is int and type(sv) is int):
+        raise AuthError("bad link")
+    if intent != "link":
+        uid = sv = None
+    return Flow(str(flow.get("n", "")), str(flow.get("v", "")), intent, uid, sv)
 
 
 # --- Google ------------------------------------------------------------------------------

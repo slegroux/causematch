@@ -1826,11 +1826,13 @@ def volunteer_for_identity(claims):
     """Profile id for this provider sign-in (app/oauth.py Claims), creating a volunteer on
     the first one: no phone, the provider's verified email, the given name as first name.
     An identity whose profile was deleted reads as absent. A suspended profile's id is
-    returned too: get_profile is None for it, and the caller refuses the sign-in."""
+    returned too: get_profile is None for it, and the caller refuses the sign-in. As with
+    a phone, a deleted account's suspension and org blocks on this identity come back."""
     where = {
         "where": "provider = ? AND subject = ?",
         "where_args": [claims.provider, claims.subject],
     }
+    kept = _retained_identity(claims)
     with _db.db.conn:
         for found in _db.identities(**where):
             live = "id = ? AND deleted_at IS NULL"
@@ -1845,18 +1847,87 @@ def volunteer_for_identity(claims):
                 display_name=" ".join(claims.given_name.split())[:80] or None,
                 session_version=1,
                 created_at=_now(),
+                suspended_at=_now() if kept and kept.suspended else None,
             )
         ).id
-        _db.identities.insert(
-            _db.Identity(
-                user_id=uid,
-                provider=claims.provider,
-                subject=claims.subject,
-                email=claims.email,
-                created_at=_now(),
-            )
-        )
+        _insert_identity(uid, claims)
+        _reapply_blocks(uid, kept)
     return uid
+
+
+def _insert_identity(uid, claims):
+    _db.identities.insert(
+        _db.Identity(
+            user_id=uid,
+            provider=claims.provider,
+            subject=claims.subject,
+            email=claims.email,
+            created_at=_now(),
+        )
+    )
+
+
+def _reapply_blocks(uid, kept):
+    for blocker_id, org_id in json.loads(kept.blocks_json) if kept else []:
+        _add_block(blocker_id=blocker_id, blocked_user_id=uid, blocked_org_id=org_id)
+
+
+def identities_of(uid):
+    """{provider: email} of the provider sign-ins connected to this profile."""
+    return {
+        i.provider: i.email
+        for i in _db.identities(where="user_id = ?", where_args=[uid])
+    }
+
+
+def link_identity(uid, claims):
+    """Connect a provider sign-in to this signed-in volunteer (Me, Connect). None when
+    connected (or it already was), else why not: "taken" when the identity is on another
+    live profile (the unique index decides a race), "other" when this profile already has
+    another account of this provider, "refused" when the profile isn't a live volunteer or
+    a deleted account suspended with this identity left its hash. A deleted account's org
+    blocks on it apply to this profile, as at a sign-up."""
+    kept = _retained_identity(claims)
+    if kept and kept.suspended:
+        return "refused"
+    where = "provider = ? AND subject = ?"
+    try:
+        with _db.db.conn:
+            args = [claims.provider, claims.subject]
+            for found in _db.identities(where=where, where_args=args):
+                if found.user_id == uid:
+                    return None
+                live = "id = ? AND deleted_at IS NULL"
+                if _db.profiles.count_where(live, [found.user_id]):
+                    return "taken"
+                _db.identities.delete(found.id)  # a deleted account's
+            mine = "user_id = ? AND provider = ?"
+            if _db.identities.count_where(mine, [uid, claims.provider]):
+                return "other"
+            p = get_profile(uid)
+            if p is None or p.role != "volunteer":
+                return "refused"
+            _insert_identity(uid, claims)
+            _reapply_blocks(uid, kept)
+    except apsw.ConstraintError:
+        return "taken"
+    return None
+
+
+def unlink_identity(uid, provider):
+    """Disconnect this profile's sign-in with `provider`. False, and nothing changed, when
+    it is the last way in: no phone and no other provider. Nobody is signed out."""
+    with _db.db.conn:
+        mine = "user_id = ? AND provider = ?"
+        if not _db.identities.count_where(mine, [uid, provider]):
+            return True  # nothing to disconnect
+        others = _db.identities.count_where(
+            "user_id = ? AND provider != ?", [uid, provider]
+        )
+        if not (_db.profiles[uid].phone or others):
+            return False
+        _db.identities.delete_where(mine, [uid, provider])
+    return True
 
 
 def phone_suspended(phone):
@@ -2210,6 +2281,18 @@ def remove_admin(email):
 
 def admin_by_email(email):
     return _staff(email, "admin")
+
+
+def staff_by_email(email):
+    """(profile, is_coordinator) for whoever signs in to staff pages with this address:
+    a coordinator with an org, else an admin. (None, False) when neither is live
+    (unknown, deleted or suspended)."""
+    uid = coordinator_by_email(email)
+    is_coordinator = bool(uid and coordinator_org_ids(uid))
+    if not is_coordinator:
+        uid = admin_by_email(email)
+    profile = get_profile(uid) if uid else None
+    return (profile, is_coordinator) if profile else (None, False)
 
 
 def metrics_rows():
@@ -3552,6 +3635,23 @@ def _phone_hash(phone):
     return hmac.new(phone_hash_key().encode(), phone.encode(), "sha256").hexdigest()
 
 
+def _identity_hash(provider, subject):
+    key = f"{provider}:{subject}".encode()
+    return hmac.new(phone_hash_key().encode(), key, "sha256").hexdigest()
+
+
+def _retained_identity(claims):
+    kept = _db.retained_identities(
+        where="hash = ?", where_args=[_identity_hash(claims.provider, claims.subject)]
+    )
+    return kept[0] if kept else None
+
+
+# What a deleted account leaves behind when a block, a report or a suspension must outlive
+# it: keyed hashes of its phone and of its provider sign-ins
+RETAINED = ("retained_phone_hash", "retained_identity_hash")
+
+
 def _blocks_against(uid):
     return [
         [b.blocker_id, b.blocked_org_id]
@@ -3565,9 +3665,10 @@ def _reports_against(uid):
     )
 
 
-def _retain_phone(uid, phone, suspended):
-    """Keep a keyed hash of a deleted account's phone only when a block, a report that is
-    open or actioned, or a suspension must outlive the account. Never the number."""
+def _retain(table, key_hash, uid, suspended):
+    """Keep a keyed hash of a deleted account's phone or sign-in only when a block, a
+    report that is open or actioned, or a suspension must outlive the account. Never the
+    number or the subject."""
     blocks, reports = _blocks_against(uid), _reports_against(uid)
     if not (blocks or reports or suspended):
         return
@@ -3577,29 +3678,43 @@ def _retain_phone(uid, phone, suspended):
         if on
     )
     _db.db.execute(
-        "INSERT OR REPLACE INTO retained_phone_hash "
+        f"INSERT OR REPLACE INTO {table} "
         "(hash, profile_id, reason, blocks_json, suspended, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        [_phone_hash(phone), uid, reason, json.dumps(blocks), int(suspended), _now()],
+        [key_hash, uid, reason, json.dumps(blocks), int(suspended), _now()],
     )
+
+
+def _retain_phone(uid, phone, suspended):
+    _retain("retained_phone_hash", _phone_hash(phone), uid, suspended)
+
+
+def _retain_identity(uid, provider, subject, suspended):
+    _retain("retained_identity_hash", _identity_hash(provider, subject), uid, suspended)
 
 
 def _refresh_retained(uid, suspended=False):
     """After a report is dismissed, a block lifted or a deleted account suspended: bring the
-    kept hash of profile `uid` in line, or drop it when nothing needs it any more."""
-    rows = _db.retained_phones(where="profile_id = ?", where_args=[uid])
+    kept hashes of profile `uid` in line, or drop them when nothing needs them any more."""
+    rows = [
+        (table, row)
+        for table in RETAINED
+        for row in _db.db.q(
+            f"SELECT hash, suspended FROM {table} WHERE profile_id = ?", [uid]
+        )
+    ]
     if not rows:
         return
-    row = rows[0]
-    blocks = _blocks_against(uid)
-    sus = bool(row.suspended) or suspended
-    if blocks or sus or _reports_against(uid):
-        _db.db.execute(
-            "UPDATE retained_phone_hash SET blocks_json = ?, suspended = ? WHERE hash = ?",
-            [json.dumps(blocks), int(sus), row.hash],
-        )
-    else:
-        _db.db.execute("DELETE FROM retained_phone_hash WHERE hash = ?", [row.hash])
+    blocks, reports = _blocks_against(uid), _reports_against(uid)
+    for table, row in rows:
+        sus = bool(row["suspended"]) or suspended
+        if blocks or sus or reports:
+            _db.db.execute(
+                f"UPDATE {table} SET blocks_json = ?, suspended = ? WHERE hash = ?",
+                [json.dumps(blocks), int(sus), row["hash"]],
+            )
+        else:
+            _db.db.execute(f"DELETE FROM {table} WHERE hash = ?", [row["hash"]])
 
 
 def delete_account(uid):
@@ -3622,6 +3737,8 @@ def delete_account(uid):
             return
         if p.phone:
             _retain_phone(uid, p.phone, bool(p.suspended_at))
+        for i in _db.identities(where="user_id = ?", where_args=[uid]):
+            _retain_identity(uid, i.provider, i.subject, bool(p.suspended_at))
         for m in _db.matches(
             where="volunteer_id = ? AND status IN ('pending', 'accepted')",
             where_args=[uid],

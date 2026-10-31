@@ -6,8 +6,10 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
+from app.auth import sign_in_staff
 from app.config import DEMO_COORDINATOR, demo_matches, is_preview
 from app.forms import EMAIL, query, str_form
+from app.routes.auth import ProviderSignIn
 from app.ui import (
     BigButton,
     DemoSignIn,
@@ -30,6 +32,7 @@ def EmailForm(email="", error=None, notice=None, link=None):
     return SignInPage(
         "Nonprofit sign in",
         DemoSignIn(volunteer=False),
+        ProviderSignIn(for_org=True),
         P(
             A("Open your sign-in link", href=link, cls="text-brand font-bold"),
             " (a preview sends no email)",
@@ -74,13 +77,11 @@ def org_login_page():
 def _send_link(email):
     """After the response, so known and unknown addresses take the same time to answer.
     The link, or None."""
-    uid = data.coordinator_by_email(email)
-    if not (uid and data.coordinator_org_ids(uid)):
-        uid = data.admin_by_email(email)
-    if not uid or data.get_profile(uid) is None:  # unknown, deleted or suspended
+    profile, _ = data.staff_by_email(email)
+    if profile is None:  # unknown, deleted or suspended
         return
     try:
-        return notify.send_login_link(email, data.create_login_token(uid))
+        return notify.send_login_link(email, data.create_login_token(profile.id))
     except Exception as e:  # noqa: BLE001  nothing here may reach the user: it would reveal the account
         log.warning("sending a sign-in link failed: %s", type(e).__name__)
 
@@ -126,10 +127,7 @@ def demo_sign_in(req, sess):
     profile = data.get_profile(uid) if uid else None
     if not (profile and data.coordinator_org_ids(uid)):
         return Refusal(403)  # a demo without its coordinator
-    sess.clear()
-    sess["uid"] = uid
-    sess["sv"] = profile.session_version or 1
-    return Redirect("/org")
+    return sign_in_staff(sess, profile, True)
 
 
 @ar("/org/login/verify", methods=["GET"])
@@ -169,7 +167,4 @@ def _sync_org_login_verify(form, sess):
     )
     if not (is_coordinator or (profile and profile.role == "admin")):
         return EmailForm(error=BAD_LINK)
-    sess.clear()
-    sess["uid"] = uid
-    sess["sv"] = profile.session_version or 1
-    return Redirect("/org" if is_coordinator else "/admin")
+    return sign_in_staff(sess, profile, is_coordinator)

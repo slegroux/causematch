@@ -100,13 +100,24 @@ def pending_phone(sess, key="pending"):
     return None
 
 
-def sign_in(sess, profile):
-    """Every sign-in method ends here, with a live profile: a fresh session for it, then
-    the deck, or onboarding when it hasn't been done."""
+def _fresh_session(sess, profile):
     sess.clear()
     sess["uid"] = profile.id
     sess["sv"] = profile.session_version or 1
+
+
+def sign_in(sess, profile):
+    """Every volunteer sign-in method ends here, with a live profile: a fresh session for
+    it, then the deck, or onboarding when it hasn't been done."""
+    _fresh_session(sess, profile)
     return Redirect("/deck" if profile.onboarded_at else "/onboarding")
+
+
+def sign_in_staff(sess, profile, is_coordinator):
+    """A coordinator's or admin's sign-in (the emailed link, Google or Apple), with a live
+    profile: a fresh session, then /org or /admin."""
+    _fresh_session(sess, profile)
+    return Redirect("/org" if is_coordinator else "/admin")
 
 
 def check_session(req, sess):

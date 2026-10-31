@@ -313,8 +313,22 @@ class RetainedPhoneHash:
     created_at: str
 
 
+class RetainedIdentityHash:
+    """A keyed hash of a deleted account's sign-in with a provider, kept on the same terms
+    as RetainedPhoneHash. Never the subject or the email."""
+
+    hash: str  # HMAC-SHA256(PHONE_HASH_KEY, "provider:subject"), hex
+    profile_id: int  # the deleted profile this was taken from
+    reason: str
+    blocks_json: str  # JSON [[blocker_id, org_id], ...] to re-apply on sign-up
+    suspended: bool
+    created_at: str
+
+
 reports = db.create(Report, pk="id", transform=True)
 retained_phones = db.create(RetainedPhoneHash, pk="hash", transform=True)
+retained_identities = db.create(RetainedIdentityHash, pk="hash", transform=True)
+retained_identities.create_index(["profile_id"], if_not_exists=True)
 blocks = db.create(Block, pk="id", transform=True)
 claim_requests = db.create(ClaimRequest, pk="id", transform=True)
 

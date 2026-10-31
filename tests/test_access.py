@@ -163,6 +163,11 @@ ROUTES = {
     ("POST", "/me/profile/details"): ("volunteer", "own-record"),
     ("POST", "/me/phone/send"): ("volunteer", "own-record"),  # 404 without Twilio
     ("POST", "/me/phone/verify"): ("volunteer", "own-record"),
+    # 404 without the provider; the link flow carries the signed-in uid (app/routes/oauth.py)
+    ("POST", "/me/identity/google/connect"): ("volunteer", "own-record"),
+    ("POST", "/me/identity/apple/connect"): ("volunteer", "own-record"),
+    ("POST", "/me/identity/google/disconnect"): ("volunteer", "own-record"),
+    ("POST", "/me/identity/apple/disconnect"): ("volunteer", "own-record"),
     ("POST", "/deck/photo-nudge/dismiss"): ("volunteer", "own-record"),
     ("POST", "/admin/reports/{report_id}/remove-photo"): ("admin", "own-record"),
     # data.photo_for decides per photo: a volunteer's own, a matched org's, an admin's
@@ -1084,7 +1089,7 @@ def test_a_volunteer_sees_none_of_another_volunteers_matches(world):
 TABLES = {
     "db", "_db", "causes", "login_tokens", "matches", "openings", "org_members",
     "messages", "orgs", "profiles", "swipes", "shifts", "notifications",
-    "blocks", "reports", "identities",
+    "blocks", "reports", "identities", "retained_identities",
 }  # fmt: skip
 
 

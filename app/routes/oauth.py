@@ -1,24 +1,30 @@
-"""Continue with Google or Apple, for volunteers: /auth/{google,apple}/start and their
-callbacks. Google returns by a GET, Apple by a cross-site form POST (form_post). The flow
-and its checks live in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH=1 the fake provider serves
-the same routes through a local consent page, /auth/fake/consent."""
+"""Continue with Google or Apple: /auth/{google,apple}/start and their callbacks. Google
+returns by a GET, Apple by a cross-site form POST (form_post). The flow and its checks live
+in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH=1 the fake provider serves the same routes
+through a local consent page, /auth/fake/consent.
+
+One flow, three intents, sealed in the flow cookie: a volunteer signing in (/login), a
+coordinator or admin signing in (?for=org, from /org/login: the verified email must be the
+one on file, as the emailed link trusts it) and a signed-in volunteer connecting a provider
+(Me's Connect, a same-origin POST). A callback acts only on its own intent."""
 
 import dataclasses
 import json
 import logging
 from urllib.parse import urlencode
 
-from fasthtml.common import Form, FtResponse, Hidden, Redirect, Response
+from fasthtml.common import A, Form, FtResponse, Hidden, Redirect, Response, Span
 from monsterui.all import LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
 from app import data, oauth
-from app.auth import sign_in
+from app.auth import sign_in, sign_in_staff
 from app.config import is_production, public_base_url
 from app.forms import bad_request, query, str_form
 from app.routes.auth import SUSPENDED, PhoneForm
-from app.ui import BigButton, Field, Router, SignInPage, TextInput
+from app.routes.org_auth import EmailForm
+from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
 ar = Router()
 log = logging.getLogger("causematch")
@@ -28,8 +34,9 @@ DOWN = "We couldn't sign you in with {} just now. Try again in a minute."
 CANCELLED = "{} sign-in was cancelled."
 UNVERIFIED = (
     "Your {} account's email isn't verified yet, so it can't sign in here. "
-    "Verify it with {}, or use your phone number."
+    "Verify it with {}, or {}."
 )
+NO_ORG = "No nonprofit account uses this email. Claim your nonprofit: "
 MAX_PICTURE_URL = 2000  # characters kept in the session for onboarding's photo choice
 
 
@@ -51,7 +58,7 @@ def _redirect_uri(name):
     return public_base_url() + f"/auth/{name}/callback"
 
 
-def _start(name):
+def _start(name, intent="volunteer", uid=None, sv=None):
     provider = oauth.get_provider(name)
     if provider is None:
         return _not_found()
@@ -64,21 +71,61 @@ def _start(name):
     )
     r.set_cookie(
         oauth.oauth_cookie(),
-        oauth.seal(name, state, nonce, verifier),
+        oauth.seal(name, state, nonce, verifier, intent, uid, sv),
         max_age=oauth.COOKIE_MAX_AGE,
         **_cookie_options(name),
     )
     return r
 
 
+def _sign_in_intent(req):
+    return "staff" if query(req, "for") == "org" else "volunteer"
+
+
 @ar("/auth/google/start", methods=["GET"])
-def google_start():
-    return _start("google")
+def google_start(req):
+    return _start("google", _sign_in_intent(req))
 
 
 @ar("/auth/apple/start", methods=["GET"])
-def apple_start():
-    return _start("apple")
+def apple_start(req):
+    return _start("apple", _sign_in_intent(req))
+
+
+# --- Me: connect and disconnect (signed-in volunteers; the beforeware checks) -----------
+
+
+def _connect(req, name):
+    """Start a link flow for the signed-in volunteer: their uid and session version go
+    into the sealed flow cookie, and the callback connects to nobody else."""
+    profile = data.get_profile(req.scope["uid"])
+    return _start(name, "link", profile.id, profile.session_version or 1)
+
+
+def _disconnect(req, name):
+    if not data.unlink_identity(req.scope["uid"], name):
+        return Redirect("/me/profile?error=last")
+    return Redirect("/me/profile?notice=disconnected")
+
+
+@ar("/me/identity/google/connect", methods=["POST"])
+def google_connect(req):
+    return _connect(req, "google")
+
+
+@ar("/me/identity/apple/connect", methods=["POST"])
+def apple_connect(req):
+    return _connect(req, "apple")
+
+
+@ar("/me/identity/google/disconnect", methods=["POST"])
+def google_disconnect(req):
+    return _disconnect(req, "google")
+
+
+@ar("/me/identity/apple/disconnect", methods=["POST"])
+def apple_disconnect(req):
+    return _disconnect(req, "apple")
 
 
 @ar("/auth/google/callback", methods=["GET"])
@@ -110,41 +157,57 @@ async def _callback(req, sess, name, params):
     return resp
 
 
-def _login(error, status):
+def _login(error, status, intent="volunteer", name=""):
+    """The page a refused or failed callback answers with: its intent's sign-in page, or,
+    for a link, a 400 (a failed check) or Me with what went wrong."""
+    if intent == "staff":
+        return FtResponse(EmailForm(error=error), status_code=status)
+    if intent == "link":
+        return (
+            Refusal(400)
+            if status == 400
+            else Redirect(f"/me/profile?error=failed-{name}")
+        )
     return FtResponse(PhoneForm(error=error), status_code=status)
 
 
 def _sync_callback(req, sess, provider, params):
     name, label = provider.name, oauth.LABELS[provider.name]
     try:
-        nonce, verifier = oauth.unseal(
+        flow = oauth.unseal(
             req.cookies.get(oauth.oauth_cookie()), name, params.get("state", "")
         )
     except oauth.AuthError as e:
         log.warning("%s sign-in refused: %s", label, e)
         return _login(FAILED.format(label), 400)
+    intent = flow.intent
     code = params.get("code", "")
     if params.get("error") or not code:
-        return _login(CANCELLED.format(label), 200)
+        return _login(CANCELLED.format(label), 200, intent, name)
     try:
-        claims = provider.finish(code, verifier, _redirect_uri(name), nonce)
+        claims = provider.finish(code, flow.verifier, _redirect_uri(name), flow.nonce)
     except oauth.Unavailable as e:
         log.warning(
             "%s sign-in failed: %s", label, e
         )  # the exception type, never a body
-        return _login(DOWN.format(label), 200)
+        return _login(DOWN.format(label), 200, intent, name)
     except oauth.AuthError as e:
         log.warning("%s sign-in refused: %s", label, e)
-        return _login(FAILED.format(label), 400)
+        return _login(FAILED.format(label), 400, intent, name)
     if not claims.subject:
-        return _login(FAILED.format(label), 400)
+        return _login(FAILED.format(label), 400, intent, name)
     if not (claims.email_verified and claims.email):
-        return _login(UNVERIFIED.format(label, label), 400)
+        other = "get an emailed link" if intent == "staff" else "use your phone number"
+        return _login(UNVERIFIED.format(label, label, other), 400, intent, name)
+    if intent == "staff":
+        return _staff_sign_in(sess, claims)
+    if intent == "link":
+        return _link(sess, name, flow, claims)
     if params.get("user"):  # Apple's names, sent on first consent only
         given, family = oauth.apple_names(params["user"])
         claims = dataclasses.replace(claims, given_name=given, family_name=family)
     profile = data.get_profile(data.volunteer_for_identity(claims))
-    if profile is None:  # suspended by an admin
+    if profile is None or profile.role != "volunteer":  # suspended by an admin
         sess.clear()
         return _login(SUSPENDED, 200)
     loc = sign_in(sess, profile).loc
@@ -155,6 +218,34 @@ def _sync_callback(req, sess, provider, params):
     ):
         sess["oauth_picture"] = claims.picture_url  # onboarding offers it, unticked
     return RedirectResponse(loc, status_code=303)
+
+
+def _staff_sign_in(sess, claims):
+    """A coordinator or admin by the verified provider email, found as the emailed link
+    finds them (data.staff_by_email). Creates nothing: no profile, no identity row."""
+    profile, is_coordinator = data.staff_by_email(claims.email.strip().lower())
+    if profile is None:
+        no_org = Span(NO_ORG, A("start a claim", href="/org/claim", cls="font-bold"))
+        return FtResponse(EmailForm(error=no_org), status_code=200)
+    return RedirectResponse(sign_in_staff(sess, profile, is_coordinator).loc, 303)
+
+
+def _link(sess, name, flow, claims):
+    """Connect this identity to the volunteer who pressed Connect: the flow's uid, still on
+    the session version it was started with, and the session's own uid when the session
+    cookie came along. Apple's cross-site form_post never carries it (SameSite=Lax), so
+    there the sealed session version stands in: signing out or being suspended since
+    changes it. The session is never written here, so Apple's post leaves it as it was."""
+    profile = data.get_profile(flow.uid)
+    current = bool(profile) and (profile.session_version or 1) == flow.sv
+    same = sess.get("uid") == flow.uid and sess.get("sv") == flow.sv
+    cross_site = name == "apple" and "uid" not in sess
+    if not (current and profile.role == "volunteer" and (same or cross_site)):
+        log.warning("%s connect refused: not the session that started it", name)
+        return Refusal(400)
+    if why := data.link_identity(flow.uid, claims):
+        return Redirect(f"/me/profile?error={why}-{name}")
+    return Redirect("/me/profile?notice=connected")
 
 
 # --- the fake provider's consent page (CAUSEMATCH_FAKE_OAUTH=1 only) ----------------------

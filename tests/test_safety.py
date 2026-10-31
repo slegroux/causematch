@@ -25,10 +25,11 @@ from fasthtml.common import to_xml
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import data, notify, propublica
+from app import data, notify, oauth, propublica
 from app.choices import SHARED_WITH_NONPROFIT
 from app.db import (
     blocks,
+    identities,
     matches,
     messages,
     notifications,
@@ -924,6 +925,33 @@ def test_a_suspended_account_cannot_come_back_by_deleting_itself(w):
     again.post("/login/send", data={"phone": phone})
     r = again.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
     assert r.status_code == 200 and "can't sign in" in r.text
+
+
+def test_a_suspended_google_account_cannot_come_back_by_deleting_itself(w):
+    claims = oauth.Claims("google", "g-gone", "gone@example.com", True, "Gale", "", "")
+    uid = data.volunteer_for_identity(claims)
+    profiles.update(id=uid, display_name="Gale", onboarded_at="2026-01-01T00:00:00")
+    m = data.swipe(uid, w.opening.id, True)
+    accept(w, m)
+    data.report_volunteer(w.coord_uid, m.id, "harassment")
+    data.delete_account(uid)  # deleted while the report is open
+    assert identities.count_where("user_id = ?", [uid]) == 0
+    w.admin.post(
+        f"/admin/reports/{reports()[0].id}/suspend"
+    )  # suspended after the fact
+    (row,) = data.__dict__["_db"].retained_identities()
+    assert row.suspended and "g-gone" not in json.dumps(row.__dict__)
+    again = TestClient(app)
+    r = again.get("/auth/google/start", follow_redirects=False)
+    flow = dict(
+        re.findall(r"(state|nonce|code_challenge)=([^&]+)", r.headers["location"])
+    )
+    form = {**flow, "sub": "g-gone", "email": "gone@example.com", "email_verified": "1"}
+    r = again.post("/auth/fake/consent", data=form, follow_redirects=False)
+    r = again.get(r.headers["location"], follow_redirects=False)
+    assert r.status_code == 200 and "can't sign in" in r.text
+    (i,) = identities(where="subject = ?", where_args=["g-gone"])  # the new sign-up's
+    assert i.user_id != uid and profiles[i.user_id].suspended_at
 
 
 def test_an_account_with_no_blocks_or_reports_leaves_no_hash(w):

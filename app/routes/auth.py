@@ -31,24 +31,28 @@ INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 SUSPENDED = "This account can't sign in. Contact us if that is a mistake."
 
 
-def ProviderSignIn():
+def ProviderSignIn(for_org=False):
     """Continue with Apple, then Google: each when a provider serves it (app/oauth.py
-    enabled_providers)."""
+    enabled_providers). for_org: the nonprofit sign-in's, for coordinators and admins."""
     providers = oauth.enabled_providers()
     if not providers:
         return None
+    if for_org:
+        then = H2("Or get an emailed link", cls="pt-6 font-bold text-ink")
+    elif notify.phone_sign_in_enabled():  # goes with PhoneForm's phone form
+        then = H2("Or use your phone number", cls="pt-6 font-bold text-ink")
+    else:
+        then = None
     return Div(
         *[
             A(
                 f"Continue with {label}",
-                href=f"/auth/{name}/start",
+                href=f"/auth/{name}/start" + ("?for=org" if for_org else ""),
                 cls="uk-btn uk-btn-primary w-full h-12 text-lg shadow-warm",
             )
             for name, label in providers
         ],
-        H2("Or use your phone number", cls="pt-6 font-bold text-ink")
-        if notify.phone_sign_in_enabled()  # goes with PhoneForm's phone form
-        else None,
+        then,
         cls="space-y-3",
     )
 

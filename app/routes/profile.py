@@ -36,7 +36,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from app import data, notify, photos, security
+from app import data, notify, oauth, photos, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
 from app.forms import (
@@ -75,7 +75,21 @@ NOTICE = {
     "removed": "Photo removed.",
     "details": "Profile saved.",
     "phone": "Number saved. Match news and shift reminders now come by text.",
+    "connected": "Connected. You can sign in with it now.",
+    "disconnected": "Disconnected.",
 }
+# Why Me's connect or disconnect didn't happen: ?error=<key>, from app/routes/oauth.py
+ERRORS = {"last": "Keep at least one way to sign in."}
+for _name, _label in oauth.LABELS.items():
+    ERRORS |= {
+        f"taken-{_name}": f"That {_label} account is already connected to another "
+        "Causematch account.",
+        f"other-{_name}": f"You already connected a {_label} account. Disconnect it "
+        "first.",
+        f"refused-{_name}": f"That {_label} account can't be connected. Contact us if "
+        "that is a mistake.",
+        f"failed-{_name}": f"Connecting {_label} didn't work. Try again.",
+    }
 # Me's add-a-number keeps its pending number under its own session keys (auth.set_pending)
 ME_PENDING = "me_pending"
 MAX_NAME = 80
@@ -291,6 +305,40 @@ def ReachCard(p, pending=None):
     return Div(*content, cls="space-y-3 p-5 " + CARD)
 
 
+def SignInMethods(p):
+    """Me's sign-in methods: the number, and each provider either connected (with its
+    email and a Disconnect button) or offered (Connect), when it is configured."""
+    connected = data.identities_of(p.id)
+
+    def button(label, action):
+        return PlainForm(
+            PlainButton(label, type="submit", cls=SMALL_LINK + " text-sm"),
+            action=action,
+            method="post",
+        )
+
+    rows = [
+        Div(
+            P(f"Connected as {connected[name]}", cls="text-ink"),
+            button(f"Disconnect {label}", f"/me/identity/{name}/disconnect"),
+            cls="space-y-1",
+        )
+        if name in connected
+        else button(f"Connect {label}", f"/me/identity/{name}/connect")
+        for name, label in oauth.LABELS.items()
+        if name in connected or oauth.get_provider(name)
+    ]
+    return Div(
+        H2("Sign-in methods", cls=ORG_SECTION),
+        P(
+            "Phone: " + (notify.mask(p.phone) if p.phone else "none"),
+            cls="text-ink",
+        ),
+        *rows,
+        cls="space-y-3 p-5 " + CARD,
+    )
+
+
 def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
     p = data.get_profile(uid)
     return VolunteerShell(
@@ -345,6 +393,7 @@ def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
             cls="space-y-5 p-5 " + CARD,
         ),
         Div(ReachCard(p, pending), cls="mt-4"),
+        Div(SignInMethods(p), cls="mt-4"),
         Div(DetailsForm(p, f), cls="mt-4"),
         Script(src="/static/photo.js", defer=True),
         uid=uid,
@@ -355,6 +404,7 @@ def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
 def profile(req, sess):
     return ProfilePage(
         req.scope["uid"],
+        error=ERRORS.get(query(req, "error")),
         notice=query(req, "notice"),
         pending=pending_phone(sess, ME_PENDING),
     )
