@@ -514,11 +514,14 @@ PROPUBLICA = (
 # the admins' budget for imports.
 CLAIM_SEARCH_PER_IP = (("claim-search-ip", 60, 3600),)
 CLAIM_SEARCH_ALL = (("claim-search-all", 300, 3600),)
+# The public check link for a certificate (/check/{code}): per address, so a code can't be
+# guessed at (ids are 128 random bits; this keeps the page from being a free probe too).
+CHECK_PER_IP = (("check-ip", 30, 600),)
 assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
     + (VERIFY_PER_PHONE, LINK_PER_EMAIL, LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL)
-    + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL)
+    + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL, CHECK_PER_IP)
     for _, _, w in rules
 )
 

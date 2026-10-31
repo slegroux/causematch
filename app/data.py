@@ -1624,6 +1624,16 @@ def _confirmed_rows(uid, org_id=None):
     ]
 
 
+def _period_rows(uid, org_id, period):
+    """_confirmed_rows at one nonprofit within a period ("2026-10" or "all"): what a
+    certificate lists, and what the check link compares a certificate with."""
+    return [
+        r
+        for r in _confirmed_rows(uid, org_id)
+        if period == "all" or r["starts_at"].startswith(period)
+    ]
+
+
 def certificate_options(uid):
     """The nonprofits this volunteer can certify hours at, by name: [{"org_id", "org",
     "minutes" (all their hours there), "months": [{"period": "2026-10", "minutes"}]}],
@@ -1674,11 +1684,7 @@ def issue_certificate(uid, org_id, period):
         p = _db.profiles[uid] if _is_id(uid) else None
         if p is None or p.role != "volunteer" or p.deleted_at:
             raise PermissionError("not a volunteer")
-        rows = [
-            r
-            for r in _confirmed_rows(uid, org_id)
-            if period == "all" or r["starts_at"].startswith(period)
-        ]
+        rows = _period_rows(uid, org_id, period)
         if not rows:
             raise LookupError("no confirmed hours there in that period")
         snapshot = {
@@ -1733,30 +1739,98 @@ def issue_certificate(uid, org_id, period):
     return {"id": cert_id, "created": True}
 
 
+def _certificate(cert_id):
+    """The certificate row, or None for an id that isn't one."""
+    try:
+        return _db.certificates[cert_id] if isinstance(cert_id, str) else None
+    except NotFoundError:
+        return None
+
+
+def _verified_snapshot(c):
+    """The snapshot of this certificate row when its signature still matches it, else None
+    (withdrawn, tampered with, or signed with another key)."""
+    if not c.snapshot or not c.signature:
+        return None
+    try:
+        snapshot = json.loads(c.snapshot)
+    except ValueError:
+        return None
+    return snapshot if _signing.verify(snapshot, c.id, c.signature) else None
+
+
 def my_certificate(uid, cert_id):
     """A certificate this volunteer issued: {"id", "period", "minutes", "issued_at",
     "snapshot" (the dict), "signature", "code" (its first 16 characters, grouped), "genuine"
     (the signature still matches)}. PermissionError for anyone else's or an unknown id;
     LookupError for their own that was withdrawn."""
-    try:
-        c = _db.certificates[cert_id] if isinstance(cert_id, str) else None
-    except NotFoundError:
-        c = None
+    c = _certificate(cert_id)
     if c is None or c.volunteer_id != uid:
         raise PermissionError("not yours")
     if c.withdrawn_at or not c.snapshot:
         raise LookupError("withdrawn")
-    snapshot = json.loads(c.snapshot)
     return {
         "id": c.id,
         "period": c.period,
         "minutes": c.minutes,
         "issued_at": c.issued_at,
-        "snapshot": snapshot,
+        "snapshot": json.loads(c.snapshot),
         "signature": c.signature,
         "code": _signing.code(c.signature),
-        "genuine": _signing.verify(snapshot, c.id, c.signature),
+        "genuine": _verified_snapshot(c) is not None,
     }
+
+
+def withdraw_certificate(uid, cert_id):
+    """The volunteer withdraws their certificate: marked withdrawn and its snapshot and
+    signature erased in the same transaction, as account deletion does, so the check link
+    says only "withdrawn". Withdrawing again changes nothing. PermissionError for anyone
+    else's or an unknown id."""
+    with _db.db.conn:
+        c = _certificate(cert_id)
+        if c is None or c.volunteer_id != uid:
+            raise PermissionError("not yours")
+        _db.db.execute(
+            "UPDATE certificate SET withdrawn_at = coalesce(withdrawn_at, ?), "
+            "snapshot = NULL, signature = NULL WHERE id = ?",
+            [_now(), c.id],
+        )
+
+
+def check_certificate(code):
+    """What the public check link says about the certificate with this id:
+    {"state": "unknown"}: not a record (no such id, a changed character, or a stored
+        snapshot whose signature no longer matches: the same answer for all);
+    {"state": "withdrawn"}: and nothing else;
+    {"state": "genuine" or "changed", "volunteer", "org", "ein", "period", "minutes",
+        "issued", "code"}: signed as issued; "changed" when that nonprofit has since
+        changed the hours it confirmed for this volunteer in the period, and then also
+        "current_minutes" (0 when none are left).
+    Only what the certificate itself says: no shifts, no contact details."""
+    c = _certificate(code)
+    if c is None:
+        return {"state": "unknown"}
+    if c.withdrawn_at:
+        return {"state": "withdrawn"}
+    snapshot = _verified_snapshot(c)
+    if snapshot is None:
+        return {"state": "unknown"}
+    current = sum(
+        r["minutes"] for r in _period_rows(c.volunteer_id, c.org_id, c.period)
+    )
+    out = {
+        "state": "genuine" if current == snapshot["minutes"] else "changed",
+        "volunteer": snapshot["volunteer"],
+        "org": snapshot["org"]["name"],
+        "ein": snapshot["org"]["ein"],
+        "period": snapshot["period"],
+        "minutes": snapshot["minutes"],
+        "issued": snapshot["issued"],
+        "code": _signing.code(c.signature),
+    }
+    if out["state"] == "changed":
+        out["current_minutes"] = current
+    return out
 
 
 def org_shifts(coordinator_uid):
