@@ -43,6 +43,7 @@ NOT_PAGES = {
     "/shifts/{shift_id}.ics",
     "/org/zip",
     "/org/claim/search",  # JSON for static/claim.js
+    "/deck/news",  # a fragment the deck and Matches pages poll
     # sign-in with Google or Apple: each answers with a redirect, never a page of its own
     "/auth/google/start",
     "/auth/apple/start",

@@ -6,6 +6,7 @@ from fasthtml.common import (
     A,
     APIRouter,
     Button,
+    Details,
     Div,
     Form,
     Img,
@@ -15,6 +16,7 @@ from fasthtml.common import (
     P,
     Select,
     Span,
+    Summary,
     Title,
 )
 from fasthtml.svg import Path, Rect, Svg
@@ -277,6 +279,29 @@ def Icon(paths, size=24, filled=False, cls=""):
     )
 
 
+# A <details> whose summary is a 44 px target; a closed one still posts its fields.
+SUMMARY = (
+    "inline-flex min-h-11 cursor-pointer list-none items-center font-bold text-ink "
+    "[&::-webkit-details-marker]:hidden"
+)
+
+
+SUMMARY_SUB = SUMMARY.replace("items-center", "flex-col items-start")
+
+
+def Fold(title, *content, open=False, sub=None):
+    """A <details>; sub is a muted line under the title, to say what is inside."""
+    if sub:
+        summary = Summary(
+            title,
+            Span(sub, cls="text-sm font-normal text-ink-muted"),
+            cls=SUMMARY_SUB,
+        )
+    else:
+        summary = Summary(title, cls=SUMMARY)
+    return Details(summary, *content, open=open, cls="space-y-3")
+
+
 def Meta(icon, text):
     """One fact of an opening (when, where, how many), after its icon."""
     return P(
@@ -391,24 +416,25 @@ TABS = (
 
 
 # a like's confirmation, on the deck and on the card after the first like
-LIKE_SENT = "Sent to {}. We'll text you when they say yes."
+LIKE_SENT = "Liked! When {} says yes, it's a match. We'll text you."
 
 
-def MatchesDot(on, oob=False):
-    """The small dot on the Matches tab: news since they last looked (data.has_match_news).
-    Always in the page (hidden when off), so a like's response can swap it in without a
-    reload."""
+def MatchesDot(n, oob=False):
+    """The badge on the Matches tab's heart: how many matches a nonprofit decided since the
+    volunteer last looked (data.match_news_count), "9+" past nine. Always in the page
+    (hidden at 0), so a like's response can swap it in without a reload."""
     return Span(
-        Span(" (something new)", cls="sr-only"),
+        Span(str(n) if n < 10 else "9+", aria_hidden="true"),
+        Span(f" {n} new", cls="sr-only"),
         id="matches-dot",
-        hidden=not on,
+        hidden=not n,
         hx_swap_oob="true" if oob else None,
-        cls="absolute left-1/2 top-2 ml-3 h-2.5 w-2.5 rounded-full bg-brand "
-        "ring-2 ring-white",
+        cls="absolute left-1/2 top-1 ml-1 min-w-[18px] rounded-full bg-brand px-1 "
+        "text-center text-[11px] font-bold leading-[18px] text-white ring-2 ring-white",
     )
 
 
-def TabBar(active, dot=False):
+def TabBar(active, news=0):
     def tab(key, label, href, icon):
         on = key == active
         # the current tab differs by more than hue: a brand bar on top, a heavier label
@@ -422,7 +448,7 @@ def TabBar(active, dot=False):
                 + ("bg-brand-soft" if on else ""),
             ),
             Span(label),
-            MatchesDot(dot) if key == "matches" else None,
+            MatchesDot(news) if key == "matches" else None,
             href=href,
             aria_current="page" if on else None,
             cls="relative flex h-16 flex-col items-center justify-center gap-0.5 text-xs "
@@ -442,8 +468,8 @@ def TabBar(active, dot=False):
 
 
 def VolunteerNav(active, uid):
-    """The volunteer's header and bottom tab bar, with the Matches dot while a like of
-    theirs waits. The bar is fixed, so it can sit anywhere in the page; static/theme.css
+    """The volunteer's header and bottom tab bar, with the count of new matches on the
+    Matches tab. The bar is fixed, so it can sit anywhere in the page; static/theme.css
     pads the body above it."""
     return Div(
         Div(
@@ -454,13 +480,13 @@ def VolunteerNav(active, uid):
             ),
             cls="flex items-center pt-2 pb-2",
         ),
-        TabBar(active, data.has_match_news(uid)),
+        TabBar(active, data.match_news_count(uid)),
     )
 
 
 def VolunteerShell(active, *content, uid):
     """A volunteer page: the header and tab bar, then the content in one narrow column.
-    uid is required, so no page leaves out the Matches dot."""
+    uid is required, so no page leaves out the Matches count."""
     return Container(VolunteerNav(active, uid), *content, cls="max-w-md pb-8")
 
 
@@ -581,6 +607,7 @@ AVATAR = {
     "sm": "h-9 w-9 text-base",
     "md": "h-14 w-14 text-2xl",
     "lg": "h-28 w-28 text-5xl",
+    "moment": "h-24 w-24 text-4xl",  # the match takeover's: 96 px, a size of its own
 }
 
 
@@ -647,24 +674,28 @@ def VolunteerHeader(name, photo_key=None, pronouns=None):
     )
 
 
-def OrgFace(org, logo=None, photo=None, slug=None):
-    """A nonprofit at 48 px on the volunteer's lists: its logo, else the opening's photo,
-    else its initial on its cause's tint. Decorative: the org's name is written next to it.
-    Logos and opening photos are public to anyone signed in (data.photo_for)."""
-    cls = "h-12 w-12 shrink-0 rounded-full"
+def OrgFace(org, logo=None, photo=None, slug=None, size="md"):
+    """A nonprofit at 48 px on the volunteer's lists (size="lg": 96 px, on the match
+    takeover): its logo, else the opening's photo, else its initial on its cause's tint.
+    Decorative: the org's name is written next to it. Logos and opening photos are public
+    to anyone signed in (data.photo_for)."""
+    big = size == "lg"
+    cls = ("h-24 w-24" if big else "h-12 w-12") + " shrink-0 rounded-full"
     if logo or photo:
         return Img(
             src=f"/photos/thumb/{logo or photo}.jpg",
             alt="",
             loading="lazy",
-            width="48",
-            height="48",
+            width="96" if big else "48",
+            height="96" if big else "48",
             cls=cls + " object-cover ring-1 ring-line",
         )
     return Span(
         ((org or "").strip()[:1] or "?").upper(),
         aria_hidden="true",
-        cls=f"{cls} grid place-items-center font-display text-xl font-extrabold "
+        cls=f"{cls} grid place-items-center font-display "
+        + ("text-4xl" if big else "text-xl")
+        + " font-extrabold "
         + CAUSE_CHIP.get(slug, "bg-sand text-ink"),
     )
 

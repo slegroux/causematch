@@ -259,7 +259,7 @@ def test_a_blocked_volunteers_like_gets_the_same_notice_and_survey(w):
         r2 = who.post("/swipe", data={"opening_id": fourth.id, "liked": "1"},
                       headers={"HX-Request": "true"})  # fmt: skip
         notice = re.search(r'<p role="status"[^>]*>([^<]*)', r2.text)[1]
-        seen.append((r.headers["location"], f"Sent to {org}." in survey, notice))
+        seen.append((r.headers["location"], f"When {org} says yes" in survey, notice))
     assert seen[0] == seen[1] and seen[0][1], seen
     assert matches(where="volunteer_id = ? AND opening_id = ?",
                    where_args=[w.vol.uid, third.id])[0].org_blind  # fmt: skip

@@ -1,6 +1,18 @@
 import re
 
-from fasthtml.common import H1, H2, A, Details, Div, P, Redirect, Script, Span, Summary
+from fasthtml.common import (
+    H1,
+    H2,
+    H3,
+    A,
+    Details,
+    Div,
+    P,
+    Redirect,
+    Script,
+    Span,
+    Summary,
+)
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -14,7 +26,7 @@ from starlette.responses import Response
 
 from app import data, notify
 from app.forms import bad_request, query, str_form
-from app.routes.deck import DeckArea, MatchSheet, deck_view
+from app.routes.deck import DeckArea, MatchSheet, MomentSlot, deck_view
 from app.ui import (
     CALENDAR,
     CARD,
@@ -23,10 +35,12 @@ from app.ui import (
     LIKE_SENT,
     MATCH_STATUS,
     NEXT,
+    ORG_SECTION,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
     EventLink,
+    Fold,
     Icon,
     MatchesDot,
     Meta,
@@ -117,7 +131,7 @@ def _sync_swipe(req, form):
                 return Redirect(more)
     if req.headers.get("HX-Request"):
         return DeckArea(uid, today, view, notice, sheet=MatchSheet(uid)), MatchesDot(
-            data.has_match_news(uid), oob=True
+            data.match_news_count(uid), oob=True
         )
     return Redirect("/deck?today=1" if today else "/deck")
 
@@ -133,7 +147,7 @@ def MatchRow(m):
         Div(
             OrgFace(m["org"], m["logo"], m["photo"], m["slug"]),
             Div(
-                H2(
+                H3(
                     m["title"],
                     cls="font-display text-lg font-extrabold leading-snug text-ink",
                 ),
@@ -201,10 +215,58 @@ def NoMatches():
     )
 
 
+def MatchSections(rows, fresh=()):
+    """Accepted matches, then the likes still waiting, then everything else folded away
+    as "Past", open when a nonprofit's decision in it is new (fresh: their match ids).
+    Nothing at all: NoMatches."""
+    if not rows:
+        return NoMatches()
+    matches = [m for m in rows if m["status"] == "accepted"]
+    likes = [m for m in rows if m["status"] == "pending"]
+    past = [m for m in rows if m["status"] not in ("accepted", "pending")]
+    new = sum(m["id"] in fresh for m in past)
+    return Div(
+        Div(
+            H2("Matches", cls=ORG_SECTION),
+            *(
+                [MatchRow(m) for m in matches]
+                or [
+                    P(
+                        "No matches yet. When a nonprofit says yes to one of your "
+                        "likes, it shows up here.",
+                        cls=TextPresets.muted_sm,
+                    )
+                ]
+            ),
+            cls="flex flex-col gap-4",
+        ),
+        Div(
+            H2("Your likes", cls=ORG_SECTION),
+            P(
+                "A like becomes a match when the nonprofit says yes. We'll tell you here.",
+                cls=TextPresets.muted_sm,
+            ),
+            *[MatchRow(m) for m in likes],
+            cls="flex flex-col gap-4",
+        )
+        if likes
+        else None,
+        Fold(
+            "Past" + (f" · {new} new" if new else ""),
+            *[MatchRow(m) for m in past],
+            open=bool(new),
+        )
+        if past
+        else None,
+        cls="flex flex-col gap-8 pb-8",
+    )
+
+
 @ar("/matches", methods=["GET"])
 def matches_page(req):
     uid = req.scope["uid"]
-    sheet = MatchSheet(uid)  # before saw_matches: it falls back on that look
+    sheet = MatchSheet(uid, "Close")  # before saw_matches: it falls back on that look
+    fresh = data.match_news_ids(uid)  # likewise: what the look is about to clear
     data.saw_matches(
         uid
     )  # before the tab bar draws: no dot on the page that shows it all
@@ -218,12 +280,9 @@ def matches_page(req):
             cls="flex items-center justify-between gap-4",
         ),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
-        sheet,
-        Script(src="/static/sheet.js", defer=True) if sheet else None,
-        Div(
-            *([MatchRow(m) for m in rows] or [NoMatches()]),
-            cls="flex flex-col gap-4 pb-8",
-        ),
+        MomentSlot(sheet, matches_page=True),
+        Script(src="/static/sheet.js", defer=True),
+        MatchSections(rows, fresh),
         uid=uid,
     )
 

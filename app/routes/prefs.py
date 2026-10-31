@@ -10,7 +10,6 @@ from fasthtml.common import (
     A,
     Button,
     Datalist,
-    Details,
     Div,
     Fieldset,
     Form,
@@ -25,7 +24,6 @@ from fasthtml.common import (
     Script,
     Select,
     Span,
-    Summary,
 )
 from monsterui.all import Alert, AlertT
 from starlette.concurrency import run_in_threadpool
@@ -67,6 +65,7 @@ from app.ui import (
     BigButton,
     CauseChip,
     Field,
+    Fold,
     Icon,
     Router,
     SimplePage,
@@ -298,27 +297,6 @@ def Group(title, cls, name, options, value):
             cls=cls,
         ),
     )
-
-
-# A <details> whose summary is a 44 px target; a closed one still posts its fields.
-SUMMARY = (
-    "inline-flex min-h-11 cursor-pointer list-none items-center font-bold text-ink "
-    "[&::-webkit-details-marker]:hidden"
-)
-SUMMARY_SUB = SUMMARY.replace("items-center", "flex-col items-start")
-
-
-def Fold(title, *content, open=False, sub=None):
-    """A <details>; sub is a muted line under the title, to say what is inside."""
-    if sub:
-        summary = Summary(
-            title,
-            Span(sub, cls="text-sm font-normal text-ink-muted"),
-            cls=SUMMARY_SUB,
-        )
-    else:
-        summary = Summary(title, cls=SUMMARY)
-    return Details(summary, *content, open=open, cls="space-y-3")
 
 
 def SecondPlace(pf, error):
