@@ -23,10 +23,8 @@ from app.forms import bad_request, query, str_form
 from app.ui import (
     SEND,
     SMALL_LINK,
-    AddToCalendar,
     BackLink,
     Icon,
-    Notes,
     OrgFace,
     OrgShell,
     Refusal,
@@ -151,10 +149,6 @@ def ChatPage(uid, match_id, role, notice=""):
                 else f"{head['org']} - {head['other']}",
                 cls=TextPresets.muted_sm,
             ),
-            Notes(head["notes"]) if role == "volunteer" else None,
-            AddToCalendar(head["shift"])
-            if role == "volunteer" and head["shift"]
-            else None,
             cls="space-y-1 border-b border-line pb-3",
         ),
         P(
