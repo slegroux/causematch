@@ -13,7 +13,7 @@ def test_tapping_an_accepted_cards_chat_button_opens_its_chat(phone):
     p = sign_in_page(phone, "(310) 555-0180")
     match_id = accepted_match(p.id)
     phone.goto("/matches")
-    phone.get_by_role("button", name="Keep swiping").click()  # the match sheet
+    phone.get_by_role("button", name="Close").click()  # the match sheet
     phone.get_by_role("link", name="Chat").click()
     phone.wait_for_url(f"**/chat/{match_id}")
 
@@ -22,7 +22,7 @@ def test_the_card_leaves_withdraw_clickable_under_more(phone):
     p = sign_in_page(phone, "(310) 555-0181")
     match_id = accepted_match(p.id)
     phone.goto("/matches")
-    phone.get_by_role("button", name="Keep swiping").click()
+    phone.get_by_role("button", name="Close").click()
     assert phone.locator("dialog").evaluate("d => !d.open")
     phone.get_by_text("More", exact=True).click()
     phone.get_by_role("link", name="Withdraw").click()

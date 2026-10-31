@@ -6,6 +6,7 @@ from fasthtml.common import (
     A,
     APIRouter,
     Button,
+    Details,
     Div,
     Form,
     Img,
@@ -15,6 +16,7 @@ from fasthtml.common import (
     P,
     Select,
     Span,
+    Summary,
     Title,
 )
 from fasthtml.svg import Path, Rect, Svg
@@ -277,6 +279,17 @@ def Icon(paths, size=24, filled=False, cls=""):
     )
 
 
+# A <details> whose summary is a 44 px target; a closed one still posts its fields.
+SUMMARY = (
+    "inline-flex min-h-11 cursor-pointer list-none items-center font-bold text-ink "
+    "[&::-webkit-details-marker]:hidden"
+)
+
+
+def Fold(title, *content, open=False):
+    return Details(Summary(title, cls=SUMMARY), *content, open=open, cls="space-y-3")
+
+
 def Meta(icon, text):
     """One fact of an opening (when, where, how many), after its icon."""
     return P(
@@ -399,7 +412,7 @@ def MatchesDot(n, oob=False):
     volunteer last looked (data.match_news_count), "9+" past nine. Always in the page
     (hidden at 0), so a like's response can swap it in without a reload."""
     return Span(
-        str(n) if n < 10 else "9+",
+        Span(str(n) if n < 10 else "9+", aria_hidden="true"),
         Span(f" {n} new", cls="sr-only"),
         id="matches-dot",
         hidden=not n,
@@ -582,7 +595,7 @@ AVATAR = {
     "sm": "h-9 w-9 text-base",
     "md": "h-14 w-14 text-2xl",
     "lg": "h-28 w-28 text-5xl",
-    "xl": "h-24 w-24 text-4xl",
+    "moment": "h-24 w-24 text-4xl",  # the match takeover's: 96 px, a size of its own
 }
 
 

@@ -12,6 +12,7 @@ from conftest import (
 from app import data
 from app.data import LA
 from app.db import matches, openings, profiles
+from app.routes.deck import MatchSheet
 
 HOME_PLACES = (
     True  # each test runs with a saved Home place and as a profile from before
@@ -152,13 +153,15 @@ def test_the_matches_badge_counts_decisions_since_the_last_look(user):
         uid_of(user), add_opening("Lost one", ["food-insecurity"]).id, True
     )
     badge = lambda page: re.search(
-        r'<span( hidden|) id="matches-dot"[^>]*>([^<]*)', user.get(page).text
+        r'<span( hidden|) id="matches-dot"[^>]*><span aria-hidden="true">([^<]*)',
+        user.get(page).text,
     ).groups()
     assert badge("/deck") == (" hidden", "0")  # both still waiting
     profiles.update(id=uid_of(user), matches_seen_at="2000-01-01T00:00:00+00:00")
     data.decide(coord, won.id, True)
     data.decide(coord, lost.id, False)
-    assert badge("/deck") == ("", "2")  # the deck's tab bar, on any volunteer page
+    for page in ("/deck", "/profile"):
+        assert badge(page) == ("", "2"), page  # the tab bar on any volunteer page
     user.get("/matches")  # they look
     assert badge("/deck") == (" hidden", "0")
 
@@ -248,11 +251,8 @@ def test_matches_page_keeps_matches_likes_and_past_apart(user):
     assert (
         html.index("Won one") < html.index(">Your likes<") < html.index("Waiting one")
     )
-    past = html[html.index("<details", html.index("Waiting one")) :]
-    assert ">Past<" in past and "Declined one" in past
-    assert (
-        "Declined one" not in html[: html.index("<details", html.index("Waiting one"))]
-    )
+    assert "Declined one" in html[html.index(">Past") :]  # never looked: all new
+    assert "Declined one" not in html[: html.index(">Past")]
 
 
 def test_matches_page_with_only_likes_says_no_matches_yet(user):
@@ -293,4 +293,28 @@ def test_deck_news_brings_a_fresh_match_once_and_nothing_after(user):
 def test_deck_and_matches_pages_poll_for_news(user):
     for page in ("/deck", "/matches"):
         html = user.get(page).text
-        assert 'id="moment-slot"' in html and 'hx-get="/deck/news"' in html
+        assert 'id="moment-slot"' in html and 'hx-get="/deck/news' in html
+
+
+def test_a_new_decline_opens_the_past_fold_once(user):
+    close_all_openings()
+    lost = _decline(user, "Lost one")
+    profiles.update(id=uid_of(user), matches_seen_at="2000-01-01T00:00:00+00:00")
+    matches.update(id=lost, decided_at="2020-01-01T00:00:00+00:00")
+    html = user.get("/matches").text
+    assert re.search(r"<details open[^>]*>\s*<summary[^>]*>\s*Past · 1 new", html)
+    again = user.get("/matches").text  # they have looked: closed, no count
+    assert re.search(r"<details[^>]*>\s*<summary[^>]*>\s*Past\s*<", again)
+    assert "<details open" not in again
+
+
+def test_two_requests_cannot_both_show_the_same_takeover(user):
+    close_all_openings()
+    _accepted(user, "Won one", "2030-01-01T00:00:00+00:00")
+    profiles.update(id=uid_of(user), match_moment_seen_at=None)
+    rows = data.new_matches(uid_of(user))  # both requests read the same rows
+    assert data.saw_new_matches(uid_of(user), rows) is True
+    assert data.saw_new_matches(uid_of(user), rows) is False  # the second lost
+    profiles.update(id=uid_of(user), match_moment_seen_at=None)
+    assert "<dialog" in str(MatchSheet(uid_of(user)))
+    assert MatchSheet(uid_of(user)) is None

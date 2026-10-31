@@ -700,15 +700,24 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
     )
 
 
+# A decided match the volunteer has not seen: a nonprofit accepted or declined it after
+# they last opened Matches. Timestamps have one-second resolution, so a decision in the
+# very second of that look is missed: accepted.
+_NEWS = "volunteer_id = ? AND status IN ('accepted', 'declined') AND decided_at > ?"
+
+
 def match_news_count(uid):
     """The number on the Matches tab: matches a nonprofit accepted or declined since the
     volunteer last opened Matches (never opened: all of them). Their own pending likes
     don't count."""
     seen = _db.profiles[uid].matches_seen_at or ""
-    return _db.matches.count_where(
-        "volunteer_id = ? AND status IN ('accepted', 'declined') AND decided_at > ?",
-        [uid, seen],
-    )
+    return _db.matches.count_where(_NEWS, [uid, seen])
+
+
+def match_news_ids(uid):
+    """The ids match_news_count counts: what the Matches page marks as new."""
+    seen = _db.profiles[uid].matches_seen_at or ""
+    return {m.id for m in _db.matches(where=_NEWS, where_args=[uid, seen])}
 
 
 def saw_matches(uid):
@@ -743,11 +752,19 @@ def new_matches(uid):
 
 
 def saw_new_matches(uid, rows):
-    """The sheet showed these (new_matches' rows): they are not new any more."""
-    if rows:
-        _db.profiles.update(
-            id=uid, match_moment_seen_at=max(r["decided_at"] for r in rows)
-        )
+    """Claim new_matches' rows for the sheet that is about to show them: True when this
+    call moved the volunteer's watermark, False when another request (a poll and a swipe
+    run at once, or a second tab) got there first. One statement decides, so only one
+    of them draws the sheet."""
+    if not rows:
+        return False
+    mark = max(r["decided_at"] for r in rows)
+    _db.db.execute(
+        "UPDATE profile SET match_moment_seen_at = ? WHERE id = ? "
+        "AND coalesce(match_moment_seen_at, matches_seen_at, '') < ?",
+        [mark, uid, mark],
+    )
+    return _db.db.conn.changes() == 1
 
 
 def org_name_of(opening_id):

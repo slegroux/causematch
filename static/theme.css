@@ -328,7 +328,7 @@ dialog.cm-moment::backdrop {
     animation: cm-pop 350ms ease-out;
   }
   .cm-heart {
-    animation: cm-pulse 1.4s ease-in-out 350ms infinite;
+    animation: cm-pulse 1.4s ease-in-out 350ms 3;
   }
 }
 /* The tallest card (an urgent call, or the Home Screen hint above it) gives its "what you'll

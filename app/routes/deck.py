@@ -486,17 +486,19 @@ def FilterSheet(uid, today, count, view):
     )
 
 
-def MatchSheet(uid):
+def MatchSheet(uid, close="Keep swiping"):
     """The "It's a match!" takeover: the first nonprofit that said yes since the volunteer
     last saw it (data.new_matches; the demo's auto-accepts land first) with both faces,
     a heart and Say hi, any others as short rows below; None when nothing is new.
-    Drawing it marks them seen. An open <dialog>, closed by its own method=dialog form:
-    no script."""
+    Drawing it marks them seen (one request wins that: the other gets None). close: the
+    second button's words. An open <dialog>, closed by its own method=dialog form: no
+    script."""
     data.demo_accept_due(uid)
     rows = data.new_matches(uid)
     if not rows:
         return None
-    data.saw_new_matches(uid, rows)
+    if not data.saw_new_matches(uid, rows):
+        return None  # another request is showing them
     first, *others = rows
     me = data.get_profile(uid)
     return Dialog(
@@ -513,7 +515,7 @@ def MatchSheet(uid):
                     cls="rounded-full ring-4 ring-white",
                 ),
                 Span(
-                    Avatar(me.display_name, me.photo_key, "xl"),
+                    Avatar(me.display_name, me.photo_key, "moment"),
                     cls="-ml-6 rounded-full ring-4 ring-white",
                 ),
                 Span(
@@ -540,7 +542,7 @@ def MatchSheet(uid):
             ),
             PlainForm(
                 Button(
-                    "Keep swiping",
+                    close,
                     data_close_sheet="1",
                     cls="uk-btn uk-btn-default h-12 w-full",
                 ),
@@ -571,14 +573,14 @@ def MatchSheet(uid):
     )
 
 
-def MomentSlot(sheet=None):
+def MomentSlot(sheet=None, matches_page=False):
     """Where a match that lands while the page is open arrives: it asks /deck/news every
     10 seconds (static/sheet.js skips a hidden tab) and the sheet drawn into it. Outside
     #deck-area, so a swipe leaves it alone."""
     return Div(
         sheet,
         id="moment-slot",
-        hx_get="/deck/news",
+        hx_get="/deck/news?on=matches" if matches_page else "/deck/news",
         hx_trigger="every 10s, visibilitychange from:document",
         hx_swap="innerHTML",
     )
@@ -588,9 +590,13 @@ def MomentSlot(sheet=None):
 def deck_news(req):
     """The poll's answer: a new match's sheet, into the slot. With nothing new the Matches
     dot alone, and HX-Reswap: none so the slot, and a sheet the volunteer has open in it,
-    stays as it is (an empty 200 would swap it away)."""
+    stays as it is (an empty 200 would swap it away). Like GET /deck and /matches it writes
+    on a GET (the demo's accepts, the seen mark); the worst a forged request costs is a
+    takeover the volunteer then finds on Matches."""
     uid = req.scope["uid"]
-    sheet = MatchSheet(uid)
+    sheet = MatchSheet(
+        uid, "Close" if query(req, "on") == "matches" else "Keep swiping"
+    )
     dot = MatchesDot(data.match_news_count(uid), oob=True)
     if sheet is None:
         return dot, HttpHeader("HX-Reswap", "none")
