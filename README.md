@@ -37,7 +37,7 @@ Causematch matches people with nonprofits across Los Angeles County that need a 
 
 | | |
 |---|---|
-| **Volunteers** | Sign in with a text code, answer a short onboarding, swipe on a phone. Each card says why it is shown; "Free in the next 48h" and a filter sheet narrow the deck. |
+| **Volunteers** | Sign in with Google, Apple or a text code, answer a short onboarding, swipe on a phone. A phone number is optional: without one, match news and reminders come by email. Each card says why it is shown; "Free in the next 48h" and a filter sheet narrow the deck. |
 | **Match preferences** | Places you help from (never an address), causes, the days you're free, the kind of work and languages. Private. Causes, distance, timing and kind of work can each rank openings or hide the ones that don't fit; languages only rank. |
 | **Nonprofits** | A dashboard to post openings anywhere in the county, accept volunteers and mark shifts done, with chat and shifts once matched (reminders once the scheduled job is set up). |
 | **Last-minute calls** | Short of people in the next 48 hours? An urgent call texts (or emails) nearby volunteers who are free, with caps so nobody is spammed (once the scheduled job is set up). |
@@ -52,11 +52,11 @@ uv run playwright install chromium  # once, for the browser tests
 uv run pytest                     # the test suite
 ```
 
-The demo prints how to sign in as a volunteer, a coordinator and an admin. As a volunteer, tap "Try it as a volunteer" on `/login` (or sign in with `(310) 555-0100` and the code `000000`): each sign-in gets its own copy of Sam, with matches, a chat and shifts, and nonprofits that say yes to a like a few seconds later. "Try it as a nonprofit" signs in the demo coordinator. Any other US mobile number works too and starts at onboarding. It never runs in production, and `scripts/screenshots.py --out DIR` screenshots every page of it.
+The demo prints how to sign in as a volunteer, a coordinator and an admin. As a volunteer, tap "Try it as a volunteer" on `/login` (or sign in with `(310) 555-0100` and the code `000000`): each sign-in gets its own copy of Sam, with matches, a chat and shifts, and nonprofits that say yes to a like a few seconds later. "Try it as a nonprofit" signs in the demo coordinator. Any other US mobile number works too and starts at onboarding. `/login` and `/org/login` also offer Google and Apple, through a fake consent page where you type the account's details. It never runs in production, and `scripts/screenshots.py --out DIR` screenshots every page of it.
 
 ## How it works
 
-The server renders HTML with FastHTML and MonsterUI, htmx swaps the parts that change, and one SQLite database holds everything. Ranking turns each volunteer's preferences into a score per opening, and a match is two likes: the volunteer's, then the nonprofit's. Reminders and urgent waves run when Cloud Scheduler calls two endpoints, since the host scales to zero (those jobs are a launch step, not set up yet). The full picture is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The server renders HTML with FastHTML and MonsterUI, htmx swaps the parts that change, and one SQLite database holds everything. Volunteers sign in with Google, Apple or a code texted by Twilio Verify, and coordinators with an emailed link or a Google or Apple account on the same email. A volunteer without a phone number gets match news, messages and reminders by email. Ranking turns each volunteer's preferences into a score per opening, and a match is two likes: the volunteer's, then the nonprofit's. Reminders and urgent waves run when Cloud Scheduler calls two endpoints, since the host scales to zero (those jobs are a launch step, not set up yet). The full picture is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Project layout
 
@@ -72,7 +72,7 @@ docs/            architecture and operations
 
 ## Deploying
 
-Causematch runs on Google Cloud Run; a password-protected preview is live, and production adds Twilio, an email service, Cloud Scheduler for the two timed jobs and a persistent database. Configuration, the scheduler setup, the security model and the password-protected preview deploy are in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+Causematch runs on Google Cloud Run; a password-protected preview is live, and production adds at least one sign-in provider (Twilio, Google or Apple), an email service, Cloud Scheduler for the two timed jobs and a persistent database. Configuration, the scheduler setup, the security model and the password-protected preview deploy are in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Contributing
 

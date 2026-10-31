@@ -32,7 +32,9 @@ Volunteers see a bottom tab bar with **Openings** (`/deck`), **Matches** (`/matc
 
 | Feature | What it does | Route(s) | Code |
 |---|---|---|---|
-| Sign in by text code | Enter a US mobile number and get a 6-digit code by SMS (Twilio Verify). The first sign-in creates the account. | `GET /login`, `POST /login/send`, `POST /login/verify`, `POST /logout` | `app/routes/auth.py`, `app/auth.py`, `app/notify.py` |
+| Sign in by text code | Enter a US mobile number and get a 6-digit code by SMS (Twilio Verify). The first sign-in creates the account. Without Twilio configured, the phone form isn't shown and these routes answer 404. | `GET /login`, `POST /login/send`, `POST /login/verify`, `POST /logout` | `app/routes/auth.py`, `app/auth.py`, `app/notify.py` |
+| Sign in with Google or Apple | "Continue with Apple" and "Continue with Google" on `/login`, each shown only when configured. The provider's verified email is required. The first sign-in creates a volunteer with no phone, that email and the given name; onboarding offers the Google profile picture behind an unticked box. See 6f. | `GET /auth/{google,apple}/start`, `GET /auth/google/callback`, `POST /auth/apple/callback` | `app/routes/oauth.py`, `app/oauth.py` |
+| Sign-in methods and reach | Under Me, Your profile: the masked phone, each provider connected ("Connected as" its email, Disconnect) or offered (Connect), never removing the last way in; and how notices arrive, by text to the number or by email, with a form to add and verify a number while Twilio is configured. | `POST /me/identity/{google,apple}/{connect,disconnect}`, `POST /me/phone/send`, `POST /me/phone/verify` | `app/routes/profile.py`, `app/routes/oauth.py` |
 | Onboarding | A single form: 18+ confirmation, first name and optional last name, optional email, a Home place (neighborhood, ZIP or device location) with travel mode and time, causes rated love / open / not for me (plus any other cause, as free text), free times on a day grid, an optional neighborhood nonprofits see, whether they volunteered in the last 12 months, how they heard of us, and consent. Volunteers can't reach the rest of the app until it is done. | `GET/POST /onboarding` | `app/routes/onboarding.py` |
 | Preferences | Kept private. Up to 2 places (each with mode and max travel time), the three-state cause ratings, a 7×3 day grid plus up to 10 specific free dates, how far ahead to look, one-time or recurring, kind of work (setting, effort, group size, first-timer friendly), whether a separate orientation is OK, spoken languages, skills, frequency, "Surprise me", and last-minute call settings. | `GET/POST /me/preferences` | `app/routes/prefs.py`, `app/prefs.py` |
 | Dealbreakers ("Only show, or prefer?") | For each of causes, distance, when and kind of work, the volunteer picks whether it only ranks openings or also hides those that don't fit. Distance hides by default. "Not for me" causes always hide. | part of `/me/preferences` | `app/choices.py` (`DEALBREAKERS`), `app/data.py` |
@@ -55,6 +57,7 @@ Volunteers see a bottom tab bar with **Openings** (`/deck`), **Matches** (`/matc
 | Feature | What it does | Route(s) | Code |
 |---|---|---|---|
 | Sign in by email link | Enter an email address to receive a single-use link that expires in 15 minutes. Only addresses of coordinators with an org membership (or of admins) get a link, and the page answers the same way for every address (a preview with the fake emailer shows a coordinator's link instead, see 6b). | `GET /org/login`, `POST /org/login/send`, `GET/POST /org/login/verify` | `app/routes/org_auth.py`, `app/notify.py` |
+| Sign in with Google or Apple | The same buttons on `/org/login`. The provider's verified email must be the coordinator's (or admin's) email on file, found as the link finds it. Nothing is ever created: an unknown address gets a pointer to `/org/claim`. | `GET /auth/{google,apple}/start?for=org` and the callbacks | `app/routes/oauth.py`, `app/data.py` (`staff_by_email`) |
 | Ask for access (claim) | A public form: EIN, org name, the requester's name, email and optional phone, and an "I'm authorized" box. It creates a pending claim that an admin decides. Typing the org's name searches IRS records (ProPublica, California 501(c)(3)s, `static/claim.js`) and picking one fills the EIN and name; the search reads ProPublica only, never the orgs table, so it can't tell whether an org is on Causematch or claimed. Typing the EIN still works, and is the fallback when the search fails. | `GET/POST /org/claim`, `GET /org/claim/search` | `app/routes/claim.py` |
 | Openings dashboard | Lists the coordinator's openings for each of their orgs, with counts and any open urgent call. The coordinator sets a contact name and phone, posts new openings and closes them. | `GET /org`, `POST /org/details`, `GET/POST /org/openings/new`, `POST /org/openings/{id}/close` | `app/routes/org.py` |
 | Opening form | Title, about, cause, ZIP (LA County), neighborhood, next start (within 12 months), recurrence (one-time / weekly / monthly / flexible), slots (1 to 200), orientation, a preferred reply channel (stored; notices are email-only today), up to 3 skills, kind of work, helpful languages, notes, and a required confirmation that the opening is adults-only with no one-to-one contact. | `/org/openings/new` | `app/routes/org.py` |
@@ -70,7 +73,7 @@ Volunteers see a bottom tab bar with **Openings** (`/deck`), **Matches** (`/matc
 
 | Feature | What it does | Route(s) | Code |
 |---|---|---|---|
-| Sign in | Admins use the same emailed link as coordinators and land on `/admin`, the admin home. They can't open volunteer or `/org` pages. | `/org/login`, `GET /admin` | `app/routes/org_auth.py`, `app/auth.py` |
+| Sign in | Admins use the same emailed link, or Google or Apple by verified email, as coordinators and land on `/admin`, the admin home. They can't open volunteer or `/org` pages. | `/org/login`, `GET /admin` | `app/routes/org_auth.py`, `app/auth.py` |
 | Org verification | An org's openings stay out of every deck until it is verified. The admin looks the EIN up on ProPublica Nonprofit Explorer, then verifies. | `GET /admin/orgs`, `POST /admin/orgs/{id}/lookup`, `POST /admin/orgs/{id}/verify` | `app/routes/admin.py`, `app/propublica.py` |
 | Claims | Pending access requests as cards (org, city, EIN, the person, their email) with Approve and Decline, and a one-line confirmation after each. If no org has the claim's EIN, Approve imports it from ProPublica first (as `scripts/import_orgs.py --ein` does), in the same tap; when ProPublica fails, the card says so and Approve retries. Approving makes the requester the owner (or a coordinator if the org already has an owner) and verifies the org. If the org already has people who can sign in, the admin must confirm adding another. Approval is refused for a deactivated org or a suspended coordinator's address. Both decisions are emailed. | `GET /admin/claims`, `POST /admin/claims/{id}/approve`, `.../reject` | `app/routes/admin.py`, `app/org_import.py` |
 | Reports queue | Dismiss a report, suspend the reported volunteer, deactivate a reported org, or remove a reported volunteer's photo. | `GET /admin/reports`, `POST /admin/reports/{id}/dismiss`, `.../suspend`, `.../deactivate`, `.../remove-photo` | `app/routes/admin.py`, `app/data.py` |
@@ -106,6 +109,7 @@ flowchart LR
 
     subgraph ext["External services"]
         twv["Twilio Verify<br/>sign-in codes"]
+        idp["Google and Apple<br/>sign-in"]
         tws["Twilio Messages<br/>SMS notices"]
         resend["Resend<br/>email"]
         pp["ProPublica<br/>Nonprofit Explorer API"]
@@ -116,6 +120,8 @@ flowchart LR
     phone -- "HTTPS; preview: access link and cookie" --> uv
     sched -. "POST /tasks/*, bearer token (not set up)" .-> uv
     app -- "production only" --> twv
+    app -- "token exchange and keys, when configured" --> idp
+    phone -. "consent page, then back to /auth/*/callback" .-> idp
     app -- "production only" --> tws
     app -- "production only" --> resend
     app -- "admin lookups and imports" --> pp
@@ -132,7 +138,8 @@ What is live and what is planned, based on the code and config in this repo:
 | Photo worker child process | **Live** (`app/photo_worker.py`). |
 | ProPublica API | **Live.** Used by the claim page's name search, the admin orgs and claims pages and by `scripts/import_orgs.py` / `scripts/verify_org.py`. |
 | Secret Manager | **Live** for the preview: `PREVIEW_PASSWORD`, `SESSION_SECRET`, `PHONE_HASH_KEY`, `TASKS_TOKEN`. |
-| Twilio Verify and SMS, Resend email | **Implemented** (`app/notify.py`), **not live**. The preview runs the fakes (`CAUSEMATCH_FAKE_SMS=1`, `CAUSEMATCH_FAKE_EMAIL=1`). Production refuses to start without real credentials. |
+| Twilio Verify and SMS, Resend email | **Implemented** (`app/notify.py`), **not live**. The preview runs the fakes (`CAUSEMATCH_FAKE_SMS=1`, `CAUSEMATCH_FAKE_EMAIL=1`). Production refuses to start without Resend, and Twilio is optional once Google or Apple is set: without it there is no phone sign-in and volunteers get email instead of texts. |
+| Google and Apple sign-in | **Implemented** (`app/oauth.py`, `app/routes/oauth.py`), **not live**. The preview and `scripts/demo.py` run the fake (`CAUSEMATCH_FAKE_OAUTH=1`), a local consent page. Production refuses to start with none of Twilio Verify, Google and Apple, or with any of them half set. Setup is in `docs/OPERATIONS.md`, Live providers. |
 | Cloud Scheduler calling `/tasks/reminders` and `/tasks/urgent` | **Not set up.** The endpoints exist and check a bearer token (`app/routes/tasks.py`), but nothing calls them: the Cloud Scheduler API isn't enabled in the project, and no script creates the jobs `docs/OPERATIONS.md` describes. In the preview they can't be called at all, because `PreviewGate` and the bearer check both read the one `Authorization` header. So the preview sends no day-before reminders, no accept-text retries and no urgent waves (the demo seed sends one wave directly). |
 | Litestream to GCS | **Planned.** Mentioned only in a code comment (`app/db.py`, `Photo`). No configuration exists in the repo. |
 
@@ -147,7 +154,7 @@ The app runs as a single process whose state is local to the instance: the SQLit
 ```mermaid
 flowchart TD
     req(["HTTP request or websocket handshake"]) --> guard
-    guard["<b>security.Guard</b><br/>same-origin check on POST/PUT/PATCH/DELETE, exempt: /tasks/reminders, /tasks/urgent<br/>websocket: exact Origin, else close 1008<br/>body limit 64 KB, 6 MB on photo uploads<br/>adds CSP and security headers, X-Request-Id<br/>production: plain 500 page with a reference"]
+    guard["<b>security.Guard</b><br/>same-origin check on POST/PUT/PATCH/DELETE, exempt: /tasks/reminders, /tasks/urgent, /auth/apple/callback<br/>websocket: exact Origin, else close 1008<br/>body limit 64 KB, 6 MB on photo uploads<br/>adds CSP and security headers, X-Request-Id<br/>production: plain 500 page with a reference"]
     guard --> gate
     gate["<b>security.PreviewGate</b><br/>preview only: access cookie or HTTP Basic password on every request<br/>?access=key on a navigation sets the cookie, 303 without the key<br/>else a plain 401 page, no WWW-Authenticate<br/>/robots.txt answered here with Disallow: /<br/>wrong guesses limited per client address"]
     gate --> sess["Starlette SessionMiddleware<br/>signed cookie: __Host-cm_session in production and preview, cm_session in dev"]
@@ -164,8 +171,8 @@ flowchart TD
 
 ### Auth, sessions and roles (`app/auth.py`)
 
-- **Public paths** skip the sign-in check: `/login`, `/login/send`, `/login/verify`, `/org/login`, `/org/login/send`, `/org/login/verify`, `/org/claim`, `/org/claim/search`, `/privacy`, `/tasks/reminders`, `/tasks/urgent`, `/urgent/off/{key}`, `/favicon.ico` and `/static/*`.
-- **Session contents:** `uid` and `sv`, the session version. A request is signed in only if the profile still exists and isn't deleted or suspended, and `sv` equals the profile's `session_version`. Bumping that version signs out every device; sign-out, suspension and account deletion bump it. A deleted or suspended profile fails the check anyway, so removing an admin or coordinator also takes effect at once.
+- **Public paths** skip the sign-in check: `/login`, `/login/send`, `/login/verify`, `/auth/*` (Google and Apple sign-in, 404 when not configured), `/org/login`, `/org/login/send`, `/org/login/verify`, `/org/claim`, `/org/claim/search`, `/privacy`, `/tasks/reminders`, `/tasks/urgent`, `/urgent/off/{key}`, `/favicon.ico` and `/static/*`.
+- **Session contents:** `uid` and `sv`, the session version. A request is signed in only if the profile still exists and isn't deleted or suspended, and `sv` equals the profile's `session_version`. Bumping that version signs out every device; sign-out, suspension and account deletion bump it. A Google or Apple connect from Me is sealed with it, so one started before a sign-out is refused. A deleted or suspended profile fails the check anyway, so removing an admin or coordinator also takes effect at once.
 - **Role gating:**
   - `/admin/*`: admins only. A coordinator who tries is redirected to `/org`, anyone else gets 403.
   - `/org/*`: coordinators with at least one current org membership, checked on every request. Others get 403.
@@ -195,13 +202,14 @@ flowchart TD
     main["main.py<br/>app assembly, startup checks"]
 
     subgraph routes["app/routes/"]
-        r_vol["auth, onboarding, deck, matches,<br/>prefs, profile, chat, shifts, safety"]
+        r_vol["auth, oauth, onboarding, deck, matches,<br/>prefs, profile, chat, shifts, safety"]
         r_org["org_auth, claim, org, org_profile"]
         r_admin["admin"]
         r_misc["tasks, photos, pwa"]
     end
 
     auth["app/auth.py<br/>sessions, Beforeware, roles"]
+    oauthm["app/oauth.py<br/>Google, Apple, fake;<br/>flow cookie, ID token checks"]
     security["app/security.py<br/>Guard, PreviewGate, CSP,<br/>rate limits, client IP"]
     notify["app/notify.py<br/>SMS, email, reminders, urgent waves"]
     data["app/data.py<br/>domain logic, one lock"]
@@ -221,6 +229,7 @@ flowchart TD
     main --> security
     main --> auth
     main --> notify
+    main --> oauthm
     main --> seed
     main --> data
     main --> ui
@@ -234,6 +243,9 @@ flowchart TD
     r_org --> security
     r_admin --> security
     r_vol --> auth
+    r_vol --> oauthm
+    oauthm --> photos
+    config -.-> oauthm
     r_org --> auth
     r_org --> pp
     r_vol --> prefs
@@ -273,11 +285,12 @@ flowchart TD
 | `main.py` | Startup refusals (environment, secrets, providers), uvicorn settings, `fast_app` with middleware and Beforeware, the static mount, router registration, seeding. |
 | `app/config.py` | What each environment allows: `is_production`, `is_preview`, `is_dev`, `fakes_allowed`, plus required-value checks for every secret and setting. Has no imports from `app`. |
 | `app/security.py` | `Guard`, `PreviewGate`, CSP and headers, body limits, client IP from `X-Forwarded-For`, persistent rate limits (`rate_event` table), in-memory token buckets, error pages, and the access-log token redaction. |
-| `app/auth.py` | Session secret and cookie name, phone normalization, the Beforeware sign-in and role check, websocket session check. |
+| `app/auth.py` | Session secret and cookie name, phone normalization, `sign_in` and `sign_in_staff`, the Beforeware sign-in and role check, websocket session check. |
+| `app/oauth.py`, `app/routes/oauth.py` | Google and Apple sign-in, and the fake that stands in for both: the flow cookie, PKCE, Apple's client secret, ID token verification, the Google picture fetch; the start, callback, connect and disconnect routes and the fake consent page. |
 | `app/data.py` | All domain logic and every query the routes and services run, apart from the metrics queries (`app/metrics_rows.py`). Schema statements live in `app/db.py` and `app/migrations/`, and `app/demo_seed.py` writes seed rows through `app/db.py`'s tables. Covers the deck, swipes, matches, shifts, chat, urgent calls, notification bookkeeping, reports and blocks, claims, photos' access rules, account deletion and rate-event storage. Every public function runs under one re-entrant lock because a single apsw connection is shared by all threads. |
 | `app/match.py` | Pure ranking functions: distance and travel time, cause fit, availability, work fit, language fit, and the weighted score. Has no database access. |
 | `app/prefs.py` | Reads a volunteer's preferences consistently whatever the profile's age, and resolves a typed place (ZIP, neighborhood, device location) to a point. |
-| `app/notify.py` | Twilio Verify, Twilio SMS, Resend email, and their fakes. Sends exactly-once notifications recorded in the `notification` table, day-before reminders and urgent-call waves. |
+| `app/notify.py` | Twilio Verify, Twilio SMS, Resend email, and their fakes; `channel` picks text or email per volunteer. Sends exactly-once notifications recorded in the `notification` table, day-before reminders and urgent-call waves. |
 | `app/photos.py`, `app/photo_worker.py` | Upload validation, the sandboxed decode in a child process, and re-encoding to JPEG (full and thumbnail). |
 | `app/db.py`, `app/migrations/` | Table classes (fastlite `transform=True`), indexes, the cause rows, invented demo orgs, and numbered migrations. |
 | `app/metrics.py`, `app/metrics_rows.py` | Pilot metrics: plain-row queries, then pure aggregation. No names, phones or emails. |
@@ -306,6 +319,7 @@ erDiagram
     opening ||--o{ urgent_call : "short of people"
     urgent_call |o--o{ match : "likes counted toward"
     profile ||--o{ login_token : "email link for"
+    profile ||--o{ identity : "signs in with"
     profile ||--o{ report : files
     profile ||--o{ block : "blocks or is blocked"
     org ||--o{ block : "blocked or covered"
@@ -315,7 +329,7 @@ erDiagram
     profile {
         int id PK
         string role "volunteer, coordinator, admin"
-        string phone "E.164, volunteers"
+        string phone "E.164, volunteers, optional"
         string email
         string display_name
         string last_name
@@ -451,7 +465,9 @@ These tables stand on their own:
 | `photo` | Re-encoded JPEG bytes (`full`, `thumb`) keyed by a random 22-character `key`. `owner_kind` is one of `volunteer`, `org_logo`, `org_photo`, `opening`, with `owner_id` pointing at the matching row. The bytes live in SQLite, so a database backup covers the photos too. |
 | `notification` | One row per logical send. `key` is unique (for example `accepted:{match}`, `reminder:{shift}`, `urgent:{call}:{volunteer}`). `status` is one of `pending`, `sent`, `failed`, `skipped`, `cancelled`, `deferred` (held back by the SMS ceiling) or `unknown` (timed out). This is what makes notices exactly-once and retryable. |
 | `rate_event` | One counted action for the persistent rate limits. The key is the limit name plus an HMAC of the phone, email or IP, never the value itself. Rows older than 24 h are pruned. |
+| `identity` | A Google or Apple sign-in linked to a volunteer: `provider`, the ID token's `subject` (unique per provider, index `identity_provider_subject`), `user_id` and the email as the provider gave it. Coordinators and admins have none. |
 | `retained_phone_hash` | An HMAC of a deleted account's phone, kept only when a block, report or suspension must survive deletion, so that it applies again if the number signs up later. |
+| `retained_identity_hash` | The same for each Google or Apple account the deleted profile had connected: HMAC-SHA256(`PHONE_HASH_KEY`, "provider:subject"), on the same terms, re-applied when that account signs up or is connected again. |
 | `schema_migrations` | Applied migration versions. |
 
 Notable indexes, created in `app/db.py`:
@@ -691,6 +707,41 @@ sequenceDiagram
 
 Once an hourly job calls it, the two-hour window puts each shift in at least one run, and the notification key keeps it to one send. No job calls it yet. A shift added less than 23 h before it starts never gets a reminder.
 
+### (f) Google or Apple sign-in
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor V as Volunteer
+    participant A as Causematch
+    participant P as Google or Apple
+    participant DB as SQLite
+
+    V->>A: GET /auth/{google,apple}/start (?for=org from /org/login)
+    A-->>V: 303 to the provider, flow cookie: state, nonce, PKCE verifier (Google), intent, 10 min
+    V->>P: consent
+    P-->>V: Google: 303 to GET /auth/google/callback?code&state
+    Note over P,V: Apple: a form POST from its own origin to /auth/apple/callback,<br/>exempt from the Origin check, so the flow cookie is SameSite=None, Secure
+    V->>A: callback with code and state, and the flow cookie
+    A->>A: cookie ours, under 10 min, this provider, same state, else 400
+    A->>P: exchange the code (PKCE verifier, or Apple's ES256 client secret)
+    P-->>A: ID token
+    A->>A: RS256 signature from the provider's keys, iss, aud, exp, nonce, then email_verified
+    alt volunteer
+        A->>DB: identity (provider, subject) to profile, or a new volunteer with no phone, re-applying retained blocks and suspension
+        A-->>V: session, redirect to /deck or /onboarding
+    else coordinator or admin (?for=org)
+        A->>DB: staff_by_email(verified email), creating nothing
+        A-->>V: session and /org or /admin, or the org login page with a link to /org/claim
+    else connect from Me
+        A->>DB: link to the sealed uid while its session version is unchanged
+        A-->>V: redirect to /me/profile with a notice or the reason it was refused
+    end
+    Note over A: the flow cookie is deleted whatever the outcome
+```
+
+With `CAUSEMATCH_FAKE_OAUTH=1` (development, test, preview) the start redirects to a local consent page, `/auth/fake/consent`, which mints a one-time code bound to the nonce (and the PKCE challenge, for Google) and sends it through the same callback. `docs/OPERATIONS.md` (Security, Sign-in) has the details and the reasons.
+
 ---
 
 ## 7. Matching and ranking
@@ -760,16 +811,16 @@ The child process runs as the same user as the app: it limits resources but does
 
 ### Request-level defences (`app/security.py`)
 
-- **Same-origin writes.** Every unsafe method needs `Origin` equal to `PUBLIC_BASE_URL`'s origin or, when the browser sends no `Origin`, a `Referer` on it. The only exemptions are `/tasks/reminders` and `/tasks/urgent`. Websockets need the exact `Origin`.
+- **Same-origin writes.** Every unsafe method needs `Origin` equal to `PUBLIC_BASE_URL`'s origin or, when the browser sends no `Origin`, a `Referer` on it. The only exemptions are `/tasks/reminders`, `/tasks/urgent` and `/auth/apple/callback`, which Apple posts from its own origin and which acts only with a flow cookie whose state matches (6f). Websockets need the exact `Origin`.
 - **Headers on every response:**
-  - A CSP of `default-src 'self'`, `script-src 'self'`, `style-src 'self'` with no inline code, `img-src 'self' data: blob:`, `connect-src 'self'` plus the ws origin, `font-src 'self'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`.
+  - A CSP of `default-src 'self'`, `script-src 'self'`, `style-src 'self'` with no inline code, `img-src 'self' data: blob:`, `connect-src 'self'` plus the ws origin, `font-src 'self'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` plus `https://accounts.google.com` and `https://appleid.apple.com` (Me's Connect form answers with a redirect to them) and `object-src 'none'`.
   - `X-Frame-Options: DENY`, `nosniff`, `strict-origin-when-cross-origin`.
   - A permissions policy that allows geolocation only on `/onboarding` and `/me/preferences`.
   - `Cache-Control: no-store`, except on `/static` and `/favicon.ico`, unless the route sets its own (photos do).
   - HSTS in production and preview.
   - `X-Robots-Tag: noindex, nofollow` in preview.
 - **Body limits:** 64 KB, or 6 MB on photo upload paths. Over that, 413.
-- **Errors in production:** a plain 500 page with a reference id. The log line keeps the request id and stack frames but not the exception message, which could hold a phone number. The uvicorn access log redacts `token=`, and the logs mask phones and emails.
+- **Errors in production:** a plain 500 page with a reference id. The log line keeps the request id and stack frames but not the exception message, which could hold a phone number. The uvicorn access log redacts `token`, `access` and `code` in query strings, and the logs mask phones and emails.
 - **Client IP:** taken from `X-Forwarded-For`, exactly `TRUSTED_PROXY_HOPS` places from the right. IPv6 clients are counted per /64.
 
 Rate limits fall into two kinds:
@@ -787,8 +838,8 @@ When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters,
 
 ### Secrets and what never enters git
 
-- **Secrets come from the environment**, through Secret Manager on Cloud Run: `SESSION_SECRET`, `PHONE_HASH_KEY`, `TASKS_TOKEN`, `PREVIEW_PASSWORD`, Twilio and Resend keys. In production the first three must be at least 32 characters.
-- **`PHONE_HASH_KEY`** keys several HMACs: rate-limit keys, retained phone hashes after deletion, and urgent unsubscribe links.
+- **Secrets come from the environment**, through Secret Manager on Cloud Run: `SESSION_SECRET`, `PHONE_HASH_KEY`, `TASKS_TOKEN`, `PREVIEW_PASSWORD`, Twilio and Resend keys, `GOOGLE_CLIENT_SECRET` and `APPLE_PRIVATE_KEY`. In production the first three and the Google secret must be at least 32 characters.
+- **`PHONE_HASH_KEY`** keys several HMACs: rate-limit keys, retained phone and identity hashes after deletion, and urgent unsubscribe links.
 - **Excluded by `.gitignore`:**
   - `data/`, `*.db`
   - `.env*`, except `.env.example`
@@ -797,7 +848,7 @@ When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters,
   - agent files (`.omc/`, `CLAUDE.md`, `.claude/`)
 - **Secret scanning:** `scripts/secret_scan.sh` runs gitleaks over the whole history. Locally it skips when gitleaks isn't installed; in CI a missing gitleaks fails the job.
 - **Seed safety:** `scripts/deploy_preview.sh` refuses to copy the seed if `preview-seed/` is tracked or not ignored.
-- **Account deletion** scrubs personal columns and photos, deletes places and login tokens, withdraws matches, cancels future shifts and its pending and failed texts, replaces sent messages with "[message removed]" and ends every session. It keeps only the answers the metrics group by.
+- **Account deletion** scrubs personal columns and photos, deletes places, login tokens and connected Google or Apple identities, withdraws matches, cancels future shifts and its pending and failed texts, replaces sent messages with "[message removed]" and ends every session. It keeps only the answers the metrics group by.
 
 ---
 
@@ -811,6 +862,8 @@ When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters,
 | Production rules (strong secrets, https origin, `__Host-` cookie, HSTS, plain 500 page) | no | yes | yes |
 | Session secret | public dev default if unset | required, 32+ chars | required, 32+ chars |
 | Fake SMS (code `000000`) and fake email (logged) | allowed with `CAUSEMATCH_FAKE_SMS=1` / `CAUSEMATCH_FAKE_EMAIL=1` | allowed, and set by the deploy script | refused at startup |
+| Fake Google and Apple consent page | allowed with `CAUSEMATCH_FAKE_OAUTH=1` (set by the tests and `scripts/demo.py`) | allowed, and set by the deploy script | refused at startup |
+| Volunteer sign-in providers | none required | at least one of Twilio Verify (the fake counts), Google, Apple | at least one of Twilio Verify, Google, Apple |
 | Password on every request | no | yes, `PreviewGate` | no |
 | Banner on every page | only with `CAUSEMATCH_DEMO_BANNER=1` (`scripts/demo.py --seed-file`) | always ("Preview") | refused at startup |
 | Demo matches: a fresh demo volunteer per sign-in with `(310) 555-0100`, and stand-in coordinators that accept a like after a few seconds | with `CAUSEMATCH_DEMO_MATCHES=1` (`scripts/demo.py`) | with `CAUSEMATCH_DEMO_MATCHES=1`, set by the deploy script | refused at startup |
@@ -835,9 +888,9 @@ flowchart LR
 ```
 
 - **`Dockerfile`:** the image's `CMD` runs uvicorn with the `Procfile`'s flags (`--ws-max-size 65536`, `--limit-concurrency 200`, `--timeout-keep-alive 15`, `--timeout-graceful-shutdown 8`, `--no-proxy-headers`) on `$PORT`, default 8080.
-- **`scripts/deploy_preview.sh`** sets `CAUSEMATCH_ENV=preview`, `PREVIEW_SEED_DIR=/app/preview-seed`, `TRUSTED_PROXY_HOPS=1`, both fakes, `CAUSEMATCH_DEMO_MATCHES=1`, `CONTACT_EMAIL` and `PUBLIC_BASE_URL`. The seed also ends up in the Cloud Build source bucket and in the image. Both are private to the project.
+- **`scripts/deploy_preview.sh`** sets `CAUSEMATCH_ENV=preview`, `PREVIEW_SEED_DIR=/app/preview-seed`, `TRUSTED_PROXY_HOPS=1`, the three fakes (SMS, email, Google and Apple), `CAUSEMATCH_DEMO_MATCHES=1`, `CONTACT_EMAIL` and `PUBLIC_BASE_URL`. The seed also ends up in the Cloud Build source bucket and in the image. Both are private to the project.
 - **Production is not deployed yet.** The code expects these additions:
-  - real Twilio and Resend credentials
+  - real Resend credentials, and at least one of Twilio, Google and Apple (`docs/OPERATIONS.md`, Live providers)
   - a persistent database (Litestream replication to GCS is the plan)
   - the two Cloud Scheduler jobs (`/tasks/reminders` hourly, `/tasks/urgent` every 10 minutes): the API is not enabled in the project and no script creates them. A preview would also need a way past `PreviewGate` for them, since the gate and the bearer check share the `Authorization` header.
   - at least 1 GiB of memory, for two worst-case photo decodes at once
@@ -853,8 +906,11 @@ flowchart LR
 | `PHONE_HASH_KEY` | HMAC key: rate-limit keys, retained phone hashes, unsubscribe links | production, preview (32+) |
 | `CONTACT_EMAIL` | Address on `/privacy` and in claim emails | production, preview |
 | `TRUSTED_PROXY_HOPS` | Proxies appending to `X-Forwarded-For`: 1 for `*.run.app`, 2 behind a load balancer | on Cloud Run |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SID` | Sign-in codes | unless `CAUSEMATCH_FAKE_SMS=1` |
-| `TWILIO_FROM_NUMBER` | Sender of notification texts | unless `CAUSEMATCH_FAKE_SMS=1` |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SID` | Sign-in codes | all four Twilio variables or none; production needs Twilio, Google or Apple |
+| `TWILIO_FROM_NUMBER` | Sender of notification texts | with the other three |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in | optional; both or neither (secret 32+ in production) |
+| `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | Sign in with Apple: Services ID, team, key id, the `.p8` key's PEM | optional; all four or none; https only |
+| `CAUSEMATCH_FAKE_OAUTH` | `1` = a local consent page stands in for Google and Apple | optional; dev, test, preview only |
 | `EMAIL_API_KEY`, `EMAIL_FROM` | Resend | unless `CAUSEMATCH_FAKE_EMAIL=1` |
 | `PREVIEW_PASSWORD` | The preview's access key (`?access=` link) and HTTP Basic password | preview (16+) |
 | `PREVIEW_SEED_DIR` | Folder with `orgs.json`, `logos-raw/`, `photos-raw/` | optional, preview |
@@ -932,4 +988,6 @@ flowchart LR
 | **Org-blind like** | A like from a volunteer the org blocked. It's recorded but never shown to the org. |
 | **Preview** | The password-protected Cloud Run deploy with demo data and fake SMS and email. |
 | **Session version** | A counter on the profile. Bumping it signs out every device. |
+| **Identity** | A volunteer's Google or Apple account, known by the provider's subject id, never by its email. |
+| **Flow cookie** | `__Host-cm_oauth`: the signed, 10-minute cookie that carries one Google or Apple sign-in from start to callback. |
 | **SMS ceiling** | The global hourly and daily cap on texts. Notifications over it are deferred, and urgent waves get half of it. |

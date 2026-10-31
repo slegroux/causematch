@@ -1,9 +1,10 @@
 import pytest
-from conftest import sign_in
+from conftest import sign_in, volunteer
 from starlette.testclient import TestClient
 
 from app import data, notify
 from app.auth import DEV_SECRET, normalize_phone, session_secret
+from app.config import require_volunteer_sign_in
 from app.db import profiles
 from main import app
 
@@ -171,20 +172,40 @@ def test_fake_sms_only_when_development_is_declared():
     assert isinstance(ok, notify.FakeVerifier)
 
 
-def test_production_without_twilio_refuses_to_start():
-    with pytest.raises(RuntimeError, match="Twilio"):
-        notify.make_verifier({"CAUSEMATCH_ENV": "production"})
-    with pytest.raises(RuntimeError, match="Twilio"):
-        notify.make_verifier({"K_SERVICE": "causematch"})
+def test_production_starts_without_twilio_when_google_is_set():
+    google = {"GOOGLE_CLIENT_ID": "id", "GOOGLE_CLIENT_SECRET": "s" * 32}
+    for prod in ({"CAUSEMATCH_ENV": "production"}, {"K_SERVICE": "causematch"}):
+        env = {**prod, **google}
+        assert notify.make_verifier(env) is None and notify.make_sms(env) is None
+        require_volunteer_sign_in(env)  # Google alone is a way in
+        with pytest.raises(RuntimeError, match="No volunteer sign-in"):
+            require_volunteer_sign_in(prod)
+        with pytest.raises(RuntimeError, match="half"):
+            notify.make_verifier({**prod, "TWILIO_ACCOUNT_SID": "a"})
     cfg = {
+        "CAUSEMATCH_ENV": "production",
         "TWILIO_ACCOUNT_SID": "a",
         "TWILIO_AUTH_TOKEN": "b",
         "TWILIO_VERIFY_SID": "c",
     }
-    assert isinstance(
-        notify.make_verifier({"CAUSEMATCH_ENV": "production", **cfg}),
-        notify.TwilioVerifier,
-    )
+    assert isinstance(notify.make_verifier(cfg), notify.TwilioVerifier)
+    require_volunteer_sign_in(cfg)
+
+
+def test_without_twilio_there_is_no_phone_sign_in_and_texts_turn_to_email(
+    anon, monkeypatch
+):
+    vol = volunteer()
+    profiles.update(id=vol.uid, email="sam@example.com")
+    monkeypatch.setattr(notify, "_verifier", None)
+    monkeypatch.setattr(notify, "_sms", None)
+    page = anon.get("/login").text
+    assert "Continue with Google" in page and 'action="/login/send"' not in page
+    assert "Or use your phone number" not in page
+    assert anon.post("/login/send", data={"phone": "3105550123"}).status_code == 404
+    assert anon.post("/login/verify", data={"code": "000000"}).status_code == 404
+    assert vol.post("/me/phone/send", data={"phone": "3105550123"}).status_code == 404
+    assert notify.channel(vol.uid) == "email"  # a number on file, but no texts
 
 
 def test_undeclared_environment_refuses_to_start():

@@ -13,6 +13,7 @@ from conftest import (
     pantry_opening,
     volunteer,
 )
+from test_oauth import EMAIL, google_sign_in
 
 from app import config, data, notify
 from app.db import (
@@ -125,6 +126,29 @@ def test_accept_sends_one_text_with_the_expected_words(world):
             f"{orgs()[0].name} said yes to {PANTRY}! Say hi: {BASE}/chat/{world.match.id}",
         )
     ]
+
+
+def test_a_volunteer_without_a_phone_is_emailed_once_when_matched(world, anon):
+    accept(world.coord, world.match)  # a volunteer with a number still gets a text
+    assert [to for to, _ in texts()] == [world.vol.phone]
+    texts().clear()
+    google_sign_in(anon)
+    (p,) = profiles(where="email = ?", where_args=[EMAIL])
+    profiles.update(id=p.id, onboarded_at="2026-01-01T00:00:00", heard_from="skipped")
+    anon.uid = p.id
+    m = like(anon)
+    notify.get_emailer().sent.clear()
+    accept(world.coord, m)
+    notify.on_accepted(m.id)  # a repeat sends nothing more
+    org = orgs()[0].name
+    assert notify.get_emailer().sent == [
+        (
+            EMAIL,
+            f"You're matched with {org}",
+            f"{org} said yes to {PANTRY}!\n\nSay hi: {BASE}/chat/{m.id}",
+        )
+    ]
+    assert texts() == []
 
 
 def test_a_second_accept_attempt_sends_nothing_more(world):
@@ -425,10 +449,9 @@ def test_reminders_skip_withdrawn_matches_and_opted_out_volunteers(world, clock,
 # --- configuration ----------------------------------------------------------------------
 
 
-def test_production_refuses_to_start_without_twilio_email_or_tasks_token():
+def test_production_refuses_to_start_with_half_a_twilio_no_email_or_tasks_token():
     prod = {"CAUSEMATCH_ENV": "production"}
-    with pytest.raises(RuntimeError):
-        notify.make_sms(prod)
+    assert notify.make_sms(prod) is None  # no Twilio at all: volunteers get email
     with pytest.raises(RuntimeError):
         notify.make_sms({**prod, "TWILIO_ACCOUNT_SID": "a", "TWILIO_AUTH_TOKEN": "b"})
     with pytest.raises(RuntimeError):
