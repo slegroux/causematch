@@ -245,7 +245,7 @@ def Certificate(c):
         ),
         Div(
             Span("Total", cls="font-bold text-ink"),
-            Span(minutes_label(c["minutes"]), cls="text-lg font-extrabold text-ink"),
+            Span(minutes_label(snap["minutes"]), cls="text-lg font-extrabold text-ink"),
             cls="flex items-baseline justify-between gap-3 border-t border-line pt-3",
         ),
         P(
@@ -293,6 +293,8 @@ def certificate_page(req, cert_id: str):
     try:
         c = data.my_certificate(uid, cert_id)
     except (LookupError, PermissionError):
+        return Response(NOT_FOUND, status_code=404)
+    if not c["genuine"]:  # a signature that no longer matches: not shown, as in the PDF
         return Response(NOT_FOUND, status_code=404)
     return VolunteerShell(
         "me",

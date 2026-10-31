@@ -181,6 +181,11 @@ def test_certificate_signature_fails_when_the_snapshot_is_changed():
     assert not signing.verify(snap, "another-id", cert.signature)
     assert not signing.verify(snap, cert.id, "")
     assert data.my_certificate(a.uid, cert.id)["genuine"]
+    # a stored snapshot that no longer matches its signature is not shown, nor offered as PDF
+    bad = {**snap, "minutes": 999}
+    certificates.update(id=cert.id, snapshot=json.dumps(bad, sort_keys=True))
+    assert a.get(f"/hours/certificate/{cert.id}").status_code == 404
+    assert a.get(f"/hours/certificate/{cert.id}.pdf").status_code == 404
 
 
 def _rename(a, first, last="Lee"):
@@ -323,6 +328,18 @@ def test_check_link_says_changed_only_for_a_correction_to_its_own_shifts(anon):
     for now in ("4.5 hours", "8.5 hours", "6.5 hours", "confirmed now"):
         assert now not in r.text, now
     assert "Genuine certificate" not in r.text
+
+
+def test_check_link_compares_each_shift_not_just_the_total(anon):
+    _a, cid, rows = _issued()  # 3 h + 2.5 h
+    three = next(r for r in rows if r.confirmed_minutes == 180)
+    two_and_a_half = next(r for r in rows if r.confirmed_minutes == 150)
+    shifts.update(id=three.id, confirmed_minutes=120)
+    shifts.update(id=two_and_a_half.id, confirmed_minutes=210)  # 2 h + 3.5 h = 5.5 h
+    assert "Hours have changed" in anon.get(f"/check/{cid}").text
+    shifts.update(id=three.id, confirmed_minutes=180)
+    shifts.update(id=two_and_a_half.id, confirmed_minutes=150)
+    assert "Genuine certificate" in anon.get(f"/check/{cid}").text
 
 
 def test_check_link_says_withdrawn_and_nothing_else(anon):

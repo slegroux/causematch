@@ -1843,17 +1843,24 @@ def check_certificate(code):
     snapshot = _verified_snapshot(c)
     if snapshot is None:
         return {"state": "unknown"}
-    # changed only by a correction to a shift that is on the certificate; a shift worked
-    # since is not on it and changes nothing
-    ids = [x["id"] for x in snapshot["shifts"]]
-    marks = ",".join("?" * len(ids))  # placeholders only: the ids are bound, not pasted
-    (current,) = _db.db.execute(
-        "SELECT coalesce(sum(confirmed_minutes), 0) FROM shift WHERE status = 'completed' "
-        f"AND confirmed_minutes > 0 AND id IN ({marks})",
-        ids,
-    ).fetchone()
+    # changed by a correction to a shift that is on the certificate: each one must still
+    # be this volunteer's, attended, with the same confirmed minutes (so corrections that
+    # cancel out in the total still count); a shift worked since is not on it
+    shifts = snapshot["shifts"]
+    marks = ",".join(
+        "?" * len(shifts)
+    )  # placeholders only: the ids are bound, not pasted
+    now = {
+        r["id"]: r["confirmed_minutes"]
+        for r in _db.db.query(
+            "SELECT s.id, s.confirmed_minutes FROM shift s JOIN match m ON m.id = s.match_id "
+            f"WHERE s.status = 'completed' AND m.volunteer_id = ? AND s.id IN ({marks})",
+            [c.volunteer_id, *(x["id"] for x in shifts)],
+        )
+    }
+    same = all(now.get(x["id"]) == x["minutes"] for x in shifts)
     return {
-        "state": "genuine" if current == snapshot["minutes"] else "changed",
+        "state": "genuine" if same else "changed",
         "volunteer": snapshot["volunteer"],
         "org": snapshot["org"]["name"],
         "ein": snapshot["org"]["ein"],
