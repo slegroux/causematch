@@ -1,16 +1,19 @@
 """The certificate as a PDF: US Letter, the frozen signed snapshot, and a QR code to the
 check link. Pure functions, no database and no request.
 
-Text is set in the PDF's built-in Helvetica, which covers Latin-1 only (no font file is
-vendored that has more: static/vendor/fonts holds Nunito's basic-Latin subset as woff2).
-`pdf_text` turns anything else into plain letters or "?" so no name can raise.
+Text is set in Noto Sans (app/fonts, embedded as a subset). It covers Latin, Greek and
+Cyrillic; a character the font has no glyph for (CJK, Armenian, Hangul...) is shown as
+"?", decided from the font's own character map, so no name can raise.
 """
 
 import re
 import unicodedata
 from datetime import datetime
+from functools import cache
+from pathlib import Path
 
 import segno
+from fontTools.ttLib import TTFont
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
@@ -41,19 +44,24 @@ def period_label(period):
     return "All hours" if period == "all" else month_name(period)
 
 
+FONTS = Path(__file__).parent / "fonts"
+FONT = "NotoSans"
+
+
+@cache
+def _glyphs():
+    """The code points the font has a glyph for (Regular and Bold share a character set)."""
+    return TTFont(FONTS / "NotoSans-Regular.ttf").getBestCmap()
+
+
 def pdf_text(value):
-    """`value` as text Helvetica can show: Latin-1 as is; other letters with their marks
-    taken off (ễ -> e); everything else, and control characters, as "?"."""
-    out = []
-    for ch in str(value):
-        if 32 <= ord(ch) < 127 or 160 <= ord(ch) < 256:
-            out.append(ch)
-            continue
-        base = "".join(
-            c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c)
-        )
-        out.append(base if base.isascii() and base.isprintable() and base else "?")
-    return "".join(out)
+    """`value` with every character the font has no glyph for, and every control
+    character, replaced by "?"."""
+    glyphs = _glyphs()
+    return "".join(
+        ch if ord(ch) in glyphs and unicodedata.category(ch) != "Cc" else "?"
+        for ch in str(value)
+    )
 
 
 def qr_matrix(url):
@@ -77,7 +85,7 @@ class _Page(FPDF):
 
     def footer(self):
         self.set_y(-14)
-        self.set_font("Helvetica", "", 8)
+        self.set_font(FONT, "", 8)
         self.set_text_color(90, 90, 90)
         self.cell(
             0,
@@ -95,6 +103,8 @@ def build_pdf(snapshot, cert_id, check_url, compress=True):
     pdf = _Page(unit="mm", format=LETTER)
     pdf.code = code
     pdf.alias_nb_pages()
+    pdf.add_font(FONT, "", str(FONTS / "NotoSans-Regular.ttf"))
+    pdf.add_font(FONT, "B", str(FONTS / "NotoSans-Bold.ttf"))
     pdf.set_compression(compress)
     pdf.set_margins(MARGIN, MARGIN, MARGIN)
     pdf.set_auto_page_break(True, margin=MARGIN)
@@ -106,7 +116,7 @@ def build_pdf(snapshot, cert_id, check_url, compress=True):
     width = pdf.w - 2 * MARGIN
 
     def line(text, size=11, style="", gap=1.5, link=None, color=(0, 0, 0)):
-        pdf.set_font("Helvetica", style, size)
+        pdf.set_font(FONT, style, size)
         pdf.set_text_color(*color)
         pdf.multi_cell(
             width,
@@ -129,7 +139,7 @@ def build_pdf(snapshot, cert_id, check_url, compress=True):
         line(" - ".join(contact), 10, color=(90, 90, 90))
     line(period_label(snapshot["period"]), 12, "B", gap=3)
 
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font(FONT, "", 10)
     pdf.set_text_color(0, 0, 0)
     with pdf.table(
         col_widths=(35, 50, 15),
@@ -173,7 +183,7 @@ def build_pdf(snapshot, cert_id, check_url, compress=True):
 
     text_x = left + QR_SIDE_MM + quiet
     pdf.set_xy(text_x, top)
-    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_font(FONT, "B", 10)
     pdf.set_text_color(0, 0, 0)
     pdf.multi_cell(
         pdf.w - MARGIN - text_x,
@@ -183,7 +193,7 @@ def build_pdf(snapshot, cert_id, check_url, compress=True):
         new_y=YPos.NEXT,
         link=check_url,
     )
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font(FONT, "", 10)
     pdf.multi_cell(
         pdf.w - MARGIN - text_x,
         5,

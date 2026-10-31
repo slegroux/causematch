@@ -297,11 +297,55 @@ def test_check_link_is_limited_per_address(monkeypatch):
 # --- the PDF ------------------------------------------------------------------------------
 
 
+def _inflate(data):
+    try:
+        return zlib.decompress(data)
+    except zlib.error:
+        return data
+
+
 def _pdf_content(raw):
     """The page content of a PDF made by app.certificate, inflated: its drawing and text
     operators, so a test can read what was put on the pages without a PDF library."""
     streams = re.findall(rb"stream\r?\n(.*?)\r?\nendstream", raw, re.DOTALL)
-    return "\n".join(zlib.decompress(s).decode("latin-1") for s in streams)
+    return "\n".join(
+        _inflate(s).decode("latin-1") for s in streams if b"BT" in _inflate(s)
+    )
+
+
+def _pdf_strings(raw):
+    """Every string shown on the pages, as text: the page content writes 2-byte glyph ids
+    of the embedded subset fonts, and each font's /ToUnicode map says which character a
+    glyph id is."""
+    objects = {
+        int(i): body
+        for i, body in re.findall(rb"(\d+) 0 obj\n(.*?)\nendobj", raw, re.DOTALL)
+    }
+    maps = {}
+    for name, obj in re.findall(rb"/F(\d+) (\d+) 0 R", raw):
+        cmap = objects[int(re.search(rb"/ToUnicode (\d+) 0 R", objects[int(obj)])[1])]
+        table = _inflate(cmap.split(b"stream\n", 1)[-1]).decode("latin-1")
+        maps[name.decode()] = {
+            int(g, 16): chr(int(u, 16))
+            for g, u in re.findall(r"<([0-9A-F]{4})> <([0-9A-F]{4})>", table)
+        }
+    out, font = [], None
+    for tf, text in re.findall(
+        r"/F(\d+) [\d.]+ Tf|\(((?:\\.|[^\\)])*)\) Tj", _pdf_content(raw)
+    ):
+        if tf:
+            font = tf
+            continue
+        codes = re.sub(r"\\(.)", lambda m: m[1].replace("r", "\r"), text).encode(
+            "latin-1"
+        )
+        out.append(
+            "".join(
+                maps[font][int.from_bytes(codes[i : i + 2], "big")]
+                for i in range(0, len(codes), 2)
+            )
+        )
+    return out
 
 
 def _qr_drawn(content):
@@ -331,8 +375,9 @@ def test_certificate_pdf_is_the_owners_and_carries_the_check_link(anon):
     check = f"{public_base_url()}/check/{cid}"
     content = _pdf_content(r.content)
     code = signing.code(certificates()[0].signature)
-    assert "(Zelda Lee) Tj" in content and "(Total: 5.5 hours) Tj" in content
-    assert f"Signature code: {code}) Tj" in content
+    text = _pdf_strings(r.content)
+    assert "Zelda Lee" in text and "Total: 5.5 hours" in text
+    assert f"Signature code: {code}" in text
     assert _qr_drawn(content) == qr_matrix(check)  # the QR encodes the check link
     assert f"/URI ({check})".encode() in r.content  # and the address is a link
     assert b"zelda@example.com" not in r.content and b"/Author" not in r.content
@@ -362,11 +407,17 @@ def test_certificate_pdf_builder_runs_on_its_own_for_long_lists_and_any_name():
     many = build_pdf(_snapshot("Sam Rivera", 60), "abc", check)
     assert re.search(rb"/Count ([2-9])", many)  # more than one page, header repeated
     content = _pdf_content(many)
-    assert content.count("(Date) Tj") > 1 and "(Total: 150 hours) Tj" in content
+    text = _pdf_strings(many)
+    assert text.count("Date") > 1 and "Total: 150 hours" in text
     assert _qr_drawn(content) == qr_matrix(check)
-    for name in ("Nguyễn Thị Ánh", "李雷", "José Muñoz", "a" * 300, "x\ny\x00", ""):
+    for name in ("a" * 300, "x\ny\x00", "", "\U0001f600", "\u0e01\u0301"):
         assert build_pdf(_snapshot(name), "abc", check).startswith(b"%PDF")
-    assert "(Nguyen Thi Ánh) Tj" in _pdf_content(
-        build_pdf(_snapshot("Nguyễn Thị Ánh"), "abc", check)
-    )
-    assert "(??) Tj" in _pdf_content(build_pdf(_snapshot("李雷"), "abc", check))
+    # characters the font has come out as stored; the ones it lacks as "?", one each
+    for name, shown in (
+        ("Nguyễn Thị Ánh", "Nguyễn Thị Ánh"),
+        ("José Muñoz", "José Muñoz"),
+        ("Иван Σωκράτης", "Иван Σωκράτης"),
+        ("李雷", "??"),
+        ("Ann 안", "Ann ?"),
+    ):
+        assert shown in _pdf_strings(build_pdf(_snapshot(name), "abc", check))

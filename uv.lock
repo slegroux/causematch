@@ -136,6 +136,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastlite" },
+    { name = "fonttools" },
     { name = "fpdf2" },
     { name = "httpx" },
     { name = "monsterui" },
@@ -156,6 +157,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastlite", specifier = ">=0.2.4" },
+    { name = "fonttools", specifier = ">=4.68.0" },
     { name = "fpdf2", specifier = ">=2.9.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "monsterui", specifier = ">=1.0.47" },
