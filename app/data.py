@@ -1502,6 +1502,47 @@ def my_shifts(uid):
     return out
 
 
+def my_hours(uid):
+    """{"months": [...], "unconfirmed": [...]}: this volunteer's attended shifts.
+
+    months, newest first: {"month": "2026-10", "minutes": total, "shifts": [...]} of the
+    shifts with hours a coordinator confirmed, latest first; each row has starts_at,
+    title, org, minutes and by (the coordinator who last confirmed them, as their profile
+    names them, else the org's name). unconfirmed: attended shifts with no confirmed hours
+    (marked before hours were asked), which count toward nothing. Like my_shifts, a block
+    hides nothing: these are the volunteer's own record.
+    """
+    out = {"months": [], "unconfirmed": []}
+    by_month = {}
+    for r in _db.db.query(
+        "SELECT s.starts_at, s.confirmed_minutes, o.title, g.name AS org, "
+        "c.display_name AS coordinator "
+        "FROM shift s JOIN match m ON m.id = s.match_id "
+        "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
+        "LEFT JOIN profile c ON c.id = coalesce(s.corrected_by, s.marked_by) "
+        "WHERE m.volunteer_id = ? AND s.status = 'completed' "
+        "ORDER BY s.starts_at DESC, s.id DESC",
+        [uid],
+    ):
+        row = {k: r[k] for k in ("starts_at", "title", "org")}
+        if r["confirmed_minutes"] is None:
+            out["unconfirmed"].append(row)
+            continue
+        row["minutes"] = r["confirmed_minutes"]
+        row["by"] = (r["coordinator"] or "").strip() or r["org"]
+        month = by_month.get(r["starts_at"][:7])
+        if month is None:
+            month = by_month[r["starts_at"][:7]] = {
+                "month": r["starts_at"][:7],
+                "minutes": 0,
+                "shifts": [],
+            }
+            out["months"].append(month)
+        month["minutes"] += row["minutes"]
+        month["shifts"].append(row)
+    return out
+
+
 def org_shifts(coordinator_uid):
     """{"upcoming", "to_mark", "marked"} for this coordinator's orgs only.
 

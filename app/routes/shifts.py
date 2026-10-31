@@ -376,6 +376,7 @@ def history(req):
             ],
             "Nothing yet.",
         ),
+        A("My hours", href="/hours", cls=SMALL_LINK),
         uid=req.scope["uid"],
     )
 

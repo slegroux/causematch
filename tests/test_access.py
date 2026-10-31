@@ -129,6 +129,7 @@ ROUTES = {
     ("POST", "/admin/orgs/{org_id}/lookup"): ("admin", "own-record"),
     ("POST", "/admin/orgs/{org_id}/verify"): ("admin", "own-record"),
     ("GET", "/history"): ("volunteer", "own-record"),
+    ("GET", "/hours"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}.ics"): ("volunteer", "own-record"),
     ("GET", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
     ("POST", "/shifts/{shift_id}/cancel"): ("volunteer", "own-record"),
