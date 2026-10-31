@@ -25,7 +25,10 @@ def MonthCard(m):
                         f"{s['title']} - {minutes_label(s['minutes'])}",
                         cls="font-bold leading-snug text-ink",
                     ),
-                    P(f"{when(s['starts_at'])} - {s['org']}", cls=TextPresets.muted_sm),
+                    P(
+                        f"{when(s['starts_at'], s['duration_minutes'])} - {s['org']}",
+                        cls=TextPresets.muted_sm,
+                    ),
                     P(f"Confirmed by {s['by']}", cls=TextPresets.muted_sm),
                     cls="space-y-1 py-3",
                 )
@@ -61,7 +64,7 @@ def hours_page(req):
             H2("Hours not confirmed", cls=ORG_SECTION),
             P(
                 f"{len(left)} earlier shift{' has' if len(left) == 1 else 's have'} no "
-                "confirmed hours, so not counted above:",
+                "confirmed hours, so they count toward nothing:",
                 cls=TextPresets.muted_sm,
             ),
             Ul(

@@ -1507,7 +1507,7 @@ def my_hours(uid):
 
     months, newest first: {"month": "2026-10", "minutes": total, "shifts": [...]} of the
     shifts with hours a coordinator confirmed, latest first; each row has starts_at,
-    title, org, minutes and by (the coordinator who last confirmed them, as their profile
+    duration_minutes, title, org, minutes and by (the coordinator who last confirmed them, as their profile
     names them, else the org's name). unconfirmed: attended shifts with no confirmed hours
     (marked before hours were asked), which count toward nothing. Like my_shifts, a block
     hides nothing: these are the volunteer's own record.
@@ -1515,8 +1515,8 @@ def my_hours(uid):
     out = {"months": [], "unconfirmed": []}
     by_month = {}
     for r in _db.db.query(
-        "SELECT s.starts_at, s.confirmed_minutes, o.title, g.name AS org, "
-        "c.display_name AS coordinator "
+        "SELECT s.starts_at, s.duration_minutes, s.confirmed_minutes, o.title, "
+        "g.name AS org, c.display_name AS coordinator "
         "FROM shift s JOIN match m ON m.id = s.match_id "
         "JOIN opening o ON o.id = m.opening_id JOIN org g ON g.id = o.org_id "
         "LEFT JOIN profile c ON c.id = coalesce(s.corrected_by, s.marked_by) "
@@ -1524,7 +1524,7 @@ def my_hours(uid):
         "ORDER BY s.starts_at DESC, s.id DESC",
         [uid],
     ):
-        row = {k: r[k] for k in ("starts_at", "title", "org")}
+        row = {k: r[k] for k in ("starts_at", "duration_minutes", "title", "org")}
         if r["confirmed_minutes"] is None:
             out["unconfirmed"].append(row)
             continue
