@@ -458,8 +458,8 @@ def privacy():
             "Only you see these: your places and your device's location, how you rated "
             "each cause, the days and times you ticked and your specific dates, how far "
             "ahead you look, one-time or recurring, the kind of work and skills you "
-            "picked, which preferences only show or only rank, Surprise me, and your "
-            "last-minute call settings. They decide which openings you see and in what "
+            "picked, which preferences only show or only rank, whether you need your hours "
+            "confirmed, Surprise me, and your last-minute call settings. They decide which openings you see and in what "
             "order.",
             'A nonprofit sees only what "Who sees what" lists, and only after you like '
             "one of its openings: your photo, your first name and last initial (all of your "

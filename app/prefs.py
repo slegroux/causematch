@@ -75,8 +75,9 @@ def dealbreakers(profile):
 
 
 def verified_hours(profile):
-    """ "" (no preference), "prefer" or "only": the nonprofits that confirm hours."""
-    return profile.verified_hours or ""
+    """ "only" (the volunteer needs their hours confirmed: only the nonprofits that confirm
+    them) or "". A stored "prefer", from before it was dropped, reads as ""."""
+    return "only" if profile.verified_hours == "only" else ""
 
 
 def work(profile):

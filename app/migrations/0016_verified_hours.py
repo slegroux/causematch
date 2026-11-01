@@ -1,5 +1,5 @@
 """Verified hours: org.confirms_hours (the nonprofit says it can confirm volunteer hours)
-and profile.verified_hours (a volunteer's private wish: prefer|only; NULL: no preference).
+and profile.verified_hours (a volunteer's private need: "only"; before it was a checkbox, also "prefer"; NULL: none).
 
 Runs before app/db.py declares the tables, so it adds the columns itself; every org
 starts as not confirming and every volunteer with no preference.

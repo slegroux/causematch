@@ -1,4 +1,4 @@
-"""Compose the three recordings and the voice-over into one 1080p video.
+"""Compose the four recordings and the voice-over into one 1080p video.
 
 python compose.py BEATS.json VOICE_DIR TAKE_DIR OUT.mp4
 Each beat is a segment with its own layout (card, laptop, phone, both), caption and voice
@@ -30,6 +30,7 @@ TONES = {
     "Volunteer": (GOOD, GOOD_SOFT),
     "Nonprofit": (BRAND, BRAND_SOFT),
     "Admin": (ADMIN, ADMIN_SOFT),
+    "Anyone": (MUTED, SAND),
 }
 
 # screen rectangles (x, y, w, h) per layout
@@ -120,11 +121,10 @@ def frame_art(b, n):
     im = Image.new("RGB", (W, H), CREAM)
     d = ImageDraw.Draw(im)
     lay, role = b["layout"], b["role"]
-    url = (
-        "causematch / admin"
-        if b.get("src") == "admin"
-        else "causematch / nonprofit dashboard"
-    )
+    url = {
+        "admin": "causematch / admin",
+        "guest": "causematch / check a certificate",
+    }.get(b.get("src"), "causematch / nonprofit dashboard")
     if lay == "laptop":
         laptop_frame(d, BIG_LAPTOP, url)
         caption_bar(d, n, role, b["caption"])
