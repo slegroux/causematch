@@ -48,18 +48,19 @@ flowchart LR
     remind --> happen["The shift<br/>happens"]
     happen --> marked["Coordinator marks it attended<br/>and confirms the hours"]
     marked --> hours["Hours show on the volunteer's<br/>Shifts and hours page"]
+    hours --> cert["Signed certificate<br/>anyone can check by its link"]
 
     classDef step fill:#85bbf0,stroke:#5d82a8,color:#0b1f33
     classDef key fill:#438dd5,stroke:#2e6295,color:#ffffff
     classDef planned fill:#999999,stroke:#6b6b6b,color:#ffffff,stroke-dasharray:6 4
     class like,yes,booked,chat,happen step
-    class marked,hours key
+    class marked,hours,cert key
     class remind planned
 ```
 
 _Each box is one step a person sees. The darker boxes are the hours record. The dashed box waits for a scheduled job that is not set up yet._
 
-A like creates a match that waits for the nonprofit. The nonprofit's yes books the first shift, tells the volunteer (by text, or by email when they have no phone number), and opens a chat. If the volunteer has the deck or Matches open, an "It's a match!" screen appears within about 10 seconds. Once the scheduled job that sends reminders is set up, a text the day before will ask "Still coming?". After the shift, the coordinator marks it attended and confirms how many hours the volunteer gave. Those **confirmed hours** add up, month by month, on the volunteer's own page. Some nonprofits also say they can confirm volunteer hours, and a volunteer can ask to see those first or only those. The code calls that preference **verified hours**.
+A like creates a match that waits for the nonprofit. The nonprofit's yes books the first shift, tells the volunteer (by text, or by email when they have no phone number), and opens a chat. If the volunteer has the deck or Matches open, an "It's a match!" screen appears within about 10 seconds. Once the scheduled job that sends reminders is set up, a text the day before will ask "Still coming?". After the shift, the coordinator marks it attended and confirms how many hours the volunteer gave. Those **confirmed hours** add up, month by month, on the volunteer's own page. For any nonprofit that confirmed some, the volunteer can get a signed **certificate** of those hours, as a page or a PDF, and anyone they give it to (a school or an employer, say) can open its check link to see that it is genuine. Some nonprofits also say they can confirm volunteer hours, and a volunteer can ask to see those first or only those. The code calls that preference **verified hours**.
 
 Nonprofits short of people can also post an **urgent call**: "needs 2 more, tomorrow 9 am". It puts the card at the top of nearby volunteers' decks and can skip the yes step entirely (the first likes are booked at once). Once its scheduled job is set up, it will also text or email the volunteers who opted in.
 
@@ -71,7 +72,7 @@ The pilot covers four causes: food insecurity, environment and parks, animal she
 - Swipe a ranked deck: Like or Pass. Each card says why it was picked ("♥ Animal shelters", "You're free Sat mornings").
 - Keep matches apart from likes still waiting, chat once a nonprofit says yes, add a shift to their calendar, or cancel just one shift ("Can't make this one").
 - Keep private preferences on four short pages, and opt in to last-minute calls.
-- See upcoming shifts, past shifts and confirmed hours on one **Shifts and hours** page.
+- See upcoming shifts, past shifts and confirmed hours on one **Shifts and hours** page, and get a signed certificate of the hours one nonprofit confirmed.
 
 **Nonprofit coordinators**
 
@@ -85,6 +86,10 @@ The pilot covers four causes: food insecurity, environment and parks, animal she
 - Handle reports and blocks.
 - Read the pilot's aggregate metrics. They never see names, phones or emails there.
 
+**Anyone with a check link**
+
+- Open a certificate's check link, or scan the QR code on its PDF, without an account: it says whether the certificate is genuine, withdrawn or unknown, and what it certifies.
+
 ## 2. Level 1: system context
 
 Who uses Causematch, and which outside services it talks to.
@@ -97,6 +102,7 @@ flowchart TB
     vol(["<b>Volunteer</b><br/><small>[Person]</small><br/><br/>Swipes openings, chats,<br/>sees shifts and hours"])
     coord(["<b>Nonprofit coordinator</b><br/><small>[Person]</small><br/><br/>Posts openings, answers likes,<br/>marks shifts"])
     admin(["<b>Admin</b><br/><small>[Person]</small><br/><br/>Verifies nonprofits,<br/>reads pilot metrics"])
+    checker(["<b>Certificate checker</b><br/><small>[Person]</small><br/><br/>A school or employer given<br/>a volunteer's certificate"])
 
     cm["<b>Causematch</b><br/><small>[Software System]</small><br/><br/>Matches volunteers with<br/>nonprofit openings"]
 
@@ -110,6 +116,7 @@ flowchart TB
     vol -- "Swipes, chats<br/><small>[HTTPS]</small>" --> cm
     coord -- "Posts openings, answers likes<br/><small>[HTTPS]</small>" --> cm
     admin -- "Verifies orgs, reads metrics<br/><small>[HTTPS]</small>" --> cm
+    checker -- "Opens the check link<br/><small>[HTTPS, no account]</small>" --> cm
     cm -- "Reads secrets at start<br/><small>[env vars]</small>" --> sm
     cm -- "Looks up nonprofits<br/><small>[HTTPS, JSON]</small>" --> pp
     cm -. "Checks sign-ins<br/><small>[HTTPS, OpenID Connect]</small>" .-> idp
@@ -121,7 +128,7 @@ flowchart TB
     classDef system fill:#1168bd,stroke:#0b4884,color:#ffffff
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
     classDef planned fill:#999999,stroke:#6b6b6b,color:#ffffff,stroke-dasharray:6 4
-    class vol,coord,admin person
+    class vol,coord,admin,checker person
     class cm system
     class sm,pp external
     class idp,twilio,resend,sched planned
@@ -137,6 +144,8 @@ What is honest to say about each outside service today:
 - **Twilio and Resend are built but not live.** `app/notify.py` has real clients for both, but the preview runs fakes: no text is sent (the code is always `000000`) and emails go to the log. Production refuses to start without Resend, and needs at least one of Twilio, Google and Apple for volunteers to sign in.
 - **Cloud Scheduler is not set up.** The two endpoints it would call exist, but nothing calls them yet, so the preview sends no day-before reminders and no urgent waves on a timer.
 
+The certificate checker is the one person who needs no account. They reach Causematch only through a check link a volunteer gave them, and see only what that certificate says (section 12). In the preview the password gate stands in front of that link too, so only someone with the preview password can open it.
+
 The public website (`site/`, published to GitHub Pages by `.github/workflows/pages.yml`) is a static page with the demo video. It is not part of the running app.
 
 ## 3. Level 2: containers
@@ -148,11 +157,12 @@ In C4, a "container" is something that runs or holds data. Causematch has very f
 flowchart TB
     vol(["<b>Volunteer</b><br/><small>[Person]</small><br/><br/>Swipes openings, chats,<br/>sees shifts and hours"])
     staff(["<b>Coordinator or admin</b><br/><small>[Person]</small><br/><br/>Runs openings, or<br/>verifies nonprofits"])
+    checker(["<b>Certificate checker</b><br/><small>[Person]</small><br/><br/>A school or employer given<br/>a volunteer's certificate"])
 
     subgraph cm["Causematch [Software System]"]
         direction TB
         ui["<b>Web pages</b><br/><small>[Container: HTML, htmx, small JS]</small><br/><br/>Server-rendered pages<br/>in the browser"]
-        app["<b>Web application</b><br/><small>[Container: Python 3.12, FastHTML, uvicorn]</small><br/><br/>Pages, sign-in, ranking, matches,<br/>chat, task endpoints"]
+        app["<b>Web application</b><br/><small>[Container: Python 3.12, FastHTML, uvicorn]</small><br/><br/>Pages, sign-in, ranking, matches,<br/>chat, certificates, task endpoints"]
         worker[["<b>Photo worker</b><br/><small>[Container: Python child process]</small><br/><br/>Decodes untrusted images<br/>under tight limits"]]
         db[("<b>Database</b><br/><small>[Container: SQLite file]</small><br/><br/>Every table, photos included")]
     end
@@ -165,6 +175,7 @@ flowchart TB
 
     vol -- "Uses<br/><small>[HTTPS]</small>" --> ui
     staff -- "Uses<br/><small>[HTTPS]</small>" --> ui
+    checker -- "Opens the check link<br/><small>[HTTPS, no account]</small>" --> ui
     ui -- "Forms, htmx swaps, chat<br/><small>[HTTPS, WebSocket]</small>" --> app
     ui -. "Consent page<br/><small>[HTTPS redirect]</small>" .-> idp
     app -- "Sends an upload,<br/>gets a clean JPEG<br/><small>[stdin/stdout]</small>" --> worker
@@ -179,7 +190,7 @@ flowchart TB
     classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
     classDef planned fill:#999999,stroke:#6b6b6b,color:#ffffff,stroke-dasharray:6 4
-    class vol,staff person
+    class vol,staff,checker person
     class ui,app,worker,db container
     class pp external
     class idp,twilio,resend,sched planned
@@ -190,7 +201,7 @@ _Legend: blue = containers inside the dashed Causematch boundary (cylinder = dat
 
 **The browser.** Pages are plain HTML built on the server, so forms work without JavaScript. The pages still count as a container of their own because a good deal runs in the browser: htmx swaps, the websocket chat, the 10-second poll for a new match and a few small scripts. [htmx](https://htmx.org) is a small library that lets a button fetch a piece of HTML and swap it into the page. Causematch uses it for swiping, for the chat, and to ask every 10 seconds whether a nonprofit said yes. The chat uses a websocket, a connection that stays open so the server can push new messages. A few small scripts in `static/` add touches such as dragging a card (`swipe.js`), using the device location (`geo.js`) and shrinking a photo before upload (`photo.js`). A web app manifest and icons (static files, not a container) let people add Causematch to their Home Screen like an app (a PWA, "progressive web app"). For Google or Apple sign-in, the browser visits that company's consent page and comes back to `/auth/*/callback`.
 
-**The web application.** One image (`Dockerfile`) runs uvicorn, a Python web server, which runs the app in `main.py`. The app is built with [FastHTML](https://fastht.ml), a Python framework in which each page is a Python function that returns HTML. The same app serves the two task endpoints that Cloud Scheduler would call (`/tasks/reminders` hourly, `/tasks/urgent` every 10 minutes); they are routes, not a separate container. Its secrets come from Google Cloud's Secret Manager as environment variables at start, which the picture leaves out. Photo uploads are decoded in a separate child process, `app/photo_worker.py`, with tight CPU and memory limits, so a hostile image can't harm the app.
+**The web application.** One image (`Dockerfile`) runs uvicorn, a Python web server, which runs the app in `main.py`. The app is built with [FastHTML](https://fastht.ml), a Python framework in which each page is a Python function that returns HTML. The same app serves the two task endpoints that Cloud Scheduler would call (`/tasks/reminders` hourly, `/tasks/urgent` every 10 minutes); they are routes, not a separate container. Its secrets come from Google Cloud's Secret Manager as environment variables at start, which the picture leaves out. Photo uploads are decoded in a separate child process, `app/photo_worker.py`, with tight CPU and memory limits, so a hostile image can't harm the app. Certificate PDFs, by contrast, are built inside the app process, in a thread, from data the app wrote itself.
 
 **The SQLite file.** All data lives in one SQLite file, photos included, read and written through one shared connection.
 
@@ -209,14 +220,15 @@ flowchart TB
         direction TB
         mw["<b>Middleware</b><br/><small>[Component: security.py, Starlette sessions]</small><br/><br/>Guard, PreviewGate,<br/>session cookie"]
         bw["<b>Beforeware</b><br/><small>[Component: Python modules, auth.py, security.py]</small><br/><br/>Who you are, your role,<br/>rate limits"]
-        rv["<b>Volunteer routes</b><br/><small>[Component: Python modules, app/routes/*.py]</small><br/><br/>Deck, matches, chat,<br/>preferences, shifts"]
-        rs["<b>Staff and public routes</b><br/><small>[Component: Python modules, app/routes/*.py]</small><br/><br/>Nonprofit, admin, sign-in,<br/>claims, tasks"]
+        rv["<b>Volunteer routes</b><br/><small>[Component: Python modules, app/routes/*.py]</small><br/><br/>Deck, matches, chat, preferences,<br/>shifts, hours, certificates"]
+        rs["<b>Staff and public routes</b><br/><small>[Component: Python modules, app/routes/*.py]</small><br/><br/>Nonprofit, admin, sign-in,<br/>claims, tasks, check link"]
         data["<b>Domain data</b><br/><small>[Component: Python module, data.py]</small><br/><br/>Every query, under one lock"]
         rank["<b>Ranking</b><br/><small>[Component: Python modules, match.py, prefs.py]</small><br/><br/>Scores openings from<br/>preferences"]
         notify["<b>Notices</b><br/><small>[Component: Python module, notify.py]</small><br/><br/>Texts and email,<br/>once each"]
         photos["<b>Photos</b><br/><small>[Component: Python module, photos.py]</small><br/><br/>Checks and re-encodes images"]
         oauth["<b>Provider sign-in</b><br/><small>[Component: Python module, oauth.py]</small><br/><br/>Google and Apple flows,<br/>token checks"]
         metrics["<b>Metrics</b><br/><small>[Component: Python module, metrics.py]</small><br/><br/>Aggregate pilot numbers"]
+        cert["<b>Certificates</b><br/><small>[Component: Python modules, signing.py, certificate.py]</small><br/><br/>Signs hours snapshots,<br/>builds the PDF and QR code"]
     end
 
     worker[["<b>Photo worker</b><br/><small>[Container: Python child process]</small><br/><br/>Decodes untrusted images"]]
@@ -240,8 +252,10 @@ flowchart TB
     rv -- "Connects accounts<br/><small>[Python call]</small>" --> oauth
     rs -- "Signs people in<br/><small>[Python call]</small>" --> oauth
     rs -- "Builds the numbers<br/><small>[Python call]</small>" --> metrics
+    rv -- "Builds the PDF<br/><small>[Python call]</small>" --> cert
     rs -- "Looks up nonprofits<br/><small>[HTTPS, JSON]</small>" --> pp
     data -- "Scores the deck<br/><small>[Python call]</small>" --> rank
+    data -- "Signs and verifies<br/><small>[Python call]</small>" --> cert
     notify -- "Claims each notice<br/><small>[Python call]</small>" --> data
     photos -- "Decodes in<br/><small>[stdin/stdout]</small>" --> worker
     data -- "Reads and writes<br/><small>[apsw, one connection]</small>" --> db
@@ -253,7 +267,7 @@ flowchart TB
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
     classDef planned fill:#999999,stroke:#6b6b6b,color:#ffffff,stroke-dasharray:6 4
     class ui,worker,db container
-    class mw,bw,rv,rs,data,rank,notify,photos,oauth,metrics component
+    class mw,bw,rv,rs,data,rank,notify,photos,oauth,metrics,cert component
     class pp external
     class msg,idp,sched planned
     style app fill:none,stroke:#888888,stroke-dasharray:8 4,color:#888888
@@ -265,9 +279,9 @@ _Legend: light blue = components inside the Web application container (dashed bo
 
 **Beforeware** is FastHTML's name for checks that run before a page handler. `auth.check_session` makes sure the session is still valid and that the role fits the path: `/admin/*` is for admins, `/org/*` for coordinators, and the other signed-in pages for volunteers. `security.throttle` takes a token from the user's bucket for swipes, chat, reports and uploads.
 
-**Routes** live in `app/routes/`, one file per area. They build HTML and never touch the database directly.
+**Routes** live in `app/routes/`, one file per area. They build HTML and never touch the database directly. The public check link, `/check/{id}`, lives in `app/routes/hours.py` next to the volunteer's certificate pages; the picture counts it with the public routes.
 
-**The domain layer** is where the rules live. `app/data.py` holds every query the routes run, and every public function in it runs under one lock, because the single database connection is shared by all threads. `app/match.py` is pure scoring with no database access, so it is easy to test. `app/notify.py` sends texts and emails. `app/photos.py` checks and re-encodes images. `app/oauth.py` talks to Google and Apple and checks what they send back. `app/metrics.py` builds the admins' aggregate numbers from rows that `app/metrics_rows.py` reads. `app/propublica.py` is the ProPublica client that the claim page and the admin pages use (with `app/org_import.py` for imports); the picture folds it into the staff routes. Routes also read preferences directly through `app/prefs.py`.
+**The domain layer** is where the rules live. `app/data.py` holds every query the routes run, and every public function in it runs under one lock, because the single database connection is shared by all threads. `app/match.py` is pure scoring with no database access, so it is easy to test. `app/notify.py` sends texts and emails. `app/photos.py` checks and re-encodes images. `app/oauth.py` talks to Google and Apple and checks what they send back. `app/metrics.py` builds the admins' aggregate numbers from rows that `app/metrics_rows.py` reads. `app/signing.py` signs and checks hours certificates with a secret key, and `app/certificate.py` lays one out as a PDF with a QR code; both are pure functions with no database access. `app/propublica.py` is the ProPublica client that the claim page and the admin pages use (with `app/org_import.py` for imports); the picture folds it into the staff routes. Routes also read preferences directly through `app/prefs.py`.
 
 **Storage.** `app/db.py` declares each table as a Python class. A migration is a numbered script in `app/migrations/` that usually changes data or structure that a class change alone can't. Pending migrations run at every start.
 
@@ -413,9 +427,10 @@ A **shift** is one dated occurrence of volunteering on an accepted match, with a
 - **Before it starts**, the volunteer can answer "Still coming?" from the reminder's link, or cancel just that shift ("Can't make this one").
 - **After it starts**, the coordinator taps Attended, which confirms the hours (pre-set to the shift's length), or No-show.
 - **Confirmed hours** add up by month on the volunteer's **Shifts and hours** page.
+- **A certificate** lists the hours one nonprofit confirmed, for one month or for all of them, with the volunteer's full name. It is frozen when issued and signed with a secret key, so it never changes with the profile and an edit to it shows. The volunteer can view it, print it, download it as a PDF with a QR code, or withdraw it. Its **check link** tells anyone who opens it whether it is genuine, whether the nonprofit has corrected those hours since, or that it was withdrawn. Hours confirmed before the volunteer last changed their name can't go on one, so one person's hours never appear under two names.
 - **Verified hours** is a private preference: Prefer, or Only show, the nonprofits that say they can confirm hours. Their cards say "Confirms your hours".
 
-The exact rules are in [section 10](#10-key-flows), flows (g) and (h).
+The exact rules are in [section 10](#10-key-flows), flows (g), (h) and (i).
 
 ### 5.6 Privacy: who sees what
 
@@ -441,7 +456,7 @@ flowchart LR
 
 _What a nonprofit sees grows with each step. The grey box never leaves the volunteer's account._
 
-A nonprofit learns about a volunteer only when that volunteer likes one of its openings. Then it sees what the volunteer agreed to share, with the name cut to first name and last initial ("Sam L."). The full last name appears once the nonprofit says yes. Places are stored as an area, never an address, and cards show the travel minutes from the nearest place, never coordinates. Photos are re-encoded on the server, which strips location data. Blocks work both ways and hide a volunteer's details from that org at once. The full table, with file paths, is in [section 12](#12-security-and-privacy).
+A nonprofit learns about a volunteer only when that volunteer likes one of its openings. Then it sees what the volunteer agreed to share, with the name cut to first name and last initial ("Sam L."). The full last name appears once the nonprofit says yes. Places are stored as an area, never an address, and cards show the travel minutes from the nearest place, never coordinates. Photos are re-encoded on the server, which strips location data. Blocks work both ways and hide a volunteer's details from that org at once. A certificate is the one thing the volunteer hands out themselves: its check link shows their full name, the nonprofit, the period and the total to whoever holds the link, and nothing more. The full table, with file paths, is in [section 12](#12-security-and-privacy).
 
 ---
 
@@ -469,10 +484,11 @@ Volunteers see a bottom tab bar with **Openings** (`/deck`), **Matches** (`/matc
 | Empty-deck help | When nothing is left, the app offers the one change that would add the most cards (widen a travel time, look further ahead, drop a dealbreaker, show nonprofits that don't confirm hours, or clear filters). | `POST /deck/relax` | `app/routes/deck.py`, `app/data.py` |
 | Matches | Three parts: "Matches" (the nonprofits that said yes), "Your likes" (likes still waiting, with a line saying a like becomes a match when the nonprofit says yes), and a closed "Past" fold for declined and withdrawn ones, which opens and counts them when a decline is new. Status labels: Waiting for the nonprofit, Accepted, Not this time, Withdrawn (`app/ui.py`, `MATCH_STATUS`). An accepted card has a Chat button, the next shift with a "Can't make this one" link, and Add to calendar (an `.ics` file and a Google Calendar link). Withdraw, Report and Block sit under "More". Withdrawing a pending or accepted match cancels its future shifts; withdrawing an accepted one emails the org. A link at the top opens Shifts and hours. | `GET /matches`, `GET/POST /matches/{id}/withdraw`, `GET /shifts/{id}.ics` | `app/routes/matches.py`, `app/routes/shifts.py`, `app/ui.py` |
 | Chat | Opens once the nonprofit accepts. Messages arrive live over a websocket, and a plain POST form works as a fallback. The chat becomes read-only after a withdrawal, a block either way, or the org's deactivation. | `GET /chat/{id}`, `POST /chat/{id}/send`, websocket `/chat/{id}/ws` | `app/routes/chat.py`, `static/chat.js` |
-| Shifts and hours | The first shift is booked automatically on accept when the opening's (or urgent call's) start is still ahead; otherwise the coordinator adds one. One page, titled "Shifts and hours", lists upcoming and past shifts, then the hours: confirmed hours by month, each shift with its nonprofit and the coordinator who confirmed it, and apart from those any attended shifts that have no confirmed hours. `/hours` redirects there. | `GET /history`, `GET /hours` | `app/routes/shifts.py`, `app/routes/hours.py`, `app/data.py` (`my_shifts`, `my_hours`) |
+| Shifts and hours | The first shift is booked automatically on accept when the opening's (or urgent call's) start is still ahead; otherwise the coordinator adds one. One page, titled "Shifts and hours", lists upcoming and past shifts, then the hours: confirmed hours by month, each shift with its nonprofit and the coordinator who confirmed it, and apart from those any attended shifts that have no confirmed hours. Below the hours, a Certificates part offers one card per nonprofit that confirmed some (see the next row). `/hours` redirects there. | `GET /history`, `GET /hours` | `app/routes/shifts.py`, `app/routes/hours.py`, `app/data.py` (`my_shifts`, `my_hours`) |
+| Hours certificates | Per nonprofit, the volunteer picks a month or "All my hours here" and taps "Get a certificate". The certificate page shows their full name, the nonprofit with its EIN and website, each shift (date, role, hours), the total, the coordinators who confirmed them, the issue date, a signature code and the check link; it prints without the tab bar. "Download PDF" gives the same on US Letter with a QR code to the check link. "Withdraw this certificate" asks first, then makes the check link say only "withdrawn". Getting the same content again returns the same certificate; a new one for the same nonprofit and period withdraws the old one. Refused, with a notice on Shifts and hours: no last name on the profile, hours confirmed before the last name change, or more than 20 in 24 hours. Only the owner can open these pages; anyone else gets 404. See 10i. | `POST /hours/orgs/{org_id}/certificate`, `GET /hours/certificate/{cert_id}`, `GET /hours/certificate/{cert_id}.pdf`, `GET/POST /hours/certificate/{cert_id}/withdraw` | `app/routes/hours.py`, `app/data.py` (`certificate_options`, `issue_certificate`, `my_certificate`, `withdraw_certificate`), `app/signing.py`, `app/certificate.py` |
 | Still coming? | A day-before reminder (a text, or an email without a number) ends with a link to this page, sent when `/tasks/reminders` runs (planned hourly Cloud Scheduler job, not set up yet). "Yes, I'll be there" stamps the shift once, and the coordinator then sees "Confirmed". "Can't make it" leads to the cancel page. The link carries no sign-in token. | `GET/POST /shifts/{id}/confirm` | `app/routes/shifts.py`, `app/notify.py` |
 | Can't make this one | The volunteer cancels one upcoming shift, with an optional reason (up to 300 characters). On a recurring or flexible opening the match stays. On a one-time opening that is open or filled, cancelling the only upcoming shift ends the match as a withdrawal would. The org's coordinators get an email at once, without the volunteer's name. Less than 48 hours ahead, a spot given up refills itself with an urgent call for 1 person (see 10g). Linked from Matches and from the chat. | `GET/POST /shifts/{id}/cancel` | `app/routes/shifts.py`, `app/data.py` (`cancel_my_shift`), `app/notify.py` |
-| Profile and photo | What nonprofits see: photo, first and last name, pronouns, short bio, up to 6 interests (chips from a list), and the neighborhood nonprofits see. Under "Only we see": an optional email (for last-minute calls when the volunteer has no texts) and any other cause they'd like, as free text. The photo is re-encoded server-side and can be removed. Delete my account is at the foot of this page. | `GET /me/profile`, `POST /me/profile/photo`, `POST /me/profile/photo/remove`, `POST /me/profile/details` | `app/routes/profile.py`, `app/photos.py` |
+| Profile and photo | What nonprofits see: photo, first and last name (changing either one once it is set stamps `name_changed_at`, and the form warns that hours confirmed before the change can't go on a certificate), pronouns, short bio, up to 6 interests (chips from a list), and the neighborhood nonprofits see. Under "Only we see": an optional email (for last-minute calls when the volunteer has no texts) and any other cause they'd like, as free text. The photo is re-encoded server-side and can be removed. Delete my account is at the foot of this page. | `GET /me/profile`, `POST /me/profile/photo`, `POST /me/profile/photo/remove`, `POST /me/profile/details` | `app/routes/profile.py`, `app/photos.py` |
 | Photo nudge | A prompt under the deck to add a photo, until the volunteer adds one or taps "Not now". | `POST /deck/photo-nudge/dismiss` | `app/routes/deck.py` |
 | Last-minute calls | Opt-in, on `/me/preferences/urgent`. Choose same day or today-and-tomorrow, quiet hours, and up to 3 notices a week. Notices arrive by SMS, or by email for volunteers who have no usable number. Waves go out when `/tasks/urgent` runs (planned every 10 minutes, not set up yet). Every email carries a signed unsubscribe link that works signed out. | `GET /me/preferences/urgent`; `GET/POST /urgent/off/{key}` | `app/routes/prefs.py`, `app/notify.py`, `app/data.py` |
 | Report and block | From a match, the volunteer can report the org (reason plus details) or block it. A block removes the org's openings from the deck, withdraws open matches and makes chat read-only. | `GET/POST /matches/{id}/report`, `GET/POST /matches/{id}/block` | `app/routes/safety.py` |
@@ -515,6 +531,12 @@ Some admin tasks are command-line scripts in `scripts/`:
 - `import_orgs.py`: import nonprofits from ProPublica.
 - `stats.py`: print headline numbers from a read-only database.
 
+### Anyone with a check link
+
+| Feature | What it does | Route(s) | Code |
+|---|---|---|---|
+| Check a certificate | Public, signed in or not. A genuine certificate shows "Genuine certificate", or "Hours have changed" when the nonprofit has corrected any of its shifts since, with the volunteer's full name, the nonprofit and its EIN, the period, the total, the issue date and the signature code. A withdrawn one says only "This certificate was withdrawn." An unknown id, a garbled one, or a stored certificate whose signature no longer matches all get the same 404 "Not a Causematch record". Limited to 30 per 10 minutes per address. Never indexed. | `GET /check/{code}` (the code is the certificate's id) | `app/routes/hours.py` (`check_link`, `CheckPage`), `app/data.py` (`check_certificate`) |
+
 ---
 
 ## 7. Request pipeline
@@ -541,7 +563,7 @@ flowchart TD
 
 ### Auth, sessions and roles (`app/auth.py`)
 
-- **Public paths** skip the sign-in check: `/login`, `/login/send`, `/login/verify`, `/login/demo`, `/auth/*` (Google and Apple sign-in, 404 when not configured), `/org/login`, `/org/login/send`, `/org/login/verify`, `/org/login/demo`, `/org/claim`, `/org/claim/search`, `/privacy`, `/tasks/reminders`, `/tasks/urgent`, `/urgent/off/{key}`, `/favicon.ico` and `/static/*`.
+- **Public paths** skip the sign-in check: `/login`, `/login/send`, `/login/verify`, `/login/demo`, `/auth/*` (Google and Apple sign-in, 404 when not configured), `/org/login`, `/org/login/send`, `/org/login/verify`, `/org/login/demo`, `/org/claim`, `/org/claim/search`, `/privacy`, `/tasks/reminders`, `/tasks/urgent`, `/urgent/off/{key}`, `/check/{code}` (a certificate's check link), `/favicon.ico` and `/static/*`.
 - **Session contents:** `uid` and `sv`, the session version. A request is signed in only if the profile still exists and isn't deleted or suspended, and `sv` equals the profile's `session_version`. Bumping that version signs out every device; sign-out, suspension and account deletion bump it. A Google or Apple connect from Me is sealed with it, so one started before a sign-out is refused. A deleted or suspended profile fails the check anyway, so removing an admin or coordinator also takes effect at once.
 - **Role gating:**
   - `/admin/*`: admins only. A coordinator who tries is redirected to `/org`, anyone else gets 403.
@@ -551,7 +573,7 @@ flowchart TD
   - `/photos/*` is open to every signed-in role. `app/data.py` then decides who may see each photo (see section 12).
 - **Websockets** apply the same rules through `auth.ws_session_user`, on connect, on every frame and before each push. It also refuses a volunteer who hasn't finished onboarding.
 - Unmatched paths reach the 404 handler without running any Beforeware.
-- Ownership of a single row is checked in `app/data.py`, not here. For example the pages that act on one shift (`/shifts/{id}/cancel`, `/shifts/{id}/confirm`, `/shifts/{id}.ics`) go through `data.shift_event`, which accepts only the volunteer's own upcoming shift on an accepted match; anything else answers 404.
+- Ownership of a single row is checked in `app/data.py`, not here. For example the pages that act on one shift (`/shifts/{id}/cancel`, `/shifts/{id}/confirm`, `/shifts/{id}.ics`) go through `data.shift_event`, which accepts only the volunteer's own upcoming shift on an accepted match; anything else answers 404. The certificate pages go through `data.my_certificate` the same way.
 
 ### htmx partials and full pages
 
@@ -585,6 +607,7 @@ flowchart TD
     side["metrics.py, propublica.py,<br/>org_import.py"]
     pure["match.py, prefs.py<br/>scoring, reading preferences"]
     photos["photos.py<br/>validate, re-encode"]
+    cert["signing.py, certificate.py<br/>HMAC signatures, PDF, QR code"]
     worker[["photo_worker.py<br/>child process"]]
     db[("db.py, migrations/<br/>tables, numbered steps")]
 
@@ -595,17 +618,19 @@ flowchart TD
     r_vol & r_org --> pure
     r_org & r_adm --> side
     r_vol & r_org --> photos
+    r_vol --> cert
     oauth --> photos
     notify --> data
     gate --> data
     data --> pure
     data --> photos
+    data --> cert
     data --> db
     photos --> worker
 
     classDef step fill:#85bbf0,stroke:#5d82a8,color:#0b1f33
     classDef key fill:#438dd5,stroke:#2e6295,color:#ffffff
-    class r_vol,r_org,r_adm,gate,oauth,notify,side,pure,photos step
+    class r_vol,r_org,r_adm,gate,oauth,notify,side,pure,photos,cert step
     class data,db,worker key
 ```
 
@@ -616,10 +641,12 @@ flowchart TD
 | `app/security.py` | `Guard`, `PreviewGate`, CSP and headers, body limits, client IP from `X-Forwarded-For`, persistent rate limits (`rate_event` table), in-memory token buckets, error pages, and the access-log token redaction. |
 | `app/auth.py` | Session secret and cookie name, phone normalization, `sign_in` and `sign_in_staff`, the Beforeware sign-in and role check, websocket session check. |
 | `app/oauth.py`, `app/routes/oauth.py` | Google and Apple sign-in, and the fake that stands in for both: the flow cookie, PKCE, Apple's client secret, ID token verification, the Google picture fetch; the start, callback, connect and disconnect routes and the fake consent page. |
-| `app/data.py` | All domain logic and every query the routes and services run, apart from the metrics queries (`app/metrics_rows.py`). Schema statements live in `app/db.py` and `app/migrations/`, and `app/demo_seed.py` writes seed rows through `app/db.py`'s tables. Covers the deck, swipes, matches, shifts and confirmed hours, chat, urgent calls (refills included), notification bookkeeping, reports and blocks, claims, photos' access rules, account deletion and rate-event storage. Every public function runs under one re-entrant lock because a single apsw connection is shared by all threads. |
+| `app/data.py` | All domain logic and every query the routes and services run, apart from the metrics queries (`app/metrics_rows.py`). Schema statements live in `app/db.py` and `app/migrations/`, and `app/demo_seed.py` writes seed rows through `app/db.py`'s tables. Covers the deck, swipes, matches, shifts and confirmed hours, certificates (issuing, withdrawing, the check), chat, urgent calls (refills included), notification bookkeeping, reports and blocks, claims, photos' access rules, account deletion and rate-event storage. Every public function runs under one re-entrant lock because a single apsw connection is shared by all threads. |
 | `app/match.py` | Pure ranking functions: distance and travel time, cause fit, availability, work fit, language fit, and the weighted score. Has no database access. |
 | `app/prefs.py` | Reads a volunteer's preferences consistently whatever the profile's age, and resolves a typed place (ZIP, neighborhood, device location) to a point. |
 | `app/notify.py` | Twilio Verify, Twilio SMS, Resend email, and their fakes; `channel` picks text or email per volunteer. Sends exactly-once notifications recorded in the `notification` table, day-before reminders, urgent-call waves, and the emails to an org when a volunteer cancels a shift or withdraws. |
+| `app/signing.py` | Certificate signatures: HMAC-SHA256, keyed by `config.certificate_key` (`CERTIFICATE_KEY`), over a canonical JSON encoding of the certificate's id and snapshot (`canonical`, `sign`, `verify` with a constant-time compare), and the 16-character signature code people read (`code`). No database access. |
+| `app/certificate.py`, `app/fonts/` | The certificate PDF (`build_pdf`): US Letter, from the stored snapshot, with the signature code on every page and a QR code of the check link, drawn with fpdf2 and segno. Text is set in Noto Sans (embedded as a subset; `app/fonts/` is outside `static/`, so it is never served), and any character the font lacks, or any control or format character, prints as "?" (`pdf_text`, using fontTools). Also the filename and the date and EIN labels the pages share. No database access. |
 | `app/photos.py`, `app/photo_worker.py` | Upload validation, the sandboxed decode in a child process, and re-encoding to JPEG (full and thumbnail). |
 | `app/db.py`, `app/migrations/` | Table classes (fastlite `transform=True`), indexes, the cause rows, invented demo orgs, and numbered migrations. |
 | `app/metrics.py`, `app/metrics_rows.py` | Pilot metrics: plain-row queries, then pure aggregation. No names, phones or emails. |
@@ -654,6 +681,8 @@ erDiagram
     org ||--o{ block : "blocked or covered"
     claim_request }o--o| org : "approved into"
     profile ||--o{ deck_empty : "saw an empty deck"
+    profile ||--o{ certificate : "issues"
+    org ||--o{ certificate : "confirmed the hours on"
 
     profile {
         int id PK
@@ -662,6 +691,7 @@ erDiagram
         string email
         string display_name
         string last_name
+        string name_changed_at "last rename, UTC"
         int session_version
         string cause_prefs "JSON slug to love, open, no"
         string availability "JSON day slots"
@@ -802,6 +832,17 @@ erDiagram
         int volunteer_id
         bool today
     }
+    certificate {
+        string id PK "22 random chars, the check link"
+        int volunteer_id
+        int org_id
+        string period "2026-10 or all"
+        int minutes "the total"
+        string issued_at
+        string withdrawn_at
+        string snapshot "JSON, NULL once withdrawn"
+        string signature "HMAC-SHA256 hex, NULL once withdrawn"
+    }
 ```
 
 These tables stand on their own:
@@ -826,6 +867,11 @@ Notable indexes, created in `app/db.py`:
 - `profile_phone_live`: one live profile per phone.
 - `coordinator_email_live` and `admin_email_live`: one live profile per email and role.
 - `block_once_v2`: one block per side.
+- `certificate (volunteer_id, issued_at)`: read by the limit of 20 certificates per volunteer in 24 hours.
+
+A certificate's `snapshot` is the JSON of what it says, frozen when it was issued: the volunteer's full name, the nonprofit (name, EIN, website), the coordinators who confirmed the hours, each shift (its id, date, role and minutes), the total, the period and the issue date (Los Angeles date). The row's `signature` is computed over that snapshot and the id (section 12). Withdrawing a certificate, issuing a new one for the same nonprofit and period, or deleting the account stamps `withdrawn_at` and sets `snapshot` and `signature` to NULL, leaving only `volunteer_id`, `org_id`, `period`, `minutes` and the dates.
+
+`profile.name_changed_at` is stamped whenever a volunteer changes a first or last name that was already set (`data._renamed`, called from `save_onboarding` and `save_profile_details`). Filling a name in for the first time doesn't count, and a later Google or Apple sign-in never renames anyone. It exists for certificates: `issue_certificate` refuses hours confirmed at or before that moment, so one person's hours can't be certified under two names.
 
 ### Migrations
 
@@ -847,8 +893,10 @@ Current migrations:
 - `0014_shift_length`: `duration_minutes` on `opening` and `shift`. Older rows keep NULL (no length known).
 - `0015_confirmed_hours`: `shift.confirmed_minutes`, the hours a coordinator confirmed. Shifts marked before it keep NULL.
 - `0016_verified_hours`: `org.confirms_hours` and `profile.verified_hours`. Every org starts as not confirming, every volunteer with no preference.
+- `0017_certificates`: the `certificate` table and its `(volunteer_id, issued_at)` index, both `IF NOT EXISTS`.
+- `0018_name_changed_at`: `profile.name_changed_at`. NULL means the name was never changed, so hours confirmed before this migration can all be certified.
 
-In practice both have happened. `0012` to `0016` only add columns, yet each is a migration that runs a guarded `ALTER TABLE ... ADD COLUMN` (it does nothing when the column is already there), with the class changed too; nothing records why. Other additions used rule 1 alone: the `identity` and `retained_identity_hash` tables (Google and Apple sign-in) and `profile.match_moment_seen_at` came in by the class change, with no migration. Both ways leave the same table, because a migration runs before `app/db.py` declares the tables and `transform=True` then finds the column already there. So the rule stands: a new column or table needs only the class change, and a migration for it is optional.
+In practice both have happened. `0012` to `0018` only add columns or, for `0017`, a table, yet each is a migration that runs a guarded statement (a `CREATE ... IF NOT EXISTS`, or an `ALTER TABLE ... ADD COLUMN` that does nothing when the column is already there), with the class changed too. Their docstrings say they run before `app/db.py` declares the tables, but not why the class change alone wasn't enough. Other additions used rule 1 alone: the `identity` and `retained_identity_hash` tables (Google and Apple sign-in) and `profile.match_moment_seen_at` came in by the class change, with no migration. Both ways leave the same table, because a migration runs before `app/db.py` declares the tables and `transform=True` then finds the column already there. So the rule stands: a new column or table needs only the class change, and a migration for it is optional.
 
 ---
 
@@ -1144,6 +1192,57 @@ The rules live in `data.complete_shift`:
 - `data.my_hours` builds the volunteer's hours: completed shifts with confirmed minutes, grouped by month (newest first) with a total each, and named by the coordinator who last confirmed them (`corrected_by`, else `marked_by`), else the org. Completed shifts with no confirmed minutes are listed apart. A block hides nothing here: it is the volunteer's own record.
 - Metrics (`app/metrics.py`) count attended shifts and no-shows, not hours.
 
+### (i) A certificate: issuing it, the PDF, and checking it
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor V as Volunteer
+    participant A as Causematch
+    participant DB as SQLite
+    actor X as Certificate checker
+
+    V->>A: POST /hours/orgs/{org_id}/certificate period (a month, or all)
+    A->>DB: the volunteer's attended shifts at that org with confirmed hours, in the period
+    alt none there, a bad period, no last name, hours confirmed before the last rename, or 20 in 24 h
+        A-->>V: 404 when there are no hours there, else back to /history with a notice
+    else the same content is already issued and not withdrawn
+        A-->>V: redirect to that certificate
+    else
+        A->>DB: withdraw and scrub the earlier one for this org and period
+        A->>DB: insert id (16 random bytes), snapshot JSON, HMAC-SHA256 of id and snapshot
+        A-->>V: redirect to /hours/certificate/{id}
+    end
+    V->>A: GET /hours/certificate/{id}.pdf
+    A->>DB: the owner's, not withdrawn, signature still matches, else 404
+    A->>A: pdf token bucket, 10 then 1 a minute
+    A-->>V: PDF from the snapshot: signature code, QR code of PUBLIC_BASE_URL/check/{id}
+    V-->>X: gives the PDF, the printout or the link
+    X->>A: GET /check/{id}, no account
+    A->>DB: rate limit per address, 30 per 10 min, else 429
+    A->>DB: the certificate by id
+    A->>A: recompute the signature from its snapshot with CERTIFICATE_KEY, constant-time compare
+    alt no such id, or the signature no longer matches
+        A-->>X: 404 "Not a Causematch record"
+    else withdrawn
+        A-->>X: "This certificate was withdrawn." and nothing else
+    else genuine
+        A->>DB: is each listed shift still attended with the same confirmed minutes?
+        A-->>X: "Genuine certificate" or "Hours have changed": name, nonprofit, EIN, period, total, issue date, signature code
+    end
+```
+
+The rules live in `data.issue_certificate` and `data.check_certificate`:
+
+- A certificate covers one volunteer, one nonprofit and one period, a month (`2026-10`) or `all`. It lists only completed shifts with confirmed minutes, by the shift's start, oldest first, read as `data.my_hours` reads them (the coordinator who last confirmed each, else the org). Like `my_hours`, it doesn't look at blocks or deactivation: it is the volunteer's own record.
+- Shifts and hours lists a card only for a nonprofit with confirmed hours (`data.certificate_options`), and offers its months and "All my hours here".
+- **Refusals.** No last name (`NameRequired`): a certificate carries the full name. Hours confirmed (`coalesce(corrected_at, marked_at)`) at or before `profile.name_changed_at`, or with no time recorded, once the name has changed (`NameChanged`). More than `CERTIFICATES_PER_DAY` (20) issued in the last 24 hours, withdrawn ones included (`CertificateLimit`).
+- **Issuing twice.** If an active certificate for the same nonprofit and period still verifies and says the same thing apart from the issue date, that one comes back and nothing is written. Otherwise the earlier one is withdrawn and scrubbed, in the same transaction as the new insert, so each nonprofit and period has at most one live check link.
+- **The PDF** is built on request from the stored snapshot, never stored, in a thread (about 0.1 to 0.5 s of CPU each, hence its own token bucket). It is served `private, no-store` as an attachment named `causematch-hours-{nonprofit}-{period}.pdf`. The certificate page and the PDF both refuse (404) a certificate whose signature no longer matches.
+- **Withdrawing** (`data.withdraw_certificate`) stamps `withdrawn_at` and erases the snapshot and signature at once. Withdrawing again changes nothing. A new certificate can be issued from Shifts and hours.
+- **"Hours have changed"** means a coordinator corrected a shift that is on the certificate after it was issued: it is no longer attended, or its confirmed minutes differ, compared shift by shift, so two corrections that cancel out in the total still count. Shifts worked later are not on it and change nothing. The figures shown stay the ones issued.
+- In the preview the check link sits behind the password gate like every other page, so a checker without the preview password gets the gate's 401.
+
 ---
 
 ## 11. Matching and ranking
@@ -1210,6 +1309,8 @@ The same visibility check guards `POST /swipe`, so a like sent by id for an open
 | What the volunteer shares (`SHARED_WITH_NONPROFIT` in `app/choices.py`): photo, first name and last initial, pronouns, bio, interests, causes (A to Z, without saying which are loved), general availability (weekday/weekend × part of day), languages, frequency, neighborhood | A nonprofit, only after the volunteer likes one of its openings. The inbox query selects only these columns. |
 | Full last name | The nonprofit, once it accepts. |
 | A shift's confirmed hours and "Still coming?" answer | The volunteer, and the coordinators of the shift's org. |
+| A certificate as issued: full name, the nonprofit's name, EIN and website, each shift's date, role and hours, the coordinators who confirmed them, the total, the period, the issue date and the signature code | The volunteer, on its page and in its PDF, and whoever they give the page, printout or PDF to. No coordinator or admin page shows certificates. |
+| What a certificate's check link shows | Anyone holding the link or the QR code, signed in or not: the full name, the nonprofit and its EIN, the period, the total, the issue date, the signature code, and whether the nonprofit has corrected those hours since. Never the shifts, the website, the coordinators, a phone or an email. A withdrawn certificate's link shows only that it was withdrawn. |
 | The reason given when cancelling a shift | Never stored. It goes only into the email to the org's coordinators, which doesn't name the volunteer. |
 | Whether an org confirms volunteer hours | Volunteers, as the "Confirms your hours" chip on its cards. Only the org's members can change it. |
 | A volunteer's photo (`/photos/{key}.jpg`, `/photos/thumb/{key}.jpg`) | The volunteer, admins, and coordinators of an org whose inbox shows one of their matches, with no block either way. Anyone else gets 404, the same as for a missing photo. It's always revalidated (`private, no-cache`), so a block or removal hides it at once. |
@@ -1242,15 +1343,15 @@ The child process runs as the same user as the app: it limits resources but does
   - HSTS in production and preview.
   - `X-Robots-Tag: noindex, nofollow` in preview.
 - **Body limits:** 64 KB, or 6 MB on photo upload paths. Over that, 413.
-- **Errors in production:** a plain 500 page with a reference id. The log line keeps the request id and stack frames but not the exception message, which could hold a phone number. The uvicorn access log redacts `token`, `access` and `code` in query strings (`security.REDACTED`), and the logs mask phones and emails.
+- **Errors in production:** a plain 500 page with a reference id. The log line keeps the request id and stack frames but not the exception message, which could hold a phone number. The uvicorn access log redacts `token`, `access` and `code` in query strings (`security.REDACTED`), and the logs mask phones and emails. A certificate's id in a path (`/check/{id}`, `/hours/certificate/{id}` and its `.pdf` and `/withdraw`) is replaced by `[redacted]` too, in the access log and in that error line (`security.redact_query`), because the id is the check link's only credential.
 - **Client IP:** taken from `X-Forwarded-For`, exactly `TRUSTED_PROXY_HOPS` places from the right. IPv6 clients are counted per /64.
 
 Rate limits fall into two kinds:
 
 | Kind | Limits |
 |---|---|
-| Persistent, stored in `rate_event` so a restart doesn't reset them | **Sign-in codes:** 5 per 10 min and 10 per day per (phone, IP); 20 per day per phone; 60 per hour per IP; 120 per hour per IPv6 /48. **Wrong codes:** 10 per 10 min per phone. **Email links:** 5 per hour per email, 20 per hour per IP. **Google and Apple callbacks:** 30 per 10 minutes per IP, counted once the flow cookie and state check out. **Adding a phone from Me:** the sign-in code limits. **Demo sign-ins** (a demo only): 10 demo volunteers per hour per IP, also counted against the IP's sign-in code limits; the one-tap nonprofit demo counts against the email-link limit per IP. **Claims:** 5 per hour per IP, 3 per day per email. **ProPublica calls:** 30 per hour across all admins; the claim page's name search has its own, 60 per hour per IP and 300 per hour for every visitor together. **SMS ceiling** on every text: `SMS_MAX_PER_HOUR` (default 100) and `SMS_MAX_PER_DAY` (default 500). Urgent waves may use only half of each, so sign-in codes always have room. |
-| In-memory token buckets per user | Swipe: 30, then 1 per second. Chat: 20, then 2 per second. Report/block: 10, then 1 every 6 minutes. Uploads: 10, then 1 per minute. Wrong preview keys, cookies and passwords: 10 per client address, then 1 per minute. |
+| Persistent, stored in `rate_event` so a restart doesn't reset them | **Sign-in codes:** 5 per 10 min and 10 per day per (phone, IP); 20 per day per phone; 60 per hour per IP; 120 per hour per IPv6 /48. **Wrong codes:** 10 per 10 min per phone. **Email links:** 5 per hour per email, 20 per hour per IP. **Google and Apple callbacks:** 30 per 10 minutes per IP, counted once the flow cookie and state check out. **Certificate check links:** 30 per 10 minutes per IP (`CHECK_PER_IP`). **Adding a phone from Me:** the sign-in code limits. **Demo sign-ins** (a demo only): 10 demo volunteers per hour per IP, also counted against the IP's sign-in code limits; the one-tap nonprofit demo counts against the email-link limit per IP. **Claims:** 5 per hour per IP, 3 per day per email. **ProPublica calls:** 30 per hour across all admins; the claim page's name search has its own, 60 per hour per IP and 300 per hour for every visitor together. **SMS ceiling** on every text: `SMS_MAX_PER_HOUR` (default 100) and `SMS_MAX_PER_DAY` (default 500). Urgent waves may use only half of each, so sign-in codes always have room. |
+| In-memory token buckets per user | Swipe: 30, then 1 per second. Chat: 20, then 2 per second. Report/block: 10, then 1 every 6 minutes. Uploads: 10, then 1 per minute. Certificate PDFs: 10, then 1 per minute (taken in the route, not by `throttle`). Wrong preview keys, cookies and passwords: 10 per client address, then 1 per minute. |
 
 HTTP requests over a limit get a 429 page with `Retry-After` (600 s for the persistent limits). Chat frames over the bucket close the socket with 1013. Texts over the SMS ceiling are deferred. A reporter may also file at most 10 reports in any 24 hours, counted from the `report` table; the 11th is refused on the form.
 
@@ -1258,9 +1359,18 @@ HTTP requests over a limit get a 429 page with `Retry-After` (600 s for the pers
 
 When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters, `PreviewGate` lets a request through only with the access cookie or the password by HTTP Basic auth, on every request: pages, `/static`, `/photos`, `/tasks` and websocket handshakes, so in a preview nothing can call `/tasks/*` (see section 13). The link people are sent carries the password as `?access=`. On a top-level navigation (`Sec-Fetch-Dest: document` with `Sec-Fetch-Mode: navigate`, or no Sec-Fetch headers, as from curl) a GET with the right key gets a 303 to the same URL without the key and the cookie `__Host-cm_preview` (Secure, HttpOnly, SameSite=Lax, 30 days). Any other request with `?access=` is refused without weighing the key, so a foreign page's `<img>` can't use up a visitor's guesses; a browser that has the cookie just gets the 303 without the key. The cookie is `<issue time>.<mac>`, the mac an HMAC-SHA256 keyed with `SESSION_SECRET` over a label, the password's SHA-256 and the issue time: it can't be made without the secret, expires after 30 days on the server side too, and a new password (or session secret) voids every one. Basic auth (any user name) stays for scripts. The password is compared in constant time on SHA-256 digests. Anything else gets a plain 401 page with no `WWW-Authenticate`, so browsers show no dialog; websockets are closed with 1008. Wrong keys, cookies and passwords share the per-address limit above. Only `/robots.txt` answers without it, with `Disallow: /`.
 
+### Certificates and the check link (`app/signing.py`, `app/data.py`)
+
+- **What is signed.** At issue, `signing.sign` computes HMAC-SHA256 over a canonical encoding of `{"id": <certificate id>, "snapshot": <snapshot>}`: JSON with sorted keys, no spaces, ASCII only, so the same content always gives the same bytes. The key is `CERTIFICATE_KEY` (`config.certificate_key`), a secret of its own: not the session secret and not `PHONE_HASH_KEY`. The 64 hex characters are stored in `certificate.signature`. The **signature code** printed on the page and the PDF is its first 16 characters in groups of four (`signing.code`), for people to compare by eye; it is not used to look a certificate up.
+- **The id is the credential.** `secrets.token_urlsafe(16)`: 22 characters, 128 random bits. The check link is `PUBLIC_BASE_URL/check/{id}`, and the QR code on the PDF encodes it. It doesn't expire: it works until the volunteer withdraws the certificate, issues a new one for the same nonprofit and period, or deletes the account. The route is public (`PUBLIC` in `app/auth.py`), limited per address, and its answers carry `noindex` (meta and `X-Robots-Tag`), `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Logs never hold the id (see the error bullet above).
+- **Tampering.** `data.check_certificate` reads the stored row and recomputes the signature from its snapshot and id (`signing.verify`, a constant-time compare). A snapshot changed by even one character, or signed with another key, no longer verifies, and the check link then gives the same 404 "Not a Causematch record" as an id that doesn't exist or has a character wrong, so a probe learns nothing from the difference. The volunteer's own page and PDF refuse such a certificate too.
+- **Forgery.** The check page shows what Causematch stored, never what a document claims, so an edited PDF or printout fails as soon as someone opens its link: a made-up id has no row, and a real id shows the real name, nonprofit and total. Making a row that verifies takes the key. The checker should compare the page with the paper they were given; the signature code makes that quick.
+- **Corrections after issue.** The certificate keeps what was issued. When the nonprofit later corrects one of its shifts, the check link says "Hours have changed" and still shows the issued figures.
+- **The key.** Required in production and preview (32+ characters), checked at startup by `main.py`; development and test fall back to a fixed dev-only default. Changing it makes every certificate issued before read as "Not a Causematch record", and their PDFs are refused: no old key is kept for checking. `docs/OPERATIONS.md` (Rotating `CERTIFICATE_KEY`) says not to rotate it without building that first.
+
 ### Secrets and what never enters git
 
-- **Secrets come from the environment**, through Secret Manager on Cloud Run: `SESSION_SECRET`, `PHONE_HASH_KEY`, `TASKS_TOKEN`, `PREVIEW_PASSWORD`, Twilio and Resend keys, `GOOGLE_CLIENT_SECRET` and `APPLE_PRIVATE_KEY`. In production the first three and the Google secret must be at least 32 characters.
+- **Secrets come from the environment**, through Secret Manager on Cloud Run: `SESSION_SECRET`, `PHONE_HASH_KEY`, `CERTIFICATE_KEY`, `TASKS_TOKEN`, `PREVIEW_PASSWORD`, Twilio and Resend keys, `GOOGLE_CLIENT_SECRET` and `APPLE_PRIVATE_KEY`. In production the first four and the Google secret must be at least 32 characters.
 - **`PHONE_HASH_KEY`** keys several HMACs: rate-limit keys, retained phone and identity hashes after deletion, and urgent unsubscribe links.
 - **Excluded by `.gitignore`:**
   - `data/`, `*.db`
@@ -1272,10 +1382,12 @@ When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters,
 - **Seed safety:** `scripts/deploy_preview.sh` refuses to copy the seed if `preview-seed/` is tracked or not ignored.
 - **Account deletion** (`data.delete_account`) soft-deletes the profile (`deleted_at`) and ends every session. It:
   - **deletes** the volunteer's places, login tokens, connected Google or Apple identities and photos;
-  - **sets to NULL** on the profile: `phone`, `email`, `display_name`, `last_name`, `contact_phone`, `lat`, `lon`, `neighborhood`, `other_causes`, `language_other`, `free_dates`, `verified_hours`, `pronouns`, `bio`, `interests` and `photo_key`;
+  - **withdraws** every certificate of theirs and erases its `snapshot` and `signature`, so each check link says only "withdrawn"; the row keeps `volunteer_id`, `org_id`, `period`, `minutes`, `issued_at` and `withdrawn_at`, with no name;
+  - **sets to NULL** on the profile 17 columns: `phone`, `email`, `display_name`, `last_name`, `contact_phone`, `lat`, `lon`, `neighborhood`, `other_causes`, `language_other`, `free_dates`, `verified_hours`, `name_changed_at`, `pronouns`, `bio`, `interests` and `photo_key`;
   - **withdraws** pending and accepted matches (cancelling their future shifts), replaces the volunteer's messages with "[message removed]", and cancels their pending and failed notices;
   - **keeps** a keyed hash of the phone and of each identity only when a block, report or suspension must survive (see section 9);
-  - **leaves on the deleted row** every other column, including the preference answers: `causes`, `cause_prefs`, `availability`, `dealbreakers`, `weekly_limit`, `skills`, `languages`, `setting`, `effort`, `group_size`, `first_timer`, `orientation_ok`, `horizon_days`, `commitment`, `surprise`, `frequency`, `radius_km`, the `urgent_*` settings, `heard_from` and `volunteered_last_year`. Nothing on that row names the person any more. The metrics read only `heard_from` from it (`app/metrics_rows.py`). The `delete_account` docstring says more is cleared ("every personal column scrubbed, kept: the answers the metrics group by"); this list is what the code does.
+  - **leaves on the deleted row** every other column, including the preference answers: `causes`, `cause_prefs`, `availability`, `dealbreakers`, `weekly_limit`, `skills`, `languages`, `setting`, `effort`, `group_size`, `first_timer`, `orientation_ok`, `horizon_days`, `commitment`, `surprise`, `frequency`, `radius_km`, the `urgent_*` settings, `heard_from` and `volunteered_last_year`. Nothing on that row names the person any more. The metrics read only `heard_from` from it (`app/metrics_rows.py`). The `delete_account` docstring says more is cleared ("every personal column scrubbed, kept: the answers the metrics group by"), and doesn't mention certificates; this list is what the code does.
+- **A coordinator's deletion** (`data.remove_coordinator`) leaves their name in the snapshots of certificates already issued, as the privacy page says: those certificates record who confirmed the hours. Certificates issued later name the org instead.
 
 ---
 
@@ -1287,7 +1399,7 @@ When `CAUSEMATCH_ENV=preview` and `PREVIEW_PASSWORD` has at least 16 characters,
 |---|---|---|---|
 | Set by | `CAUSEMATCH_ENV=development` or `test` | `CAUSEMATCH_ENV=preview` + `PREVIEW_PASSWORD` (16+ chars) | `CAUSEMATCH_ENV=production`, or Cloud Run |
 | Production rules (strong secrets, https origin, `__Host-` cookie, HSTS, plain 500 page) | no | yes | yes |
-| Session secret | public dev default if unset | required, 32+ chars | required, 32+ chars |
+| Session secret, certificate key | public dev defaults if unset | required, 32+ chars | required, 32+ chars |
 | Fake SMS (code `000000`) and fake email (logged) | allowed with `CAUSEMATCH_FAKE_SMS=1` / `CAUSEMATCH_FAKE_EMAIL=1` | allowed, and set by the deploy script | refused at startup |
 | Fake Google and Apple consent page | allowed with `CAUSEMATCH_FAKE_OAUTH=1` (set by the tests and `scripts/demo.py`) | allowed, and set by the deploy script | refused at startup |
 | Volunteer sign-in providers | none required | at least one of Twilio Verify (the fake counts), Google, Apple | at least one of Twilio Verify, Google, Apple |
@@ -1315,7 +1427,7 @@ Based on the code and config in this repo:
 | SQLite file | **Live**, but in the preview it lives inside the container and is reseeded at each cold start. |
 | Photo worker child process | **Live** (`app/photo_worker.py`). |
 | ProPublica API | **Live.** Used by the claim page's name search, the admin orgs and claims pages and by `scripts/import_orgs.py` / `scripts/verify_org.py`. |
-| Secret Manager | **Live** for the preview: `PREVIEW_PASSWORD`, `SESSION_SECRET`, `PHONE_HASH_KEY`, `TASKS_TOKEN`. |
+| Secret Manager | **Live** for the preview: `PREVIEW_PASSWORD`, `SESSION_SECRET`, `PHONE_HASH_KEY`, `CERTIFICATE_KEY`, `TASKS_TOKEN`. |
 | Twilio Verify and SMS, Resend email | **Implemented** (`app/notify.py`), **not live**. The preview runs the fakes (`CAUSEMATCH_FAKE_SMS=1`, `CAUSEMATCH_FAKE_EMAIL=1`). Production refuses to start without Resend, and Twilio is optional once Google or Apple is set: without it there is no phone sign-in and volunteers get email instead of texts. |
 | Google and Apple sign-in | **Implemented** (`app/oauth.py`, `app/routes/oauth.py`), **not live**. The preview and `scripts/demo.py` run the fake (`CAUSEMATCH_FAKE_OAUTH=1`), a local consent page. Production refuses to start with none of Twilio Verify, Google and Apple, or with any of them half set. Setup is in `docs/OPERATIONS.md`, Live providers. |
 | Cloud Scheduler calling `/tasks/reminders` and `/tasks/urgent` | **Not set up.** The endpoints exist and check a bearer token (`app/routes/tasks.py`), but nothing calls them: the Cloud Scheduler API isn't enabled in the project, and no script creates the jobs `docs/OPERATIONS.md` describes. In the preview they can't be called at all, because `PreviewGate` and the bearer check both read the one `Authorization` header. So the preview sends no day-before reminders, no accept-text retries and no urgent waves (the demo seed sends one wave directly). |
@@ -1331,12 +1443,12 @@ flowchart LR
     dev["Developer machine<br/>scripts/deploy_preview.sh"] -- "checks project is named Causematch<br/>copies seed into ignored preview-seed/" --> cb["Cloud Build<br/>gcloud run deploy --source ."]
     cb -- "Dockerfile" --> img["Image in Artifact Registry<br/>python:3.12-slim + uv, pinned by digest<br/>uv sync --frozen --no-dev<br/>non-root user owns only data/"]
     img --> svc["Cloud Run service causematch-preview<br/>us-west1, 0 to 1 instances, 1 GiB, 1 CPU<br/>--allow-unauthenticated, the app gates itself"]
-    sm["Secret Manager<br/>PREVIEW_PASSWORD, SESSION_SECRET,<br/>PHONE_HASH_KEY, TASKS_TOKEN"] --> svc
+    sm["Secret Manager<br/>PREVIEW_PASSWORD, SESSION_SECRET,<br/>PHONE_HASH_KEY, CERTIFICATE_KEY, TASKS_TOKEN"] --> svc
     svc -- "second step: set PUBLIC_BASE_URL<br/>to the service URL" --> svc
 ```
 
 - **`Dockerfile`:** the image's `CMD` runs uvicorn with the `Procfile`'s flags (`--ws-max-size 65536`, `--limit-concurrency 200`, `--timeout-keep-alive 15`, `--timeout-graceful-shutdown 8`, `--no-proxy-headers`) on `$PORT`, default 8080.
-- **`scripts/deploy_preview.sh`** sets `CAUSEMATCH_ENV=preview`, `PREVIEW_SEED_DIR=/app/preview-seed`, `TRUSTED_PROXY_HOPS=1`, the three fakes (SMS, email, Google and Apple), `CAUSEMATCH_DEMO_MATCHES=1`, `CONTACT_EMAIL` and `PUBLIC_BASE_URL`. The seed also ends up in the Cloud Build source bucket and in the image. Both are private to the project.
+- **`scripts/deploy_preview.sh`** sets `CAUSEMATCH_ENV=preview`, `PREVIEW_SEED_DIR=/app/preview-seed`, `TRUSTED_PROXY_HOPS=1`, the three fakes (SMS, email, Google and Apple), `CAUSEMATCH_DEMO_MATCHES=1`, `CONTACT_EMAIL` and `PUBLIC_BASE_URL`, and reads `PREVIEW_PASSWORD`, `SESSION_SECRET`, `PHONE_HASH_KEY`, `CERTIFICATE_KEY` and `TASKS_TOKEN` from Secret Manager. The seed also ends up in the Cloud Build source bucket and in the image. Both are private to the project.
 - **Production is not deployed yet.** The code expects these additions:
   - real Resend credentials, and at least one of Twilio, Google and Apple (`docs/OPERATIONS.md`, Live providers)
   - a persistent database (Litestream replication to GCS is the plan)
@@ -1352,6 +1464,7 @@ flowchart LR
 | `PUBLIC_BASE_URL` | The app's origin: emailed links, the same-origin check, CSP. Never read from the request. | production, preview (`https://`, origin only); dev defaults to `http://localhost:5001` |
 | `TASKS_TOKEN` | Bearer token for `/tasks/*` | production, preview (32+) |
 | `PHONE_HASH_KEY` | HMAC key: rate-limit keys, retained phone hashes, unsubscribe links | production, preview (32+) |
+| `CERTIFICATE_KEY` | HMAC key that signs hours certificates. Changing it makes every certificate issued before read as not genuine. | production, preview (32+); dev and test default to a fixed dev-only key |
 | `CONTACT_EMAIL` | Address on `/privacy` and in claim emails | production, preview |
 | `TRUSTED_PROXY_HOPS` | Proxies appending to `X-Forwarded-For`: 1 for `*.run.app`, 2 behind a load balancer | on Cloud Run |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SID` | Sign-in codes | all four Twilio variables or none; production needs Twilio, Google or Apple |
@@ -1379,7 +1492,7 @@ flowchart LR
 | Part | What it covers |
 |---|---|
 | `tests/conftest.py` | Before importing the app it sets `CAUSEMATCH_ENV=test`, a temporary `CAUSEMATCH_DB`, the three fakes (SMS, email, Google and Apple) and `PUBLIC_BASE_URL=https://causematch.test`. It replaces Starlette's `TestClient` with one that sends the same `Origin` a browser would, and provides fixtures for fresh databases and signed-in volunteers and coordinators. The `live_url` fixture runs the real app under uvicorn in a thread on a free port, for browser tests. |
-| `tests/test_*.py` (34 modules) | One module per area: access and roles, auth, Google and Apple sign-in (`test_oauth.py`, `test_oauth_apple.py`, through the fake consent page and with test-generated signing keys), cookie settings, org auth, claims, deck, matching (`test_match*.py`), prefs, onboarding, openings, urgent calls, shifts (marking, confirmed hours, cancel and confirm pages), My hours (`test_hours.py`), chat and threads, notify, safety, security, preview, photos, org media, profile, metrics, import, db and migrations, PWA, UI, and the public website (`test_site.py`). |
+| `tests/test_*.py` (34 modules) | One module per area: access and roles, auth, Google and Apple sign-in (`test_oauth.py`, `test_oauth_apple.py`, through the fake consent page and with test-generated signing keys), cookie settings, org auth, claims, deck, matching (`test_match*.py`), prefs, onboarding, openings, urgent calls, shifts (marking, confirmed hours, cancel and confirm pages), My hours and certificates (`test_hours.py`: issuing, the name rules, the PDF, tampering, withdrawal, the check link and its limit), chat and threads, notify, safety, security, preview, photos, org media, profile, metrics, import, db and migrations, PWA, UI, and the public website (`test_site.py`). |
 | `tests/e2e/` | Playwright with Chromium, often at iPhone 13 size, against `live_url`: swipe and drag, live chat between two browsers, the match moment arriving live, the deck fitting one screen, preferences, photo upload, layout and tap targets. Marked `e2e`. |
 | `tests/fixtures/propublica/` | Recorded ProPublica API responses, so tests never call the network. |
 
@@ -1426,6 +1539,10 @@ A second workflow, `.github/workflows/pages.yml`, only assembles and publishes t
 | **Can't make this one** | A volunteer cancelling one upcoming shift. The match stays, except for the only shift of a one-time opening. |
 | **Refill** | The urgent call for 1 person the app posts itself when a late cancel gives up a spot (`urgent_call.refill`). |
 | **Confirmed hours** | The hours a coordinator stored when marking a shift attended (`shift.confirmed_minutes`). They add up on the volunteer's Shifts and hours page. |
+| **Certificate** | A volunteer's signed record of the hours one nonprofit confirmed, for a month or for all of them (`certificate` table). Its snapshot is frozen when issued. |
+| **Check link** | `/check/{id}`, the public page that says whether a certificate is genuine, has changed hours or was withdrawn. The PDF's QR code points at it. The random id is the only credential. |
+| **Signature code** | The first 16 characters of a certificate's HMAC signature, grouped in fours ("A1B2-C3D4-E5F6-0718"), printed so a person can compare the paper with the check link. |
+| **Name change** | A changed first or last name that was already set, stamped in `profile.name_changed_at`. Hours confirmed before it can't go on a certificate. |
 | **Verified hours** | A volunteer's private choice about nonprofits that say they can confirm hours (`org.confirms_hours`): no preference, Prefer or Only show (`profile.verified_hours`). |
 | **Weekly limit** | "Up to N shifts a week". A full week's openings rank last and its urgent calls skip the volunteer. |
 | **Clash warning** | The "You're booked at {org} then" chip on a card that starts less than 4 hours from a booked shift. |
