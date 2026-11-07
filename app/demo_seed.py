@@ -31,6 +31,7 @@ COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 TEAM_NAMES = ("Rosa", "Alex", "Jamie", "Noor", "Luis", "Kim", "Theo", "Dana")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
 CONFIRMING_ORG = "Downtown Harvest Kitchen"  # the invented org that confirms hours
+CONFIRMING_SEED_ORGS = 4  # with a seed file: this many orgs, by id, confirm hours
 SOON_TIMES = ("10:00", "13:00", "16:00", "18:30")  # tomorrow's shifts (_soon_shifts)
 # the seed file's words -> the opening form's values (app/routes/org.py)
 RECURRENCE = {
@@ -378,6 +379,12 @@ def seed(seed_file=None):
     if seed_file:
         path = Path(seed_file)
         load_orgs(json.loads(path.read_text()), path.resolve().parent)
+        # The first CONFIRMING_SEED_ORGS (the coordinator's among them) confirm hours, so
+        # the demo shows confirmed hours and the "I need my hours confirmed" deck has
+        # cards. Every opening here is a sample, so this claims nothing about what a
+        # real nonprofit does.
+        for o in orgs(order_by="id")[:CONFIRMING_SEED_ORGS]:
+            orgs.update(id=o.id, confirms_hours=True)
     else:
         seed_demo()
         for o in orgs():  # app/db.py verifies them in development only; a preview's too
@@ -562,14 +569,29 @@ def _matches(uid, coordinator_org_id, kinds):
 def demo_volunteer(phone):
     """Signing in with ME_PHONE while config.demo_matches is on (the auth route's hook,
     set by main.py): a fresh Sam for this visitor alone, with their preferences and photo,
-    no matches yet, and a full deck whose first card is the urgent call. Its
-    profile id; None for any other number."""
+    one accepted match at the coordinator's org with a confirmed shift from 14 days ago
+    (so Shifts and hours and a certificate work in one visit), and a full deck whose
+    first card is the urgent call. Its profile id; None for any other number."""
     from app import data
     from app.config import DEMO_PHONE  # ME_PHONE, in E.164
+    from app.db import matches, openings
 
     if phone != DEMO_PHONE:
         return None
     uid = _sam(data.new_demo_volunteer())
+    coord = data.coordinator_by_email(COORDINATOR[0])
+    (org_id,) = data.coordinator_org_ids(coord)
+    first = next(
+        o for o in openings(order_by="id") if o.org_id == org_id and o.status == "open"
+    )
+    m = data.swipe(uid, first.id, True)
+    data.decide(coord, m.id, True)
+    # accepted before the shift it holds, and already seen: the "It's a match!" takeover
+    # is for the likes this visitor makes
+    long_ago = (datetime.now(UTC) - timedelta(days=15)).isoformat(timespec="seconds")
+    matches.update(id=m.id, created_at=long_ago, decided_at=long_ago)
+    data.saw_new_matches(uid, data.new_matches(uid))
+    _past_shift(m.id, coord, 14, "completed", first.duration_minutes)
     _preferences(uid)
     return uid
 

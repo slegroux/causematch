@@ -679,6 +679,16 @@ def test_seed_has_one_invented_org_that_confirms_hours(preview):
     assert [o.name for o in orgs() if o.confirms_hours] == [demo_seed.CONFIRMING_ORG]
 
 
+def test_seed_file_orgs_confirm_hours_so_the_demo_can_show_them(preview, seed_dir):
+    _empty()
+    demo_seed.seed_preview(str(seed_dir))
+    coordinator_org = orgs(order_by="id")[0]
+    assert coordinator_org.confirms_hours
+    assert data.coordinator_org_ids(
+        data.coordinator_by_email(demo_seed.COORDINATOR[0])
+    ) == [coordinator_org.id]
+
+
 def test_seed_preview_runs_in_a_preview_only(seed_dir):
     _empty()
     with pytest.raises(RuntimeError, match="preview only"):
@@ -755,14 +765,23 @@ def test_each_visitor_of_the_demo_number_gets_their_own_sam(demo):
     assert data.deck(b.uid, 1)[0]["id"] == first["id"]  # b's urgent card is still up
 
 
-def test_a_new_demo_sam_starts_with_no_matches_and_a_full_deck(demo):
+def test_a_new_demo_sam_has_one_match_and_a_full_deck(demo):
     uid = as_demo_volunteer().uid
-    assert matches.count_where("volunteer_id = ?", [uid]) == 0
-    assert not messages(where="match_id IN (SELECT id FROM match WHERE volunteer_id = ?)",
-                        where_args=[uid])  # fmt: skip
+    (m,) = matches(where="volunteer_id = ?", where_args=[uid])
+    assert m.status == "accepted"
     deck = data.deck(uid, 200)
-    # the invented seed holds 7 openings (the real seed dir holds more than 40)
-    assert len(deck) >= 7 and deck[0]["urgent"]
+    # the invented seed holds 7 openings, one of them now Sam's match (the real seed
+    # dir holds more than 40)
+    assert len(deck) >= 6 and deck[0]["urgent"]
+
+
+def test_a_new_demo_sam_arrives_with_confirmed_hours_to_certify(demo):
+    uid = as_demo_volunteer().uid
+    (option,) = data.certificate_options(uid)
+    assert option["minutes"] > 0
+    assert data.my_hours(uid)["months"][0]["minutes"] == option["minutes"]
+    made = data.issue_certificate(uid, option["org_id"], "all")
+    assert made["created"]
 
 
 def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
@@ -840,22 +859,25 @@ def test_in_a_demo_the_coordinator_sees_demo_people_only(demo):
     (real,) = profiles(where="phone = ?", where_args=["+12135550188"])
     profiles.update(id=real.id, display_name="Realtester", onboarded_at="2026-01-01",
                     heard_from="skipped")  # fmt: skip
+    # a demo Sam arrives accepted at Pat's first opening, so Pat sees them
     sam = as_demo_volunteer()
     opening = demo_seed_first_opening(pat)
     before = data.org_pending_count(opening.org_id)
-    for c, uid in ((tester, real.id), (sam, sam.uid)):
-        r = c.post("/swipe", data={"opening_id": opening.id, "liked": "1"},
-                   follow_redirects=False)  # fmt: skip
-        assert r.status_code == 303, uid
-    ids = {m.volunteer_id: m.id for m in matches(where="opening_id = ?",
-                                                  where_args=[opening.id])}  # fmt: skip
+    r = tester.post("/swipe", data={"opening_id": opening.id, "liked": "1"},
+                    follow_redirects=False)  # fmt: skip
+    assert r.status_code == 303
+    (mine,) = matches(where="volunteer_id = ? AND opening_id = ?",
+                      where_args=[sam.uid, opening.id])  # fmt: skip
     pending = {r["id"] for r in data.org_inbox(pat)["pending"]}
-    assert ids[sam.uid] in pending and ids[real.id] not in pending
+    assert mine.status == "accepted" and not pending & {
+        m.id for m in matches(where="volunteer_id = ?", where_args=[real.id])
+    }
     pat_page = TestClient(app, headers={"Authorization": basic()})
     pat_page.post("/org/login/demo")
     inbox = pat_page.get("/org/inbox").text
     assert "Realtester" not in inbox and "Sam" in inbox
-    assert data.org_pending_count(opening.org_id) == before + 1  # the copy only
+    # the tester's like is hidden
+    assert data.org_pending_count(opening.org_id) == before
     (m,) = matches(where="volunteer_id = ?", where_args=[real.id])
     with pytest.raises(PermissionError):  # nor accepted by id, so no chat or shift
         data.decide(pat, m.id, True)
@@ -934,12 +956,16 @@ def test_five_likes_on_stand_in_openings_give_five_matches(demo):
         sam.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
         liked.append(card["id"])
     early = (datetime.now(UTC) - data.DEMO_ACCEPT_AFTER).isoformat(timespec="seconds")
-    for m in matches(where="volunteer_id = ?", where_args=[sam.uid]):
+    mine = [  # Sam also arrives with an accepted match at Pat's, which this leaves be
+        m for m in matches(where="volunteer_id = ?", where_args=[sam.uid])
+        if m.opening_id in liked
+    ]  # fmt: skip
+    for m in mine:
         assert m.status == "pending"
         matches.update(id=m.id, created_at=early)
     assert "s a match!" in sam.get("/deck").text.replace("&#x27;", "'")
-    mine = matches(where="volunteer_id = ?", where_args=[sam.uid])
-    assert len(mine) == 5 and {m.status for m in mine} == {"accepted"}
+    assert len(mine) == 5
+    assert {matches[m.id].status for m in mine} == {"accepted"}
 
 
 def test_many_demo_copies_matching_one_opening_leave_it_open(demo):
@@ -996,7 +1022,10 @@ def test_in_a_demo_copies_never_fill_pats_side_or_the_urgent_card(demo):
     openings.update(id=o.id, slots=accepted + 1)  # one real spot left
     for _ in range(3):  # copies accepted on Pat's opening
         uid = as_demo_volunteer().uid
-        data.decide(pat, data.swipe(uid, o.id, True).id, True)
+        # a copy arrives accepted at Pat's first opening
+        m = data.swipe(uid, o.id, True)
+        if m.status == "pending":
+            data.decide(pat, m.id, True)
     assert openings[o.id].status == "open"
     assert data.opening_counts(pat)[o.id]["accepted"] == accepted
     inbox = {r["id"]: r for r in data.org_inbox(pat)["pending"]}
@@ -1062,13 +1091,8 @@ def test_a_stand_in_org_answers_a_demo_copys_first_message_once(demo):
 
 def test_pats_org_and_real_volunteers_get_no_stand_in_reply(demo):
     sam = as_demo_volunteer()
-    pat = data.coordinator_by_email(demo_seed.COORDINATOR[0])
-    o = next(
-        o for o in openings(where="status = 'open'", order_by="id")
-        if not data.demo_team(o.org_id)
-    )  # fmt: skip
-    m = data.swipe(sam.uid, o.id, True)
-    data.decide(pat, m.id, True)
+    (m,) = matches(where="volunteer_id = ?", where_args=[sam.uid])  # accepted at Pat's
+    assert not data.demo_team(openings[m.opening_id].org_id)
     sam.post(f"/chat/{m.id}/send", data={"msg": "Hello"})
     assert _chat_bodies(m.id) == ["Hello"]
 
