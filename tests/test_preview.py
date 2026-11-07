@@ -625,15 +625,21 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
     _empty()
     caplog.set_level("INFO", logger="causematch")
     demo_seed.seed_preview(str(seed_dir))
-    pantry, shelter = sorted(orgs(), key=lambda o: o.name)
+    harvest, pantry, shelter = sorted(orgs(), key=lambda o: o.name)
+    assert harvest.name == demo_seed.CONFIRMING_ORG and harvest.verified_at
     assert pantry.name == "Invented Pantry" and pantry.logo_key and pantry.photo_key
     assert pantry.verified_at and shelter.verified_at
     titles = {o.title for o in openings()}
-    # the urgent call's opening: the coordinator's org had only one
-    fridge = "Sample: Restock the community fridge"
-    assert titles == {"Sample: Sort cans", "Sample: Walk dogs", fridge}
+    # the invented coordinator's org brings two openings of its own, samples too
+    lunch = "Sample: Play a set at the Sunday community lunch"
+    assert titles == {
+        "Sample: Sort cans",
+        "Sample: Walk dogs",
+        "Sample: Serve a weekend lunch line",
+        lunch,
+    }
     (call,) = urgent_calls()
-    assert openings[call.opening_id].title == fridge and call.status == "open"
+    assert openings[call.opening_id].title == lunch and call.status == "open"
     assert openings(where="title = ?", where_args=["Sample: Sort cans"])[0].photo_key
     sam = [p for p in profiles() if p.display_name == "Sam"]
     assert len(sam) == 1 and sam[0].photo_key
@@ -679,14 +685,15 @@ def test_seed_has_one_invented_org_that_confirms_hours(preview):
     assert [o.name for o in orgs() if o.confirms_hours] == [demo_seed.CONFIRMING_ORG]
 
 
-def test_seed_file_orgs_confirm_hours_so_the_demo_can_show_them(preview, seed_dir):
+def test_seed_file_demo_nonprofit_is_invented_and_the_only_one_to_confirm_hours(
+    preview, seed_dir
+):
     _empty()
     demo_seed.seed_preview(str(seed_dir))
-    coordinator_org = orgs(order_by="id")[0]
-    assert coordinator_org.confirms_hours
-    assert data.coordinator_org_ids(
-        data.coordinator_by_email(demo_seed.COORDINATOR[0])
-    ) == [coordinator_org.id]
+    (mine,) = [o for o in orgs() if o.confirms_hours]
+    assert mine.name == demo_seed.CONFIRMING_ORG and not mine.ein
+    pat = data.coordinator_by_email(demo_seed.COORDINATOR[0])
+    assert data.coordinator_org_ids(pat) == [mine.id]
 
 
 def test_seed_preview_runs_in_a_preview_only(seed_dir):
@@ -790,13 +797,14 @@ def test_a_demo_visitor_gets_hours_and_a_certificate_in_one_visit(
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     assert "s a match!" not in browser.get("/deck").text.replace("&#x27;", "'")
     history = browser.get("/history").text
-    assert "Invented Pantry" in history and "hours" in history
-    org_id = orgs(where="name = ?", where_args=["Invented Pantry"])[0].id
+    assert demo_seed.CONFIRMING_ORG in history and "hours" in history
+    org_id = orgs(where="name = ?", where_args=[demo_seed.CONFIRMING_ORG])[0].id
     r = browser.post(f"/hours/orgs/{org_id}/certificate", data={"period": "all"},
                      follow_redirects=False)  # fmt: skip
     assert r.status_code == 303
     page = browser.get(r.headers["location"]).text
-    assert "Sam Lee" in page and "Invented Pantry" in page
+    assert "Sam Lee" in page and demo_seed.CONFIRMING_ORG in page
+    assert "Invented Pantry" not in page and "EIN" not in page  # nothing of the file's
     pdf = browser.get(r.headers["location"] + ".pdf")
     assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf"
     assert pdf.content.startswith(b"%PDF")

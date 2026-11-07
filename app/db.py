@@ -716,52 +716,55 @@ def seed_demo():
 
 
 def _seed_demo():
-    ids = []
-    for name, cs, lat, lon in ORGS:
-        org = orgs.insert(
-            Org(
-                name=name,
-                causes=json.dumps(cs),
-                lat=lat,
-                lon=lon,
-                about="An invented organization.",
-                intro="cold",
-                created_at=now(),
-                verified_at=now() if is_dev() else None,
-            )
+    ids = [_demo_org(*entry).id for entry in ORGS]
+    for row in OPENINGS:
+        _demo_opening(ids[row[0]], row)
+
+
+def seed_demo_org(name):
+    """One of the invented orgs and its openings, added alone to a database that holds
+    others (app/demo_seed.py, beside a seed file's real nonprofits): (org, [openings])."""
+    index = next(i for i, entry in enumerate(ORGS) if entry[0] == name)
+    with db.conn:
+        org = _demo_org(*ORGS[index])
+        return org, [_demo_opening(org.id, r) for r in OPENINGS if r[0] == index]
+
+
+def _demo_org(name, cs, lat, lon):
+    return orgs.insert(
+        Org(
+            name=name,
+            causes=json.dumps(cs),
+            lat=lat,
+            lon=lon,
+            about="An invented organization.",
+            intro="cold",
+            created_at=now(),
+            verified_at=now() if is_dev() else None,
         )
-        ids.append(org.id)
-    for (
-        oi,
-        title,
-        cs,
-        skills,
-        hood,
-        lat,
-        lon,
-        starts,
-        slots,
-        minutes,
-        status,
-    ) in OPENINGS:
-        openings.insert(
-            Opening(
-                org_id=ids[oi],
-                title=title,
-                about=ABOUT[title][0],
-                notes=ABOUT[title][1],
-                causes=json.dumps(cs),
-                skills=json.dumps(skills),
-                lat=lat,
-                lon=lon,
-                neighborhood=hood,
-                remote=False,
-                starts_at=starts,
-                duration_minutes=minutes,
-                recurrence="",
-                slots=slots,
-                orientation_required="",
-                status=status,
-                created_at=now(),
-            )
+    )
+
+
+def _demo_opening(org_id, row):
+    _, title, cs, skills, hood, lat, lon, starts, slots, minutes, status = row
+    return openings.insert(
+        Opening(
+            org_id=org_id,
+            title=title,
+            about=ABOUT[title][0],
+            notes=ABOUT[title][1],
+            causes=json.dumps(cs),
+            skills=json.dumps(skills),
+            lat=lat,
+            lon=lon,
+            neighborhood=hood,
+            remote=False,
+            starts_at=starts,
+            duration_minutes=minutes,
+            recurrence="",
+            slots=slots,
+            orientation_required="",
+            status=status,
+            created_at=now(),
         )
+    )
