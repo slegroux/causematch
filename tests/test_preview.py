@@ -767,21 +767,42 @@ def test_each_visitor_of_the_demo_number_gets_their_own_sam(demo):
 
 def test_a_new_demo_sam_has_one_match_and_a_full_deck(demo):
     uid = as_demo_volunteer().uid
+    pat = data.coordinator_by_email(demo_seed.COORDINATOR[0])
     (m,) = matches(where="volunteer_id = ?", where_args=[uid])
-    assert m.status == "accepted"
+    assert m.status == "accepted" and not messages(
+        where="match_id = ?", where_args=[m.id]
+    )
+    assert openings[m.opening_id].org_id == data.coordinator_org_ids(pat)[0]
     deck = data.deck(uid, 200)
     # the invented seed holds 7 openings, one of them now Sam's match (the real seed
     # dir holds more than 40)
     assert len(deck) >= 6 and deck[0]["urgent"]
 
 
-def test_a_new_demo_sam_arrives_with_confirmed_hours_to_certify(demo):
-    uid = as_demo_volunteer().uid
-    (option,) = data.certificate_options(uid)
-    assert option["minutes"] > 0
-    assert data.my_hours(uid)["months"][0]["minutes"] == option["minutes"]
-    made = data.issue_certificate(uid, option["org_id"], "all")
-    assert made["created"]
+def test_a_demo_visitor_gets_hours_and_a_certificate_in_one_visit(
+    preview, seed_dir, monkeypatch
+):
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    _empty()
+    demo_seed.seed_preview(str(seed_dir))
+    browser = TestClient(app, headers={"Authorization": basic()})
+    r = browser.post("/login/demo", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    assert "s a match!" not in browser.get("/deck").text.replace("&#x27;", "'")
+    history = browser.get("/history").text
+    assert "Invented Pantry" in history and "hours" in history
+    org_id = orgs(where="name = ?", where_args=["Invented Pantry"])[0].id
+    r = browser.post(f"/hours/orgs/{org_id}/certificate", data={"period": "all"},
+                     follow_redirects=False)  # fmt: skip
+    assert r.status_code == 303
+    page = browser.get(r.headers["location"]).text
+    assert "Sam Lee" in page and "Invented Pantry" in page
+    pdf = browser.get(r.headers["location"] + ".pdf")
+    assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content.startswith(b"%PDF")
+    (cert,) = certificates()
+    check = TestClient(app, headers={"Authorization": basic()}).get(f"/check/{cert.id}")
+    assert "Genuine certificate" in check.text
 
 
 def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
@@ -859,25 +880,33 @@ def test_in_a_demo_the_coordinator_sees_demo_people_only(demo):
     (real,) = profiles(where="phone = ?", where_args=["+12135550188"])
     profiles.update(id=real.id, display_name="Realtester", onboarded_at="2026-01-01",
                     heard_from="skipped")  # fmt: skip
-    # a demo Sam arrives accepted at Pat's first opening, so Pat sees them
     sam = as_demo_volunteer()
-    opening = demo_seed_first_opening(pat)
-    before = data.org_pending_count(opening.org_id)
-    r = tester.post("/swipe", data={"opening_id": opening.id, "liked": "1"},
-                    follow_redirects=False)  # fmt: skip
-    assert r.status_code == 303
-    (mine,) = matches(where="volunteer_id = ? AND opening_id = ?",
-                      where_args=[sam.uid, opening.id])  # fmt: skip
+    first = demo_seed_first_opening(pat)
+    org = orgs[first.org_id]
+    fresh = data.create_opening(
+        pat, org.id, title="Fresh", about="x", cause=json.loads(org.causes)[0],
+        lat=org.lat, lon=org.lon, neighborhood="Sawtelle",
+        starts_at=(datetime.now(data.LA) + timedelta(days=9)).strftime("%Y-%m-%dT10:00"),
+        recurrence="weekly", slots=4, orientation_required="no", notes="",
+        reply_channel="email",
+    )  # fmt: skip
+    (arrival,) = matches(where="volunteer_id = ?", where_args=[sam.uid])
+    # the copy's arrival match shows to Pat as accepted
+    assert arrival.id in {r["id"] for r in data.org_inbox(pat)["decided"]}
+    before = data.org_pending_count(org.id)
+    for c, uid in ((tester, real.id), (sam, sam.uid)):
+        r = c.post("/swipe", data={"opening_id": fresh, "liked": "1"},
+                   follow_redirects=False)  # fmt: skip
+        assert r.status_code == 303, uid
+    ids = {m.volunteer_id: m.id for m in matches(where="opening_id = ?",
+                                                  where_args=[fresh])}  # fmt: skip
     pending = {r["id"] for r in data.org_inbox(pat)["pending"]}
-    assert mine.status == "accepted" and not pending & {
-        m.id for m in matches(where="volunteer_id = ?", where_args=[real.id])
-    }
+    assert ids[sam.uid] in pending and ids[real.id] not in pending
     pat_page = TestClient(app, headers={"Authorization": basic()})
     pat_page.post("/org/login/demo")
     inbox = pat_page.get("/org/inbox").text
     assert "Realtester" not in inbox and "Sam" in inbox
-    # the tester's like is hidden
-    assert data.org_pending_count(opening.org_id) == before
+    assert data.org_pending_count(org.id) == before + 1  # the copy only
     (m,) = matches(where="volunteer_id = ?", where_args=[real.id])
     with pytest.raises(PermissionError):  # nor accepted by id, so no chat or shift
         data.decide(pat, m.id, True)
@@ -1023,9 +1052,7 @@ def test_in_a_demo_copies_never_fill_pats_side_or_the_urgent_card(demo):
     for _ in range(3):  # copies accepted on Pat's opening
         uid = as_demo_volunteer().uid
         # a copy arrives accepted at Pat's first opening
-        m = data.swipe(uid, o.id, True)
-        if m.status == "pending":
-            data.decide(pat, m.id, True)
+        assert data.swipe(uid, o.id, True).status == "accepted"
     assert openings[o.id].status == "open"
     assert data.opening_counts(pat)[o.id]["accepted"] == accepted
     inbox = {r["id"]: r for r in data.org_inbox(pat)["pending"]}

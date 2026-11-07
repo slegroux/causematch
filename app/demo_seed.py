@@ -568,32 +568,56 @@ def _matches(uid, coordinator_org_id, kinds):
 
 def demo_volunteer(phone):
     """Signing in with ME_PHONE while config.demo_matches is on (the auth route's hook,
-    set by main.py): a fresh Sam for this visitor alone, with their preferences and photo,
-    one accepted match at the coordinator's org with a confirmed shift from 14 days ago
-    (so Shifts and hours and a certificate work in one visit), and a full deck whose
-    first card is the urgent call. Its profile id; None for any other number."""
+    set by main.py): a fresh Sam for this visitor alone, with their preferences and photo
+    and a full deck whose first card is the urgent call. Sam also arrives with a history
+    at the coordinator's org: a match accepted 15 days ago on its first opening (whatever
+    that opening's status now) and one completed shift 14 days ago with its hours
+    confirmed, so Shifts and hours and a certificate work in one visit. No upcoming
+    shift comes with it, and the match is already seen, takeover and Matches tab both.
+    If that history can't be built the visitor still gets the plain Sam. Its profile id;
+    None for any other number."""
     from app import data
     from app.config import DEMO_PHONE  # ME_PHONE, in E.164
-    from app.db import matches, openings
 
     if phone != DEMO_PHONE:
         return None
     uid = _sam(data.new_demo_volunteer())
-    coord = data.coordinator_by_email(COORDINATOR[0])
-    (org_id,) = data.coordinator_org_ids(coord)
-    first = next(
-        o for o in openings(order_by="id") if o.org_id == org_id and o.status == "open"
-    )
-    m = data.swipe(uid, first.id, True)
-    data.decide(coord, m.id, True)
-    # accepted before the shift it holds, and already seen: the "It's a match!" takeover
-    # is for the likes this visitor makes
-    long_ago = (datetime.now(UTC) - timedelta(days=15)).isoformat(timespec="seconds")
-    matches.update(id=m.id, created_at=long_ago, decided_at=long_ago)
-    data.saw_new_matches(uid, data.new_matches(uid))
-    _past_shift(m.id, coord, 14, "completed", first.duration_minutes)
+    try:
+        _arrival_history(uid)
+    except Exception:
+        log.warning("demo volunteer %s: no arrival history", uid, exc_info=True)
     _preferences(uid)
     return uid
+
+
+def _arrival_history(uid):
+    """The match and the confirmed shift a demo Sam arrives with (demo_volunteer). Rows
+    written here, not through data.swipe and data.decide: the history is 15 days old and
+    must not depend on what the opening is today (filled, closed, carrying an urgent
+    call), nor leave an upcoming shift behind."""
+    from app import data
+    from app.db import Match, Swipe, matches, openings, swipes
+
+    coord = data.coordinator_by_email(COORDINATOR[0])
+    (org_id,) = data.coordinator_org_ids(coord)
+    first = next(o for o in openings(order_by="id") if o.org_id == org_id)
+    long_ago = (datetime.now(UTC) - timedelta(days=15)).isoformat(timespec="seconds")
+    swipes.insert(
+        Swipe(volunteer_id=uid, opening_id=first.id, liked=True, created_at=long_ago)
+    )
+    m = matches.insert(
+        Match(
+            opening_id=first.id,
+            volunteer_id=uid,
+            status="accepted",
+            created_at=long_ago,
+            decided_at=long_ago,
+            decided_by=coord,
+        )
+    )
+    data.saw_new_matches(uid, data.new_matches(uid))
+    data.saw_matches(uid)
+    _past_shift(m.id, coord, 14, "completed", first.duration_minutes)
 
 
 def _soon_shifts(me, coordinator_org_id):
