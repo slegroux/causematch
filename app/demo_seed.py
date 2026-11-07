@@ -596,42 +596,12 @@ def demo_volunteer(phone):
     if phone != DEMO_PHONE:
         return None
     uid = _sam(data.new_demo_volunteer())
-    try:
-        _arrival_history(uid)
+    try:  # under the data layer's lock, in one transaction
+        data.arrive_with_history(uid, data.coordinator_by_email(COORDINATOR[0]))
     except Exception:
         log.warning("demo volunteer %s: no arrival history", uid, exc_info=True)
     _preferences(uid)
     return uid
-
-
-def _arrival_history(uid):
-    """The match and the confirmed shift a demo Sam arrives with (demo_volunteer). Rows
-    written here, not through data.swipe and data.decide: the history is 15 days old and
-    must not depend on what the opening is today (filled, closed, carrying an urgent
-    call), nor leave an upcoming shift behind."""
-    from app import data
-    from app.db import Match, Swipe, matches, openings, swipes
-
-    coord = data.coordinator_by_email(COORDINATOR[0])
-    (org_id,) = data.coordinator_org_ids(coord)
-    first = next(o for o in openings(order_by="id") if o.org_id == org_id)
-    long_ago = (datetime.now(UTC) - timedelta(days=15)).isoformat(timespec="seconds")
-    swipes.insert(
-        Swipe(volunteer_id=uid, opening_id=first.id, liked=True, created_at=long_ago)
-    )
-    m = matches.insert(
-        Match(
-            opening_id=first.id,
-            volunteer_id=uid,
-            status="accepted",
-            created_at=long_ago,
-            decided_at=long_ago,
-            decided_by=coord,
-        )
-    )
-    data.saw_new_matches(uid, data.new_matches(uid))
-    data.saw_matches(uid)
-    _past_shift(m.id, coord, 14, "completed", first.duration_minutes)
 
 
 def _soon_shifts(me, coordinator_org_id):

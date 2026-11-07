@@ -4435,6 +4435,68 @@ def new_demo_volunteer():
         ).id
 
 
+def arrive_with_history(uid, coordinator_uid):
+    """The history a demo copy arrives with (demo_seed.demo_volunteer): a match accepted
+    15 days ago on the coordinator's org's first opening, whatever that opening's status
+    now, and one shift 14 days ago, completed with its hours confirmed. Both already seen,
+    takeover and Matches tab. The match.
+
+    Rows written here, not through swipe and decide: the history must not depend on what
+    the opening is today (filled, closed, carrying an urgent call) nor leave an upcoming
+    shift behind. Skipping them is safe for a copy: demo mode keeps copies out of every
+    fill count, org_blind and urgent_call_id stay NULL, and neither sends a notification.
+    One transaction, so a failure leaves none of it. PermissionError outside a demo and
+    for anyone but a demo copy."""
+    if not demo_matches() or not is_demo_volunteer(uid):
+        raise PermissionError("demo and preview only")
+    with _db.db.conn:
+        (org_id,) = coordinator_org_ids(coordinator_uid)
+        first = _db.openings(
+            where="org_id = ?", where_args=[org_id], order_by="id", limit=1
+        )
+        if not first:
+            raise LookupError("the coordinator's org has no opening")
+        first = first[0]
+        long_ago = (datetime.now(UTC) - timedelta(days=15)).isoformat(
+            timespec="seconds"
+        )
+        _db.swipes.insert(
+            _db.Swipe(
+                volunteer_id=uid, opening_id=first.id, liked=True, created_at=long_ago
+            )
+        )
+        m = _db.matches.insert(
+            _db.Match(
+                opening_id=first.id,
+                volunteer_id=uid,
+                status="accepted",
+                created_at=long_ago,
+                decided_at=long_ago,
+                decided_by=coordinator_uid,
+            )
+        )
+        saw_new_matches(uid, new_matches(uid))
+        saw_matches(uid)
+        minutes = first.duration_minutes
+        _db.shifts.insert(
+            _db.Shift(
+                match_id=m.id,
+                starts_at=(datetime.now(LA) - timedelta(days=14)).strftime(
+                    "%Y-%m-%dT09:00"
+                ),
+                duration_minutes=minutes,
+                confirmed_minutes=minutes,
+                status="completed",
+                kind="added",
+                created_by=coordinator_uid,
+                created_at=_now(),
+                marked_at=_now(),
+                marked_by=coordinator_uid,
+            )
+        )
+        return m
+
+
 def demo_accept_due(uid):
     """Demo only, and a demo copy's likes only (an ordinary volunteer of a preview waits
     like anyone), else []: the volunteer's likes made DEMO_ACCEPT_AFTER to

@@ -638,6 +638,39 @@ OPENINGS = [
     ),
 ]
 
+
+# More invented openings, added only beside a seed file (seed_demo_org): there the
+# invented org is the only one that confirms hours, so "I need my hours confirmed" shows
+# its openings alone, and its first two hold the demo's match and its urgent call.
+MORE_OPENINGS = [
+    (
+        1,
+        "Prep vegetables for the evening meal",
+        ["food-insecurity"],
+        ["food_handling"],
+        "Downtown LA",
+        34.0412,
+        -118.2475,
+        _soon(11, "15:00"),
+        4,
+        150,
+        "open",
+    ),
+    (
+        1,
+        "Restock the pantry shelves",
+        ["food-insecurity"],
+        ["physical"],
+        "Downtown LA",
+        34.0401,
+        -118.2460,
+        _soon(13, "10:00"),
+        3,
+        120,
+        "open",
+    ),
+]
+
 # title -> (about, notes) of each invented opening: what the card and its sheet show
 ABOUT = {
     "Sort and pack pantry boxes": (
@@ -684,6 +717,14 @@ ABOUT = {
         "Play or sing for guests while they eat. Bring your own instrument; 45 minutes is plenty.",
         "We have a small speaker and a mic. Acoustic is fine.",
     ),
+    "Prep vegetables for the evening meal": (
+        "Wash, peel and chop vegetables for the evening's soup, alongside the kitchen crew.",
+        "Hair tied back; we give you an apron and a knife lesson.",
+    ),
+    "Restock the pantry shelves": (
+        "Unload the morning delivery and restock the shelves guests choose from.",
+        "Closed-toe shoes. Some lifting.",
+    ),
     "Paint the garden's mural with neighborhood kids": (
         "Help children sketch and paint a mural on the garden wall, one panel each.",
         "Wear clothes that can get paint on them. We supply paint and brushes.",
@@ -722,12 +763,14 @@ def _seed_demo():
 
 
 def seed_demo_org(name):
-    """One of the invented orgs and its openings, added alone to a database that holds
-    others (app/demo_seed.py, beside a seed file's real nonprofits): (org, [openings])."""
+    """One of the invented orgs and its openings, MORE_OPENINGS' too, added alone to a
+    database that holds others (app/demo_seed.py, beside a seed file's real nonprofits):
+    (org, [openings])."""
     index = next(i for i, entry in enumerate(ORGS) if entry[0] == name)
     with db.conn:
         org = _demo_org(*ORGS[index])
-        return org, [_demo_opening(org.id, r) for r in OPENINGS if r[0] == index]
+        rows = [r for r in OPENINGS + MORE_OPENINGS if r[0] == index]
+        return org, [_demo_opening(org.id, r) for r in rows]
 
 
 def _demo_org(name, cs, lat, lon):

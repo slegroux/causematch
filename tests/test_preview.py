@@ -48,6 +48,7 @@ from app.db import (
     orgs,
     places,
     profiles,
+    shifts,
     swipes,
     urgent_calls,
 )
@@ -630,13 +631,15 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
     assert pantry.name == "Invented Pantry" and pantry.logo_key and pantry.photo_key
     assert pantry.verified_at and shelter.verified_at
     titles = {o.title for o in openings()}
-    # the invented coordinator's org brings two openings of its own, samples too
+    # the invented coordinator's org brings four openings of its own, samples too
     lunch = "Sample: Play a set at the Sunday community lunch"
     assert titles == {
         "Sample: Sort cans",
         "Sample: Walk dogs",
         "Sample: Serve a weekend lunch line",
         lunch,
+        "Sample: Prep vegetables for the evening meal",
+        "Sample: Restock the pantry shelves",
     }
     (call,) = urgent_calls()
     assert openings[call.opening_id].title == lunch and call.status == "open"
@@ -780,6 +783,11 @@ def test_a_new_demo_sam_has_one_match_and_a_full_deck(demo):
         where="match_id = ?", where_args=[m.id]
     )
     assert openings[m.opening_id].org_id == data.coordinator_org_ids(pat)[0]
+    (sh,) = shifts(where="match_id = ?", where_args=[m.id])
+    assert sh.status == "completed" and sh.confirmed_minutes == sh.duration_minutes
+    (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
+    with pytest.raises(PermissionError):  # a demo copy's history only
+        data.arrive_with_history(seed_sam.id, pat)
     deck = data.deck(uid, 200)
     # the invented seed holds 7 openings, one of them now Sam's match (the real seed
     # dir holds more than 40)
@@ -796,6 +804,11 @@ def test_a_demo_visitor_gets_hours_and_a_certificate_in_one_visit(
     r = browser.post("/login/demo", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     assert "s a match!" not in browser.get("/deck").text.replace("&#x27;", "'")
+    (uid,) = [p.id for p in profiles() if data.is_demo_volunteer(p.id)]
+    profiles.update(id=uid, verified_hours="only")  # "I need my hours confirmed"
+    hours_deck = data.deck(uid, 50)
+    assert len(hours_deck) == 3 and hours_deck[0]["urgent"]  # more than the urgent call
+    profiles.update(id=uid, verified_hours=None)
     history = browser.get("/history").text
     assert demo_seed.CONFIRMING_ORG in history and "hours" in history
     org_id = orgs(where="name = ?", where_args=[demo_seed.CONFIRMING_ORG])[0].id
