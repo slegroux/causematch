@@ -634,6 +634,7 @@ BUCKETS = {
     "safety": (10, 3600),  # report and block POSTs
     "upload": (10, 600),  # pictures (UPLOADS): 10 in a row, then one a minute
     "preview": (10, 600),  # wrong preview passwords, per client address
+    "edit": (10, 600),  # saving an opening's edit: each writes a line into its chats
     "pdf": (10, 600),  # certificate PDF downloads: each costs about 0.1 to 0.5 s of CPU
 }
 # POST paths and their bucket
@@ -641,6 +642,7 @@ THROTTLED = (
     (re.compile(r"/swipe"), "swipe"),
     (re.compile(r"/(org/)?chat/[^/]+/send"), "chat"),
     (re.compile(r"/(org/)?matches/[^/]+/(report|block)"), "safety"),
+    (re.compile(r"/org/openings/[^/]+/edit"), "edit"),
     *((rx, "upload") for rx in UPLOADS),
 )
 _buckets = {}  # (name, user id) -> (tokens, last refill time)

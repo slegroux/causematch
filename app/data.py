@@ -3038,14 +3038,17 @@ _OPENING_EDITS = {
 
 
 def opening_locks(opening_id):
-    """What can't change on this opening now: {"accepted": volunteers who fill it,
-    "when": True once one is accepted (they planned around the time), "cause": True once
-    anyone liked it (the deck ranked it by its cause for them)}."""
-    accepted = _accepted(opening_id)
+    """What can't change on this opening now: {"accepted": volunteers accepted, "when" and
+    "cause": True once anyone liked it (the deck ranked it by its cause for them, and a
+    liker chose it for its time). Every match counts, a demo copy's too: unlike the fill
+    (_filling), these protect the people who planned around the opening."""
+    liked = _db.matches.count_where("opening_id = ?", [opening_id]) > 0
     return {
-        "accepted": accepted,
-        "when": accepted > 0,
-        "cause": _db.matches.count_where("opening_id = ?", [opening_id]) > 0,
+        "accepted": _db.matches.count_where(
+            "opening_id = ? AND status = 'accepted'", [opening_id]
+        ),
+        "when": liked,
+        "cause": liked,
     }
 
 
@@ -3064,6 +3067,8 @@ def update_opening(coordinator_uid, opening_id, **new):
     for key in ("skills", "languages"):
         if key in new:
             new[key] = json.dumps(sorted(set(new[key])))
+    if unknown := set(new) - set(_OPENING_EDITS):
+        raise TypeError(f"not editable: {sorted(unknown)}")
     with _db.db.conn:
         o = coordinator_opening(coordinator_uid, opening_id)
         the_org = _db.orgs[o.org_id]
@@ -3090,8 +3095,8 @@ def update_opening(coordinator_uid, opening_id, **new):
             )
         if locks["when"] and changed & {"starts_at", "duration_minutes"}:
             raise ValueError(
-                "The date and time can't change while volunteers are accepted: they "
-                "planned around it. Close this opening and post a new one."
+                "The date and time can't change once volunteers have liked this opening: "
+                "they chose it for that time. Close it and post a new one."
             )
         if locks["cause"] and "causes" in changed:
             raise ValueError("The cause can't change once volunteers have liked it.")

@@ -712,7 +712,7 @@ def test_spots_cannot_go_below_the_accepted_and_the_time_is_locked(coord):
     assert openings[o.id].status == "filled"  # the two accepted fill it
     # the time is not asked once someone is accepted, and the data layer refuses it
     page = coord.get(f"/org/openings/{o.id}/edit").text
-    assert 'name="starts_at"' not in page and "planned around" in page
+    assert 'name="starts_at"' not in page and "chose it for that time" in page
     edit(coord, o, starts_at=future(30))
     assert openings[o.id].starts_at == o.starts_at
     with pytest.raises(ValueError, match="date and time"):
@@ -736,3 +736,18 @@ def test_reopening_a_closed_opening_restores_it_and_its_fill(coord):
     coord.post(f"/org/openings/{o.id}/reopen")
     assert openings[o.id].status == "closed"
     assert f"/org/openings/{o.id}/reopen" not in coord.get("/org").text
+
+
+def test_the_time_is_locked_once_anyone_has_liked_it(coord):
+    o = pantry()
+    when = future(30)
+    free = edit(coord, o, starts_at=when)  # nobody liked it yet: the time moves
+    assert free.status_code == 303 and openings[o.id].starts_at == when
+    data.swipe(volunteer().uid, o.id, True)  # pending, not accepted
+    assert 'name="starts_at"' not in coord.get(f"/org/openings/{o.id}/edit").text
+    edit(coord, openings[o.id], starts_at=future(40))
+    assert openings[o.id].starts_at == when
+    with pytest.raises(ValueError, match="date and time"):
+        data.update_opening(coordinator_for(0)[0], o.id, starts_at=future(40))
+    with pytest.raises(TypeError, match="org_id"):
+        data.update_opening(coordinator_for(0)[0], o.id, org_id=2)

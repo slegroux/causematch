@@ -583,8 +583,8 @@ def OpeningForm(uid, f=None, error=None, editing=None):
             Locked(
                 "Date and time",
                 when(editing.starts_at, editing.duration_minutes),
-                "It can't change while volunteers are accepted, because they planned "
-                "around it. Close this opening and post a new one to move it.",
+                "It can't change once volunteers have liked this opening, because they "
+                "chose it for that time. Close it and post a new one to move it.",
             )
             if editing and locks["when"]
             else Field(
