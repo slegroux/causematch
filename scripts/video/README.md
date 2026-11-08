@@ -125,9 +125,11 @@ app's own; only their timing is chosen.
 The `check` beat shows a certificate's check link signed out, so it opens in its own fresh
 browser context (`guest`, a laptop), not in Jordan's or the admin's signed-in ones. That
 context exists for the whole recording and sits on a blank page until the beat. The link is
-the one Riley's certificate page prints, with its origin swapped on the page, while
-recording, for the public one (`DEMO_PUBLIC_URL`, below), so no local address is on screen.
-The path is the real one; the swap changes only the text the camera sees, never the app.
+the one Riley's certificate page prints, with its origin swapped for the public one
+(`DEMO_PUBLIC_URL`, below) in the page's text as the page is built (an init script that
+watches the DOM, so not even the first frames show a local address). The path is the real
+one; the swap changes only the text the camera sees, never the app. Every beat also checks
+that no page's visible text holds the local address, and the run fails if one does.
 The certificate page itself shows the code and the link; the QR code is in the PDF, which
 the video names but does not open.
 
@@ -158,9 +160,9 @@ take, and the narration is lined up with them (the heart is tapped as the line s
 
 ## Timing
 
-The result of one run (2026-11-07): the full video 2:30 (150.4 s), 1920x1080, 6.6 MB; the
+The result of one run (2026-11-07): the full video 2:31 (151.3 s), 1920x1080, 6.6 MB; the
 short cut 1:07 (67.6 s), 2.7 MB; both -16.1 LUFS. Recording the story takes about 2 minutes
 20 seconds (paced by the voice lines), composing both videos about 40 seconds, and voicing a
 changed line or two about 20 seconds. The first volunteer appears at about 0:34, and no
 stretch of the full video is silent for more than 3 seconds (the longest gap between caption
-cues in `demo.vtt` is 2.6 seconds).
+cues in `demo.vtt` is 2.3 seconds).

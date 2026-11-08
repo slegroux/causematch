@@ -33,7 +33,8 @@ import demo  # scripts/demo.py: refuse_production
 
 BASE, LOG = sys.argv[1], Path(sys.argv[2])
 # The app's own origin must stay the local one (it refuses posts from any other), so the
-# check link is rewritten on the page while recording: no local address is ever on screen.
+# check link's origin is swapped in the page's text as the page is built (PUBLIC_TEXT), and
+# every beat checks that no page shows the local address.
 PUBLIC = os.environ.get("DEMO_PUBLIC_URL", "").rstrip("/")
 if re.fullmatch(r"https://[A-Za-z0-9.-]+(:\d+)?", PUBLIC) is None:
     sys.exit(
@@ -71,6 +72,27 @@ CURSOR = """
 })();
 """
 
+# Runs in every page before it is drawn: the app's own (local) origin, wherever the page
+# prints it as text (the certificate's check link), becomes the public one. Only text nodes
+# change, so not even the first frames show a local address, and the app is untouched.
+PUBLIC_TEXT = (
+    """
+(() => {
+  const from = location.origin, to = %s;
+  if (!from.startsWith('http')) return;
+  const fix = n => {
+    if (n.nodeType === 3) { if (n.nodeValue.includes(from)) n.nodeValue = n.nodeValue.split(from).join(to); }
+    else n.childNodes.forEach(fix);
+  };
+  new MutationObserver(ms => ms.forEach(m => {
+    m.addedNodes.forEach(fix);
+    if (m.type === 'characterData') fix(m.target);
+  })).observe(document, {childList: true, subtree: true, characterData: true});
+})();
+"""
+    % json.dumps(PUBLIC)
+)
+
 problems = []
 
 
@@ -102,6 +124,21 @@ def watch(name, page):
 
 def hold(s):
     time.sleep(s)
+
+
+def link_text(page):
+    return page.get_by_text("/check/").first.inner_text()
+
+
+def no_local_address(*pages):
+    """Fail the run if any page's visible text holds the local address."""
+    for page in pages:
+        try:
+            text = page.locator("body").inner_text(timeout=2000)
+        except Exception:  # noqa: BLE001  a page mid-navigation: checked at the next beat
+            continue
+        if urlsplit(BASE).netloc in text:
+            problems.append(f"local address on screen ({page.url})")
 
 
 def point(page, loc, steps=12):
@@ -200,6 +237,7 @@ def days_pass():
 
 
 timeline = []
+SHOWN = []  # the pages the camera sees, checked at each beat for a local address
 marks = {}  # named moments inside a beat, for the short cut and the screen switch
 t0 = None
 need_until = 0.0
@@ -215,12 +253,14 @@ def beat(bid):
     now = time.monotonic() - t0
     if now < need_until:
         hold(need_until - now)
+    no_local_address(*SHOWN)
     start = round(time.monotonic() - t0, 2)
     timeline.append({"id": bid, "t": start})
     need_until = start + DUR[bid] + GAP
 
 
 def story(vol, org, adm, gst):
+    SHOWN.extend((vol, org, adm, gst))
     # intro, under the title card: the admin signs in, every page is opened
     beat("intro")
     before = email_count()
@@ -321,7 +361,7 @@ def story(vol, org, adm, gst):
     smooth_to(org, submit)
     tap(org, submit)
     org.wait_for_url("**/org")
-    hold(0.6)
+    point(org, org.get_by_role("link", name="Edit").first)  # the new opening is editable
 
     # 4. Riley signs up with an email address and opens the emailed link
     beat("register")
@@ -423,8 +463,9 @@ def story(vol, org, adm, gst):
     # 9. Jordan's inbox
     beat("inbox")
     org.reload()
-    hold(1.0)
-    tap(org, org.get_by_role("link", name="Inbox").first)
+    hold(0.8)
+    # the home's "Needs you" strip says a volunteer is waiting; it leads to the inbox
+    tap(org, org.get_by_role("link", name=re.compile(r"1 volunteer waiting")))
     org.wait_for_url("**/org/inbox")
     row = (
         org.locator("div")
@@ -536,12 +577,13 @@ def story(vol, org, adm, gst):
     tap(vol, vol.get_by_role("button", name="Get a certificate").first)
     vol.wait_for_url("**/hours/certificate/**")
     vol.get_by_text("Volunteer hours certificate").wait_for()
+    if PUBLIC not in link_text(vol):
+        raise RuntimeError("the certificate page doesn't show the public address")
     hold(1.0)
     smooth_to(vol, vol.get_by_text("Signature code:"))
     hold(0.8)
     link = vol.get_by_text("/check/").first
-    check_path = urlsplit(link.inner_text().strip()).path  # the real, local link
-    link.evaluate("(el, text) => { el.textContent = text; }", PUBLIC + check_path)
+    check_path = urlsplit(link.inner_text().strip()).path  # the real link's path
     smooth_to(vol, link)
     mark("link")
     hold(1.5)
@@ -568,6 +610,7 @@ def main():
         def ctx(**kw):
             c = browser.new_context(base_url=BASE, **kw)
             c.add_init_script(CURSOR)
+            c.add_init_script(PUBLIC_TEXT)
             return c
 
         phone_ctx = ctx(
