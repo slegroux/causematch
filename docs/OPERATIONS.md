@@ -107,6 +107,15 @@ The narrated demo video on the website (`site/assets/demo.mp4`) is rebuilt from 
 - **Rotating the password** (a new `PREVIEW_PASSWORD` version, then redeploy) voids every access cookie and old link: the next request with an old cookie gets the 401 page, the cookie is deleted, and it counts as one wrong guess. Send the new link. A browser that still sends Basic credentials saved before the access link existed counts a wrong guess per request, so after 10 it gets 429 for up to 10 minutes: clear the site's saved credentials (or use a private window). Everyone behind one address (an office network) shares that count.
 - **The seed also leaves this machine**: `gcloud run deploy --source .` uploads the build context, `preview-seed/` included, to the Cloud Build source bucket (`gs://run-sources-<project>-<region>`), and the image holding it stays in Artifact Registry (`cloud-run-source-deploy`). Both are private to the project; delete old ones, or set a lifecycle rule on the bucket, when the preview goes away.
 
+**Smoke test.** After each deploy, run `scripts/smoke_preview.py` against the preview: it walks the presenter's path in a phone-sized browser (the access gate, "Try it as a volunteer", the deck's "Confirms your hours" chip, a like and its match, confirmed hours, a certificate with its PDF and check link, "Try it as a nonprofit" with the volunteer in its inbox and its shifts, `/privacy`), prints `ok` or `FAIL` per step and exits 1 if any failed. Read the password from Secret Manager into the environment in the same shell, so it is never typed, printed or saved:
+
+```
+PREVIEW_PASSWORD="$(gcloud secrets versions access latest --secret PREVIEW_PASSWORD --project causematch-la)" \
+  uv run python scripts/smoke_preview.py "$URL" [--screenshots DIR]
+```
+
+`URL` is the bare `https://` address the deploy printed, without `?access=`; the script refuses a URL that has it, and a missing password. A run makes two demo copies of the volunteer, and an address may make 10 an hour. In a preview the access gate also covers `/check/...`, so the check link answers 401 without the access cookie; the script expects that. `--insecure` accepts a self-signed certificate, for running against a local preview served with its own (a preview refuses `http://` origins).
+
 ### Schema changes
 
 Adding a column or a table: edit the class in `app/db.py` (`transform=True` does the rest). Renames, data changes, index changes and anything touching triggers need a numbered migration in `app/migrations/` instead; its docstring says how. Pending migrations run at startup, or by hand with `uv run python -m app.migrations [--db PATH]`.
