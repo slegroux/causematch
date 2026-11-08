@@ -243,6 +243,51 @@ def OpeningRow(o, counts, urgent=None):
     )
 
 
+def NeedsYou(waiting, to_mark):
+    """The strip atop the dashboard: what waits for the coordinator, each part a link to
+    where it is dealt with; each part hidden at 0, the strip when both are."""
+    if not (waiting or to_mark):
+        return None
+    link = (
+        "inline-flex min-h-11 items-center gap-2 font-bold text-brand-ink underline "
+        "underline-offset-4 hover:text-brand"
+    )
+    return Div(
+        P("Needs you", cls="text-sm font-bold text-ink-muted"),
+        Div(
+            A(
+                f"{waiting} volunteer{'' if waiting == 1 else 's'} waiting",
+                Span("→", aria_hidden="true"),
+                Span(" Inbox", cls="sr-only"),
+                href="/org/inbox",
+                cls=link,
+            )
+            if waiting
+            else None,
+            A(
+                f"{to_mark} shift{'' if to_mark == 1 else 's'} to mark",
+                Span("→", aria_hidden="true"),
+                Span(" Shifts", cls="sr-only"),
+                href="/org/shifts",
+                cls=link,
+            )
+            if to_mark
+            else None,
+            cls="flex flex-wrap items-center gap-x-6",
+        ),
+        cls="mb-4 rounded-2xl bg-cream px-4 py-2",
+    )
+
+
+def waiting_first(openings, counts):
+    """An org's openings in dashboard order: the open ones with volunteers waiting, then
+    the other open ones, each soonest start first; then the closed, newest first (as
+    data.org_openings gives them)."""
+    live = [o for o in openings if o.status == "open"]
+    live.sort(key=lambda o: (not counts.get(o.id, {}).get("pending"), o.starts_at))
+    return live + [o for o in openings if o.status != "open"]
+
+
 @ar("/org", methods=["GET"])
 def org_page(req):
     return org_home(req)
@@ -258,7 +303,7 @@ def org_home(req, error=""):
     for org, role in data.coordinator_orgs(uid):
         rows = [
             OpeningRow(o, counts.get(o.id, {}), urgent.get(o.id))
-            for o in by_org.get(org.id, [])
+            for o in waiting_first(by_org.get(org.id, []), counts)
         ]
         sections.append(
             Div(
@@ -273,10 +318,13 @@ def org_home(req, error=""):
         )
     named = bool(profile.display_name)
     unanswered = len(data.org_unanswered(uid))
+    pending = sum(c["pending"] for c in counts.values())
+    to_mark = data.org_to_mark(uid)
     return OrgShell(
         "openings",
-        # data.org_waiting, without re-reading the counts
-        sum(c["pending"] for c in counts.values()) + unanswered,
+        # data.org_badges, without re-reading the counts
+        {"inbox": pending + unanswered, "shifts": to_mark},
+        NeedsYou(pending, to_mark) if named else None,
         Div(
             H1("Your openings", cls=ORG_TITLE),
             A(
@@ -532,7 +580,7 @@ def OpeningForm(uid, f=None, error=None):
     )
     return OrgShell(
         "openings",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         Div(
             H1("Post an opening", cls=ORG_TITLE),
             P(
@@ -751,7 +799,7 @@ def UrgentPage(uid, opening_id, f=None, error=None):
     default = o.starts_at if urgent_possible(o.starts_at) else ""
     return OrgShell(
         "openings",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         A("Back to your openings", href="/org", cls=SMALL_LINK + " mb-2 text-sm"),
         H1("Urgent call", cls=ORG_TITLE),
         P(o.title, cls="pb-4 font-semibold text-ink-muted"),
@@ -872,11 +920,51 @@ INBOX_NOTICE = {
     "full": "That opening is full. You can decline instead, or post another opening.",
     "reported": "Thanks. A Causematch admin will review the report.",
     "blocked": "Blocked.",
+    "late": "Too late to undo that one.",
 }
 
 
 def Fact(term, value):
     return P(Span(f"{term}: ", cls="font-bold"), value, cls="text-sm text-ink")
+
+
+def ShiftFacts(m):
+    """What the like is for: the shift's date and time, the spots left, and whether it
+    falls in the volunteer's usual times (nothing under a block)."""
+    return Div(
+        P(
+            when(m["starts_at"], m["duration_minutes"]),
+            f" · {m['spots_left']} of {m['slots']} spots left",
+            cls="text-sm font-semibold text-ink",
+        ),
+        P(
+            "Fits their usual times" if m["fits"] else "Outside their usual times",
+            cls="text-sm text-ink-muted",
+        )
+        if m["fits"] is not None
+        else None,
+        cls="mt-1",
+    )
+
+
+def Declined(m):
+    """The note after a Decline, until the undo window closes: nothing was sent yet."""
+    return Div(
+        P(
+            f"Declined. {m['name']} hasn't been told yet.",
+            cls="text-sm font-semibold text-ink",
+        ),
+        PlainForm(
+            Button(
+                "Undo",
+                cls="min-h-11 px-2 text-sm font-semibold text-brand-ink underline "
+                "underline-offset-4 hover:text-brand",
+            ),
+            action=f"/org/matches/{m['id']}/undo",
+            method="post",
+        ),
+        cls="flex flex-wrap items-center justify-between gap-x-3 p-4 " + CARD,
+    )
 
 
 def InboxRow(m):
@@ -890,6 +978,7 @@ def InboxRow(m):
             Div(
                 VolunteerHeader(m["name"], m["photo_key"], m["pronouns"]),
                 P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
+                ShiftFacts(m),
                 cls="min-w-0 flex-1",
             ),
             status_pill(MATCH_STATUS, m["status"], "org"),
@@ -911,7 +1000,14 @@ def InboxRow(m):
         ),
         PlainForm(
             accept,
-            Button("Decline", name="decision", value="decline", cls=ButtonT.default),
+            # plain text, apart from Accept: a mis-tap costs one Undo, not a lost volunteer
+            Button(
+                "Decline",
+                name="decision",
+                value="decline",
+                cls="ml-auto min-h-11 px-3 text-sm font-semibold text-ink-muted "
+                "underline underline-offset-4 hover:text-ink",
+            ),
             action=f"/org/matches/{m['id']}/decide",
             method="post",
             cls="flex flex-wrap items-center gap-3",
@@ -966,12 +1062,15 @@ def inbox(req):
     notice = query(req, "notice")
     chat_id = query(req, "match")
     chat_id = chat_id if chat_id.isascii() and chat_id.isdigit() else ""
+    declined = query(req, "declined")
     uid = req.scope["uid"]
     box = data.org_inbox(uid)
+    # the decline just made, while the volunteer has still been told nothing of it
+    undo = [m for m in box["decided"] if m["undoable"] and str(m["id"]) == declined]
     unanswered = data.org_unanswered(uid)
     return OrgShell(
         "inbox",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         H1("Volunteer inbox", cls=ORG_TITLE + " pb-4"),
         Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in INBOX_NOTICE
@@ -995,7 +1094,7 @@ def inbox(req):
         Div(
             InboxSection(
                 "Waiting for you",
-                [InboxRow(m) for m in box["pending"]],
+                [*map(Declined, undo), *map(InboxRow, box["pending"])],
                 "No one is waiting.",
             ),
             Div(
@@ -1021,7 +1120,7 @@ async def decide(req, match_id: int):
 
 def _sync_decide(req, decision, match_id: int):
     try:
-        data.decide(req.scope["uid"], match_id, decision == "accept")
+        data.decide(req.scope["uid"], match_id, decision == "accept", undoable=True)
     except PermissionError:
         return Refusal(403)
     except ValueError as e:
@@ -1031,4 +1130,19 @@ def _sync_decide(req, decision, match_id: int):
     if decision == "accept":
         notify.after(req, notify.on_accepted, match_id)
         return Redirect(f"/org/inbox?notice=accepted&match={match_id}")
+    return Redirect(f"/org/inbox?declined={match_id}")
+
+
+@ar("/org/matches/{match_id}/undo", methods=["POST"])
+async def undo_decline(req, match_id: int):
+    return await run_in_threadpool(_sync_undo, req, match_id)
+
+
+def _sync_undo(req, match_id: int):
+    try:
+        data.undo_decline(req.scope["uid"], match_id)
+    except PermissionError:
+        return Refusal(403)
+    except ValueError:
+        return Redirect("/org/inbox?notice=late")
     return Redirect("/org/inbox")

@@ -1,5 +1,6 @@
 import threading
 from datetime import UTC, datetime, timedelta
+from html import unescape
 
 import pytest
 from conftest import PANTRY, coordinator_for, org_sign_in, uid_of, volunteer
@@ -306,6 +307,49 @@ def test_coordinator_inbox_accept_and_volunteer_sees_it(user, coord):
     assert matches[mid].status == "accepted"
 
 
+def test_inbox_row_shows_the_shift_the_spots_and_whether_it_fits(user, coord):
+    o = opening()
+    # a Saturday morning, and 5 slots with 2 already taken
+    openings.update(id=o.id, starts_at="2030-01-05T09:00", slots=5)
+    user.post("/swipe", data={"opening_id": o.id, "liked": "1"})
+    uid = matches()[0].volunteer_id
+    profiles.update(id=uid, availability='["weekend_morning"]')
+    html = coord.get("/org/inbox").text
+    assert "Sat Jan 5, 9:00 AM" in html and "5 of 5 spots left" in html
+    assert "Fits their usual times" in html
+    profiles.update(id=uid, availability='["weekday_evening"]')
+    assert "Outside their usual times" in coord.get("/org/inbox").text
+
+
+def test_decline_can_be_undone_before_the_volunteer_sees_it(user, coord):
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    mid = matches()[0].id
+    r = coord.post(
+        f"/org/matches/{mid}/decide",
+        data={"decision": "decline"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == f"/org/inbox?declined={mid}"
+    assert "hasn't been told yet" in unescape(coord.get(r.headers["location"]).text)
+    assert "Not this time" not in user.get("/matches").text  # held: nothing shown
+    coord.post(f"/org/matches/{mid}/undo", follow_redirects=False)
+    assert matches[mid].status == "pending" and matches[mid].decided_at is None
+    assert "Not this time" not in user.get("/matches").text
+    assert f"/org/matches/{mid}/decide" in coord.get("/org/inbox").text  # waiting again
+
+
+def test_a_decline_shows_and_cannot_be_undone_once_its_window_has_passed(user, coord):
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    mid = matches()[0].id
+    coord.post(f"/org/matches/{mid}/decide", data={"decision": "decline"})
+    past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat(timespec="seconds")
+    matches.update(id=mid, undo_until=past)
+    assert "Not this time" in user.get("/matches").text
+    r = coord.post(f"/org/matches/{mid}/undo", follow_redirects=False)
+    assert r.headers["location"] == "/org/inbox?notice=late"
+    assert matches[mid].status == "declined"
+
+
 def test_other_org_coordinator_gets_403_and_empty_inbox(user):
     user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
     mid = matches()[0].id
@@ -354,7 +398,8 @@ def test_inbox_never_shows_contact_or_location(user, coord):
     assert set(data.org_inbox(coordinator_for(0)[0])["decided"][0]) == {
         "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
         "interests", "causes", "availability", "languages", "neighborhood",
-        "frequency", "full", "weekly",
+        "frequency", "full", "weekly", "starts_at", "duration_minutes", "slots",
+        "spots_left", "fits", "undoable",
     }  # fmt: skip
 
 
@@ -576,7 +621,8 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
     assert set(row) == {
         "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
         "interests", "causes", "availability", "languages", "neighborhood",
-        "frequency", "full", "weekly",
+        "frequency", "full", "weekly", "starts_at", "duration_minutes", "slots",
+        "spots_left", "fits", "undoable",
     }  # fmt: skip
 
 

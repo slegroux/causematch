@@ -504,10 +504,12 @@ ORG_TABS = (
 )
 
 
-def TopNav(tabs, active, label, home, badges=None):
+def TopNav(tabs, active, label, home, badges=None, badge_words=None):
     """A staff header (nonprofit, admin): the wordmark, the sections (a tab can carry a
-    count badge) and Sign out. One row on a desk, two on a phone."""
+    count badge, read aloud with its badge_words entry, "waiting" by default) and Sign
+    out. One row on a desk, two on a phone."""
     badges = badges or {}
+    badge_words = badge_words or {}
 
     def tab(key, text, href):
         on = key == active
@@ -515,7 +517,7 @@ def TopNav(tabs, active, label, home, badges=None):
             text,
             Span(
                 str(badges[key]),
-                Span(" waiting", cls="sr-only"),
+                Span(f" {badge_words.get(key, 'waiting')}", cls="sr-only"),
                 cls="grid h-6 min-w-6 place-items-center rounded-full bg-brand px-1.5 "
                 "text-xs text-white",
             )
@@ -563,14 +565,15 @@ def TopNav(tabs, active, label, home, badges=None):
     )
 
 
-def OrgNav(active, waiting=0):
-    """The nonprofit's header; the Inbox tab counts the volunteers waiting for an answer."""
-    return TopNav(ORG_TABS, active, "Nonprofit", "/org", {"inbox": waiting})
+def OrgNav(active, badges=None):
+    """The nonprofit's header; the Inbox tab counts the volunteers waiting for an answer,
+    the Shifts tab the shifts to mark (data.org_badges)."""
+    return TopNav(ORG_TABS, active, "Nonprofit", "/org", badges, {"shifts": "to mark"})
 
 
-def OrgShell(active, waiting, *content):
+def OrgShell(active, badges, *content):
     """A nonprofit page: the top nav, then the content, up to two columns wide on a desk."""
-    return Div(OrgNav(active, waiting), Container(*content, cls="max-w-5xl pt-6 pb-12"))
+    return Div(OrgNav(active, badges), Container(*content, cls="max-w-5xl pt-6 pb-12"))
 
 
 def SimplePage(title, *content):

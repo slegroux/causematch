@@ -197,7 +197,7 @@ def ChatPage(uid, match_id, role, notice=""):
         Script(src="/static/chat.js", defer=True),
     )
     if role == "coordinator":  # the nonprofit's own top nav, from the inbox
-        return OrgShell("inbox", data.org_waiting(uid), Div(*content))
+        return OrgShell("inbox", data.org_badges(uid), Div(*content))
     return VolunteerShell("matches", *content, uid=uid)
 
 

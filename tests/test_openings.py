@@ -651,3 +651,8 @@ def test_urgent_link_only_within_48_hours(coord):
     assert f"/org/openings/{near.id}/urgent" in page
     assert f"/org/openings/{far.id}/urgent" not in page
     assert near.starts_at in coord.get(f"/org/openings/{near.id}/urgent").text
+
+
+def test_the_needs_you_strip_is_absent_when_nothing_waits(coord):
+    html = coord.get("/org").text
+    assert "Needs you" not in html and "to mark" not in html

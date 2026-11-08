@@ -699,7 +699,12 @@ def _why(p, rated, spoken, o, cause_labels, slugs, near, surprise, booked=()):
 # A decided match the volunteer has not seen: a nonprofit accepted or declined it after
 # they last opened Matches. Timestamps have one-second resolution, so a decision in the
 # very second of that look is missed: accepted.
-_NEWS = "volunteer_id = ? AND status IN ('accepted', 'declined') AND decided_at > ?"
+# A decline still inside its undo window (Match.undo_until) is not news yet, and counts
+# from the end of the window, so a look at Matches meanwhile doesn't swallow it.
+_NEWS = (
+    "volunteer_id = ? AND status IN ('accepted', 'declined') "
+    "AND coalesce(undo_until, decided_at) > ? AND coalesce(undo_until, '') <= ?"
+)
 
 
 def match_news_count(uid):
@@ -707,13 +712,13 @@ def match_news_count(uid):
     volunteer last opened Matches (never opened: all of them). Their own pending likes
     don't count."""
     seen = _db.profiles[uid].matches_seen_at or ""
-    return _db.matches.count_where(_NEWS, [uid, seen])
+    return _db.matches.count_where(_NEWS, [uid, seen, _now()])
 
 
 def match_news_ids(uid):
     """The ids match_news_count counts: what the Matches page marks as new."""
     seen = _db.profiles[uid].matches_seen_at or ""
-    return {m.id for m in _db.matches(where=_NEWS, where_args=[uid, seen])}
+    return {m.id for m in _db.matches(where=_NEWS, where_args=[uid, seen, _now()])}
 
 
 def saw_matches(uid):
@@ -956,11 +961,13 @@ def _like_starts_at(m, o):
     )
 
 
-def decide(coordinator_uid, match_id, accept):
-    """Accept or decline a pending match. PermissionError unless a member of the org.
+UNDO_DECLINE = timedelta(minutes=2)
 
-    ValueError when the match is not pending or no slot is left to accept into.
-    """
+
+def _decidable(coordinator_uid, match_id):
+    """The match and its opening, once the coordinator may decide it: PermissionError
+    unless a member of the org, or when the org is deactivated, the match org-blind or a
+    block stands."""
     m, o = _match_and_opening(match_id)
     _member_of(coordinator_uid, o.org_id)
     if (
@@ -969,16 +976,32 @@ def decide(coordinator_uid, match_id, accept):
         or _org_blocked_volunteer(m.volunteer_id, o.org_id)
     ):
         raise PermissionError("no such match")
+    return m, o
+
+
+def decide(coordinator_uid, match_id, accept, undoable=False):
+    """Accept or decline a pending match. PermissionError unless a member of the org.
+
+    ValueError when the match is not pending or no slot is left to accept into.
+    undoable: a decline the coordinator may take back for UNDO_DECLINE (undo_decline);
+    until then the volunteer is shown nothing of it (my_matches, match_news_count).
+    """
+    m, o = _decidable(coordinator_uid, match_id)
     status = "accepted" if accept else "declined"
+    undo_until = (
+        (datetime.fromisoformat(_now()) + UNDO_DECLINE).isoformat(timespec="seconds")
+        if undoable and not accept
+        else None
+    )
     skip, args = _filling()
     with _db.db.conn:
         # One statement, so two coordinators can't both take the last slot.
         _db.db.execute(
-            "UPDATE match SET status = ?, decided_at = ?, decided_by = ? "
+            "UPDATE match SET status = ?, decided_at = ?, decided_by = ?, undo_until = ? "
             "WHERE id = ? AND status = 'pending' AND (? = 0 OR "
             f"(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
             "< (SELECT slots FROM opening WHERE id = ?))",
-            [status, _now(), coordinator_uid, match_id, int(bool(accept)),
+            [status, _now(), coordinator_uid, undo_until, match_id, int(bool(accept)),
              o.id, *args, o.id],
         )  # fmt: skip
         if _db.db.conn.changes() != 1:
@@ -993,6 +1016,21 @@ def decide(coordinator_uid, match_id, accept):
             # An opening that already started gets no shift: the coordinator schedules one.
             if starts_at > _local_now():
                 _new_shift(match_id, starts_at, "accept", coordinator_uid)
+
+
+def undo_decline(coordinator_uid, match_id):
+    """Take back an undoable decline (decide): the like is pending again, as if never
+    decided. PermissionError as decide; ValueError when it is not a decline still inside
+    its window."""
+    _decidable(coordinator_uid, match_id)
+    with _db.db.conn:
+        _db.db.execute(
+            "UPDATE match SET status = 'pending', decided_at = NULL, decided_by = NULL, "
+            "undo_until = NULL WHERE id = ? AND status = 'declined' AND undo_until > ?",
+            [match_id, _now()],
+        )
+        if _db.db.conn.changes() != 1:
+            raise ValueError("too late to undo")
 
 
 def _own_match(uid, match_id):
@@ -1158,11 +1196,12 @@ def my_matches(uid):
         o = _db.openings[m.opening_id]
         org = org_rows.get(o.org_id)
         accepted = m.status == "accepted"
+        held = m.status == "declined" and (m.undo_until or "") > _now()
         out.append(
             {
                 "blocked": _volunteer_blocked_org(uid, o.org_id),
                 "id": m.id,
-                "status": m.status,
+                "status": "pending" if held else m.status,
                 "title": o.title,
                 "org": org.name if org else "",
                 "starts_at": _like_starts_at(m, o),
@@ -1185,20 +1224,25 @@ def org_inbox(coordinator_uid):
     Each row carries what the volunteer agreed to share (see choices.SHARED_WITH_NONPROFIT):
     their photo (none while a block stands), name ("Sam L.", "Sam Lee" once accepted),
     pronouns, bio, interests, causes, availability (as general buckets), the languages
-    they speak, neighborhood, frequency. One query
+    they speak, neighborhood, frequency. A row also says which shift the like is for
+    (starts_at, duration_minutes, slots, spots_left) and whether it fits their usual times
+    (fits, as those buckets, never the days). One query
     selects only those columns, so phone, email and location never leave SQLite.
     """
     skip, args = _filling("a")
     labels = {c.slug: c.label for c in _db.causes()}
     interests = dict(INTERESTS)
     rows = _db.db.query(
-        "SELECT m.id, m.status, o.title, o.recurrence, p.display_name, p.causes, "
-        "p.availability, "
+        "SELECT m.id, m.status, m.undo_until, o.title, o.recurrence, o.slots, "
+        "o.duration_minutes, "
+        "coalesce((SELECT c.starts_at FROM urgent_call c WHERE c.id = m.urgent_call_id), "
+        "o.starts_at) AS starts_at, "
+        "p.display_name, p.causes, p.availability, "
         "p.neighborhood, p.frequency, p.languages, p.last_name, p.pronouns, p.bio, "
         "p.interests, "
         "p.photo_key, " + _BLOCKED + " AS blocked, "
         "(SELECT count(*) FROM match a WHERE a.opening_id = o.id "
-        f"AND a.status = 'accepted'{skip}) >= o.slots AS full "
+        f"AND a.status = 'accepted'{skip}) AS taken "
         "FROM match m JOIN opening o ON o.id = m.opening_id "
         "JOIN profile p ON p.id = m.volunteer_id "
         "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
@@ -1211,6 +1255,7 @@ def org_inbox(coordinator_uid):
         [*args, coordinator_uid],
     )
     out = {"pending": [], "decided": [], "past": []}
+    now = _now()
     for r in rows:
         # After a block either way the row shows BLOCKED_NAME and nothing else of the
         # volunteer: every field is read live, and the volunteer may still edit it.
@@ -1254,8 +1299,20 @@ def org_inbox(coordinator_uid):
                 ],
                 "neighborhood": None if blocked else r["neighborhood"],
                 "frequency": None if blocked else r["frequency"],
-                "full": bool(r["full"]),
+                "full": r["taken"] >= r["slots"],
                 "weekly": r["recurrence"] == "weekly",
+                "starts_at": r["starts_at"],
+                "duration_minutes": r["duration_minutes"],
+                "spots_left": max(r["slots"] - r["taken"], 0),
+                "slots": r["slots"],
+                # None under a block: nothing of the volunteer, their times included
+                "fits": None
+                if blocked
+                else _match.fits_usual_times(
+                    json.loads(r["availability"] or "[]"), r["starts_at"]
+                ),
+                # a decline the coordinator may still take back
+                "undoable": r["status"] == "declined" and (r["undo_until"] or "") > now,
             }
         )
     return out
@@ -2917,6 +2974,20 @@ def org_waiting(coordinator_uid):
     a reply."""
     pending = sum(c["pending"] for c in opening_counts(coordinator_uid).values())
     return pending + len(org_unanswered(coordinator_uid))
+
+
+def org_to_mark(coordinator_uid):
+    """How many shifts started and wait for the coordinator to mark: the Shifts page's
+    "to_mark" list (org_shifts), and the nav's Shifts badge."""
+    return len(org_shifts(coordinator_uid)["to_mark"])
+
+
+def org_badges(coordinator_uid):
+    """The nonprofit nav's counts: {"inbox": org_waiting, "shifts": org_to_mark}."""
+    return {
+        "inbox": org_waiting(coordinator_uid),
+        "shifts": org_to_mark(coordinator_uid),
+    }
 
 
 def close_opening(coordinator_uid, opening_id):
