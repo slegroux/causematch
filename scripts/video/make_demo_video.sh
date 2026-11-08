@@ -11,7 +11,8 @@
 # and the espeak-ng data) and CAUSEMATCH_VIDEO_WORK (default $CACHE/video-work: voice,
 # recordings, the finished video; never inside the repo). CAUSEMATCH_VIDEO_VOICE (default
 # af_heart) is the Kokoro voice. CAUSEMATCH_VIDEO_PORT (default 5190) is the demo
-# server's port. Nothing here touches a real database: record uses scripts/demo.py's
+# server's port. DEMO_PUBLIC_URL (required by record) is the public https origin the
+# certificate's check link shows on screen, never a local address. Nothing here touches a real database: record uses scripts/demo.py's
 # throwaway one, with invented data only.
 set -euo pipefail
 
@@ -71,6 +72,10 @@ voice() {
 
 record() {
   say "record (about 3 minutes)"
+  case "${DEMO_PUBLIC_URL:-}" in
+    https://*) ;;
+    *) echo "DEMO_PUBLIC_URL must be set to the public https origin the video shows (no path), e.g. DEMO_PUBLIC_URL=https://example.org" >&2; exit 1 ;;
+  esac
   if lsof -ti "tcp:$PORT" >/dev/null 2>&1; then
     echo "port $PORT is in use: set CAUSEMATCH_VIDEO_PORT" >&2
     exit 1

@@ -26,6 +26,11 @@ scripts/video/make_demo_video.sh
 - Disk: about 1 GB for the TTS environment, 370 MB for Chromium, and about 70 MB of
   recordings, voice and segments for one run.
 - Nothing else uses port 5190 (override with `CAUSEMATCH_VIDEO_PORT`).
+- `DEMO_PUBLIC_URL`, for the `record` step: the public https origin the video shows on the
+  certificate page's check link, with no path (for example
+  `DEMO_PUBLIC_URL=https://example.org scripts/video/make_demo_video.sh`). Both the script
+  and `record.py` refuse to record without it, so a local address cannot get on screen.
+  The app keeps its local origin (it refuses posts from any other).
 
 Nothing is installed into the repo's virtualenv except what `uv sync` already installs
 (Playwright and Pillow are dev dependencies).
@@ -106,7 +111,9 @@ app's own; only their timing is chosen.
 The `check` beat shows a certificate's check link signed out, so it opens in its own fresh
 browser context (`guest`, a laptop), not in Jordan's or the admin's signed-in ones. That
 context exists for the whole recording and sits on a blank page until the beat. The link is
-the one Riley's certificate page prints (`http://127.0.0.1:PORT/check/...`, demo data only).
+the one Riley's certificate page prints, with its origin swapped on the page, while
+recording, for the public one (`DEMO_PUBLIC_URL`, below), so no local address is on screen.
+The path is the real one; the swap changes only the text the camera sees, never the app.
 The certificate page itself shows the code and the link; the QR code is in the PDF, which
 the video names but does not open.
 

@@ -3,6 +3,9 @@ volunteer's hours get confirmed.
 
 python record.py BASE_URL SERVER_LOG BEATS.json DURATIONS.json DB OUT_DIR
 
+The environment variable DEMO_PUBLIC_URL (an https origin, no path) is required: it is the
+address the certificate page's check link shows on screen instead of BASE_URL's local one.
+
 BASE_URL is scripts/video/serve.py's server and DB its throwaway database (one step edits
 it: "a few days later" moves the shift's start into the past). Four recordings (phone:
 Riley; jordan: the new coordinator; admin; guest: a signed-out visitor) and timeline.json. Each beat lasts at least as
@@ -11,6 +14,7 @@ server error makes the run fail, after the recordings are saved so you can look.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -28,6 +32,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import demo  # scripts/demo.py: refuse_production
 
 BASE, LOG = sys.argv[1], Path(sys.argv[2])
+# The app's own origin must stay the local one (it refuses posts from any other), so the
+# check link is rewritten on the page while recording: no local address is ever on screen.
+PUBLIC = os.environ.get("DEMO_PUBLIC_URL", "").rstrip("/")
+if re.fullmatch(r"https://[A-Za-z0-9.-]+(:\d+)?", PUBLIC) is None:
+    sys.exit(
+        "DEMO_PUBLIC_URL must be set to the public https origin the video shows, "
+        "e.g. https://example.org (no path): refusing to record a local address"
+    )
 BEATS = json.loads(Path(sys.argv[3]).read_text())
 DUR = json.loads(Path(sys.argv[4]).read_text())
 DB = sys.argv[5]
@@ -519,8 +531,9 @@ def story(vol, org, adm, gst):
     smooth_to(vol, vol.get_by_text("Signature code:"))
     hold(0.8)
     link = vol.get_by_text("/check/").first
+    check_path = urlsplit(link.inner_text().strip()).path  # the real, local link
+    link.evaluate("(el, text) => { el.textContent = text; }", PUBLIC + check_path)
     smooth_to(vol, link)
-    check_path = urlsplit(link.inner_text().strip()).path
     hold(0.8)
 
     # 17. anyone with the link: a fresh browser, signed out, on the laptop side
