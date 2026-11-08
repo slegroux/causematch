@@ -186,7 +186,7 @@ PREVIEW_PASSWORD="$(gcloud secrets versions access latest --secret PREVIEW_PASSW
 
 ### Schema changes
 
-Adding a column or a table: edit the class in `app/db.py` (`transform=True` does the rest). Renames, data changes, index changes and anything touching triggers need a numbered migration in `app/migrations/` instead; its docstring says how. Pending migrations run at startup, or by hand with `uv run python -m app.migrations [--db PATH]`.
+Adding a table: edit `app/db.py`; startup creates it. Everything else (a new column, renames, data changes, index changes, anything touching triggers) needs a numbered migration in `app/migrations/`, plus the class changed to the end state; its docstring says how. Startup never rebuilds a table or drops a column, and it stops when a table lacks a column its class declares. Pending migrations run at startup, or by hand with `uv run python -m app.migrations [--db PATH]`.
 
 ### Secret scan
 

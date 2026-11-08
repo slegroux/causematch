@@ -931,6 +931,62 @@ def test_a_failing_step_changes_nothing_and_stops_the_run(tmp_path):
     assert migrations.migrate(conn, [(1, rename), (2, lambda c: None)]) == 1
 
 
+def start(db):
+    """Import app.db on db in a fresh interpreter: what every app start does to the schema."""
+    return subprocess.run(
+        [sys.executable, "-c", "import app.db"],
+        check=False,
+        cwd=ROOT,
+        env={"PATH": os.environ["PATH"], "CAUSEMATCH_DB": str(db)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def schema(db):
+    c = apsw.Connection(str(db))
+    rows = c.execute(  # sqlite_stat*: apsw's PRAGMA optimize, not ours
+        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_stat%' "
+        "ORDER BY type, name"
+    ).fetchall()
+    c.close()
+    return rows
+
+
+def test_a_second_start_leaves_the_schema_byte_identical(tmp_path):
+    """transform=True rebuilt ten tables on every start (CREATE TABLE [match] came back
+    as CREATE TABLE "match"): an existing database's schema is the migrations' alone."""
+    db = tmp_path / "s.db"
+    assert start(db).returncode == 0
+    first = schema(db)
+    assert start(db).returncode == 0
+    assert schema(db) == first
+
+
+def test_a_column_only_the_class_has_stops_the_start_and_one_only_the_table_has_stays(
+    tmp_path,
+):
+    db = v1_copy(tmp_path)
+    assert run_migrations(db).returncode == 0
+    c = apsw.Connection(str(db))
+    c.execute("ALTER TABLE profile ADD COLUMN legacy TEXT")
+    c.close()
+    r = start(db)
+    assert r.returncode == 0, r.stderr
+    assert "table profile keeps column(s) legacy" in r.stderr
+    c = apsw.Connection(str(db))
+    assert "legacy" in [r[1] for r in c.execute("PRAGMA table_info(profile)")]
+    c = apsw.Connection(str(db))
+    c.execute("ALTER TABLE profile DROP COLUMN name_changed_at")  # as if 0018 never was
+    c.close()
+    r = start(db)
+    nxt = migrations.available()[-1][0] + 1
+    assert r.returncode != 0
+    assert "table profile has no column name_changed_at" in r.stderr
+    assert f"app/migrations/{nxt:04d}_" in r.stderr
+
+
 def test_migration_modules_are_numbered_once():
     names = [n for _, n in migrations.available()]
     assert names[0] == "0001_baseline"
