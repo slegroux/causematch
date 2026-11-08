@@ -2385,7 +2385,9 @@ def volunteer_holds_address(email):
 def _gives_volunteer_staff_links(email):
     """Making this address a coordinator's or an admin's would send a volunteer who signs
     in with it staff links: they hold it, and it doesn't already get the staff link."""
-    return volunteer_holds_address(email) and not staff_by_email(email.strip().lower())[0]
+    return (
+        volunteer_holds_address(email) and not staff_by_email(email.strip().lower())[0]
+    )
 
 
 class VolunteerAddress(ValueError):
