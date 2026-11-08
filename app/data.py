@@ -2235,11 +2235,11 @@ def link_identity(uid, claims):
     return None
 
 
-def unlink_identity(uid, provider, phone_works, working_providers):
+def unlink_identity(uid, provider, working_providers):
     """Disconnect this profile's sign-in with `provider`. False, and nothing changed, when
-    it is the last way in that works: its phone only counts when `phone_works` (codes can
-    be texted), another provider only when it is in `working_providers` (configured). The
-    check and the delete are one statement, so two disconnects at once can't both pass.
+    it is the last way in that works: another identity only counts when its provider is in
+    `working_providers` (configured, or the emailed link). The check and the delete are one
+    statement, so two disconnects at once can't both pass.
     When a block, an open or actioned report or a suspension stands against this profile,
     the disconnected identity's hash is kept, as at a deletion (_retain), so signing in
     with it again, as a new profile or on another, brings them back. Nobody is signed out
@@ -2251,12 +2251,10 @@ def unlink_identity(uid, provider, phone_works, working_providers):
             return True  # nothing to disconnect
         working = ",".join("?" * len(working_providers))
         _db.db.execute(
-            "DELETE FROM identity WHERE user_id = ? AND provider = ? AND ("
-            " (? AND (SELECT coalesce(phone, '') FROM profile WHERE id = ?) != '')"
-            " OR EXISTS (SELECT 1 FROM identity WHERE user_id = ? AND provider != ?"
-            f" AND provider IN ({working})))",
-            [uid, provider, int(bool(phone_works)), uid, uid, provider]
-            + list(working_providers),
+            "DELETE FROM identity WHERE user_id = ? AND provider = ? AND EXISTS ("
+            "SELECT 1 FROM identity WHERE user_id = ? AND provider != ?"
+            f" AND provider IN ({working}))",
+            [uid, provider, uid, provider] + list(working_providers),
         )
         if _db.db.conn.changes() != 1:
             return False
@@ -2658,13 +2656,25 @@ def metrics_rows():
 
 
 def create_login_token(uid):
-    """A fresh single-use token for the emailer; only its SHA-256 is stored."""
+    """A fresh single-use token for a staff profile's emailed link; only its SHA-256 is
+    stored, and it replaces the profile's last one."""
+    return _new_login_token("user_id", uid)
+
+
+def create_email_token(email):
+    """A fresh single-use token for a volunteer's emailed link (/login), tied to the
+    lowercased address, not to a profile: none is created until the link is used
+    (volunteer_for_identity). Only its SHA-256 is stored; it replaces the address's last."""
+    return _new_login_token("email", email)
+
+
+def _new_login_token(column, value):
     token = secrets.token_urlsafe(32)
-    _db.login_tokens.delete_where("user_id = ? OR expires_at < ?", [uid, _now()])
+    _db.login_tokens.delete_where(f"{column} = ? OR expires_at < ?", [value, _now()])
     _db.login_tokens.insert(
         _db.LoginToken(
             token_hash=_hash(token),
-            user_id=uid,
+            **{column: value},
             expires_at=(datetime.now(UTC) + timedelta(minutes=TOKEN_MINUTES)).isoformat(
                 timespec="seconds"
             ),
@@ -2674,13 +2684,55 @@ def create_login_token(uid):
 
 
 def consume_login_token(token):
-    """User id the token was issued to, or None. Marks it used in one statement."""
+    """User id a staff link's token was issued to, or None. Marks it used in one statement.
+    A volunteer's token is left alone: /org/login/verify can't use it up."""
     rows = _db.db.q(
-        "UPDATE login_token SET used_at = ? WHERE token_hash = ? "
+        "UPDATE login_token SET used_at = ? WHERE token_hash = ? AND user_id IS NOT NULL "
         "AND used_at IS NULL AND expires_at > ? RETURNING user_id",
         [_now(), _hash(token), _now()],
     )
     return rows[0]["user_id"] if rows else None
+
+
+def consume_email_token(token):
+    """The address a volunteer's link was sent to, or None; create_email_token's half of
+    consume_login_token, which leaves a staff link's token alone."""
+    rows = _db.db.q(
+        "UPDATE login_token SET used_at = ? WHERE token_hash = ? AND email IS NOT NULL "
+        "AND used_at IS NULL AND expires_at > ? RETURNING email",
+        [_now(), _hash(token), _now()],
+    )
+    return rows[0]["email"] if rows else None
+
+
+# identity.provider of a volunteer's emailed link: its subject is the lowercased address,
+# so the link signs in whoever signed up with that address, as Google's sub does
+EMAIL_SIGN_IN = "email"
+
+
+def volunteer_link_kind(email):
+    """What /login's emailed link does for this lowercased ASCII address. "staff": a live
+    coordinator's or admin's, who gets their own link (/org/login/verify). "sign-in": a live
+    volunteer signed up with it. "sign-up": no account holds it. None, and nothing is sent:
+    an account an admin suspended (live, or deleted with its hash kept, as for Google), and
+    a staff address that can't sign in (suspended, or a coordinator without an org): one
+    address, one role, as add_admin and claim approval keep it."""
+    if staff_by_email(email)[0]:
+        return "staff"
+    staff = (
+        "role IN ('coordinator', 'admin') AND lower(email) = ? AND deleted_at IS NULL"
+    )
+    if _db.profiles.count_where(staff, [email]):
+        return None
+    where = "provider = ? AND subject = ?"
+    for found in _db.identities(where=where, where_args=[EMAIL_SIGN_IN, email]):
+        p = _db.profiles[found.user_id]
+        if not p.deleted_at:  # a deleted account's identity signs nobody in
+            return None if p.suspended_at else "sign-in"
+    kept = _db.retained_identities(
+        where="hash = ?", where_args=[_identity_hash(EMAIL_SIGN_IN, email)]
+    )
+    return None if kept and kept[0].suspended else "sign-up"
 
 
 def create_opening(
@@ -4107,6 +4159,12 @@ def delete_account(uid):
             [uid],
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        # a link sent to the account's address must not sign it up again once deleted
+        _db.db.execute(
+            "DELETE FROM login_token WHERE email IN (SELECT subject FROM identity "
+            "WHERE user_id = ? AND provider = ?)",
+            [uid, EMAIL_SIGN_IN],
+        )
         _db.db.execute("DELETE FROM identity WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         # certificates carry the name and every shift: withdrawn, and nothing left to read

@@ -20,11 +20,11 @@ from monsterui.all import LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
-from app import data, notify, oauth, security
+from app import data, oauth, security
 from app.auth import sign_in, sign_in_staff
 from app.config import demo_address, is_preview, is_production, public_base_url
 from app.forms import EMAIL, bad_request, query, str_form
-from app.routes.auth import SUSPENDED, PhoneForm
+from app.routes.auth import SUSPENDED, LoginPage
 from app.routes.org_auth import EmailForm, link_sent
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
@@ -36,7 +36,7 @@ DOWN = "We couldn't sign you in with {} just now. Try again in a minute."
 CANCELLED = "{} sign-in was cancelled."
 UNVERIFIED = (
     "Your {} account's email isn't verified yet, so it can't sign in here. "
-    "Verify it with {}, or {}."
+    "Verify it with {}, or get an emailed link."
 )
 NO_ORG = "No nonprofit account uses this email. Claim your nonprofit: "
 MAX_PICTURE_URL = 2000  # characters kept in the session for onboarding's photo choice
@@ -105,15 +105,14 @@ def _connect(req, name):
 
 
 def _disconnect(req, sess, name):
-    """Only ways in that work now count as another: the phone while codes can be texted,
-    a provider while it is configured. A disconnect ends every other session and open
-    chat, because a reason to disconnect is often that the provider account is no longer
-    only theirs; this browser stays signed in."""
+    """Only ways in that work now count as another: a provider while it is configured,
+    and the emailed link (email is always configured). A disconnect ends every other
+    session and open chat, because a reason to disconnect is often that the provider
+    account is no longer only theirs; this browser stays signed in."""
     uid = req.scope["uid"]
-    providers = [n for n, _ in oauth.enabled_providers()]
-    phone_works = notify.phone_sign_in_enabled()
+    working = [n for n, _ in oauth.enabled_providers()] + [data.EMAIL_SIGN_IN]
     had = name in data.identities_of(uid)
-    if not data.unlink_identity(uid, name, phone_works, providers):
+    if not data.unlink_identity(uid, name, working):
         return Redirect("/me/profile?error=last")
     if had:
         data.sign_out_everywhere(uid)
@@ -182,7 +181,7 @@ def _login(error, status, intent="volunteer", name=""):
             if status == 400
             else Redirect(f"/me/profile?error=failed-{name}")
         )
-    return FtResponse(PhoneForm(error=error), status_code=status)
+    return FtResponse(LoginPage(error=error), status_code=status)
 
 
 def _sync_callback(req, sess, provider, params):
@@ -218,8 +217,7 @@ def _sync_callback(req, sess, provider, params):
     if not claims.subject:
         return _login(FAILED.format(label), 400, intent, name)
     if not (claims.email_verified and claims.email):
-        other = "get an emailed link" if intent == "staff" else "use your phone number"
-        return _login(UNVERIFIED.format(label, label, other), 400, intent, name)
+        return _login(UNVERIFIED.format(label, label), 400, intent, name)
     if intent == "staff":
         return _staff_sign_in(req, sess, claims)
     if intent == "link":

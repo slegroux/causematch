@@ -9,6 +9,8 @@ import httpx
 import pytest
 from conftest import (
     PANTRY,
+    add_number,
+    adder,
     coordinator,
     pantry_opening,
     volunteer,
@@ -622,10 +624,10 @@ def status_of(key):
 
 
 def at_the_ceiling(monkeypatch, anon):
-    """A ceiling of one text an hour, already used by a sign-in code."""
+    """A ceiling of one text an hour, already used by a code from Me's add-a-number."""
     rate_events.delete_where()
     monkeypatch.setenv("SMS_MAX_PER_HOUR", "1")
-    assert anon.post("/login/send", data={"phone": "3105550140"}).status_code == 200
+    assert add_number(adder(), "3105550140") == 303
 
 
 def test_over_the_ceiling_a_text_is_deferred_and_the_sweep_sends_it(
@@ -659,8 +661,7 @@ def test_codes_and_notifications_share_the_ceiling(world, monkeypatch, anon):
     monkeypatch.setenv("SMS_MAX_PER_HOUR", "1")
     accept(world.coord, world.match)  # the text uses the hour's one
     assert len(texts()) == 1
-    r = anon.post("/login/send", data={"phone": "3105550141"})
-    assert r.status_code == 429
+    assert add_number(adder(), "3105550141") == 429
 
 
 def test_reminders_per_sweep_are_capped(world, clock, anon, monkeypatch):

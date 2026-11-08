@@ -9,7 +9,7 @@ from app import data, notify, security
 from app.auth import sign_in_staff
 from app.config import DEMO_COORDINATOR, demo_address, demo_matches, is_preview
 from app.forms import EMAIL, query, str_form
-from app.routes.auth import ProviderSignIn
+from app.routes.auth import BAD_EMAIL, BAD_LINK, ProviderSignIn
 from app.ui import (
     BigButton,
     DemoSignIn,
@@ -24,8 +24,6 @@ ar = Router()
 log = logging.getLogger("causematch")
 
 SENT = "If that address belongs to a coordinator, a sign-in link is on its way."
-BAD_EMAIL = "Enter your email address."
-BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
 
 
 def EmailForm(email="", error=None, notice=None, link=None):
@@ -63,7 +61,7 @@ def EmailForm(email="", error=None, notice=None, link=None):
         intro=notice or "Sign in to post volunteer openings.",
         aside=P(
             "Volunteering? ",
-            A("Sign in with your phone", href="/login", cls="text-brand font-bold"),
+            A("Volunteer sign in", href="/login", cls="text-brand font-bold"),
             cls="mt-8 text-center text-ink-muted",
         ),
     )

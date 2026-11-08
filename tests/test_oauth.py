@@ -261,11 +261,11 @@ def test_coordinator_and_volunteer_intents_never_cross(anon):
 # --- Me: connect and disconnect -----------------------------------------------------------
 
 
-def test_link_connects_google_to_a_phone_volunteer_but_not_someone_elses(anon):
+def test_link_connects_google_to_an_email_volunteer_but_not_someone_elses(anon):
     vol = volunteer()
     r = connect(vol)
     assert r.headers["location"] == "/me/profile?notice=connected"
-    assert data.identities_of(vol.uid) == {"google": EMAIL}
+    assert data.identities_of(vol.uid)["google"] == EMAIL
     assert f"Connected as {EMAIL}" in vol.get("/me/profile").text
     google_sign_in(anon, sub="g-theirs")  # another volunteer's Google account
     r = connect(volunteer(), sub="g-theirs")
@@ -291,10 +291,10 @@ def test_unlink_never_removes_the_last_way_in(anon):
     connect(vol)
     r = vol.post("/me/identity/google/disconnect", follow_redirects=False)
     assert r.headers["location"] == "/me/profile?notice=disconnected"
-    assert data.identities_of(vol.uid) == {}
+    assert list(data.identities_of(vol.uid)) == ["email"]  # the emailed link is left
     assert vol.get("/deck").status_code == 200  # nobody is signed out
 
-    google_sign_in(anon, sub="g-only")  # no phone: Google is the only way in
+    google_sign_in(anon, sub="g-only")  # Google is the only way in
     anon.post("/onboarding", data=FORM)
     r = anon.post("/me/identity/google/disconnect", follow_redirects=False)
     assert r.headers["location"] == "/me/profile?error=last"

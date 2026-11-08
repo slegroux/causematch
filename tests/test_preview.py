@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import pytest
-from conftest import ROOT, coordinator_for, jpeg, uid_of
+from conftest import ROOT, coordinator_for, jpeg, sign_in, uid_of
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
@@ -259,8 +259,8 @@ def test_every_path_needs_the_password(preview):
             assert PRIVATE in r.text and "<link" not in r.text  # nothing of the app
         r = c.post("/tasks/reminders", headers={"Authorization": f"Bearer {SECRET}"})
         assert r.status_code == 401
-        r = c.post("/login/send", data={"phone": "3105550123"})
-        assert r.status_code == 401 and not notify.get_verifier().sent
+        r = c.post("/login/send", data={"email": "x@example.org"})
+        assert r.status_code == 401 and not notify.get_emailer().sent
 
 
 def test_the_password_lets_every_path_through(guest):
@@ -403,9 +403,9 @@ def test_only_a_navigation_weighs_the_key(preview):
 
 def test_a_post_with_the_key_is_neither_let_in_nor_counted(preview):
     c = TestClient(app, base_url="https://testserver")
-    r = c.post(f"/login/send?access={PASSWORD}", data={"phone": "3105550123"})
+    r = c.post(f"/login/send?access={PASSWORD}", data={"email": "x@example.org"})
     assert r.status_code == 401 and "set-cookie" not in r.headers
-    assert not notify.get_verifier().sent and not counted()
+    assert not notify.get_emailer().sent and not counted()
 
 
 def test_a_valid_cookie_gets_in_past_the_limit(preview):
@@ -516,10 +516,19 @@ def test_no_banner_outside_a_preview(anon):
     assert PREVIEW_NOTICE not in anon.get("/login").text
 
 
-def test_fake_sign_in_codes_work_in_a_preview(guest):
-    guest.post("/login/send", data={"phone": "(310) 555-0123"})
-    r = guest.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+def test_a_preview_shows_a_volunteers_link_on_the_page(guest):
+    """As /org/login does for a coordinator: nothing is emailed, so the page shows it."""
+    page = guest.post("/login/send", data={"email": "new@example.org"}).text
+    link = re.search(
+        r'href="https://causematch\.test(/login/verify\?token=[\w-]+)"', page
+    )
+    assert link and "Open your sign-in link" in page
+    guest.get(link[1])
+    r = guest.post("/login/verify", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/onboarding"
+    data.add_admin(*demo_seed.ADMIN)  # an admin's link stays in the log, here too
+    page = guest.post("/login/send", data={"email": demo_seed.ADMIN[0]}).text
+    assert "Open your sign-in link" not in page and "token=" not in page
 
 
 def test_fake_codes_go_to_demo_numbers_only_in_a_preview(guest):
@@ -773,8 +782,7 @@ def demo(preview, monkeypatch):
 
 def as_demo_volunteer():
     c = TestClient(app, headers={"Authorization": basic()})
-    c.post("/login/send", data={"phone": demo_seed.ME_PHONE})
-    r = c.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    r = c.post("/login/demo", follow_redirects=False)
     assert r.headers["location"] == "/deck"
     (c.uid,) = [
         p.id
@@ -784,7 +792,7 @@ def as_demo_volunteer():
     return c
 
 
-def test_each_visitor_of_the_demo_number_gets_their_own_sam(demo):
+def test_each_demo_visitor_gets_their_own_sam(demo):
     a, b = as_demo_volunteer(), as_demo_volunteer()
     assert a.uid != b.uid
     assert profiles[a.uid].display_name == profiles[b.uid].display_name == "Sam"
@@ -870,19 +878,24 @@ def test_demo_copies_are_capped_and_the_oldest_is_reused(demo, monkeypatch):
     assert [c.volunteer_id for c in certificates()] == [b]  # a's certificate went too
 
 
-def test_without_the_switch_the_demo_number_is_the_seeds_sam(preview):
+def test_without_the_switch_there_are_no_demo_copies(preview):
     _empty()
     demo_seed.seed_preview(None)
     (seed_sam,) = profiles(where="phone = ?", where_args=[DEMO_PHONE])
     c = TestClient(app, headers={"Authorization": basic()})
-    c.post("/login/send", data={"phone": demo_seed.ME_PHONE})
-    c.post("/login/verify", data={"code": "000000"})
+    assert c.post("/login/demo", follow_redirects=False).status_code == 403
     assert data.get_or_create_volunteer(DEMO_PHONE) == seed_sam.id
     assert not [
         p for p in profiles() if (p.phone or "").startswith(data.DEMO_PHONE_PREFIX)
     ]
     with pytest.raises(PermissionError):
         data.new_demo_volunteer()
+    # the seed's Sam signs in with the emailed link instead (a preview shows it)
+    page = c.post("/login/send", data={"email": demo_seed.ME_EMAIL}).text
+    c.get(re.search(r"/login/verify\?token=[\w-]+", page)[0])
+    assert (
+        c.post("/login/verify", follow_redirects=False).headers["location"] == "/deck"
+    )
     assert "Sam" in c.get("/profile").text
 
 
@@ -914,15 +927,14 @@ def test_the_demo_buttons_sign_in_each_role_in_one_tap(demo):
 
 def test_in_a_demo_the_coordinator_sees_demo_people_only(demo):
     """Anyone can become the demo coordinator, so a tester who signed up with their own
-    number never shows in its inbox; a demo copy's like does."""
+    address never shows in its inbox; a demo copy's like does."""
     from app.auth import normalize_phone
 
     assert {normalize_phone(p) for p in (demo_seed.ME_PHONE, demo_seed.NO_PHOTO_PHONE)}
     assert normalize_phone(demo_seed.NO_PHOTO_PHONE) in data.DEMO_SEEDED_PHONES
     pat = data.coordinator_by_email(DEMO_COORDINATOR)
     tester = TestClient(app, headers={"Authorization": basic()})
-    tester.post("/login/send", data={"phone": "(213) 555-0188"})
-    tester.post("/login/verify", data={"code": "000000"})
+    sign_in(tester, "(213) 555-0188")
     (real,) = profiles(where="phone = ?", where_args=["+12135550188"])
     profiles.update(id=real.id, display_name="Realtester", onboarded_at="2026-01-01",
                     heard_from="skipped")  # fmt: skip

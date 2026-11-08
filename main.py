@@ -48,9 +48,9 @@ from app.routes import oauth as oauth_routes
 from app.routes.safety import not_found
 
 require_env()  # an undeclared environment, or a preview without its password, never runs
-require_volunteer_sign_in()  # ... nor production with no Twilio, Google or Apple sign-in
-notify.get_verifier()  # ... or Twilio is half set (unset: no phone sign-in, email instead)
-notify.get_emailer()  # ... or sign-in links
+require_volunteer_sign_in()  # ... nor production with no emailed link, Google or Apple
+notify.get_verifier()  # ... or Twilio Verify is half set (unset: Me adds no number)
+notify.get_emailer()  # ... or sign-in links (volunteers' and staff's)
 notify.get_sms()  # ... or texts
 oauth.enabled_providers()  # ... or Google is half set, Apple's key unreadable, or faked
 tasks_token()  # ... or the scheduler can't call in

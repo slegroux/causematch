@@ -32,7 +32,6 @@ from app.config import (
     is_production,
     phone_hash_key,
     public_base_url,
-    shared_demo_phone,
     sms_ceilings,
     trusted_proxy_hops,
 )
@@ -489,8 +488,9 @@ def _subject(ip, v6_prefix=64):
 
 # (name, limit, window seconds), counted in a SQLite table so a restart doesn't reset
 # them: these send texts or email (which cost money) or would let someone enumerate.
-# Codes are limited per (phone, client address) first, so someone else hammering a
-# number from elsewhere doesn't lock its owner out; the per-phone day cap is looser.
+# Me's add-a-number codes are limited per (phone, client address) first, so someone else
+# hammering a number from elsewhere doesn't lock its owner out; the per-phone day cap is
+# looser. Sign-in is the emailed link's (LINK_*) and the providers' (OAUTH_PER_IP).
 SMS_PER_PHONE_IP = (("sms-phone-ip-10m", 5, 600), ("sms-phone-ip-day", 10, 24 * 3600))
 SMS_PER_PHONE = (("sms-phone-day", 20, 24 * 3600),)
 SMS_PER_IP = (("sms-ip", 60, 3600),)  # IPv4 address or IPv6 /64
@@ -503,8 +503,8 @@ DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo o
 
 
 def verify_limits(phone):
-    """The wrong-code limit of a number: none for the shared demo number of a demo."""
-    return () if shared_demo_phone(phone) else ((VERIFY_PER_PHONE, phone),)
+    """The wrong-code limit of a number Me's add-a-number is proving."""
+    return ((VERIFY_PER_PHONE, phone),)
 
 
 LINK_PER_IP = (("link-ip", 20, 3600),)
@@ -541,7 +541,7 @@ def sms_all():
 
 def sms_urgent():
     """Urgent calls' own ceiling, half of each of sms_all's, subject "urgent": waves never
-    take the whole budget, so sign-in codes always have room."""
+    take the whole budget, so verification codes and other texts always have room."""
     hour, day = sms_ceilings()
     return (
         ("sms-urgent-hour", max(1, hour // 2), 3600),
@@ -579,16 +579,11 @@ def ip_subject(req, v6_prefix=64):
 
 
 def sms_send_limits(req, phone):
-    """Every limit one sign-in code counts against; the shared demo number of a demo
-    (config.shared_demo_phone) counts against its address and network only."""
+    """Every limit one of Me's add-a-number codes counts against."""
     ip = ip_subject(req)
-    per_phone = (
-        ()
-        if shared_demo_phone(phone)
-        else ((SMS_PER_PHONE_IP, f"{phone}|{ip}"), (SMS_PER_PHONE, phone))
-    )
     return (
-        *per_phone,
+        (SMS_PER_PHONE_IP, f"{phone}|{ip}"),
+        (SMS_PER_PHONE, phone),
         (SMS_PER_IP, ip),
         (SMS_PER_NET, ip_subject(req, 48)),
         (sms_all(), "all"),
