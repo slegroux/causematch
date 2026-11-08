@@ -987,3 +987,16 @@ def test_an_address_that_already_gets_staff_links_needs_no_box(admin):
     claim(email="vol@example.org")
     assert WARNING not in admin.get("/admin/claims").text
     assert approve(admin, the_claim().id).status_code == 303
+
+
+def test_a_coordinator_on_a_tag_of_the_address_still_leaves_the_warning(admin):
+    """Only the exact address getting staff links skips it: a coordinator on a +tag of
+    the volunteer's address doesn't make the volunteer's own links staff ones."""
+    imported()
+    held()
+    data.add_coordinator("vol+org@example.org", orgs()[0].id)
+    claim(email="vol@example.org")
+    assert WARNING in admin.get("/admin/claims").text
+    r = approve(admin, the_claim().id)
+    assert r.status_code == 200 and WARNING in r.text
+    assert the_claim().status == "pending"
