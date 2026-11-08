@@ -75,10 +75,9 @@ CURSOR = """
 # Runs in every page before it is drawn: the app's own (local) origin, wherever the page
 # prints it as text (the certificate's check link), becomes the public one. Only text nodes
 # change, so not even the first frames show a local address, and the app is untouched.
-PUBLIC_TEXT = (
-    """
+PUBLIC_TEXT = """
 (() => {
-  const from = location.origin, to = %s;
+  const from = location.origin, to = __PUBLIC__;
   if (!from.startsWith('http')) return;
   const fix = n => {
     if (n.nodeType === 3) { if (n.nodeValue.includes(from)) n.nodeValue = n.nodeValue.split(from).join(to); }
@@ -89,9 +88,7 @@ PUBLIC_TEXT = (
     if (m.type === 'characterData') fix(m.target);
   })).observe(document, {childList: true, subtree: true, characterData: true});
 })();
-"""
-    % json.dumps(PUBLIC)
-)
+""".replace("__PUBLIC__", json.dumps(PUBLIC))
 
 problems = []
 
@@ -130,14 +127,17 @@ def link_text(page):
     return page.get_by_text("/check/").first.inner_text()
 
 
+def visible_text(page):
+    try:
+        return page.locator("body").inner_text(timeout=2000)
+    except Exception:  # noqa: BLE001  a page mid-navigation: checked at the next beat
+        return ""
+
+
 def no_local_address(*pages):
     """Fail the run if any page's visible text holds the local address."""
     for page in pages:
-        try:
-            text = page.locator("body").inner_text(timeout=2000)
-        except Exception:  # noqa: BLE001  a page mid-navigation: checked at the next beat
-            continue
-        if urlsplit(BASE).netloc in text:
+        if urlsplit(BASE).netloc in visible_text(page):
             problems.append(f"local address on screen ({page.url})")
 
 
@@ -361,7 +361,9 @@ def story(vol, org, adm, gst):
     smooth_to(org, submit)
     tap(org, submit)
     org.wait_for_url("**/org")
-    point(org, org.get_by_role("link", name="Edit").first)  # the new opening is editable
+    point(
+        org, org.get_by_role("link", name="Edit").first
+    )  # the new opening is editable
 
     # 4. Riley signs up with an email address and opens the emailed link
     beat("register")
