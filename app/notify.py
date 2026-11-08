@@ -2,12 +2,16 @@ import logging
 import os
 import re
 import smtplib
+import socket
 import ssl
+import threading
 import unicodedata
+from contextlib import contextmanager, nullcontext, suppress
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from app import data, security
 from app.config import (
@@ -39,6 +43,7 @@ TWILIO_KEYS = (
 )
 FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days
 SMTP_TIMEOUT = 10  # seconds, for the connection and each SMTP command
+SMTP_DEADLINE = 30  # seconds for one send in all, connecting and signing in included
 
 
 def _record(sent, item):
@@ -161,7 +166,7 @@ class FakeEmailer:
         self.sent = []
         self.with_headers = []  # (to, subject, headers) of messages that had any
 
-    def send(self, to, subject, body, headers=None, sign_in=False):
+    def send(self, to, subject, body, headers=None, kind="notice"):
         _record(self.sent, (to, subject, body))
         if headers:
             _record(self.with_headers, (to, subject, headers))
@@ -177,46 +182,108 @@ class ResendEmailer:
             timeout=10,
         )
 
-    def send(self, to, subject, body, headers=None, sign_in=False):
+    def send(self, to, subject, body, headers=None, kind="notice"):
         message = {"from": self.sender, "to": [to], "subject": subject, "text": body}
         if headers:
             message["headers"] = headers
         self.client.post("/emails", json=message).raise_for_status()
 
 
-NOTICE_SHARE = 0.6  # of SMTP_MAX_PER_DAY that notices may use: the rest is for sign-in
+DAY = 24 * 3600
+# Shares of SMTP_MAX_PER_DAY, in every 24 hours: notices (urgent calls' emails among them,
+# with their own share inside, as urgent texts get half the SMS ceiling) and sign-up links
+# each have a cap, so links to existing accounts and staff always have at least a quarter.
+NOTICE_SHARE, SIGNUP_SHARE, URGENT_SHARE = 0.5, 0.25, 0.25
+KINDS = (
+    "sign-in",
+    "sign-up",
+    "notice",
+    "urgent",
+)  # what an emailer's send(kind=) takes
 
 
 class EmailCeiling(Exception):
-    """SMTP_MAX_PER_DAY emails were sent over SMTP in the last 24 hours, or notices used
-    their share of it: not sent."""
+    """SMTP_MAX_PER_DAY emails were sent over SMTP in the last 24 hours, or this kind of
+    email used its share of it: not sent."""
+
+
+def _shut(server):
+    """SMTP_DEADLINE ran out: shut the socket, so the blocked call fails at once."""
+    sock = getattr(server, "sock", None)
+    if sock is not None:
+        with suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
+
+
+def _close(server, polite):
+    """polite: say QUIT first. Never raises: the message is out, or the error is."""
+    with suppress(Exception):
+        if polite:
+            server.quit()
+    server.close()
 
 
 class SMTPEmailer:
     """Email over SMTP with a login: a Gmail account and its app password, for the beta.
+
     Always TLS with the certificate checked: port 465 is TLS from the start, any other
     upgrades with STARTTLS, and a server that doesn't offer it is refused, so the password
-    never crosses in the clear. Every send counts against SMTP_MAX_PER_DAY first, and a
-    notice (anything but a sign-in or sign-up link) against NOTICE_SHARE of it too, as
-    urgent texts get half the SMS ceiling: sign-in links always have room."""
+    never crosses in the clear. Each send has SMTP_DEADLINE in all, connecting and signing
+    in included. Inside batch() the sends of one thread share a signed-in connection.
+
+    Every send counts against SMTP_MAX_PER_DAY, and by its kind against a share of it:
+    "notice" NOTICE_SHARE, "urgent" that and URGENT_SHARE, "sign-up" SIGNUP_SHARE;
+    "sign-in" (a link to an existing account or staff) the whole only."""
 
     def __init__(self, host, port, username, password, sender, per_day):
         self.host, self.port = host, port
         self.username, self.password = username, password
         self.sender = sender
-        self.ceiling = (("email-smtp-day", per_day, 24 * 3600),)
-        notices = max(1, int(per_day * NOTICE_SHARE))
-        self.notices = (("email-smtp-notices-day", notices, 24 * 3600),)
         self.context = ssl.create_default_context()
+        self._local = threading.local()  # .server: the open batch connection, if any
 
-    def send(self, to, subject, body, headers=None, sign_in=False):
-        # security.allow logs "rate limit reached: email-smtp-day" or
-        # "...: email-smtp-notices-day" (docs/OPERATIONS.md)
-        limits = [(self.ceiling, "all")]
-        if not sign_in:
-            limits.append((self.notices, "all"))
-        if not security.allow(*limits):
-            raise EmailCeiling
+        def share(name, part):
+            return (
+                ((f"email-smtp-{name}-day", max(1, int(per_day * part)), DAY),),
+                "all",
+            )
+
+        whole = ((("email-smtp-day", per_day, DAY),), "all")
+        notices = share("notices", NOTICE_SHARE)
+        self.limits = {
+            "sign-in": (whole,),
+            "sign-up": (whole, share("signups", SIGNUP_SHARE)),
+            "notice": (whole, notices),
+            "urgent": (whole, notices, share("urgent", URGENT_SHARE)),
+        }
+
+    @contextmanager
+    def batch(self):
+        """The sends inside, in this thread, share one signed-in connection."""
+        if hasattr(self._local, "server"):  # already in one
+            yield
+            return
+        self._local.server = None
+        try:
+            yield
+        finally:
+            server = self._local.server
+            del self._local.server
+            if server is not None:
+                _close(server, polite=True)
+
+    def _unconnected(self):
+        """An SMTP client not connected yet, so SMTP_DEADLINE covers connecting too."""
+        if self.port == SMTP_TLS_PORT:
+            server = smtplib.SMTP_SSL(timeout=SMTP_TIMEOUT, context=self.context)
+        else:
+            server = smtplib.SMTP(timeout=SMTP_TIMEOUT)
+        # the name TLS checks the certificate against; smtplib sets it only from the
+        # constructor's host, which would connect at once
+        server._host = self.host
+        return server
+
+    def send(self, to, subject, body, headers=None, kind="notice"):
         message = EmailMessage()
         message["From"] = self.sender
         message["To"] = to
@@ -224,17 +291,77 @@ class SMTPEmailer:
         for name, value in (headers or {}).items():
             message[name] = value
         message.set_content(body)
-        if self.port == SMTP_TLS_PORT:
-            server = smtplib.SMTP_SSL(
-                self.host, self.port, timeout=SMTP_TIMEOUT, context=self.context
-            )
-        else:
-            server = smtplib.SMTP(self.host, self.port, timeout=SMTP_TIMEOUT)
-        with server:
-            if self.port != SMTP_TLS_PORT:
-                server.starttls(context=self.context)  # SMTPNotSupportedError if none
-            server.login(self.username, self.password)
+        # security.allow logs "rate limit reached: email-smtp-..." (docs/OPERATIONS.md)
+        if not security.allow(*self.limits[kind]):
+            raise EmailCeiling
+        batched = hasattr(self._local, "server")
+        server = self._local.server if batched else None
+        fresh = server is None
+        if fresh:
+            server = self._unconnected()
+        timer = threading.Timer(SMTP_DEADLINE, _shut, (server,))
+        timer.start()
+        try:
+            if fresh:
+                server.connect(self.host, self.port)
+                if self.port != SMTP_TLS_PORT:
+                    # SMTPNotSupportedError when the server doesn't offer it
+                    server.starttls(context=self.context)
+                server.login(self.username, self.password)
             server.send_message(message)
+        except BaseException:
+            if batched:
+                self._local.server = None  # the next send connects afresh
+            _close(server, polite=False)
+            raise
+        finally:
+            timer.cancel()
+        if batched:
+            self._local.server = server
+        else:
+            _close(server, polite=True)
+
+
+def batch():
+    """One SMTP connection for the sends inside, in this thread; nothing for the others."""
+    emailer = get_emailer()
+    return emailer.batch() if hasattr(emailer, "batch") else nullcontext()
+
+
+AFTER = "causematch.after"  # in a request's scope: what after() queued
+
+
+def after(req, fn, *args):
+    """Call fn(*args) once the response is out (RunAfter), off the request: an SMTP send
+    can take seconds. Without RunAfter around the request, at once."""
+    queued = req.scope.get(AFTER)
+    if queued is None:
+        fn(*args)
+    else:
+        queued.append((fn, args))
+
+
+class RunAfter:
+    """ASGI middleware: after an HTTP response, runs what after() queued, each in a worker
+    thread, as a BackgroundTask would. Never raises for them."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        scope[AFTER] = queued = []
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            for fn, args in queued:
+                try:
+                    await run_in_threadpool(fn, *args)
+                except Exception as e:  # noqa: BLE001  the response is out already
+                    log.warning(
+                        "a notice failed after the response: %s", type(e).__name__
+                    )
 
 
 def make_emailer(env=os.environ):
@@ -276,7 +403,7 @@ def send_login_link(email, token):
         "Your Causematch sign-in link",
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
-        sign_in=True,
+        kind="sign-in",
     )
     return link
 
@@ -291,7 +418,7 @@ def send_volunteer_link(email, token, new):
         ("Finish signing up for Causematch:" if new else "Sign in to Causematch:")
         + f"\n\n{link}\n\nThis link works once and expires in 15 minutes. If you "
         "didn't ask for it, ignore this email.",
-        sign_in=True,
+        kind="sign-up" if new else "sign-in",
     )
     return link
 
@@ -555,13 +682,14 @@ def on_new_like(match_id):
     def send():
         n = data.org_pending_count(org_id)
         waiting = "1 volunteer is" if n == 1 else f"{n} volunteers are"
-        for to in emails:
-            get_emailer().send(
-                to,
-                "New volunteer interest on Causematch",
-                f"{waiting} waiting to hear from {info['org']}.\n\n"
-                f"{public_base_url()}/org/inbox",
-            )
+        with batch():
+            for to in emails:
+                get_emailer().send(
+                    to,
+                    "New volunteer interest on Causematch",
+                    f"{waiting} waiting to hear from {info['org']}.\n\n"
+                    f"{public_base_url()}/org/inbox",
+                )
 
     _deliver("likes", f"likes:{org_id}", org_id, send, LIKES_WINDOW)
 
@@ -577,15 +705,16 @@ def on_auto_accepted(match_id):
         return
 
     def send():
-        for to in emails:
-            get_emailer().send(
-                to,
-                f"A volunteer is in for {info['opening']}, {info['when']}",
-                f"A volunteer said yes to your urgent call for {info['opening']}, "
-                f"{info['when']}, and was accepted automatically ({info['found']} of "
-                f"{info['needed']} found). Their shift is booked.\n\n"
-                f"Who and chat: {public_base_url()}/org/inbox",
-            )
+        with batch():
+            for to in emails:
+                get_emailer().send(
+                    to,
+                    f"A volunteer is in for {info['opening']}, {info['when']}",
+                    f"A volunteer said yes to your urgent call for {info['opening']}, "
+                    f"{info['when']}, and was accepted automatically ({info['found']} "
+                    f"of {info['needed']} found). Their shift is booked.\n\n"
+                    f"Who and chat: {public_base_url()}/org/inbox",
+                )
 
     _deliver("auto", f"auto:{match_id}", info["org_id"], send)
 
@@ -605,8 +734,9 @@ def _email_org(kind, key, info, subject, body):
         return
 
     def send():
-        for to in emails:
-            get_emailer().send(to, subject, body)
+        with batch():
+            for to in emails:
+                get_emailer().send(to, subject, body)
 
     _deliver(kind, key, info["org_id"], send)
 
@@ -685,6 +815,12 @@ def on_withdrawn(match_id, was):
 
 
 def send_due_reminders():
+    """The hourly sweep (_send_due_reminders), its emails over one SMTP connection."""
+    with batch():
+        return _send_due_reminders()
+
+
+def _send_due_reminders():
     """Text the volunteer of every scheduled shift starting 23 to 25 hours from now, once
     per shift, and retry failed "you're matched" texts and texts the SMS ceiling deferred.
     How many were sent.
@@ -732,6 +868,12 @@ def send_due_reminders():
 
 
 def send_urgent_waves():
+    """The 10-minute sweep (_send_urgent_waves), its emails over one SMTP connection."""
+    with batch():
+        return _send_urgent_waves()
+
+
+def _send_urgent_waves():
     """Cloud Scheduler calls /tasks/urgent every 10 minutes: send each urgent call's due
     wave (data.urgent_waves_due) to the volunteers data.urgent_recipients picks, once per
     volunteer and call. A wave is claimed only once it has someone to reach, so one that
@@ -777,7 +919,7 @@ def send_urgent_waves():
                     key,
                     uid,
                     lambda to=email, s=subject, b=body, off=off: get_emailer().send(
-                        to, s, b, {"List-Unsubscribe": f"<{off}>"}
+                        to, s, b, {"List-Unsubscribe": f"<{off}>"}, kind="urgent"
                     ),
                 )
             )

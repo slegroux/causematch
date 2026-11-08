@@ -504,7 +504,12 @@ VERIFY_PER_PHONE = (
 # then a looser cap per mailbox a day
 LINK_PER_EMAIL_IP = (("link-email-ip", 5, 3600),)
 LINK_PER_EMAIL = (("link-email-day", 20, 24 * 3600),)
-DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo only)
+DEMO_PER_IP = (("demo-ip", 10, 3600),)
+# likes per volunteer a day that email the org (notify.on_new_like); later ones only
+# show in its inbox, so one volunteer can't spend the email ceiling's notices
+LIKE_NOTICES = (
+    ("like-notice-day", 20, 24 * 3600),
+)  # demo copies made per address (a demo only)
 
 
 def verify_limits(phone):
@@ -538,6 +543,7 @@ assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
     + (VERIFY_PER_PHONE, LINK_PER_EMAIL_IP, LINK_PER_EMAIL, LINK_PER_IP, LINK_PER_NET)
+    + (LIKE_NOTICES,)
     + (SIGNUP_ALL, CLAIM_PER_IP, CLAIM_PER_EMAIL)
     + (OAUTH_PER_IP,)
     + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL, CHECK_PER_IP)

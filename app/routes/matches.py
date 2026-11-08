@@ -24,7 +24,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 
-from app import data, notify
+from app import data, notify, security
 from app.forms import bad_request, query, str_form
 from app.routes.deck import DeckArea, MatchSheet, MomentSlot, deck_view
 from app.ui import (
@@ -109,7 +109,7 @@ def _sync_swipe(req, form):
         notice = "That opening isn't available any more."
     else:
         if m and m.status == "accepted":  # an urgent call took them: off to the chat
-            notify.on_auto_accepted(m.id)
+            notify.after(req, notify.on_auto_accepted, m.id)
             fresh = data.new_matches(uid)
             if [r["id"] for r in fresh] == [m.id]:  # the chat is its moment: no sheet
                 data.saw_new_matches(uid, fresh)
@@ -117,10 +117,10 @@ def _sync_swipe(req, form):
                 return Response(headers={"HX-Redirect": f"/chat/{m.id}?notice=in"})
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
-            if (
-                not m.org_blind
-            ):  # the org never hears of a blind like; the volunteer can't tell
-                notify.on_new_like(m.id)
+            # the org never hears of a blind like; the volunteer can't tell. Past the
+            # volunteer's daily share of like notices the org sees the like in its inbox.
+            if not m.org_blind and security.allow((security.LIKE_NOTICES, uid)):
+                notify.after(req, notify.on_new_like, m.id)
             notice = LIKE_SENT.format(data.org_name_of(m.opening_id))
             if not data.get_profile(uid).heard_from:  # the one optional card, once
                 more = (
@@ -327,5 +327,5 @@ def withdraw(req, match_id: int):
         return Refusal(403)
     except ValueError:
         return Redirect("/matches")  # already withdrawn or declined: nothing to do
-    notify.on_withdrawn(match_id, was)
+    notify.after(req, notify.on_withdrawn, match_id, was)
     return Redirect("/matches")

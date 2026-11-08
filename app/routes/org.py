@@ -1029,6 +1029,6 @@ def _sync_decide(req, decision, match_id: int):
             f"/org/inbox?notice={'full' if 'slots' in str(e) else 'decided'}"
         )
     if decision == "accept":
-        notify.on_accepted(match_id)
+        notify.after(req, notify.on_accepted, match_id)
         return Redirect(f"/org/inbox?notice=accepted&match={match_id}")
     return Redirect("/org/inbox")

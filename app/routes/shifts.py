@@ -469,7 +469,7 @@ def _sync_cancel_mine(req, form, shift_id: int):
             "That reason holds a character we can't show, or is too long.",
             reason[: data.MAX_CANCEL_REASON],
         )
-    notify.on_shift_cancelled(shift_id, done)
+    notify.after(req, notify.on_shift_cancelled, shift_id, done)
     return Redirect(f"/matches?notice={'gave_up' if done['ended'] else 'cancelled'}")
 
 

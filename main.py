@@ -84,7 +84,11 @@ app, rt = fast_app(
     before=(beforeware, security.throttle),
     # outside the session: covers every request. The preview's password, inside Guard so
     # its 401 carries the headers too.
-    middleware=(Middleware(security.Guard), Middleware(security.PreviewGate)),
+    middleware=(
+        Middleware(security.Guard),
+        Middleware(security.PreviewGate),
+        Middleware(notify.RunAfter),  # notify.after's notices, once the response is out
+    ),
     secret_key=session_secret(os.environ),
     session_cookie=session_cookie(),
     sess_https_only=is_production(),

@@ -810,6 +810,23 @@ def test_privacy_says_what_a_certificate_check_link_shows_and_what_stays(anon):
         assert words in text, words
 
 
+def test_privacy_names_the_email_provider_in_use(anon, monkeypatch):
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    assert "Our email provider (Resend)" in text and "Sent folder" not in text
+    gmail = notify.make_emailer(
+        {
+            "CAUSEMATCH_ENV": "test",
+            "SMTP_USERNAME": "causematch.example@gmail.com",
+            "SMTP_PASSWORD": "abcdefghijklmnop",
+        }
+    )
+    monkeypatch.setattr(notify, "_emailer", gmail)
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    assert "Our email provider (Google, through Gmail)" in text and "Resend" not in text
+    assert "copy of each email in our account's Sent folder" in text
+    assert "Gmail erases them 30 days later" in text
+
+
 def test_privacy_is_linked_from_consent_login_pages_and_footer(anon, new_user):
     assert 'href="/privacy"' in anon.get("/login").text
     assert 'href="/privacy"' in anon.get("/org/login").text

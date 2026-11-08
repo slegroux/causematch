@@ -26,7 +26,7 @@ from monsterui.all import (
 )
 from starlette.concurrency import run_in_threadpool
 
-from app import data
+from app import data, notify
 from app.choices import SHARED_WITH_NONPROFIT
 from app.config import contact_email
 from app.forms import bad_request, str_form
@@ -399,6 +399,8 @@ def Section(title, *paras):
 @ar("/privacy", methods=["GET"])
 def privacy():
     contact = contact_email()
+    # the beta sends through a Gmail account (docs/OPERATIONS.md), later through Resend
+    gmail = isinstance(notify.get_emailer(), notify.SMTPEmailer)
     return SimplePage(
         "Privacy",
         Div(
@@ -490,8 +492,16 @@ def privacy():
         ),
         Section(
             "Who else handles your data",
-            "Our email provider (Resend) sends everyone's sign-in links, coordinators' "
-            "notices, and volunteers' notices when we can't text them. If you add a "
+            f"Our email provider ({'Google, through Gmail' if gmail else 'Resend'}) "
+            "sends everyone's sign-in links, coordinators' notices, and volunteers' "
+            "notices when we can't text them. "
+            + (
+                "Gmail keeps a copy of each email in our account's Sent folder: we move "
+                "them to the bin after a day, and Gmail erases them 30 days later. "
+                if gmail
+                else ""
+            )
+            + "If you add a "
             "mobile number, Twilio sends the code that confirms it and our texts. If "
             "you sign in with Google or Apple, that company confirms who you are, so it knows you use Causematch. Google Cloud hosts the "
             "app and keeps its backups. Each sees only what it needs to do that job. We "

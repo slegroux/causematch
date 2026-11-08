@@ -227,9 +227,9 @@ def smtp(env=os.environ):
     if not any(values):
         return None
     host, port, username, password = values
-    password = "".join(
-        password.split()
-    )  # Gmail shows it in four groups; it has no spaces
+    # Gmail shows an app password in four groups, and it has no spaces of its own. This
+    # assumes every SMTP password is one: another provider's with a space would break.
+    password = "".join(password.split())
     if not (username and password):
         raise RuntimeError(
             "SMTP is half configured: set SMTP_USERNAME and SMTP_PASSWORD, or none of "
@@ -246,13 +246,21 @@ def smtp(env=os.environ):
     return host or "smtp.gmail.com", int(port), username, password, sender
 
 
+GMAIL_MAX_PER_DAY = 500  # recipients a free Gmail account may send to in a day
+
+
 def smtp_max_per_day(env=os.environ):
     """The ceiling on emails sent over SMTP in any 24 hours, every kind together:
-    SMTP_MAX_PER_DAY, default 400 (a free Gmail account allows about 500 recipients a
-    day)."""
+    SMTP_MAX_PER_DAY, default 400. Through smtp.gmail.com (the default host) it may not
+    pass GMAIL_MAX_PER_DAY: Google may lock an account that goes over."""
     raw = (env.get("SMTP_MAX_PER_DAY") or "").strip() or "400"
     if not raw.isdigit() or int(raw) < 1:
         raise RuntimeError("SMTP_MAX_PER_DAY must be a positive whole number")
+    host = (env.get("SMTP_HOST") or "").strip() or "smtp.gmail.com"
+    if host == "smtp.gmail.com" and int(raw) > GMAIL_MAX_PER_DAY:
+        raise RuntimeError(
+            f"SMTP_MAX_PER_DAY may be at most {GMAIL_MAX_PER_DAY} through smtp.gmail.com"
+        )
     return int(raw)
 
 
