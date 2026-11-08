@@ -17,6 +17,7 @@ import httpx
 from app import data, security
 from app.config import (
     SMTP_TLS_PORT,
+    collect_phone,
     contact_email,
     fakes_allowed,
     public_base_url,
@@ -143,8 +144,10 @@ def get_verifier():
 
 
 def phone_verify_enabled():
-    """Whether a number can be proven by a texted code: Me's add-a-number needs it."""
-    return get_verifier() is not None
+    """Whether Me offers add-a-number: CAUSEMATCH_COLLECT_PHONE=1 and a verifier that can
+    prove a number by a texted code. Texts to a number a volunteer already has don't
+    depend on it."""
+    return collect_phone() and get_verifier() is not None
 
 
 def send_code(phone):

@@ -1,5 +1,6 @@
 """The volunteer's own profile, /me/profile: their photo, name, pronouns, bio and
-interests, and how we reach them (a mobile number for texts, else email).
+interests, and how we reach them (email; a mobile number for texts only where
+CAUSEMATCH_COLLECT_PHONE=1 offers one).
 
 A photo goes up as a multipart form. static/photo.js first shrinks it in the browser and
 shows it (a blob: preview); without script the form posts the original. Either way the
@@ -257,8 +258,8 @@ def CodeInput():
 
 
 def phone_off():
-    """Me's add-a-number's answer while Twilio Verify is unset (notify.phone_verify_enabled):
-    the 404 of a feature that isn't there."""
+    """Me's add-a-number's answer while it is off, CAUSEMATCH_COLLECT_PHONE unset or Twilio
+    Verify unset (notify.phone_verify_enabled): the 404 of a feature that isn't there."""
     return security.page(
         404, "Not found", "That page isn't here. Go back and try again."
     )
@@ -266,7 +267,8 @@ def phone_off():
 
 def ReachCard(p, pending=None):
     """How we reach this volunteer: texts to their number, or email; without a number
-    (and while Twilio Verify can prove one) a form to add and verify one."""
+    (and only where phone collection is on and Twilio Verify can prove one) a form to add
+    and verify one."""
     to = " to the address below." if p.email else ": add your email below."
     by_email = f"match news and shift reminders come by email{to}"
     if notify.channel(p.id) == "sms":

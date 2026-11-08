@@ -315,6 +315,28 @@ def _phoneless(anon):
     return p.id
 
 
+def test_phone_collection_is_off_unless_the_switch_is_on(anon, monkeypatch):
+    from app.config import collect_phone
+
+    assert not collect_phone({}) and not collect_phone(
+        {"CAUSEMATCH_COLLECT_PHONE": "0"}
+    )
+    assert collect_phone({"CAUSEMATCH_COLLECT_PHONE": "1"})
+    uid = _phoneless(anon)
+    monkeypatch.delenv("CAUSEMATCH_COLLECT_PHONE")  # the fake verifier is still on
+    assert notify.get_verifier() is not None
+    page = anon.get("/me/profile").text
+    assert "mobile number" not in page.lower() and 'name="phone"' not in page
+    assert (
+        anon.post("/me/phone/send", data={"phone": "(310) 555-0177"}).status_code == 404
+    )
+    assert anon.post("/me/phone/verify", data={"code": "000000"}).status_code == 404
+    assert profiles[uid].phone in (None, "")
+    # a volunteer who already has a number still gets texts
+    profiles.update(id=uid, phone="+13105550177")
+    assert notify.channel(uid) == "sms"
+
+
 def test_a_volunteer_adds_and_verifies_a_number_for_texts(anon):
     uid = _phoneless(anon)
     page = anon.get("/me/profile").text
