@@ -155,7 +155,7 @@ def org_shifts_page(req):
     box = data.org_shifts(uid)
     return OrgShell(
         "shifts",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         H1("Shifts", cls=ORG_TITLE + " pb-4"),
         Alert(NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in NOTICE
@@ -264,7 +264,7 @@ def repeat(req, match_id: int):
 def ShiftForm(uid, match_id, head, error=None, value="", minutes=None):
     return OrgShell(
         "inbox",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         Div(
             H1("Schedule another shift", cls=ORG_TITLE),
             P(

@@ -177,7 +177,7 @@ def OrganizationPage(uid, notice="", errors=None, details_error=None):
     errors = errors or {}
     return OrgShell(
         "organization",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         H1("Organization", cls=ORG_TITLE + " pb-4"),
         Alert(NOTICE[notice], cls=AlertT.info + " mb-4") if notice in NOTICE else None,
         Div(
@@ -306,7 +306,7 @@ def OpeningMediaPage(uid, opening_id, error=None, link=None, notice=""):
     base = f"/org/openings/{o.id}"
     return OrgShell(
         "openings",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         A("Back to your openings", href="/org", cls=SMALL_LINK + " mb-2 text-sm"),
         H1(o.title, cls=ORG_TITLE + " pb-4"),
         Alert(error, cls=AlertT.error + " mb-4") if error else None,

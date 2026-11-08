@@ -886,6 +886,49 @@ def test_migration_2_turns_homelessness_services_on(tmp_path):
     assert row == (1,)
 
 
+UNDO_ON_UPGRADED_DB = """
+from types import SimpleNamespace
+from app import data
+from app.db import matches
+mid = matches.insert(opening_id=1, volunteer_id=1, status="pending", created_at="x").id
+data._decidable = lambda uid, m: (matches[m], SimpleNamespace(id=1))
+data.decide(1, mid, False, undoable=True)
+print(matches[mid].status, matches[mid].undo_until is not None)
+data.undo_decline(1, mid)
+print(matches[mid].status)
+"""
+
+
+def test_migration_19_adds_undo_until_and_the_app_start_keeps_the_table(tmp_path):
+    """A database from before Match.undo_until: the migration adds the column, the app's
+    start (transform=True) keeps it as it is, and an undoable Decline is undone on it."""
+    db = v1_copy(tmp_path)
+    c = apsw.Connection(str(db))
+    c.execute("ALTER TABLE match DROP COLUMN undo_until")
+    c.close()
+    assert run_migrations(db).returncode == 0
+
+    def undo_cols():
+        c = apsw.Connection(str(db))
+        cols = [(r[1], r[2]) for r in c.execute("PRAGMA table_info(match)")]
+        c.close()
+        return [col for col in cols if col[0] == "undo_until"]
+
+    assert undo_cols() == [("undo_until", "TEXT")]
+    r = subprocess.run(
+        [sys.executable, "-c", UNDO_ON_UPGRADED_DB],
+        check=False,
+        cwd=ROOT,
+        env={**os.environ, "CAUSEMATCH_DB": str(db)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["declined", "True", "pending"]
+    assert undo_cols() == [("undo_until", "TEXT")]
+
+
 def test_a_missing_database_is_an_error(tmp_path):
     r = run_migrations(tmp_path / "none.db")
     assert r.returncode == 1 and not (tmp_path / "none.db").exists()
