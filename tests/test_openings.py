@@ -14,7 +14,7 @@ from conftest import (
 from starlette.testclient import TestClient
 
 from app import data, geo
-from app.db import causes, matches, messages, openings, orgs
+from app.db import causes, matches, messages, openings, orgs, profiles
 from app.routes.org import opening_fields
 from main import app
 
@@ -677,6 +677,19 @@ def edit(c, o, **over):
     return c.post(
         f"/org/openings/{o.id}/edit", data={**f, **over}, follow_redirects=False
     )
+
+
+def test_demo_copies_accepted_beyond_the_spots_do_not_block_an_edit(coord, monkeypatch):
+    monkeypatch.setattr(data, "demo_matches", lambda *_: True)
+    o = pantry()
+    openings.update(id=o.id, slots=1)
+    for i in range(3):  # visitors' copies fill nothing, so any number can be accepted
+        v = volunteer()
+        profiles.update(id=v.uid, phone=f"{data.DEMO_PHONE_PREFIX}{i:04d}")
+        data.decide(coordinator_for(0)[0], data.swipe(v.uid, o.id, True).id, True)
+    assert 'min="1"' in coord.get(f"/org/openings/{o.id}/edit").text
+    r = edit(coord, o, title="Pantry boxes, new location")
+    assert r.status_code == 303 and openings[o.id].title == "Pantry boxes, new location"
 
 
 def test_editing_a_title_keeps_the_matches_and_tells_the_accepted(coord):

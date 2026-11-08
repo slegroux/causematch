@@ -433,7 +433,7 @@ def privacy():
             "each cause; when you're usually free and specific free dates; how far ahead "
             "to look and one-time or recurring; the kind of work, languages and skills "
             "you pick; how often you'd like to help; which of these only show or only "
-            "rank openings; and whether you want last-minute calls, for which shifts, "
+            "rank openings; and whether you want last-minute calls, for which openings, "
             "your quiet hours and how many a week.",
             "Causematch uses your answers (your causes, places, when you're free and the "
             "rest) to match you with openings.",

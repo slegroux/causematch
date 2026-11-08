@@ -116,19 +116,13 @@ def ProviderSignIn(for_org=False):
     )
 
 
-def LoginPage(email="", error=None, notice=None, link=None):
+def LoginPage(email="", error=None):
     """/login: the demo's buttons, Google and Apple when configured, then the emailed
     link, which signs a volunteer in or, for a new address, up."""
     return SignInPage(
         "Sign in",
         DemoSignIn(),
         ProviderSignIn(),
-        P(
-            A("Open your sign-in link", href=link, cls="text-brand font-bold"),
-            " (a preview sends no email)",
-        )
-        if link
-        else None,
         Form(
             Field(
                 "Email",
@@ -154,7 +148,7 @@ def LoginPage(email="", error=None, notice=None, link=None):
             cls="space-y-4",
         ),
         error=error,
-        intro=notice or INTRO,
+        intro=INTRO,
         aside=Div(
             Div(
                 *[CauseChip(c.slug, c.label) for c in data.active_causes()],

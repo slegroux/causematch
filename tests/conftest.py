@@ -136,7 +136,6 @@ _phones = itertools.count(3105550200)
 
 FORM = {
     "first_name": "Sam",
-    "adult": "1",
     "place1_where": "90012",  # Home: Chinatown's ZIP, by car within 30 minutes
     "place1_mode": "car",
     "place1_minutes": "30",

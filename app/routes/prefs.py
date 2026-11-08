@@ -358,7 +358,7 @@ def LastMinute(u):
             u["on"],
         ),
         Group(
-            "For shifts starting",
+            "For openings starting",
             "grid grid-cols-2 gap-2",
             "urgent_window",
             URGENT_WINDOWS,

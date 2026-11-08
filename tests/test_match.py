@@ -215,6 +215,8 @@ def test_matches_page_and_withdraw(user):
     user.post("/swipe", data={"opening_id": o.id, "liked": "1"})
     r = user.get("/matches")
     assert PANTRY in r.text and "Waiting for the nonprofit" in r.text
+    # a like not yet accepted is not an unmarked shift
+    assert "to mark you present" not in r.text
     mid = matches()[0].id
     r = user.post(f"/matches/{mid}/withdraw", follow_redirects=False)
     assert r.status_code == 303
@@ -296,7 +298,7 @@ def test_coordinator_inbox_accept_and_volunteer_sees_it(user, coord):
         follow_redirects=False,
     )
     assert r.status_code == 303
-    assert "Accepted" in user.get("/matches").text
+    assert "Matched" in user.get("/matches").text
     again = coord.post(
         f"/org/matches/{mid}/decide",
         data={"decision": "decline"},
@@ -331,7 +333,10 @@ def test_decline_can_be_undone_before_the_volunteer_sees_it(user, coord):
     )
     assert r.headers["location"] == f"/org/inbox?declined={mid}"
     assert "hasn't been told yet" in unescape(coord.get(r.headers["location"]).text)
-    assert "Not this time" not in user.get("/matches").text  # held: nothing shown
+    held = user.get("/matches").text
+    assert "Not this time" not in held  # held: nothing shown
+    assert f"/matches/{mid}/withdraw" not in held  # and nothing to withdraw
+    assert data.match_news_count(uid_of(user)) == 0
     coord.post(f"/org/matches/{mid}/undo", follow_redirects=False)
     assert matches[mid].status == "pending" and matches[mid].decided_at is None
     assert "Not this time" not in user.get("/matches").text
@@ -344,7 +349,19 @@ def test_a_decline_shows_and_cannot_be_undone_once_its_window_has_passed(user, c
     coord.post(f"/org/matches/{mid}/decide", data={"decision": "decline"})
     past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat(timespec="seconds")
     matches.update(id=mid, undo_until=past)
+    assert data.match_news_count(uid_of(user)) == 1
     assert "Not this time" in user.get("/matches").text
+    r = coord.post(f"/org/matches/{mid}/undo", follow_redirects=False)
+    assert r.headers["location"] == "/org/inbox?notice=late"
+    assert matches[mid].status == "declined"
+
+
+def test_a_decline_cannot_be_undone_once_the_opening_has_closed(user, coord):
+    o = opening()
+    user.post("/swipe", data={"opening_id": o.id, "liked": "1"})
+    mid = matches()[0].id
+    coord.post(f"/org/matches/{mid}/decide", data={"decision": "decline"})
+    openings.update(id=o.id, status="closed")
     r = coord.post(f"/org/matches/{mid}/undo", follow_redirects=False)
     assert r.headers["location"] == "/org/inbox?notice=late"
     assert matches[mid].status == "declined"

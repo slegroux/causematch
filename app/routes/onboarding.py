@@ -192,7 +192,7 @@ def _sync_onboarding_save(req, form, sess):
     def fail(msg):
         return OnboardingForm(f, msg, google_photo=bool(picture))
 
-    if not f["consent"]:  # one box records both: 18 or older, and the privacy policy
+    if f["consent"] != "1":  # one box records both: 18 or older, and the privacy policy
         return fail(NO_CONSENT)
     if any(len(f[k]) > n for k, n in LIMITS.items()):
         return fail("One of your answers is too long. Please shorten it.")

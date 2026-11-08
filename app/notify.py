@@ -807,7 +807,7 @@ def on_auto_accepted(match_id):
                 get_emailer().send(
                     to,
                     f"A volunteer is in for {info['opening']}, {info['when']}",
-                    f"A volunteer said yes to your urgent call for {info['opening']}, "
+                    f"A volunteer said yes to your last-minute call for {info['opening']}, "
                     f"{info['when']}, and was accepted automatically ({info['found']} "
                     f"of {info['needed']} found). Their shift is booked.\n\n"
                     f"Who and chat: {public_base_url()}/org/inbox",
@@ -866,12 +866,12 @@ def on_shift_cancelled(shift_id, done):
             else "you decide who joins"
         )
         lines.append(
-            "It was less than 48 hours away, so we posted an urgent call for 1 person "
+            "It was less than 48 hours away, so we posted a last-minute call for 1 person "
             f"at that time to volunteers nearby ({how}). Follow it: {base}/org"
         )
     elif done["can_call"]:
         lines.append(
-            "It's less than 48 hours away. Short of people? Post an urgent call: "
+            "It's less than 48 hours away. Short of people? Post a last-minute call: "
             f"{base}/org"
         )
     elif done["late"] and not done["ended"]:
@@ -994,7 +994,7 @@ def _send_urgent_waves():
             f"{sms_safe(info['opening'])}. Interested? {link} (Turn these off in "
             "Preferences. Reply STOP to end all texts.)"
         )
-        subject = f"Last minute: {info['org']} needs {people} {info['when']}"
+        subject = f"Last-minute: {info['org']} needs {people} {info['when']}"
         for uid, how in recipients:
             key = f"urgent:{call_id}:{uid}"
             if how == "sms" and get_sms() is not None:  # else by email

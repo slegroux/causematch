@@ -1021,12 +1021,13 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
 def undo_decline(coordinator_uid, match_id):
     """Take back an undoable decline (decide): the like is pending again, as if never
     decided. PermissionError as decide; ValueError when it is not a decline still inside
-    its window."""
+    its window, or when the opening has closed since."""
     _decidable(coordinator_uid, match_id)
     with _db.db.conn:
         _db.db.execute(
             "UPDATE match SET status = 'pending', decided_at = NULL, decided_by = NULL, "
-            "undo_until = NULL WHERE id = ? AND status = 'declined' AND undo_until > ?",
+            "undo_until = NULL WHERE id = ? AND status = 'declined' AND undo_until > ? "
+            "AND (SELECT status FROM opening WHERE id = match.opening_id) != 'closed'",
             [match_id, _now()],
         )
         if _db.db.conn.changes() != 1:
@@ -1202,6 +1203,7 @@ def my_matches(uid):
                 "blocked": _volunteer_blocked_org(uid, o.org_id),
                 "id": m.id,
                 "status": "pending" if held else m.status,
+                "held": held,  # a decline inside its undo window: pending to the volunteer
                 "title": o.title,
                 "org": org.name if org else "",
                 "starts_at": _like_starts_at(m, o),
@@ -2947,7 +2949,7 @@ def create_opening(
 
 
 def org_openings(coordinator_uid):
-    """{org id: [openings, soonest first]} for the coordinator's own orgs only."""
+    """{org id: [openings, newest start first]} for the coordinator's own orgs only."""
     mine = coordinator_org_ids(coordinator_uid)
     return {
         org_id: _db.openings(
@@ -3038,15 +3040,15 @@ _OPENING_EDITS = {
 
 
 def opening_locks(opening_id):
-    """What can't change on this opening now: {"accepted": volunteers accepted, "when" and
-    "cause": True once anyone liked it (the deck ranked it by its cause for them, and a
-    liker chose it for its time). Every match counts, a demo copy's too: unlike the fill
-    (_filling), these protect the people who planned around the opening."""
+    """What can't change on this opening now: {"accepted": volunteers accepted, counted as
+    the fill does (a demo copy's don't count, or they would push the spots minimum above
+    the opening's own spots), "when" and "cause": True once anyone liked it (the deck
+    ranked it by its cause for them, and a liker chose it for its time). For these two
+    every match counts, a demo copy's too: they protect the people who planned around
+    the opening."""
     liked = _db.matches.count_where("opening_id = ?", [opening_id]) > 0
     return {
-        "accepted": _db.matches.count_where(
-            "opening_id = ? AND status = 'accepted'", [opening_id]
-        ),
+        "accepted": _accepted(opening_id),
         "when": liked,
         "cause": liked,
     }
@@ -3314,8 +3316,8 @@ def urgent_when(starts_at, today=None):
 
 
 def urgent_label(starts_at, left):
-    """ "Urgent · today 9 am · needs 2": the deck's badge and the org's pill."""
-    return f"Urgent · {urgent_when(starts_at)} · needs {left}"
+    """ "Last-minute · today 9 am · needs 2": the deck's badge and the org's pill."""
+    return f"Last-minute · {urgent_when(starts_at)} · needs {left}"
 
 
 URGENT_WAVES = 2  # notification waves per call
