@@ -2143,12 +2143,15 @@ def volunteer_for_identity(claims):
     the first one: no phone, the provider's verified email, the given name as first name.
     An identity whose profile was deleted reads as absent. A suspended profile's id is
     returned too: get_profile is None for it, and the caller refuses the sign-in. As with
-    a phone, a deleted account's suspension and org blocks on this identity come back."""
+    a phone, a deleted account's suspension and org blocks on this identity come back, and
+    so do those on its verified address: a mailbox a suspended account holds, live or
+    deleted (mailbox_suspended), gives a suspended profile, whichever way in it used."""
     where = {
         "where": "provider = ? AND subject = ?",
         "where_args": [claims.provider, claims.subject],
     }
     kept = _retained_identity(claims)
+    mailbox = _mailbox_of(claims)
     # onboarding's check on the first name: a name that fails it is dropped, not kept
     name = " ".join(claims.given_name.split())[:80]
     try:
@@ -2166,14 +2169,26 @@ def volunteer_for_identity(claims):
                     display_name=name if name and not hidden_chars(name) else None,
                     session_version=1,
                     created_at=_now(),
-                    suspended_at=_now() if kept and kept.suspended else None,
+                    suspended_at=_now()
+                    if (kept and kept.suspended)
+                    or (claims.email and mailbox_suspended(claims.email))
+                    else None,
                 )
             ).id
             _insert_identity(uid, claims)
             _reapply_blocks(uid, kept)
+            _reapply_blocks(uid, mailbox)
     except apsw.ConstraintError:  # a concurrent first sign-in won the race
         return _db.identities(**where)[0].user_id
     return uid
+
+
+def _mailbox_of(claims):
+    """The kept hash of a Google or Apple sign-in's verified address, whose org blocks
+    follow it (an emailed link's own identity hash is already that address's)."""
+    if claims.provider == EMAIL_SIGN_IN or not claims.email:
+        return None
+    return _retained_mailbox(claims.email)
 
 
 def _insert_identity(uid, claims):
@@ -2206,11 +2221,13 @@ def link_identity(uid, claims):
     connected (or it already was), else why not: "taken" when the identity is on another
     live profile (the unique index decides a race), "other" when this profile already has
     another account of this provider, "refused" when the profile isn't a live volunteer or
-    a deleted account suspended with this identity left its hash. A deleted account's org
-    blocks on it apply to this profile, as at a sign-up."""
+    a deleted account suspended with this identity left its hash, or a suspended account
+    holds its verified address (mailbox_suspended). A deleted account's org blocks on it
+    or on that address apply to this profile, as at a sign-up."""
     kept = _retained_identity(claims)
-    if kept and kept.suspended:
+    if (kept and kept.suspended) or (claims.email and mailbox_suspended(claims.email)):
         return "refused"
+    mailbox = _mailbox_of(claims)
     where = "provider = ? AND subject = ?"
     try:
         with _db.db.conn:
@@ -2230,6 +2247,7 @@ def link_identity(uid, claims):
                 return "refused"
             _insert_identity(uid, claims)
             _reapply_blocks(uid, kept)
+            _reapply_blocks(uid, mailbox)
     except apsw.ConstraintError:
         return "taken"
     return None
@@ -2743,6 +2761,17 @@ def volunteer_link_kind(email):
     )
     if _db.profiles.count_where(staff, [email]):
         return None
+    if mailbox_suspended(email):
+        return None
+    return "sign-in" if email_sign_in_owner(email) else "sign-up"
+
+
+def mailbox_suspended(email):
+    """True when a suspended account holds this mailbox (forms.abuse_key, so a +tag or
+    Gmail's dots don't dodge it) as a verified address, by any way in: live, through any
+    identity (an emailed link's, Google's or Apple's), or deleted with its mailbox hash
+    kept as suspended (delete_account). A profile's typed email doesn't count: it is
+    unverified, and counting it would let anyone block someone else's address."""
     key = abuse_key(email)
     held = _db.db.q(  # few: only suspended accounts, compared by mailbox below
         "SELECT i.email FROM identity i JOIN profile p ON p.id = i.user_id "
@@ -2750,13 +2779,17 @@ def volunteer_link_kind(email):
         "AND coalesce(i.email, '') != ''"
     )
     if any(abuse_key(r["email"]) == key for r in held):
-        return None
+        return True
+    kept = _retained_mailbox(email)
+    return bool(kept and kept.suspended)
+
+
+def _retained_mailbox(email):
+    """The kept hash of a deleted account's verified address (delete_account), if any."""
     kept = _db.retained_identities(
         where="hash = ?", where_args=[_identity_hash(EMAIL_SIGN_IN, email)]
     )
-    if kept and kept[0].suspended:
-        return None
-    return "sign-in" if email_sign_in_owner(email) else "sign-up"
+    return kept[0] if kept else None
 
 
 def email_sign_in_owner(email):

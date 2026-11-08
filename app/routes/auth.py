@@ -1,4 +1,7 @@
+import hashlib
+import hmac
 import logging
+import time
 
 from fasthtml.common import H2, A, Div, Form, HttpHeader, P, Redirect
 from monsterui.all import Alert, AlertT, TextPresets
@@ -7,8 +10,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, oauth, security
 from app.auth import sign_in
-from app.config import DEMO_PHONE, demo_matches, is_preview
-from app.forms import EMAIL, bad_request, query, str_form
+from app.config import DEMO_PHONE, demo_matches, is_preview, phone_hash_key
+from app.forms import EMAIL, abuse_key, bad_request, query, str_form
 from app.ui import (
     BigButton,
     CauseChip,
@@ -36,7 +39,9 @@ SENT = "Check your email: if we can sign you in or up with that address, a link 
 BAD_EMAIL = "Enter your email address."
 BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
 TOKEN_KEY = "volunteer_token"  # the link's token, between its GET and the button's POST
-LINK_FOR = "link_for"  # the address this browser last asked for a link to (both pages)
+# The mailbox this browser last asked for a link to (both pages), as [keyed digest, unix
+# time]: the session is signed, not encrypted, so the address itself is never kept in it
+LINK_FOR = "link_for"
 NOT_ASKED = (
     "This browser didn't ask for this link. If someone sent it to you, stop here: "
     "continuing would sign you in to their account."
@@ -44,9 +49,25 @@ NOT_ASKED = (
 SIGNED_IN = "This browser is signed in to another account. Continuing signs it out."
 
 
+def _mailbox_digest(email):
+    key = phone_hash_key().encode()
+    return hmac.new(key, abuse_key(email).encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def asked_for(sess, email):
-    """Remember that this browser asked for a link to this address (ConfirmPage)."""
-    sess[LINK_FOR] = email.lower()
+    """Remember that this browser asked for a link to this address (ConfirmPage), as a
+    keyed digest of its mailbox and when."""
+    sess[LINK_FOR] = [_mailbox_digest(email), int(time.time())]
+
+
+def _asked(sess, email):
+    """Whether this browser asked for a link to this address within a link's lifetime."""
+    found = sess.get(LINK_FOR)
+    if not (isinstance(found, list) and len(found) == 2):
+        return False
+    digest, at = found
+    fresh = isinstance(at, int) and 0 <= time.time() - at <= data.TOKEN_MINUTES * 60
+    return fresh and hmac.compare_digest(str(digest), _mailbox_digest(email))
 
 
 def ConfirmPage(action, email, sess, owner):
@@ -57,7 +78,7 @@ def ConfirmPage(action, email, sess, owner):
     Referrer-Policy same-origin, not no-referrer: under no-referrer a browser sends
     `Origin: null` with the button's POST, which security.Guard refuses."""
     warnings = [
-        NOT_ASKED if sess.get(LINK_FOR) != email.lower() else None,
+        None if _asked(sess, email) else NOT_ASKED,
         SIGNED_IN if sess.get("uid") and sess.get("uid") != owner else None,
     ]
     return HttpHeader("Referrer-Policy", "same-origin"), SignInPage(

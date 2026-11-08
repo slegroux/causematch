@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -242,6 +243,28 @@ def test_the_confirm_page_names_the_account_and_warns_about_a_link_from_elsewher
         t for t in login_tokens() if t.user_id or t.email == "attacker@example.org"
     ]
     assert [t.used_at for t in peeked] == [None, None]  # peeking used nothing up
+    cookie = json.dumps(session_of(attacker))  # signed, not encrypted: no address in it
+    assert "attacker" not in cookie and "example.org" not in cookie
+
+
+def test_the_asked_for_mark_lasts_a_links_lifetime(monkeypatch):
+    import app.routes.auth as auth_routes
+
+    c = TestClient(app)
+    send_link(c, "late@example.org")
+    token = link_token("late@example.org")
+    later = Later(data.TOKEN_MINUTES * 60 + 1)
+    monkeypatch.setattr(auth_routes, "time", later)
+    page = c.get(f"/login/verify?token={token}").text.replace("&#x27;", "'")
+    assert "didn't ask for this link" in page
+
+
+def test_a_plus_led_address_keeps_its_own_mailbox():
+    from app.forms import abuse_key
+
+    assert abuse_key("+x@example.com") == "+x@example.com"
+    assert abuse_key("+x@example.com") != abuse_key("+y@example.com")
+    assert abuse_key("a+b@corp.com") == "a@corp.com"
 
 
 def test_a_deleted_account_signs_up_anew_unless_it_was_suspended(anon):

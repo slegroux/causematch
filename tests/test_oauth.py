@@ -5,7 +5,15 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
-from conftest import FORM, coordinator_for, jpeg, orgs, volunteer
+from conftest import (
+    FORM,
+    coordinator_for,
+    jpeg,
+    link_sign_in,
+    orgs,
+    pantry_opening,
+    volunteer,
+)
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
@@ -372,3 +380,37 @@ def test_signing_in_again_or_connecting_never_renames_the_volunteer(anon):
     connect(phone_user, sub="g-connect")
     p = profiles[phone_user.uid]
     assert (p.display_name, p.last_name, p.name_changed_at) == ("Sam", None, None)
+
+
+# --- a suspended mailbox stays suspended whichever way in comes next ----------------------
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_a_suspended_emailed_link_account_cannot_come_back_through_google(deleted):
+    uid = link_sign_in(TestClient(app), "mal@example.org")
+    profiles.update(id=uid, suspended_at="2026-01-01T00:00:00")
+    if deleted:
+        data.delete_account(uid)  # suspended: its address's hash is kept
+    c = TestClient(app)
+    r, _ = google_sign_in(c, sub="g-mal", email="mal+g@example.org")  # the same mailbox
+    assert r.status_code == 200 and "can't sign in" in r.text
+    assert signed_out(c)
+    vol = volunteer()  # and no one can connect a Google account with that address
+    flow = start(vol, "/me/identity/google/connect", "POST")
+    r = vol.get(consent(vol, flow, sub="g-mal2", email="mal@example.org"),
+                follow_redirects=False)  # fmt: skip
+    assert r.headers["location"] == "/me/profile?error=refused-google"
+
+
+def test_a_deleted_emailed_link_accounts_org_block_follows_it_to_google(anon):
+    uid = link_sign_in(TestClient(app), "kit@example.org")
+    profiles.update(id=uid, display_name="Kit", onboarded_at="2026-01-01T00:00:00")
+    coord, _ = coordinator_for(0)
+    data.block_volunteer(coord, data.swipe(uid, pantry_opening().id, True).id)
+    data.delete_account(uid)
+    r, _ = google_sign_in(anon, sub="g-kit", email="kit@example.org")
+    assert r.status_code == 303
+    (i,) = identities(where="subject = ?", where_args=["g-kit"])
+    assert i.user_id != uid and blocks(
+        where="blocked_user_id = ?", where_args=[i.user_id]
+    )

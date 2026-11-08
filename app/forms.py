@@ -26,7 +26,7 @@ def abuse_key(email):
     a +tag, and for Gmail without dots and under gmail.com. Mail still goes to the address
     as typed."""
     local, _, domain = email.lower().rpartition("@")
-    local = local.split("+", 1)[0]
+    local = local.split("+", 1)[0] or local  # "+x@d" keeps its whole local part
     if domain in GMAIL:
         local, domain = local.replace(".", ""), GMAIL[0]
     return f"{local}@{domain}"
