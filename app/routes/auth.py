@@ -1,7 +1,7 @@
 import logging
 
 from fasthtml.common import H2, A, Div, Form, HttpHeader, P, Redirect
-from monsterui.all import TextPresets
+from monsterui.all import Alert, AlertT, TextPresets
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -36,6 +36,36 @@ SENT = "Check your email: if we can sign you in or up with that address, a link 
 BAD_EMAIL = "Enter your email address."
 BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
 TOKEN_KEY = "volunteer_token"  # the link's token, between its GET and the button's POST
+LINK_FOR = "link_for"  # the address this browser last asked for a link to (both pages)
+NOT_ASKED = (
+    "This browser didn't ask for this link. If someone sent it to you, stop here: "
+    "continuing would sign you in to their account."
+)
+SIGNED_IN = "This browser is signed in to another account. Continuing signs it out."
+
+
+def asked_for(sess, email):
+    """Remember that this browser asked for a link to this address (ConfirmPage)."""
+    sess[LINK_FOR] = email.lower()
+
+
+def ConfirmPage(action, email, sess, owner):
+    """An emailed link's confirm page (both sign-ins): the account it signs in to by
+    address, and a warning when this browser didn't ask for the link or is signed in as
+    someone else, since pressing the button on a link someone sent you would sign you in
+    as them (login CSRF). owner: the profile id the link signs in to, None for a new one.
+    Referrer-Policy same-origin, not no-referrer: under no-referrer a browser sends
+    `Origin: null` with the button's POST, which security.Guard refuses."""
+    warnings = [
+        NOT_ASKED if sess.get(LINK_FOR) != email.lower() else None,
+        SIGNED_IN if sess.get("uid") and sess.get("uid") != owner else None,
+    ]
+    return HttpHeader("Referrer-Policy", "same-origin"), SignInPage(
+        "Sign in to Causematch",
+        *[Alert(w, cls=AlertT.warning) for w in warnings if w],
+        Form(BigButton("Sign in"), action=action, method="post"),
+        intro=f"Sign in as {email}",
+    )
 
 
 def ProviderSignIn(for_org=False):
@@ -123,6 +153,8 @@ def _send_link(email):
     (data.volunteer_link_kind decides what is sent). (link, whether a preview may show
     it: not an admin's), or (None, False) when nothing was sent."""
     kind = data.volunteer_link_kind(email)
+    if kind == "sign-up" and not security.allow((security.SIGNUP_ALL, "all")):
+        return None, False  # past the app-wide ceiling (logged by name): nothing sent
     try:
         if kind == "staff":  # the nonprofit sign-in's own link, as /org/login sends
             profile, is_coordinator = data.staff_by_email(email)
@@ -137,14 +169,14 @@ def _send_link(email):
 
 
 @ar("/login/send", methods=["POST"])
-async def send(req):
+async def send(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
-    return await run_in_threadpool(_sync_send, req, form)
+    return await run_in_threadpool(_sync_send, req, form, sess)
 
 
-def _sync_send(req, form):
+def _sync_send(req, form, sess):
     raw = form.get("email", "").strip()
     # not ASCII is refused before lowercasing, which would turn the Kelvin sign into a "k"
     if len(raw) > 254 or not raw.isascii() or not EMAIL.fullmatch(raw):
@@ -152,11 +184,9 @@ def _sync_send(req, form):
     email = raw.lower()
     # every valid-shape address is counted, in the nonprofit link's own buckets, so a
     # refusal says nothing about the account and the two pages share one budget
-    if not security.allow(
-        (security.LINK_PER_EMAIL, email),
-        (security.LINK_PER_IP, security.ip_subject(req)),
-    ):
+    if not security.allow(*security.link_limits(req, email)):
         return security.too_many()
+    asked_for(sess, email)
     if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
         # As /org/login on a preview (org_auth.link_sent): nothing is emailed, so the page
         # shows the link, for the demo's data only. An admin's stays in the log.
@@ -169,16 +199,16 @@ def _sync_send(req, form):
 def confirm(req, sess):
     """Consumes nothing, so a mail scanner that fetches the link can't use it up: the
     token moves into the session and the browser comes back here without it, as on
-    /org/login/verify (see org_auth.org_login_confirm for the Referrer-Policy)."""
+    /org/login/verify, to ConfirmPage, which only peeks at it."""
     token = query(req, "token")
     if token:
         sess[TOKEN_KEY] = token[:200]
         return Redirect("/login/verify")
-    return HttpHeader("Referrer-Policy", "same-origin"), SignInPage(
-        "Sign in to Causematch",
-        Form(BigButton("Sign in"), action="/login/verify", method="post"),
-        intro="Press the button to finish signing in.",
-    )
+    _, email = data.peek_login_token(sess.get(TOKEN_KEY, ""))
+    if not email:
+        return HttpHeader("Referrer-Policy", "same-origin"), LoginPage(error=BAD_LINK)
+    owner = data.email_sign_in_owner(email)
+    return ConfirmPage("/login/verify", email, sess, owner)
 
 
 @ar("/login/verify", methods=["POST"])

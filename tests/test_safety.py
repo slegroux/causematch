@@ -15,9 +15,9 @@ from conftest import (
     ROOT,
     coordinator_for,
     last_link_token,
+    link_sign_in,
     org_sign_in,
     pantry_opening,
-    sign_in,
     uid_of,
     volunteer,
 )
@@ -742,11 +742,10 @@ def test_delete_account_scrubs_pii(w):
         assert secret not in seen, secret
     assert data.metrics_rows()["matches"][0]["volunteer_id"] == uid  # still counted
 
-    # the session is dead, the number is free for a new profile
+    # the session is dead, the address is free for a new profile
     assert w.vol.get("/deck", follow_redirects=False).headers["location"] == "/login"
     fresh = TestClient(app)
-    sign_in(fresh, phone)
-    new_uid = data.get_or_create_volunteer(phone)
+    new_uid = link_sign_in(fresh, w.vol.email)
     assert new_uid != uid and profiles[new_uid].deleted_at is None
     assert (
         fresh.get("/deck", follow_redirects=False).headers["location"] == "/onboarding"
@@ -902,7 +901,7 @@ def test_the_deactivated_filter_alone_hides_a_reopened_opening(w):
     assert w.opening.id not in deck_ids(w.other)
 
 
-# a number keeps its blocks and suspension through delete and sign-up
+# an address (and a number) keeps its blocks and suspension through delete and sign-up
 
 
 def retained():
@@ -916,16 +915,15 @@ def test_delete_and_sign_up_again_keeps_a_block(w):
     data.delete_account(w.vol.uid)
     (row,) = retained()
     assert phone not in json.dumps(row.__dict__) and "block" in row.reason
-    fresh = TestClient(app)
-    sign_in(fresh, phone)
-    new_uid = data.get_or_create_volunteer(phone)
+    fresh = TestClient(app)  # signing up again with the emailed link, as anyone can
+    new_uid = link_sign_in(fresh, w.vol.email)
     assert new_uid != w.vol.uid and not profiles[new_uid].suspended_at
     assert blocks(where="blocked_user_id = ?", where_args=[new_uid])
     profiles.update(
         id=new_uid, display_name="Sam New", onboarded_at="2026-01-01T00:00:00"
     )
     liked = data.swipe(new_uid, w.opening.id, True)
-    assert matches[liked.id].org_blind  # the block followed the number
+    assert matches[liked.id].org_blind  # the block followed the address
     assert "Sam New" not in w.coord.get("/org/inbox").text
 
 
@@ -956,8 +954,10 @@ def test_a_suspended_google_account_cannot_come_back_by_deleting_itself(w):
     w.admin.post(
         f"/admin/reports/{reports()[0].id}/suspend"
     )  # suspended after the fact
-    (row,) = data.__dict__["_db"].retained_identities()
-    assert row.suspended and "g-gone" not in json.dumps(row.__dict__)
+    # Google's account and its verified address (for the emailed link), hashed
+    rows = data.__dict__["_db"].retained_identities()
+    assert len(rows) == 2 and all(r.suspended for r in rows)
+    assert not re.search("g-gone|gone@", json.dumps([r.__dict__ for r in rows]))
     again = TestClient(app)
     r = again.get("/auth/google/start", follow_redirects=False)
     flow = dict(

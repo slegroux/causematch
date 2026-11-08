@@ -252,7 +252,7 @@ def _staff_sign_in(req, sess, claims):
         return FtResponse(EmailForm(error=no_org), status_code=200)
     email = raw.lower()
     if not oauth.authoritative(claims):
-        sent = link_sent(req, email)
+        sent = link_sent(req, email, sess)
         return sent if isinstance(sent, Response) else FtResponse(sent)
     profile, is_coordinator = data.staff_by_email(email)
     # A preview's fake consent page takes any typed email as verified, so there it signs

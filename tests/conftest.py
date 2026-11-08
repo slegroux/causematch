@@ -194,6 +194,21 @@ def add_number(client, phone):
     return r.status_code
 
 
+def link_sign_in(client, email):
+    """Sign in or up the way a volunteer does: ask /login/send for the emailed link, then
+    use it (the fake emailer keeps it). Returns the profile id."""
+    client.post("/login/send", data={"email": email})
+    r = client.post(
+        "/login/verify", data={"token": last_link_token()}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    (i,) = identities(
+        where="provider = ? AND subject = ?",
+        where_args=[data.EMAIL_SIGN_IN, email.lower()],
+    )
+    return i.user_id
+
+
 @pytest.fixture
 def new_user():
     """Signed in, not yet onboarded."""

@@ -2,10 +2,10 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import coordinator_for, sign_in, volunteer
+from conftest import coordinator_for, link_sign_in, sign_in, volunteer
 from starlette.testclient import TestClient
 
-from app import data, notify, security
+from app import data, notify, oauth, security
 from app.auth import DEV_SECRET, normalize_phone, session_secret
 from app.config import require_volunteer_sign_in
 from app.db import identities, login_tokens, profiles, rate_events
@@ -150,15 +150,98 @@ def test_a_staff_link_and_a_volunteer_link_only_work_on_their_own_page(anon):
     assert verify(anon, vol_token).headers["location"] == "/onboarding"
 
 
-def test_links_are_rate_limited_per_address_whoever_holds_it(anon):
-    for e in ("a@example.org", "nobody@example.org"):
-        c = TestClient(app)
-        for _ in range(security.LINK_PER_EMAIL[0][1]):
-            assert send_link(c, e).status_code == 200
-        assert send_link(c, e).status_code == 429
-    for i in range(security.LINK_PER_IP[0][1] - 2 * security.LINK_PER_EMAIL[0][1]):
-        assert send_link(anon, f"x{i}@example.org").status_code == 200
-    assert send_link(anon, "fresh@example.org").status_code == 429  # the address's
+def at(ip):
+    return TestClient(app, client=(ip, 1))
+
+
+def test_links_are_limited_per_mailbox_and_address_then_per_mailbox_a_day():
+    """5 an hour per mailbox from one address, whoever holds it (a +tag or Gmail's dots
+    are the same mailbox); someone asking elsewhere doesn't hold the owner's off; 20 a
+    day per mailbox in all."""
+    c = at("198.51.100.1")
+    variants = ("a.b@gmail.com", "ab@gmail.com", "ab+1@gmail.com", "AB@googlemail.com")
+    codes = [
+        send_link(c, e).status_code
+        for e in (*variants, "a.b+x@gmail.com", "ab@gmail.com")
+    ]
+    assert codes == [200] * 5 + [429]
+    assert send_link(at("203.0.113.5"), "ab@gmail.com").status_code == 200
+    for i in range(14):  # 20 today in all
+        assert send_link(at(f"192.0.2.{i + 1}"), "ab@gmail.com").status_code == 200
+    assert send_link(at("192.0.2.200"), "ab@gmail.com").status_code == 429
+
+
+def test_ipv6_link_requests_share_a_slash_48():
+    codes = [
+        send_link(at(f"2001:db8:cc:{i:x}::1"), f"n{i}@example.org").status_code
+        for i in range(41)
+    ]
+    assert codes == [200] * 40 + [429]  # each /64 alone may ask for 20
+
+
+def test_sign_up_links_stop_at_the_app_wide_ceiling_but_sign_ins_still_go(monkeypatch):
+    monkeypatch.setattr(security, "SIGNUP_ALL", (("signup-all-hour", 2, 3600),))
+    sign_in(TestClient(app), "3105550010")  # an account: v13105550010@example.org
+    pages = [send_link(at(f"192.0.2.{i}"), f"new{i}@example.org") for i in range(3)]
+    assert {r.status_code for r in pages} == {200} and len({r.text for r in pages}) == 1
+    assert len(notify.get_emailer().sent) == 2  # the third sign-up link isn't sent
+    send_link(at("192.0.2.9"), "v13105550010@example.org")
+    assert notify.get_emailer().sent[-1][0] == "v13105550010@example.org"
+
+
+def test_a_suspended_google_volunteers_address_gets_no_link_live_or_deleted(anon):
+    claims = oauth.Claims("google", "g-1", "bob@gmail.com", True, "Bob", "", "")
+    uid = data.volunteer_for_identity(claims)
+    profiles.update(id=uid, suspended_at="2026-01-01T00:00:00")
+    before = profiles.count
+    for e in ("bob@gmail.com", "b.o.b+x@gmail.com"):
+        assert SENT in send_link(anon, e).text
+    data.delete_account(uid)  # suspended: its verified address's hash is kept too
+    assert SENT in send_link(anon, "bob@gmail.com").text
+    assert notify.get_emailer().sent == [] and profiles.count == before
+
+
+def test_variants_of_a_suspended_mailbox_get_nothing_and_odd_shapes_are_refused():
+    c = at("203.0.113.7")
+    uid = link_sign_in(c, "mal@gmail.com")
+    profiles.update(id=uid, suspended_at="2026-01-01T00:00:00")
+    notify.get_emailer().sent.clear()
+    for v in ("mal+2@gmail.com", "m.al@gmail.com", "MAL@googlemail.com"):
+        assert SENT in send_link(c, v).text
+    for bad in (
+        "mal@gmail.com.",
+        "<mal@gmail.com>",
+        '"mal"@gmail.com',
+        "x<mal@gmail.com>",
+    ):
+        assert "Enter your email address" in send_link(c, bad).text
+    assert notify.get_emailer().sent == []
+    send_link(c, "Other.Name+tag@Example.org")  # mail goes to the address as typed
+    assert notify.get_emailer().sent[-1][0] == "other.name+tag@example.org"
+
+
+def test_the_confirm_page_names_the_account_and_warns_about_a_link_from_elsewhere():
+    def page(client, path):
+        return client.get(path).text.replace("&#x27;", "'")
+
+    attacker = TestClient(app)
+    send_link(attacker, "attacker@example.org")
+    token = link_token("attacker@example.org")
+    mine = page(attacker, f"/login/verify?token={token}")
+    assert "Sign in as attacker@example.org" in mine
+    assert "didn't ask for this link" not in mine and "another account" not in mine
+    victim = volunteer()  # signed in, and never asked for this link
+    theirs = page(victim, f"/login/verify?token={token}")
+    assert "Sign in as attacker@example.org" in theirs
+    assert "didn't ask for this link" in theirs and "another account" in theirs
+    _, staff = coordinator_for(0)  # the same on the nonprofit sign-in
+    TestClient(app).post("/org/login/send", data={"email": staff})
+    org = page(victim, f"/org/login/verify?token={link_token(staff)}")
+    assert f"Sign in as {staff}" in org and "didn't ask for this link" in org
+    peeked = [
+        t for t in login_tokens() if t.user_id or t.email == "attacker@example.org"
+    ]
+    assert [t.used_at for t in peeked] == [None, None]  # peeking used nothing up
 
 
 def test_a_deleted_account_signs_up_anew_unless_it_was_suspended(anon):

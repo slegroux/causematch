@@ -26,7 +26,7 @@ from app.choices import (
     SHIFT_LENGTHS,
 )
 from app.config import demo_matches, phone_hash_key
-from app.forms import BIDI, hidden_chars
+from app.forms import BIDI, abuse_key, hidden_chars
 from app.match import LA
 from app.metrics_rows import fetch_rows
 
@@ -2669,18 +2669,36 @@ def create_email_token(email):
 
 
 def _new_login_token(column, value):
+    """The replacement is one transaction, so two requests at once leave one live token."""
     token = secrets.token_urlsafe(32)
-    _db.login_tokens.delete_where(f"{column} = ? OR expires_at < ?", [value, _now()])
-    _db.login_tokens.insert(
-        _db.LoginToken(
-            token_hash=_hash(token),
-            **{column: value},
-            expires_at=(datetime.now(UTC) + timedelta(minutes=TOKEN_MINUTES)).isoformat(
-                timespec="seconds"
-            ),
+    with _db.db.conn:
+        _db.login_tokens.delete_where(
+            f"{column} = ? OR expires_at < ?", [value, _now()]
         )
-    )
+        _db.login_tokens.insert(
+            _db.LoginToken(
+                token_hash=_hash(token),
+                **{column: value},
+                expires_at=(
+                    datetime.now(UTC) + timedelta(minutes=TOKEN_MINUTES)
+                ).isoformat(timespec="seconds"),
+            )
+        )
     return token
+
+
+def peek_login_token(token):
+    """The (user id, address) a live, unused token is for, without using it up: the
+    confirm pages name the account before the button signs anyone in. (None, None) for
+    any other token. The address is a volunteer link's; a staff link's is its profile's."""
+    if not 0 < len(token) <= 200:
+        return None, None
+    rows = _db.db.q(
+        "SELECT user_id, email FROM login_token WHERE token_hash = ? "
+        "AND used_at IS NULL AND expires_at > ?",
+        [_hash(token), _now()],
+    )
+    return (rows[0]["user_id"], rows[0]["email"]) if rows else (None, None)
 
 
 def consume_login_token(token):
@@ -2714,9 +2732,10 @@ def volunteer_link_kind(email):
     """What /login's emailed link does for this lowercased ASCII address. "staff": a live
     coordinator's or admin's, who gets their own link (/org/login/verify). "sign-in": a live
     volunteer signed up with it. "sign-up": no account holds it. None, and nothing is sent:
-    an account an admin suspended (live, or deleted with its hash kept, as for Google), and
-    a staff address that can't sign in (suspended, or a coordinator without an org): one
-    address, one role, as add_admin and claim approval keep it."""
+    a mailbox (forms.abuse_key, so a +tag or Gmail's dots don't dodge it) that a suspended
+    account holds as a verified address, by any way in, live or deleted with its hash kept;
+    and a staff address that can't sign in (suspended, or a coordinator without an org):
+    one address, one role, as add_admin and claim approval keep it."""
     if staff_by_email(email)[0]:
         return "staff"
     staff = (
@@ -2724,15 +2743,30 @@ def volunteer_link_kind(email):
     )
     if _db.profiles.count_where(staff, [email]):
         return None
-    where = "provider = ? AND subject = ?"
-    for found in _db.identities(where=where, where_args=[EMAIL_SIGN_IN, email]):
-        p = _db.profiles[found.user_id]
-        if not p.deleted_at:  # a deleted account's identity signs nobody in
-            return None if p.suspended_at else "sign-in"
+    key = abuse_key(email)
+    held = _db.db.q(  # few: only suspended accounts, compared by mailbox below
+        "SELECT i.email FROM identity i JOIN profile p ON p.id = i.user_id "
+        "WHERE p.suspended_at IS NOT NULL AND p.deleted_at IS NULL "
+        "AND coalesce(i.email, '') != ''"
+    )
+    if any(abuse_key(r["email"]) == key for r in held):
+        return None
     kept = _db.retained_identities(
         where="hash = ?", where_args=[_identity_hash(EMAIL_SIGN_IN, email)]
     )
-    return None if kept and kept[0].suspended else "sign-up"
+    if kept and kept[0].suspended:
+        return None
+    return "sign-in" if email_sign_in_owner(email) else "sign-up"
+
+
+def email_sign_in_owner(email):
+    """The live profile that signed up with this emailed-link address, else None (a
+    deleted account's identity signs nobody in)."""
+    where = "provider = ? AND subject = ?"
+    for found in _db.identities(where=where, where_args=[EMAIL_SIGN_IN, email]):
+        if not _db.profiles[found.user_id].deleted_at:
+            return found.user_id
+    return None
 
 
 def create_opening(
@@ -4042,6 +4076,10 @@ def _phone_hash(phone):
 
 
 def _identity_hash(provider, subject):
+    """An emailed link's identity is hashed by its mailbox (forms.abuse_key), so a kept
+    suspension or block can't be dodged with a +tag or Gmail's dots."""
+    if provider == EMAIL_SIGN_IN:
+        subject = abuse_key(subject)
     key = f"{provider}:{subject}".encode()
     return hmac.new(phone_hash_key().encode(), key, "sha256").hexdigest()
 
@@ -4145,6 +4183,9 @@ def delete_account(uid):
             _retain_phone(uid, p.phone, bool(p.suspended_at))
         for i in _db.identities(where="user_id = ?", where_args=[uid]):
             _retain_identity(uid, i.provider, i.subject, bool(p.suspended_at))
+            if i.provider != EMAIL_SIGN_IN and i.email:  # Google's or Apple's, verified
+                # so an emailed-link sign-up to that address brings them back too
+                _retain_identity(uid, EMAIL_SIGN_IN, i.email, bool(p.suspended_at))
         for m in _db.matches(
             where="volunteer_id = ? AND status IN ('pending', 'accepted')",
             where_args=[uid],

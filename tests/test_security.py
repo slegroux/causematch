@@ -246,7 +246,7 @@ def test_a_rate_limit_trip_is_logged_by_name_only(anon, caplog):
         for _ in range(6):
             anon.post("/login/send", data={"email": "who@example.org"})
     (msg,) = [r.getMessage() for r in caplog.records if "rate limit" in r.getMessage()]
-    assert msg == "rate limit reached: link-email"
+    assert msg == "rate limit reached: link-email-ip"
 
 
 def test_a_suspended_number_is_counted_like_any_other():
