@@ -421,7 +421,7 @@ def privacy():
         Section(
             "What we collect",
             "Volunteers: your email address, which you sign in with (or your Google or "
-            "Apple account's, below); your mobile number, if you add one for texts; your "
+            "Apple account's, below); your mobile number, only where we offer to text you and you add one; your "
             "first name and, if you give them, "
             "your last name, pronouns, a short bio, your interests and a photo; the "
             "neighborhood you show nonprofits; the other "
@@ -507,7 +507,7 @@ def privacy():
             "notices when we can't text them. "
             + (_GMAIL_COPIES[gmail_purge()] if gmail else "")
             + "If you add a "
-            "mobile number, Twilio sends the code that confirms it and our texts. If "
+            "mobile number (where that is offered), Twilio sends the code that confirms it and our texts. If "
             "you sign in with Google or Apple, that company confirms who you are, so it knows you use Causematch. Google Cloud hosts the "
             "app and keeps its backups. Each sees only what it needs to do that job. We "
             "don't sell your data or share it for advertising.",

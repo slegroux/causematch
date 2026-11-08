@@ -40,6 +40,13 @@ def fakes_allowed(env=os.environ):
     return is_dev(env) or is_preview(env)
 
 
+def collect_phone(env=os.environ):
+    """CAUSEMATCH_COLLECT_PHONE=1 offers the opt-in mobile number on Me (add-a-number, with a
+    texted code). Off by default everywhere: for the beta the app asks volunteers for no
+    phone number, and they are reached by email."""
+    return env.get("CAUSEMATCH_COLLECT_PHONE") == "1"
+
+
 def demo_matches(env=os.environ):
     """CAUSEMATCH_DEMO_MATCHES=1 (scripts/demo.py and the preview deploy set it): signing in
     with the demo number gives each visitor a fresh copy of the demo volunteer, and an org

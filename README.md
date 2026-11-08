@@ -38,7 +38,7 @@ Causematch matches people with nonprofits across Los Angeles County that need a 
 
 | | |
 |---|---|
-| **Volunteers** | Sign in with an emailed link, or Google or Apple, answer a short onboarding, swipe on a phone. A phone number is optional: without one, match news and reminders come by email. Each card says why it is shown; "Free in the next 48h" and a filter sheet narrow the deck. |
+| **Volunteers** | Sign in with an emailed link, or Google or Apple, answer a short onboarding, swipe on a phone. No phone number is asked for: volunteers are reached by email. Each card says why it is shown; "Free in the next 48h" and a filter sheet narrow the deck. |
 | **Match preferences** | Places you help from (never an address), causes, the days you're free, the kind of work and languages. Private. Causes, distance, timing and kind of work can each rank openings or hide the ones that don't fit; languages only rank. |
 | **Nonprofits** | A dashboard to post openings anywhere in the county, accept volunteers and mark shifts done, with chat and shifts once matched (reminders once the scheduled job is set up). |
 | **Last-minute calls** | Short of people in the next 48 hours? An urgent call texts (or emails) nearby volunteers who are free, with caps so nobody is spammed (once the scheduled job is set up). |
