@@ -42,7 +42,9 @@ from app.ui import (
 ar = Router()
 log = logging.getLogger("causematch")
 
-ADULTS_ONLY = "Causematch is for adults 18+"
+NO_CONSENT = (
+    "Please confirm you're 18 or older and agree to the privacy policy to continue."
+)
 LA_ONLY = "Causematch is only in Los Angeles County for now"
 NO_PLACE = (
     "Tell us where you'll help from: a neighborhood, a ZIP code or your location."
@@ -95,12 +97,6 @@ def OnboardingForm(f=None, error=None, google_photo=False):
                     ),
                 ),
                 LabelCheckboxX(
-                    "I'm 18 or older",
-                    name="adult",
-                    value="1",
-                    checked=bool(f.get("adult")),
-                ),
-                LabelCheckboxX(
                     "Use my Google photo",
                     name="google_photo",
                     value="1",
@@ -119,20 +115,25 @@ def OnboardingForm(f=None, error=None, google_photo=False):
                 "What",
                 "Love ranks first. Not for me hides every opening for that cause.",
                 *[
-                    CauseRow(c, f.get("causes", {}).get(c.slug))
+                    CauseRow(c, f.get("causes", {}).get(c.slug, prefs.OPEN))
                     for c in data.active_causes()
                 ],
             ),
-            LabelCheckboxX(
-                Span(
-                    "I agree to the ",
-                    A("privacy policy", href="/privacy", cls=AT.muted),
+            # the consent and the button share the sticky bar: both are always in reach
+            Div(
+                LabelCheckboxX(
+                    Span(
+                        "I'm 18 or older and I agree to the ",
+                        A("privacy policy", href="/privacy", cls=AT.muted),
+                    ),
+                    name="consent",
+                    value="1",
+                    checked=bool(f.get("consent")),
                 ),
-                name="consent",
-                value="1",
-                checked=bool(f.get("consent")),
+                P(error, cls="text-sm font-bold text-brand-ink") if error else None,
+                BigButton("Start swiping"),
+                cls="cm-savebar z-20 -mx-1 space-y-2 bg-cream px-1 py-3",
             ),
-            Div(BigButton("Start swiping"), cls="cm-savebar z-20 -mx-1 py-3"),
             action="/onboarding",
             method="post",
             cls="space-y-4",
@@ -182,7 +183,6 @@ def _sync_onboarding_save(req, form, sess):
     shown_lat, shown_lon = shown_point(posted["lat"], posted["lon"])
     f = {
         **{k: text(k) for k in LIMITS},
-        "adult": form.get("adult"),
         "place": {**HOME, **posted, "lat": shown_lat, "lon": shown_lon},
         "causes": {s: form.get(f"cause_{s}") for s in active if form.get(f"cause_{s}")},
         "consent": form.get("consent"),
@@ -192,8 +192,8 @@ def _sync_onboarding_save(req, form, sess):
     def fail(msg):
         return OnboardingForm(f, msg, google_photo=bool(picture))
 
-    if f["adult"] != "1":
-        return fail(ADULTS_ONLY)
+    if not f["consent"]:  # one box records both: 18 or older, and the privacy policy
+        return fail(NO_CONSENT)
     if any(len(f[k]) > n for k, n in LIMITS.items()):
         return fail("One of your answers is too long. Please shorten it.")
     if any(hidden_chars(f[k]) for k in LIMITS):
@@ -215,8 +215,6 @@ def _sync_onboarding_save(req, form, sess):
         return fail(prefs.UNRECOGNIZED)
     if not {prefs.LOVE, prefs.OPEN} & set(f["causes"].values()):
         return fail("Please pick at least one cause you love or are open to.")
-    if not f["consent"]:
-        return fail("Please agree to the privacy policy to continue.")
     reach = match.reach_km(place["mode"], place["max_minutes"])
     data.save_onboarding(
         req.scope["uid"],
