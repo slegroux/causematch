@@ -292,7 +292,7 @@ flowchart TD
 | `app/prefs.py` | Reads a volunteer's preferences consistently whatever the profile's age, and resolves a typed place (ZIP, neighborhood, device location) to a point. |
 | `app/notify.py` | Twilio Verify, Twilio SMS, Resend email, and their fakes; `channel` picks text or email per volunteer. Sends exactly-once notifications recorded in the `notification` table, day-before reminders and urgent-call waves. |
 | `app/photos.py`, `app/photo_worker.py` | Upload validation, the sandboxed decode in a child process, and re-encoding to JPEG (full and thumbnail). |
-| `app/db.py`, `app/migrations/` | Table classes (fastlite `transform=True`), indexes, the cause rows, invented demo orgs, and numbered migrations. |
+| `app/db.py`, `app/migrations/` | Table classes (fastlite `db.create`, which only makes missing tables), indexes, the cause rows, invented demo orgs, and numbered migrations. |
 | `app/metrics.py`, `app/metrics_rows.py` | Pilot metrics: plain-row queries, then pure aggregation. No names, phones or emails. |
 | `app/propublica.py`, `app/org_import.py` | ProPublica API client, and the import rules: LA County ZIPs and NTEE code mapped to a cause. |
 | `app/demo_seed.py` | Demo and preview data: invented or real orgs (from a seed file kept outside git) with "Sample:" openings and demo people. |
@@ -482,12 +482,12 @@ Notable indexes, created in `app/db.py`:
 
 ### Migrations
 
-There are two mechanisms (`app/migrations/__init__.py`):
+Migrations are the only thing that changes an existing database's schema (`app/migrations/__init__.py`):
 
-1. **Adding a column or table:** edit the class in `app/db.py`. `db.create(..., transform=True)` reshapes the table at startup.
-2. **Renames, data changes, index changes on existing tables, and anything involving triggers:** add a numbered module `app/migrations/NNNN_what.py` with `up(conn)`, and also change the class to the end state.
+1. **Adding a table:** edit `app/db.py`. `db.create` makes a table that doesn't exist yet and never rebuilds or alters one.
+2. **Adding a column, renames, data changes, index changes on existing tables, and anything involving triggers:** add a numbered module `app/migrations/NNNN_what.py` with `up(conn)`, and also change the class to the end state.
 
-Pending migrations run in order at every start, before the tables are declared. Each runs in its own transaction together with its `schema_migrations` row. A brand-new database records all migrations as applied without running them. You can also run them by hand with `uv run python -m app.migrations [--db PATH]`.
+Pending migrations run in order at every start, before the tables are declared. After them, startup stops when a table lacks a column its class declares, naming the migration to write, and logs a warning for a column only the table has (kept, never dropped). Each runs in its own transaction together with its `schema_migrations` row. A brand-new database records all migrations as applied without running them. You can also run them by hand with `uv run python -m app.migrations [--db PATH]`.
 
 Current migrations:
 

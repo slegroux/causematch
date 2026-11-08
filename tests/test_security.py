@@ -1,3 +1,4 @@
+import ast
 import logging
 import os
 import re
@@ -972,6 +973,106 @@ def test_a_failing_step_changes_nothing_and_stops_the_run(tmp_path):
     assert [r[1] for r in conn.execute("PRAGMA table_info(thing)")] == ["b"]
     assert [v for (v,) in conn.execute("SELECT version FROM schema_migrations")] == [1]
     assert migrations.migrate(conn, [(1, rename), (2, lambda c: None)]) == 1
+
+
+def start(db):
+    """Import app.db on db in a fresh interpreter: what every app start does to the schema."""
+    return subprocess.run(
+        [sys.executable, "-c", "import app.db"],
+        check=False,
+        cwd=ROOT,
+        env={"PATH": os.environ["PATH"], "CAUSEMATCH_DB": str(db)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def schema(db):
+    c = apsw.Connection(str(db))
+    rows = c.execute(  # sqlite_stat*: apsw's PRAGMA optimize, not ours
+        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_stat%' "
+        "ORDER BY type, name"
+    ).fetchall()
+    c.close()
+    return rows
+
+
+def test_a_second_start_leaves_the_schema_byte_identical(tmp_path):
+    """transform=True rebuilt ten tables on every start (CREATE TABLE [match] came back
+    as CREATE TABLE "match"): an existing database's schema is the migrations' alone."""
+    db = tmp_path / "s.db"
+    assert start(db).returncode == 0
+    first = schema(db)
+    assert start(db).returncode == 0
+    assert schema(db) == first
+
+
+def test_a_column_only_the_class_has_stops_the_start_and_one_only_the_table_has_stays(
+    tmp_path,
+):
+    db = v1_copy(tmp_path)
+    assert run_migrations(db).returncode == 0
+    c = apsw.Connection(str(db))
+    c.execute("ALTER TABLE profile ADD COLUMN legacy TEXT")
+    c.close()
+    r = start(db)
+    assert r.returncode == 0, r.stderr
+    assert "table profile keeps column(s) legacy" in r.stderr
+    c = apsw.Connection(str(db))
+    assert "legacy" in [r[1] for r in c.execute("PRAGMA table_info(profile)")]
+    c.execute("ALTER TABLE profile DROP COLUMN name_changed_at")  # as if 0018 never was
+    c.close()
+    r = start(db)
+    nxt = migrations.available()[-1][0] + 1
+    assert r.returncode != 0
+    assert "table profile has no column name_changed_at" in r.stderr
+    assert f"app/migrations/{nxt:04d}_" in r.stderr
+
+
+def columns(db):
+    """{table: sorted (name, type, notnull, default, pk)}: what a table holds, not its order."""
+    c = apsw.Connection(str(db))
+    names = [
+        n
+        for (n,) in c.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    out = {
+        t: sorted(r[1:] for r in c.execute(f"PRAGMA table_info([{t}])")) for t in names
+    }
+    c.close()
+    return out
+
+
+def test_the_oldest_schema_migrates_to_the_columns_of_a_new_database(tmp_path):
+    """Every table as first created since the baseline: a class field with no migration
+    stops this start, as it would stop one on a real database that old."""
+    old, new = tmp_path / "old.db", tmp_path / "new.db"
+    c = apsw.Connection(str(old))
+    c.execute((ROOT / "tests" / "fixtures" / "schema_since_baseline.sql").read_text())
+    c.close()
+    r = start(old)
+    assert r.returncode == 0, r.stderr
+    assert "keeps column" not in r.stderr
+    assert start(new).returncode == 0
+    assert columns(old) == columns(new)
+
+
+def test_no_table_is_declared_with_transform():
+    """transform=True rebuilt tables and dropped columns at every start: an existing
+    database's schema belongs to the migrations."""
+    found = [
+        f"{path.relative_to(ROOT)}:{node.lineno}"
+        for path in [*(ROOT / "app").rglob("*.py"), ROOT / "main.py"]
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.keyword)
+        and node.arg == "transform"
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is True
+    ]
+    assert found == []
 
 
 def test_migration_modules_are_numbered_once():

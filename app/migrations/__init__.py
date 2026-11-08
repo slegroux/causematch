@@ -1,16 +1,20 @@
-"""Numbered schema migrations, for the changes `db.create(..., transform=True)` can't make.
+"""Numbered schema migrations: the only way an existing database's schema changes.
 
-`transform=True` (app/db.py) is right for adding a column or a table: edit the class and
-restart. Write a migration instead for:
+app/db.py creates a table from its class only when the table doesn't exist yet. It never
+rebuilds or alters an existing one: `transform=True` did, and on every start it copied ten
+tables into `<table>_new_<hex>` and renamed them back (a bool field never compares equal to
+the INTEGER SQLite reads back), dropped any column the class no longer declared, and its
+rename is what stranded rows in the item-9 incident (a trigger naming a dropped table).
 
-- renaming a column or a table: transform sees a dropped column and a new one, and the
-  data stays behind;
+So a new table can come from its class alone, and everything else is a migration:
+
+- adding a column: `ALTER TABLE ... ADD COLUMN` (0012 onward show the pattern). After the
+  migrations, `check` stops the app when a table lacks a column its class declares;
+- renaming or removing a column or a table. A column only the table still has is kept, and
+  `check` logs a warning naming it;
 - changing data: a backfill, moving values between columns, splitting a table;
 - an index on an existing table, above all a unique one that existing rows might break;
-- anything involving triggers. Transform rebuilds a table as `<table>_new_<hex>` and renames
-  it, SQLite re-checks every trigger on that rename, and a trigger naming a table that was
-  just dropped makes the rename fail half-way: the old table is gone and its rows are
-  stranded in the copy (the item-9 incident; the cleanup is the DROP TRIGGER in app/db.py).
+- anything involving triggers.
 
 A migration is a module `NNNN_what.py` in this package with one function, `up(conn)`, where
 conn is an apsw Connection; numbers are never reused or reordered. Also change the class
@@ -19,17 +23,19 @@ the database has no tables yet, every migration is recorded as applied without r
 
 Pending migrations run in order, each in its own transaction together with its row in
 `schema_migrations`, so a failing one changes nothing and stops the run. They run at every
-start (app/db.py, before the tables are declared) and by hand:
+start (app/db.py, before the tables are declared, then `check`) and by hand:
 
     uv run python -m app.migrations [--db PATH]
 """
 
 import importlib
+import logging
 import pkgutil
 import re
 from datetime import UTC, datetime
 
 TABLE = "schema_migrations"
+log = logging.getLogger("causematch")
 
 
 def available():
@@ -83,3 +89,28 @@ def migrate(conn, steps=None):
                 [version, datetime.now(UTC).isoformat(timespec="seconds")],
             )
     return ran
+
+
+def check(conn, tables):
+    """Stop when a table lacks a column its class declares; warn about one only the table
+    has (kept, never dropped). tables: {name: [column, ...]} from app/db.py's classes.
+
+    Names only: a changed type, primary key or NOT NULL, and a table whose class is gone,
+    pass unnoticed here and need a migration all the same."""
+    for name, want in tables.items():
+        have = [r[1] for r in conn.execute(f"PRAGMA table_info([{name}])")]
+        if missing := [c for c in want if c not in have]:
+            raise RuntimeError(
+                f"table {name} has no column {', '.join(missing)}, which its class in "
+                f"app/db.py declares: add a migration "
+                f"app/migrations/{available()[-1][0] + 1:04d}_<what>.py that adds "
+                f"{'them' if len(missing) > 1 else 'it'} "
+                f"(ALTER TABLE {name} ADD COLUMN ...)"
+            )
+        if extra := [c for c in have if c not in want]:
+            log.warning(
+                "table %s keeps column(s) %s that its class in app/db.py lacks: "
+                "a migration should drop or rename them",
+                name,
+                ", ".join(extra),
+            )

@@ -1,7 +1,8 @@
 import json
+from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 
-from fastlite import database
+from fastlite import Table, database
 
 from app import migrations
 from app.config import db_path, is_dev
@@ -10,11 +11,11 @@ from app.match import LA
 DB_PATH = db_path()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 db = database(DB_PATH)
-# An early build installed this trigger. It names the shift table, so any later transform
-# of that table fails half-way and strands its rows. Must run before the first create.
+# An early build installed this trigger. It names the shift table, so any rebuild of that
+# table (a migration's, say) fails half-way and strands its rows.
 db.execute("DROP TRIGGER IF EXISTS shift_with_match")
-# Before the tables below: a migration (a rename, say) must reshape an existing table before
-# transform=True compares it with its class.
+# Migrations own an existing database's schema: db.create below only makes a table that
+# doesn't exist yet, and never rebuilds or alters one (app/migrations/__init__.py).
 migrations.migrate(db.conn)
 
 
@@ -299,32 +300,32 @@ class Block:
     created_at: str
 
 
-causes = db.create(Cause, pk="slug", transform=True)
-orgs = db.create(Org, pk="id", transform=True)
+causes = db.create(Cause, pk="slug")
+orgs = db.create(Org, pk="id")
 orgs.create_index(["ein"], unique=True, if_not_exists=True)  # NULLs allowed
-openings = db.create(Opening, pk="id", transform=True)
-profiles = db.create(Profile, pk="id", transform=True)
-identities = db.create(Identity, pk="id", transform=True)
+openings = db.create(Opening, pk="id")
+profiles = db.create(Profile, pk="id")
+identities = db.create(Identity, pk="id")
 identities.create_index(["user_id"], if_not_exists=True)
 db.execute(
     "CREATE UNIQUE INDEX IF NOT EXISTS identity_provider_subject "
     "ON identity(provider, subject)"
 )
-org_members = db.create(OrgMember, pk="id", transform=True)
+org_members = db.create(OrgMember, pk="id")
 org_members.create_index(["org_id", "user_id"], unique=True, if_not_exists=True)
-login_tokens = db.create(LoginToken, pk="token_hash", transform=True)
-swipes = db.create(Swipe, pk=["volunteer_id", "opening_id"], transform=True)
-matches = db.create(Match, pk="id", transform=True)
+login_tokens = db.create(LoginToken, pk="token_hash")
+swipes = db.create(Swipe, pk=["volunteer_id", "opening_id"])
+matches = db.create(Match, pk="id")
 matches.create_index(["opening_id", "volunteer_id"], unique=True, if_not_exists=True)
 matches.create_index(
     ["volunteer_id", "status"], if_not_exists=True
 )  # a volunteer's own
-messages = db.create(Message, pk="id", transform=True)
+messages = db.create(Message, pk="id")
 messages.create_index(["match_id", "created_at"], if_not_exists=True)
-shifts = db.create(Shift, pk="id", transform=True)
-certificates = db.create(Certificate, pk="id", transform=True)
+shifts = db.create(Shift, pk="id")
+certificates = db.create(Certificate, pk="id")
 certificates.create_index(["volunteer_id", "issued_at"], if_not_exists=True)
-notifications = db.create(Notification, pk="id", transform=True)
+notifications = db.create(Notification, pk="id")
 notifications.create_index(["key"], unique=True, if_not_exists=True)
 
 
@@ -352,12 +353,12 @@ class RetainedIdentityHash:
     created_at: str
 
 
-reports = db.create(Report, pk="id", transform=True)
-retained_phones = db.create(RetainedPhoneHash, pk="hash", transform=True)
-retained_identities = db.create(RetainedIdentityHash, pk="hash", transform=True)
+reports = db.create(Report, pk="id")
+retained_phones = db.create(RetainedPhoneHash, pk="hash")
+retained_identities = db.create(RetainedIdentityHash, pk="hash")
 retained_identities.create_index(["profile_id"], if_not_exists=True)
-blocks = db.create(Block, pk="id", transform=True)
-claim_requests = db.create(ClaimRequest, pk="id", transform=True)
+blocks = db.create(Block, pk="id")
+claim_requests = db.create(ClaimRequest, pk="id")
 
 
 class RateEvent:
@@ -368,7 +369,7 @@ class RateEvent:
     at: float  # unix seconds
 
 
-rate_events = db.create(RateEvent, pk="id", transform=True)
+rate_events = db.create(RateEvent, pk="id")
 rate_events.create_index(["key", "at"], if_not_exists=True)
 
 
@@ -381,7 +382,7 @@ class DeckEmpty:
     at: str  # UTC
 
 
-deck_empties = db.create(DeckEmpty, pk="id", transform=True)
+deck_empties = db.create(DeckEmpty, pk="id")
 
 
 class Place:
@@ -398,7 +399,7 @@ class Place:
     max_minutes: int  # 0: any distance
 
 
-places = db.create(Place, pk="id", transform=True)
+places = db.create(Place, pk="id")
 places.create_index(["user_id"], if_not_exists=True)
 
 
@@ -415,7 +416,7 @@ class Photo:
     created_at: str
 
 
-photos = db.create(Photo, pk="key", transform=True)
+photos = db.create(Photo, pk="key")
 
 
 class UrgentCall:
@@ -444,7 +445,7 @@ class UrgentCall:
     )
 
 
-urgent_calls = db.create(UrgentCall, pk="id", transform=True)
+urgent_calls = db.create(UrgentCall, pk="id")
 urgent_calls.create_index(["org_id", "created_at"], if_not_exists=True)
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
@@ -473,6 +474,17 @@ db.execute(
 db.execute(
     "CREATE UNIQUE INDEX IF NOT EXISTS admin_email_live ON profile(lower(email)) "
     "WHERE role = 'admin' AND deleted_at IS NULL"
+)
+# Every table above against its class: a column only the class has stops the app here.
+# The index statements run first, so a missing column one of them names stops it there
+# instead, with SQLite's bare "no such column" (all such columns date from the baseline).
+migrations.check(
+    db.conn,
+    {
+        t.name: [f.name for f in fields(t.cls)]
+        for t in list(globals().values())
+        if isinstance(t, Table) and hasattr(t, "cls")
+    },
 )
 
 CAUSES = [
