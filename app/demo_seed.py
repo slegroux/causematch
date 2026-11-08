@@ -260,12 +260,15 @@ def _onboard(uid, name, hood, causes, skills, frequency):
     return uid
 
 
-def _fill_invented_openings():
-    """The invented seed's openings, given what real ones carry: kind of work, a sample
-    event link (example.org) and a language now and then, so their cards show it all."""
+def _fill_invented_openings(ids=None):
+    """The invented seed's openings (those with these ids; all by default), given what
+    real ones carry: kind of work, a sample event link (example.org) and a language now
+    and then, so their cards show it all."""
     from app.db import openings
 
     for i, o in enumerate(openings(order_by="id")):
+        if ids is not None and o.id not in ids:
+            continue
         cause = (json.loads(o.causes or "[]") or [""])[0]
         openings.update(
             id=o.id,
@@ -372,12 +375,30 @@ def seed(seed_file=None):
     instead (demo_volunteer); this one stays for the coordinator's inbox and chat."""
     from app import data, photos
     from app.auth import normalize_phone
-    from app.db import ensure_causes, matches, now, openings, orgs, seed_demo
+    from app.db import (
+        ensure_causes,
+        matches,
+        now,
+        openings,
+        orgs,
+        seed_demo,
+        seed_demo_org,
+    )
 
     ensure_causes()
     if seed_file:
         path = Path(seed_file)
         load_orgs(json.loads(path.read_text()), path.resolve().parent)
+        # The demo nonprofit is invented, never one of the file's real ones: it is the
+        # coordinator's org, the one that confirms hours, and the one whose name a
+        # certificate shows. Its openings are samples, like the file's.
+        org, invented = seed_demo_org(CONFIRMING_ORG)
+        orgs.update(
+            id=org.id, verified_at=org.verified_at or now(), confirms_hours=True
+        )
+        for o in invented:
+            openings.update(id=o.id, title=f"Sample: {o.title}")
+        _fill_invented_openings([o.id for o in invented])
     else:
         seed_demo()
         for o in orgs():  # app/db.py verifies them in development only; a preview's too
@@ -387,7 +408,7 @@ def seed(seed_file=None):
                 confirms_hours=o.name == CONFIRMING_ORG,
             )
         _fill_invented_openings()
-    org = orgs()[0]
+        org = orgs()[0]
     coord = data.add_coordinator(COORDINATOR[0], org.id, name=COORDINATOR[1])
     data.add_admin(*ADMIN)
     first = next(
@@ -561,15 +582,24 @@ def _matches(uid, coordinator_org_id, kinds):
 
 def demo_volunteer(phone):
     """Signing in with ME_PHONE while config.demo_matches is on (the auth route's hook,
-    set by main.py): a fresh Sam for this visitor alone, with their preferences and photo,
-    no matches yet, and a full deck whose first card is the urgent call. Its
-    profile id; None for any other number."""
+    set by main.py): a fresh Sam for this visitor alone, with their preferences and photo
+    and a full deck whose first card is the urgent call. Sam also arrives with a history
+    at the coordinator's org: a match accepted 15 days ago on its first opening (whatever
+    that opening's status now) and one completed shift 14 days ago with its hours
+    confirmed, so Shifts and hours and a certificate work in one visit. No upcoming
+    shift comes with it, and the match is already seen, takeover and Matches tab both.
+    If that history can't be built the visitor still gets the plain Sam. Its profile id;
+    None for any other number."""
     from app import data
     from app.config import DEMO_PHONE  # ME_PHONE, in E.164
 
     if phone != DEMO_PHONE:
         return None
     uid = _sam(data.new_demo_volunteer())
+    try:  # under the data layer's lock, in one transaction
+        data.arrive_with_history(uid, data.coordinator_by_email(COORDINATOR[0]))
+    except Exception:
+        log.warning("demo volunteer %s: no arrival history", uid, exc_info=True)
     _preferences(uid)
     return uid
 
