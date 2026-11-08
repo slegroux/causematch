@@ -1048,7 +1048,7 @@ def test_no_async_route_calls_data_directly():
 def test_privacy_page_is_complete_and_honest(anon):
     text = anon.get("/privacy").text.replace("&#x27;", "'").replace("&quot;", '"')
     for needed in (
-        "Draft, pending legal review.",
+        "Last updated ",
         "Effective ",
         "Twilio",
         "Resend",

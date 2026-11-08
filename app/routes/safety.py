@@ -387,6 +387,7 @@ def delete_save(req, sess):
 # --- privacy ---------------------------------------------------------------------------------
 
 EFFECTIVE = "November 7, 2026"
+UPDATED = "November 7, 2026"  # the date of the latest change to this page's text
 
 
 def Section(title, *paras):
@@ -402,7 +403,7 @@ def privacy():
     return SimplePage(
         "Privacy",
         Div(
-            P("Draft, pending legal review.", cls="font-bold text-red-700"),
+            P(f"Last updated {UPDATED}.", cls=TextPresets.muted_sm),
             P(f"Effective {EFFECTIVE}.", cls=TextPresets.muted_sm),
             cls="flex flex-wrap items-center gap-3 pt-2",
         ),

@@ -265,8 +265,8 @@ def _onboard(uid, name, hood, causes, skills, frequency):
 
 def _fill_invented_openings(ids=None):
     """The invented seed's openings (those with these ids; all by default), given what
-    real ones carry: kind of work, a sample event link (example.org) and a language now
-    and then, so their cards show it all."""
+    real ones carry: kind of work and a language now and then, so their cards show it
+    all. They carry no event link: an invented opening has no website to send anyone to."""
     from app.db import openings
 
     for i, o in enumerate(openings(order_by="id")):
@@ -276,7 +276,6 @@ def _fill_invented_openings(ids=None):
         openings.update(
             id=o.id,
             **_sample_work(cause, i),
-            event_url=f"https://example.org/volunteer/{o.id}",
         )
 
 
