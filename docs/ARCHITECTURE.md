@@ -911,8 +911,7 @@ flowchart LR
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in | optional; both or neither (secret 32+ in production) |
 | `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | Sign in with Apple: Services ID, team, key id, the `.p8` key's PEM | optional; all four or none; https only |
 | `CAUSEMATCH_FAKE_OAUTH` | `1` = a local consent page stands in for Google and Apple | optional; dev, test, preview only |
-| `EMAIL_API_KEY`, `EMAIL_FROM` | Resend | Resend or SMTP, unless `CAUSEMATCH_FAKE_EMAIL=1` |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_MAX_PER_DAY` | Email over SMTP (Gmail for the beta), when `EMAIL_API_KEY` is unset; defaults `smtp.gmail.com`, 587, 400 a day | username and password together (password 16+ in production) |
+| `EMAIL_API_KEY`, `EMAIL_FROM` | Resend | unless `CAUSEMATCH_FAKE_EMAIL=1` |
 | `PREVIEW_PASSWORD` | The preview's access key (`?access=` link) and HTTP Basic password | preview (16+) |
 | `PREVIEW_SEED_DIR` | Folder with `orgs.json`, `logos-raw/`, `photos-raw/` | optional, preview |
 | `CAUSEMATCH_FAKE_SMS`, `CAUSEMATCH_FAKE_EMAIL` | `1` = fakes | optional; dev, test, preview only |

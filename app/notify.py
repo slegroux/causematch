@@ -161,7 +161,7 @@ class FakeEmailer:
         self.sent = []
         self.with_headers = []  # (to, subject, headers) of messages that had any
 
-    def send(self, to, subject, body, headers=None):
+    def send(self, to, subject, body, headers=None, sign_in=False):
         _record(self.sent, (to, subject, body))
         if headers:
             _record(self.with_headers, (to, subject, headers))
@@ -177,33 +177,45 @@ class ResendEmailer:
             timeout=10,
         )
 
-    def send(self, to, subject, body, headers=None):
+    def send(self, to, subject, body, headers=None, sign_in=False):
         message = {"from": self.sender, "to": [to], "subject": subject, "text": body}
         if headers:
             message["headers"] = headers
         self.client.post("/emails", json=message).raise_for_status()
 
 
+NOTICE_SHARE = 0.6  # of SMTP_MAX_PER_DAY that notices may use: the rest is for sign-in
+
+
 class EmailCeiling(Exception):
-    """SMTP_MAX_PER_DAY emails were sent over SMTP in the last 24 hours: not sent."""
+    """SMTP_MAX_PER_DAY emails were sent over SMTP in the last 24 hours, or notices used
+    their share of it: not sent."""
 
 
 class SMTPEmailer:
     """Email over SMTP with a login: a Gmail account and its app password, for the beta.
     Always TLS with the certificate checked: port 465 is TLS from the start, any other
     upgrades with STARTTLS, and a server that doesn't offer it is refused, so the password
-    never crosses in the clear. Every send counts against SMTP_MAX_PER_DAY first."""
+    never crosses in the clear. Every send counts against SMTP_MAX_PER_DAY first, and a
+    notice (anything but a sign-in or sign-up link) against NOTICE_SHARE of it too, as
+    urgent texts get half the SMS ceiling: sign-in links always have room."""
 
     def __init__(self, host, port, username, password, sender, per_day):
         self.host, self.port = host, port
         self.username, self.password = username, password
         self.sender = sender
         self.ceiling = (("email-smtp-day", per_day, 24 * 3600),)
+        notices = max(1, int(per_day * NOTICE_SHARE))
+        self.notices = (("email-smtp-notices-day", notices, 24 * 3600),)
         self.context = ssl.create_default_context()
 
-    def send(self, to, subject, body, headers=None):
-        # security.allow logs "rate limit reached: email-smtp-day" (docs/OPERATIONS.md)
-        if not security.allow((self.ceiling, "all")):
+    def send(self, to, subject, body, headers=None, sign_in=False):
+        # security.allow logs "rate limit reached: email-smtp-day" or
+        # "...: email-smtp-notices-day" (docs/OPERATIONS.md)
+        limits = [(self.ceiling, "all")]
+        if not sign_in:
+            limits.append((self.notices, "all"))
+        if not security.allow(*limits):
             raise EmailCeiling
         message = EmailMessage()
         message["From"] = self.sender
@@ -264,6 +276,7 @@ def send_login_link(email, token):
         "Your Causematch sign-in link",
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
+        sign_in=True,
     )
     return link
 
@@ -278,6 +291,7 @@ def send_volunteer_link(email, token, new):
         ("Finish signing up for Causematch:" if new else "Sign in to Causematch:")
         + f"\n\n{link}\n\nThis link works once and expires in 15 minutes. If you "
         "didn't ask for it, ignore this email.",
+        sign_in=True,
     )
     return link
 

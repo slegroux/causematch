@@ -766,6 +766,8 @@ def test_email_picks_the_fake_then_resend_then_smtp_and_production_needs_one():
             config.require_volunteer_sign_in({**prod, **half})
     with pytest.raises(RuntimeError, match="at least 16"):
         notify.make_emailer({**prod, **SMTP_ENV, "SMTP_PASSWORD": "short"})
+    grouped = {**prod, **SMTP_ENV, "SMTP_PASSWORD": " abcd efgh\tijkl mnop\n"}
+    assert notify.make_emailer(grouped).password == APP_PASSWORD  # as Google shows it
     with pytest.raises(RuntimeError, match="SMTP_PORT"):
         notify.make_emailer({**prod, **SMTP_ENV, "SMTP_PORT": "smtp"})
     with pytest.raises(RuntimeError, match="SMTP_MAX_PER_DAY"):
@@ -845,13 +847,23 @@ def test_a_failed_smtp_send_logs_its_type_only(anon, smtp_server, monkeypatch, c
         assert secret not in caplog.text
 
 
-def test_smtp_stops_at_its_daily_ceiling_and_says_so(smtp_server, caplog):
-    env = {"CAUSEMATCH_ENV": "test", **SMTP_ENV, "SMTP_MAX_PER_DAY": "2"}
+def test_smtp_keeps_room_for_sign_in_links_under_its_daily_ceiling(
+    smtp_server, monkeypatch, caplog
+):
+    env = {"CAUSEMATCH_ENV": "test", **SMTP_ENV, "SMTP_MAX_PER_DAY": "5"}
     e = notify.make_emailer(env)
-    e.send("a@example.org", "s", "b")
-    e.send("b@example.org", "s", "b")
+    monkeypatch.setattr(notify, "_emailer", e)
+    for to in ("a", "b", "c"):  # notices may use 60% of the 5: three
+        e.send(f"{to}@example.org", "s", "b")
     with caplog.at_level(logging.WARNING), pytest.raises(notify.EmailCeiling):
-        e.send("c@example.org", "s", "b")
-    assert len(smtp_server) == 2  # the third never connected
+        e.send("d@example.org", "s", "b")
+    assert "rate limit reached: email-smtp-notices-day" in caplog.text
+    # sign-in and sign-up links still go, up to the whole ceiling
+    notify.send_login_link("coord@example.org", "tok")
+    notify.send_volunteer_link("vol@example.org", "tok", new=True)
+    assert len(smtp_server) == 5
+    with pytest.raises(notify.EmailCeiling):
+        notify.send_login_link("coord@example.org", "tok")
+    assert len(smtp_server) == 5  # neither refusal connected
     assert "rate limit reached: email-smtp-day" in caplog.text
     assert config.smtp_max_per_day({}) == 400

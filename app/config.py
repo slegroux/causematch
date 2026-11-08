@@ -227,6 +227,9 @@ def smtp(env=os.environ):
     if not any(values):
         return None
     host, port, username, password = values
+    password = "".join(
+        password.split()
+    )  # Gmail shows it in four groups; it has no spaces
     if not (username and password):
         raise RuntimeError(
             "SMTP is half configured: set SMTP_USERNAME and SMTP_PASSWORD, or none of "
