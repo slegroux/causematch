@@ -4,7 +4,7 @@ A short how-to for the admin running the beta. You don't need to be technical: e
 
 The screenshots use demo data: invented organizations and example.org addresses.
 
-This guide is for the live (production) site. The **preview** is demo-only: it accepts only demo addresses, so a real address gets no link there, and the demo admin's link is in the server log instead of an email. Don't approve real claims on the preview.
+This guide is for the live (production) site. The **preview** is demo-only: it accepts only demo addresses, so a real address gets no link there, and the demo admin's link is in the server log instead of an email; there, **Try it as an admin** on `/org/login` signs you in as the demo admin in one tap, with one invented claim to approve. Don't approve real claims on the preview.
 
 Nothing tells you when something new arrives. **No email or text goes to admins** when a nonprofit asks for access or someone files a report, so look at the Claims and Reports tabs every day or two.
 

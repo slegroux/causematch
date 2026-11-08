@@ -64,6 +64,7 @@ ROUTES = {
     ("GET", "/org/login"): ("public", None),
     ("POST", "/login/demo"): ("public", None),  # a demo's one tap; 403 elsewhere
     ("POST", "/org/login/demo"): ("public", None),  # the same
+    ("POST", "/org/login/demo-admin"): ("public", None),  # the same
     ("GET", "/auth/google/start"): ("public", None),  # 404 without a provider
     ("GET", "/auth/google/callback"): ("public", None),  # the oauth cookie guards it
     ("GET", "/auth/apple/start"): ("public", None),  # 404 without a provider

@@ -515,6 +515,6 @@ def test_outside_a_demo_there_are_no_demo_buttons_and_their_posts_are_refused(
         monkeypatch.setenv(k, v)
     for page in ("/login", "/org/login"):
         assert "Try it as" not in anon.get(page).text
-    for path in ("/login/demo", "/org/login/demo"):
+    for path in ("/login/demo", "/org/login/demo", "/org/login/demo-admin"):
         r = anon.post(path, follow_redirects=False)
         assert r.status_code == 403 and "uid" not in session_of(anon), path

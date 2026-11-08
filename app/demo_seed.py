@@ -33,6 +33,10 @@ COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 # the stand-in coordinators of the other orgs (data.DEMO_TEAM_DOMAIN), by turns
 TEAM_NAMES = ("Rosa", "Alex", "Jamie", "Noor", "Luis", "Kim", "Theo", "Dana")
 ADMIN = ("ada@demo.causematch.test", "Ada (Causematch admin)")
+# The admin's one pending claim (_pending_claim): an invented nonprofit and claimant, the
+# video's nonprofit (scripts/video/README.md) with a claimant of the demo's own
+CLAIM_ORG = ("Silver Lake Garden Friends", "990000001")  # name, EIN
+CLAIMANT = ("jordan@demo.causematch.test", "Jordan Ellis")
 CONFIRMING_ORG = "Downtown Harvest Kitchen"  # the invented org that confirms hours
 SOON_TIMES = ("10:00", "13:00", "16:00", "18:30")  # tomorrow's shifts (_soon_shifts)
 # the seed file's words -> the opening form's values (app/routes/org.py)
@@ -371,7 +375,8 @@ def seed(seed_file=None):
     ME_PHONE's volunteer with an accepted match (chat, upcoming and past shifts), another
     upcoming shift and a waiting like; then the coordinator's urgent call for tomorrow
     9 am, the first card in ME_PHONE's deck, and its first wave (the fake SMS log shows
-    ME_PHONE's text). Returns what a demo needs to sign in.
+    ME_PHONE's text); last, an unverified nonprofit with a pending claim for the admin
+    (_pending_claim). Returns what a demo needs to sign in.
 
     Without config.demo_matches, Sam and Priya sign in with the emailed link (ME_EMAIL,
     NO_PHOTO_EMAIL). With it on, "Try it as a volunteer" signs each visitor in as a fresh
@@ -491,6 +496,7 @@ def seed(seed_file=None):
     urgent = _urgent_call(coord, org, first, sample=bool(seed_file))
     # the match with the coordinator holds a chat and shifts already
     _matches(me, org.id, ("calendar", "waiting"))
+    _pending_claim()
     return {
         "org": org.name,
         "match_id": m.id,
@@ -499,6 +505,31 @@ def seed(seed_file=None):
         "urgent_opening_id": urgent,
         "soon_opening_ids": soon,
     }
+
+
+def _pending_claim():
+    """CLAIM_ORG as the IRS import leaves a nonprofit (unverified, unclaimed, no openings)
+    and CLAIMANT's pending request to manage it, so Admin > Claims has one to approve. The
+    org already carries the claim's EIN: approving never asks ProPublica. Unverified, it
+    is in no deck until then; after, it is verified and CLAIMANT is its owner."""
+    from app import data
+    from app.db import Org, now, orgs
+
+    name, ein = CLAIM_ORG
+    orgs.insert(
+        Org(
+            name=name,
+            ein=ein,
+            causes=json.dumps(["environment-parks"]),
+            lat=34.0869,
+            lon=-118.2702,
+            intro="cold",
+            created_at=now(),
+            city="Los Angeles",
+            zip="90026",
+        )
+    )
+    data.submit_claim(ein, name, CLAIMANT[1], CLAIMANT[0])
 
 
 def _email_sign_in(uid, email):

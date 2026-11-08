@@ -95,7 +95,8 @@ def BigButton(text):
 
 def DemoSignIn(volunteer=True):
     """One tap into a demo (config.demo_matches, never production): a fresh copy of the
-    demo volunteer, and the demo coordinator. POSTs, so the same-origin check applies."""
+    demo volunteer and the demo coordinator on /login; the demo coordinator and the demo
+    admin on /org/login. POSTs, so the same-origin check applies."""
     if not demo_matches():
         return None
     return Div(
@@ -110,6 +111,17 @@ def DemoSignIn(volunteer=True):
                 cls="uk-btn uk-btn-default h-12 w-full",
             ),
             action="/org/login/demo",
+            method="post",
+        ),
+        None
+        if volunteer
+        else Form(
+            Button(
+                "Try it as an admin",
+                type="submit",
+                cls="uk-btn uk-btn-default h-12 w-full",
+            ),
+            action="/org/login/demo-admin",
             method="post",
         ),
         cls="space-y-3 border-b border-line pb-6",

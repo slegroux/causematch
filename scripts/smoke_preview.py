@@ -32,6 +32,7 @@ PHONE = {"width": 390, "height": 844}  # like scripts/video/record.py
 COOKIE = "__Host-cm_preview"  # app/security.py PREVIEW_COOKIE
 CHIP = "Confirms your hours"  # app/data.py CONFIRMS_HOURS
 GENUINE = "This is a genuine Causematch certificate"  # app/routes/hours.py CheckPage
+CLAIM = "Silver Lake Garden Friends"  # app/demo_seed.py CLAIM_ORG, the seeded claim
 SECRET = ""
 
 
@@ -62,7 +63,7 @@ def run(base, shots, insecure):
             need(r.status == 200, f"with ?access= the answer was {r.status}")
             need(any(c["name"] == COOKIE for c in page.context.cookies()), "no cookie")
 
-        V, N, G = visitor(), visitor(), visitor()  # volunteer, nonprofit, guest
+        V, N, G, A = visitor(), visitor(), visitor(), visitor()  # A: the admin
         st = {}
 
         def text(page):
@@ -91,7 +92,7 @@ def run(base, shots, insecure):
         def gate():
             r = no_cookie(base + "/")
             need(r.status == 401, f"without the cookie GET / gave {r.status}")
-            for page in (V, N, G):
+            for page in (V, N, G, A):
                 enter(page)
 
         def volunteer_demo():
@@ -219,6 +220,15 @@ def run(base, shots, insecure):
             need(r.status == 200, f"/privacy answered {r.status}")
             need("Hours certificates" in text(G), "no 'Hours certificates' on /privacy")
 
+        def admin_demo():
+            A.goto(base + "/org/login")
+            button = A.get_by_role("button", name="Try it as an admin")
+            need(button.count(), "no 'Try it as an admin' button on /org/login")
+            button.click()
+            A.wait_for_url("**/admin")
+            A.goto(base + "/admin/claims")
+            need(CLAIM in text(A), f"no claim for {CLAIM} on /admin/claims")
+
         def blocked():
             raise AssertionError("not run: the gate step failed")
 
@@ -234,6 +244,7 @@ def run(base, shots, insecure):
             ("nonprofit_demo", N, nonprofit_demo),
             ("shifts", N, shifts),
             ("privacy", G, privacy),
+            ("admin_demo", A, admin_demo),
         ):
             step(name, page, fn if name == "gate" or results[0] else blocked)
         browser.close()

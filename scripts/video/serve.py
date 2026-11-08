@@ -4,11 +4,12 @@ stand-in teams' automatic "yes" to a like turned off: Jordan answers Riley's lik
 
 python scripts/video/serve.py PORT DB
 
-It also adds the one nonprofit that Jordan claims on camera (invented, unverified, with an
-EIN the form accepts), then serves until killed. Local only, like scripts/demo.py.
+The seed holds the one nonprofit that Jordan claims on camera (demo_seed.CLAIM_ORG:
+invented, unverified, with an EIN the form accepts); its pending claim is dropped, so the
+admin's list is empty until Jordan asks. Then it serves until killed. Local only, like
+scripts/demo.py.
 """
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -24,20 +25,8 @@ demo.configure(port, db)  # refuses production and an existing database
 os.environ.pop("CAUSEMATCH_DEMO_MATCHES", None)
 demo.demo_seed.seed(None)
 import main  # noqa: F401  after seeding, so its startup seeds nothing more
-from app.db import Org, now, orgs
+from app.db import claim_requests
 
-orgs.insert(
-    Org(
-        name="Silver Lake Garden Friends",
-        ein="990000001",
-        causes=json.dumps(["environment-parks"]),
-        lat=34.0869,
-        lon=-118.2702,
-        intro="cold",
-        created_at=now(),
-        city="Los Angeles",
-        zip="90026",
-    )
-)
+claim_requests.delete_where("status = 'pending'")
 print("ready", flush=True)
 demo.serve(port)
