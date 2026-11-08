@@ -12,11 +12,21 @@ signed-in volunteer connecting a provider (Me's Connect, a same-origin POST). A 
 acts only on its own intent."""
 
 import dataclasses
+import hmac
 import json
 import logging
 from urllib.parse import urlencode
 
-from fasthtml.common import A, Form, FtResponse, Hidden, Redirect, Response, Span
+from fasthtml.common import (
+    A,
+    Button,
+    Form,
+    FtResponse,
+    Hidden,
+    Redirect,
+    Response,
+    Span,
+)
 from monsterui.all import LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
@@ -78,20 +88,23 @@ def _start(req, name, intent="volunteer", uid=None, sv=None):
         max_age=oauth.COOKIE_MAX_AGE,
         **_cookie_options(name),
     )
-    subject = oauth.fake_subject_cookie()
     if (
         is_preview()
         and isinstance(provider, oauth.Fake)
-        and not oauth.browser_subject(req.cookies.get(subject))
+        and not oauth.browser_subject(req.cookies.get(oauth.fake_subject_cookie()))
     ):
-        # read by the fake page's same-site POST, which a Lax cookie rides along on
-        r.set_cookie(
-            subject,
-            oauth.new_browser_subject(),
-            max_age=oauth.FAKE_SUBJECT_MAX_AGE,
-            **_cookie_options("google"),
-        )
+        _set_subject(r, oauth.new_browser_subject())
     return r
+
+
+def _set_subject(r, value):
+    # read by the fake page's same-site POST, which a Lax cookie rides along on
+    r.set_cookie(
+        oauth.fake_subject_cookie(),
+        value,
+        max_age=oauth.FAKE_SUBJECT_MAX_AGE,
+        **_cookie_options("google"),
+    )
 
 
 def _sign_in_intent(req):
@@ -355,6 +368,16 @@ def fake_consent(req):
             if fake.name == "google"
             else None,
             BigButton("Continue"),
+            # a shared device: the next person gets an account of their own
+            Button(
+                "Use a different account",
+                type="submit",
+                name="fresh",
+                value="1",
+                cls="uk-btn uk-btn-default h-12 w-full",
+            )
+            if preview
+            else None,
             action="/auth/fake/consent",
             method="post",
             cls="space-y-4",
@@ -376,8 +399,14 @@ async def fake_consent_post(req):
         return _not_found()
     flow = _flow_fields(fake)
     f = {k: form.get(k, "").strip() for k in (*flow, *FIELDS)}
+    fresh = None
     if is_preview():  # never a typed subject: this browser's own, sealed at /start
-        f["sub"] = oauth.browser_subject(req.cookies.get(oauth.fake_subject_cookie()))
+        if not _own_flow(req, fake, f):
+            return bad_request()
+        if form.get("fresh") == "1":  # "Use a different account"
+            fresh = oauth.new_browser_subject()
+        cookie = fresh or req.cookies.get(oauth.fake_subject_cookie())
+        f["sub"] = oauth.browser_subject(cookie)
     if not all(f[k] for k in (*flow, "sub")):
         return bad_request()
     apple = fake.name == "apple"
@@ -394,10 +423,35 @@ async def fake_consent_post(req):
     )
     code = fake.mint(claims, f["nonce"], f.get("code_challenge", ""))
     if not apple:
-        return Redirect(
-            "/auth/google/callback?" + urlencode({"code": code, "state": f["state"]})
+        callback = "/auth/google/callback?"
+        resp = Redirect(callback + urlencode({"code": code, "state": f["state"]}))
+    else:
+        resp = FtResponse(_fake_apple_post(code, f))
+    if fresh:
+        resp = resp.__response__(req)
+        _set_subject(resp, fresh)
+    return resp
+
+
+def _own_flow(req, fake, f):
+    """The posted flow is this browser's own, the one in its flow cookie from /start:
+    state, nonce and PKCE challenge. Otherwise a link carrying someone else's flow would
+    mint a code for this browser's subject, and the sender's callback would redeem it,
+    signing them in to this browser's account. Apple's flow cookie is SameSite=None, so it
+    rides along on this same-site POST too."""
+    try:
+        flow = oauth.unseal(
+            req.cookies.get(oauth.oauth_cookie()), fake.name, f["state"]
         )
-    return _fake_apple_post(code, f)
+    except oauth.AuthError:
+        return False
+    # bytes: compare_digest refuses a str with non-ASCII characters
+    if not hmac.compare_digest(flow.nonce.encode(), f["nonce"].encode()):
+        return False
+    posted = f.get("code_challenge", "").encode()
+    return not fake.pkce or hmac.compare_digest(
+        oauth.challenge(flow.verifier).encode(), posted
+    )
 
 
 def _fake_apple_post(code, f):

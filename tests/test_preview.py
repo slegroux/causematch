@@ -584,9 +584,79 @@ def test_each_preview_browser_has_its_own_fake_google_account(preview):
     a.post("/logout")
     assert fake_google(a) == first  # the same browser, back in its own account
     assert identities.count_where("provider = 'google'") == 2
-    form = {**fake_flow(a), "sub": "maria", "email": "m@example.org"}
-    no_cookie = browser()  # never a typed subject in its place
-    assert no_cookie.post("/auth/fake/consent", data=form).status_code == 400
+
+
+CONSENT = {"email": "m@example.org", "email_verified": "1"}
+
+
+def test_a_preview_mints_a_code_only_for_this_browsers_own_flow(preview):
+    """The attack: B sends A a consent link carrying B's flow. Were a code minted for A's
+    subject, B's callback would redeem it and sign B in to A's account."""
+    victim, attacker = browser(), browser()
+    fake_google(victim)
+    before = identities.count_where("provider = 'google'")
+    theirs = fake_flow(attacker)
+    r = victim.post(
+        "/auth/fake/consent", data={**theirs, **CONSENT}, follow_redirects=False
+    )
+    assert r.status_code == 400 and "location" not in r.headers
+    own = fake_flow(victim)
+    for k in (
+        "nonce",
+        "code_challenge",
+    ):  # the victim's state, the attacker's other half
+        form = {**own, k: theirs[k], **CONSENT}
+        r = victim.post("/auth/fake/consent", data=form, follow_redirects=False)
+        assert r.status_code == 400, k
+    r = victim.post(
+        "/auth/fake/consent", data={**own, **CONSENT}, follow_redirects=False
+    )
+    replayed = attacker.get(r.headers["location"], follow_redirects=False)
+    assert replayed.status_code == 400  # the victim's callback: not the attacker's flow
+    assert attacker.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    assert identities.count_where("provider = 'google'") == before
+
+
+def test_a_shared_device_can_use_a_different_account(preview):
+    """The subject cookie outlives a sign-out, so the next person on the same device
+    would land in the last one's account: the page offers a fresh one."""
+    device = browser()
+    first = fake_google(device)
+    device.post("/logout")
+    flow = fake_flow(device)
+    page = device.get("/auth/fake/consent", params={"provider": "google", **flow})
+    assert "Use a different account" in page.text
+    r = device.post("/auth/fake/consent", data={**flow, **CONSENT, "fresh": "1"})
+    assert r.status_code == 200 and r.url.path == "/onboarding"
+    sub = oauth.browser_subject(device.cookies[oauth.fake_subject_cookie()])
+    (second,) = identities(
+        where="provider = 'google' AND subject = ?", where_args=[sub]
+    )
+    assert second.user_id != first
+    device.post("/logout")
+    assert fake_google(device) == second.user_id  # plain Continue keeps the new one
+
+
+@pytest.mark.parametrize("how", ["missing", "tampered", "foreign", "expired"])
+def test_a_bad_subject_cookie_signs_nobody_in(preview, monkeypatch, how):
+    """Never a typed subject in its place, nor a shared default: a 400."""
+    b = browser()
+    flow = fake_flow(b)
+    name = oauth.fake_subject_cookie()
+    value = b.cookies[name]
+    if how == "missing":
+        b.cookies.delete(name)
+    elif how == "tampered":  # the payload's first character: its signature fails
+        value = ("B" if value[0] == "A" else "A") + value[1:]
+        b.cookies.set(name, value, domain="testserver.local")
+    elif how == "foreign":  # our signature, another salt: the flow cookie
+        b.cookies.set(name, b.cookies[oauth.oauth_cookie()], domain="testserver.local")
+    else:
+        monkeypatch.setattr(oauth, "FAKE_SUBJECT_MAX_AGE", -1)
+    form = {**flow, "sub": "maria", **CONSENT}
+    r = b.post("/auth/fake/consent", data=form, follow_redirects=False)
+    assert r.status_code == 400
+    assert not identities(where="subject = 'maria'")
 
 
 def test_outside_a_preview_any_number_gets_a_code():

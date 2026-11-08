@@ -364,7 +364,7 @@ class Fake:
     def __init__(self, name):
         self.name = name  # it serves this provider's routes
         self.pkce = name != "apple"  # as the real one: Apple has none
-        self._codes = {}  # code -> (Claims, nonce, code_challenge)
+        self._codes = {}  # code -> (Claims, nonce, code_challenge, minted)
         self._lock = threading.Lock()
 
     def authorize_url(self, redirect_uri, state, nonce, code_challenge):
@@ -378,7 +378,7 @@ class Fake:
         with self._lock:
             if len(self._codes) >= 1000:  # unused codes of a long dev session
                 self._codes.pop(next(iter(self._codes)))
-            self._codes[code] = (claims, nonce, code_challenge)
+            self._codes[code] = (claims, nonce, code_challenge, time.monotonic())
         return code
 
     def finish(self, code, verifier, redirect_uri, nonce):
@@ -386,7 +386,9 @@ class Fake:
             found = self._codes.pop(code, None)  # once
         if found is None:
             raise AuthError("unknown or used code")
-        claims, bound_nonce, code_challenge = found
+        claims, bound_nonce, code_challenge, minted = found
+        if time.monotonic() - minted > COOKIE_MAX_AGE:  # as long as its flow lives
+            raise AuthError("expired code")
         if self.pkce and not hmac.compare_digest(challenge(verifier), code_challenge):
             raise AuthError("PKCE mismatch")
         if not nonce or not hmac.compare_digest(bound_nonce, nonce):
