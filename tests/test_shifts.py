@@ -1,6 +1,7 @@
 """Shifts: made on accept, scheduled again by a coordinator, marked after they start."""
 
 import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from conftest import (
     ROOT,
     coordinator,
     coordinator_for,
+    make_opening,
     pantry_opening,
     volunteer,
 )
@@ -749,3 +751,26 @@ def test_confirmed_hours_changing_them_uses_up_the_one_correction(accepted, cloc
     with pytest.raises(ValueError, match="corrected"):
         data.complete_shift(uid, s.id, True, "120")
     assert shifts[s.id].confirmed_minutes == 150
+
+
+def test_the_dashboard_says_what_needs_the_coordinator(world, clock):
+    """Two likes wait on the pantry opening, and one accepted shift has started unmarked."""
+    data.swipe(world.b.uid, world.opening.id, True)
+    where = {  # near everyone, so the deck shows both
+        "causes": world.opening.causes,
+        "lat": world.opening.lat,
+        "lon": world.opening.lon,
+        "neighborhood": world.opening.neighborhood,
+    }
+    early = make_opening("Early start", starts_at=clock.local(days=1), **where)
+    make_opening("Later start", starts_at=clock.local(days=30), **where)  # no likes
+    cleo = volunteer("Cleo")
+    data.decide(world.org0.uid, data.swipe(cleo.uid, early.id, True).id, True)
+    clock.advance(days=2)  # the early shift began, nobody marked it
+    html = world.org0.get("/org").text
+    assert re.search(r'href="/org/inbox"[^>]*>\s*2 volunteers waiting', html)
+    assert re.search(r'href="/org/shifts"[^>]*>\s*1 shift to mark', html)
+    nav = re.search(r'<nav[^>]*aria-label="Nonprofit".*?</nav>', html, re.DOTALL)[0]
+    assert re.search(r"Shifts\s*<span[^>]*>1<span[^>]*>\s*to mark", nav)
+    # the opening with waiting volunteers first, though the others start sooner or later
+    assert html.index(PANTRY) < html.index("Early start") < html.index("Later start")

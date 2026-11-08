@@ -243,6 +243,51 @@ def OpeningRow(o, counts, urgent=None):
     )
 
 
+def NeedsYou(waiting, to_mark):
+    """The strip atop the dashboard: what waits for the coordinator, each part a link to
+    where it is dealt with; each part hidden at 0, the strip when both are."""
+    if not (waiting or to_mark):
+        return None
+    link = (
+        "inline-flex min-h-11 items-center gap-2 font-bold text-brand-ink underline "
+        "underline-offset-4 hover:text-brand"
+    )
+    return Div(
+        P("Needs you", cls="text-sm font-bold text-ink-muted"),
+        Div(
+            A(
+                f"{waiting} volunteer{'' if waiting == 1 else 's'} waiting",
+                Span("→", aria_hidden="true"),
+                Span(" Inbox", cls="sr-only"),
+                href="/org/inbox",
+                cls=link,
+            )
+            if waiting
+            else None,
+            A(
+                f"{to_mark} shift{'' if to_mark == 1 else 's'} to mark",
+                Span("→", aria_hidden="true"),
+                Span(" Shifts", cls="sr-only"),
+                href="/org/shifts",
+                cls=link,
+            )
+            if to_mark
+            else None,
+            cls="flex flex-wrap items-center gap-x-6",
+        ),
+        cls="mb-4 rounded-2xl bg-cream px-4 py-2",
+    )
+
+
+def waiting_first(openings, counts):
+    """An org's openings in dashboard order: the open ones with volunteers waiting, then
+    the other open ones, each soonest start first; then the closed, newest first (as
+    data.org_openings gives them)."""
+    live = [o for o in openings if o.status == "open"]
+    live.sort(key=lambda o: (not counts.get(o.id, {}).get("pending"), o.starts_at))
+    return live + [o for o in openings if o.status != "open"]
+
+
 @ar("/org", methods=["GET"])
 def org_page(req):
     return org_home(req)
@@ -258,7 +303,7 @@ def org_home(req, error=""):
     for org, role in data.coordinator_orgs(uid):
         rows = [
             OpeningRow(o, counts.get(o.id, {}), urgent.get(o.id))
-            for o in by_org.get(org.id, [])
+            for o in waiting_first(by_org.get(org.id, []), counts)
         ]
         sections.append(
             Div(
@@ -273,10 +318,13 @@ def org_home(req, error=""):
         )
     named = bool(profile.display_name)
     unanswered = len(data.org_unanswered(uid))
+    pending = sum(c["pending"] for c in counts.values())
+    to_mark = data.org_to_mark(uid)
     return OrgShell(
         "openings",
-        # data.org_waiting, without re-reading the counts
-        sum(c["pending"] for c in counts.values()) + unanswered,
+        # data.org_badges, without re-reading the counts
+        {"inbox": pending + unanswered, "shifts": to_mark},
+        NeedsYou(pending, to_mark) if named else None,
         Div(
             H1("Your openings", cls=ORG_TITLE),
             A(
@@ -532,7 +580,7 @@ def OpeningForm(uid, f=None, error=None):
     )
     return OrgShell(
         "openings",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         Div(
             H1("Post an opening", cls=ORG_TITLE),
             P(
@@ -751,7 +799,7 @@ def UrgentPage(uid, opening_id, f=None, error=None):
     default = o.starts_at if urgent_possible(o.starts_at) else ""
     return OrgShell(
         "openings",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         A("Back to your openings", href="/org", cls=SMALL_LINK + " mb-2 text-sm"),
         H1("Urgent call", cls=ORG_TITLE),
         P(o.title, cls="pb-4 font-semibold text-ink-muted"),
@@ -971,7 +1019,7 @@ def inbox(req):
     unanswered = data.org_unanswered(uid)
     return OrgShell(
         "inbox",
-        data.org_waiting(uid),
+        data.org_badges(uid),
         H1("Volunteer inbox", cls=ORG_TITLE + " pb-4"),
         Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in INBOX_NOTICE

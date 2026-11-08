@@ -2910,6 +2910,20 @@ def org_waiting(coordinator_uid):
     return pending + len(org_unanswered(coordinator_uid))
 
 
+def org_to_mark(coordinator_uid):
+    """How many shifts started and wait for the coordinator to mark: the Shifts page's
+    "to_mark" list (org_shifts), and the nav's Shifts badge."""
+    return len(org_shifts(coordinator_uid)["to_mark"])
+
+
+def org_badges(coordinator_uid):
+    """The nonprofit nav's counts: {"inbox": org_waiting, "shifts": org_to_mark}."""
+    return {
+        "inbox": org_waiting(coordinator_uid),
+        "shifts": org_to_mark(coordinator_uid),
+    }
+
+
 def close_opening(coordinator_uid, opening_id):
     coordinator_opening(coordinator_uid, opening_id)
     with _db.db.conn:

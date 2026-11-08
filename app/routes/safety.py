@@ -68,7 +68,7 @@ def Shell(uid, back, title, *content, error=None):
         Div(*content, cls="space-y-3 p-5 " + CARD),
     )
     if org:
-        return OrgShell("inbox", data.org_waiting(uid), Div(*body, cls="max-w-md"))
+        return OrgShell("inbox", data.org_badges(uid), Div(*body, cls="max-w-md"))
     return VolunteerShell("matches", *body, uid=uid)
 
 
