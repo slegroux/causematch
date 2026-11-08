@@ -1,6 +1,6 @@
 """The demo app for the video: invented demo data on a new throwaway database, with the
-fake SMS (every code is 000000) and the fake emailer, but with the stand-in teams' automatic
-"yes" to a like turned off: Jordan answers Riley's like himself, on camera.
+fake SMS and the fake emailer (the sign-in links are read from its log), but with the
+stand-in teams' automatic "yes" to a like turned off: Jordan answers Riley's like himself, on camera.
 
 python scripts/video/serve.py PORT DB
 

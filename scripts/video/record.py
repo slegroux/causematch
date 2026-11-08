@@ -1,16 +1,20 @@
 """Record the full story: a new nonprofit and a new volunteer join, match, chat, and the
-volunteer's hours get confirmed.
+volunteer's hours get confirmed and certified.
 
 python record.py BASE_URL SERVER_LOG BEATS.json DURATIONS.json DB OUT_DIR
 
+The environment variable DEMO_PUBLIC_URL (an https origin, no path) is required: it is the
+address the certificate page's check link shows on screen instead of BASE_URL's local one.
+
 BASE_URL is scripts/video/serve.py's server and DB its throwaway database (one step edits
-it: "a few days later" moves the shift's start into the past). Four recordings (phone:
+it: "after the shift" moves the shift's start into the past). Four recordings (phone:
 Riley; jordan: the new coordinator; admin; guest: a signed-out visitor) and timeline.json. Each beat lasts at least as
 long as its voice-over line. Any console error, page error, failed request, 5xx answer or
 server error makes the run fail, after the recordings are saved so you can look.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -28,6 +32,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import demo  # scripts/demo.py: refuse_production
 
 BASE, LOG = sys.argv[1], Path(sys.argv[2])
+# The app's own origin must stay the local one (it refuses posts from any other), so the
+# check link is rewritten on the page while recording: no local address is ever on screen.
+PUBLIC = os.environ.get("DEMO_PUBLIC_URL", "").rstrip("/")
+if re.fullmatch(r"https://[A-Za-z0-9.-]+(:\d+)?", PUBLIC) is None:
+    sys.exit(
+        "DEMO_PUBLIC_URL must be set to the public https origin the video shows, "
+        "e.g. https://example.org (no path): refusing to record a local address"
+    )
 BEATS = json.loads(Path(sys.argv[3]).read_text())
 DUR = json.loads(Path(sys.argv[4]).read_text())
 DB = sys.argv[5]
@@ -92,7 +104,7 @@ def hold(s):
     time.sleep(s)
 
 
-def point(page, loc, steps=18):
+def point(page, loc, steps=12):
     """Move the cursor onto loc, first scrolling it clear of the fixed top bar and the
     phone's bottom tab bar (a tap under the tab bar would hit the tab instead)."""
     loc.scroll_into_view_if_needed()
@@ -105,7 +117,7 @@ def point(page, loc, steps=18):
     page.mouse.move(
         box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=steps
     )
-    hold(0.3)
+    hold(0.2)
 
 
 def tap(page, loc):
@@ -115,7 +127,7 @@ def tap(page, loc):
 
 def smooth_to(page, loc):
     loc.evaluate("e => e.scrollIntoView({behavior: 'smooth', block: 'center'})")
-    hold(0.9)
+    hold(0.7)
 
 
 def type_in(page, loc, text, delay=45):
@@ -124,17 +136,26 @@ def type_in(page, loc, text, delay=45):
     hold(0.3)
 
 
+def fill_in(page, loc, text):
+    """Fill a field at once (no typing), the cursor on it first."""
+    point(page, loc)
+    loc.fill(text)
+    hold(0.2)
+
+
 def email_count():
     return LOG.read_text().count("FAKE EMAIL")
 
 
-def link_after(before, masked):
+def link_after(before, masked, path="/org/login/verify"):
+    """The sign-in link in the fake emailer's log line for the masked address (the
+    nonprofit sign-in's by default, the volunteer's with path="/login/verify")."""
     deadline = time.time() + 15
     while time.time() < deadline:
         text = LOG.read_text()
         if text.count("FAKE EMAIL") > before:
             hits = re.findall(
-                rf"FAKE EMAIL to {re.escape(masked)}.*?(/org/login/verify\?token=[\w-]+)",
+                rf"FAKE EMAIL to {re.escape(masked)}.*?({re.escape(path)}\?token=[\w-]+)",
                 text,
                 re.DOTALL,
             )
@@ -179,8 +200,13 @@ def days_pass():
 
 
 timeline = []
+marks = {}  # named moments inside a beat, for the short cut and the screen switch
 t0 = None
 need_until = 0.0
+
+
+def mark(name):
+    marks[name] = round(time.monotonic() - t0, 2)
 
 
 def beat(bid):
@@ -212,51 +238,47 @@ def story(vol, org, adm, gst):
 
     # 1. Jordan asks for access
     beat("claim")
-    hold(1.2)
-    type_in(org, org.get_by_label("Organization's EIN"), "99-0000001", 70)
+    hold(0.6)
+    type_in(org, org.get_by_label("Organization's EIN"), "99-0000001", 60)
     type_in(
-        org, org.get_by_label("Organization name"), "Silver Lake Garden Friends", 35
+        org, org.get_by_label("Organization name"), "Silver Lake Garden Friends", 25
     )
-    type_in(org, org.get_by_label("Your name"), "Jordan Reyes", 45)
-    type_in(org, org.get_by_label("Your email"), "jordan@silverlake.example", 30)
+    fill_in(org, org.get_by_label("Your name"), "Jordan Reyes")
+    fill_in(org, org.get_by_label("Your email"), "jordan@silverlake.example")
     tap(org, org.get_by_text("I'm authorized to represent this organization"))
     tap(org, org.get_by_role("button", name="Request access"))
     org.get_by_text("We'll review your request").wait_for()
+    hold(0.5)
+    adm.reload()  # off camera: the admin's list now holds Jordan's request
 
-    # 2. the admin approves
+    # 2. the admin approves, then Jordan signs in from the emailed link
     beat("approve")
-    adm.reload()
-    hold(1.5)
+    hold(0.4)
     card = adm.locator("div", has_text="Jordan Reyes").last
     point(adm, card.get_by_text("Jordan Reyes").first)
-    hold(1.5)
+    hold(0.4)
     tap(adm, card.get_by_role("button", name="Approve"))
     adm.get_by_text("Approved").first.wait_for()
-
-    # 3. Jordan signs in from the emailed link
-    beat("signin")
+    hold(0.6)
+    mark("signin")  # compose switches from the admin's screen to Jordan's here
     org.goto("/org/login")
-    hold(0.8)
     before = email_count()
-    type_in(org, org.get_by_label("Email"), "jordan@silverlake.example", 30)
+    fill_in(org, org.get_by_label("Email"), "jordan@silverlake.example")
     tap(org, org.get_by_role("button", name="Email me a link"))
     link = link_after(before, "j***@s")
-    hold(2.0)  # the "check your email" page
+    hold(1.2)  # the "check your email" page
     org.goto(link)
-    hold(1.0)
+    hold(0.5)
     tap(org, org.get_by_role("button", name="Sign in"))
     org.wait_for_url("**/org")
 
-    # 4. Jordan says the nonprofit confirms hours, then posts an opening
+    # 3. Jordan says the nonprofit confirms hours, then posts an opening
     beat("post")
-    hold(1.0)
     tap(org, org.get_by_role("link", name="Organization").first)
     org.wait_for_url("**/org/organization")
-    hold(0.8)
     confirms = org.get_by_text("We can confirm volunteer hours")
     smooth_to(org, confirms)
     tap(org, confirms)
-    hold(0.6)
     # the Organization page has two "Save details": the one in the confirms-hours form
     tap(
         org,
@@ -265,63 +287,58 @@ def story(vol, org, adm, gst):
         .get_by_role("button", name="Save details"),
     )
     org.wait_for_url("**notice=saved**")
-    hold(1.0)
     tap(org, org.get_by_role("link", name="Openings").first)
     org.wait_for_url("**/org")
     tap(org, org.get_by_role("link", name="Post an opening"))
     org.wait_for_url("**/org/openings/new")
-    type_in(
+    mark("form")
+    fill_in(
         org,
         org.get_by_label('Opening title, e.g. "Saturday pantry sorting"'),
         "Weed and water the community garden",
-        30,
     )
-    type_in(
+    fill_in(
         org,
         org.get_by_label("What will volunteers do?"),
         "Pull weeds, water the beds and tidy the tool shed with our crew.",
-        18,
     )
-    org.locator("select[name=cause]").select_option("environment-parks")
-    type_in(org, org.get_by_label("ZIP code"), "90026", 80)
-    start = (datetime.now() + timedelta(days=3)).replace(hour=9, minute=0)
-    when = org.get_by_label("Date and time of the next shift")
-    smooth_to(org, when)
-    when.fill(start.strftime("%Y-%m-%dT%H:%M"))
-    length = org.locator("select[name=duration_minutes]")
-    smooth_to(org, length)
-    length.select_option(str(SHIFT_HOURS * 60))
-    org.locator("select[name=recurrence]").select_option("one_time")
-    slots = org.get_by_label("How many volunteers do you need?")
-    smooth_to(org, slots)
-    type_in(org, slots, "4", 80)
-    org.locator("select[name=orientation_required]").select_option(index=2)
-    adult = org.locator("input[name=adult_only_ok]")
-    smooth_to(org, adult)
-    point(org, adult)
-    adult.check()
-    hold(0.6)
+    # the rest is set at once, then the filled form scrolls by once on the way to Post
+    # (the next Saturday at 9 am: a time Riley ticks as free, the deck's reason chip)
+    la = datetime.now(ZoneInfo("America/Los_Angeles"))
+    start = (la + timedelta(days=(5 - la.weekday()) % 7 or 7)).replace(hour=9, minute=0)
+    for sel, value in (
+        ("select[name=cause]", "environment-parks"),
+        ("input[name=zip]", "90026"),
+        ("input[name=starts_at]", start.strftime("%Y-%m-%dT%H:%M")),
+        ("select[name=duration_minutes]", str(SHIFT_HOURS * 60)),
+        ("select[name=recurrence]", "one_time"),
+        ("input[name=slots]", "4"),
+        ("select[name=orientation_required]", "no"),
+    ):
+        org.locator(sel).evaluate("(e, v) => { e.value = v; }", value)
+    org.locator("input[name=adult_only_ok]").evaluate("e => { e.checked = true; }")
     submit = org.locator("form button[type=submit]").last
     smooth_to(org, submit)
     tap(org, submit)
     org.wait_for_url("**/org")
-    hold(1.0)
+    hold(0.6)
 
-    # 5. Riley registers with a phone number
+    # 4. Riley signs up with an email address and opens the emailed link
     beat("register")
-    hold(1.0)
-    type_in(vol, vol.get_by_label("Mobile number"), "(213) 555-0142", 70)
-    tap(vol, vol.get_by_role("button", name="Text me a code"))
-    code = vol.get_by_label("Code")
-    code.wait_for()
-    hold(0.8)
-    type_in(vol, code, "000000", 120)
+    hold(0.6)
+    before = email_count()
+    type_in(vol, vol.get_by_label("Email"), "riley@example.org", 40)
+    tap(vol, vol.get_by_role("button", name="Email me a link"))
+    link = link_after(before, "r***@e", "/login/verify")
+    hold(1.2)  # the "check your email" page
+    vol.goto(link)
+    hold(0.5)
     tap(vol, vol.get_by_role("button", name="Sign in"))
     vol.wait_for_url("**/onboarding")
 
-    # 6. onboarding
+    # 5. onboarding
     beat("onboard")
-    hold(0.6)
+    hold(0.4)
     type_in(vol, vol.locator("input[name=first_name]"), "Riley", 80)
     type_in(vol, vol.get_by_label("Neighborhood or ZIP"), "90026", 90)
     for slug in ("environment-parks", "food-insecurity"):
@@ -334,15 +351,13 @@ def story(vol, org, adm, gst):
     tap(vol, vol.get_by_role("button", name="Start swiping"))
     vol.wait_for_url("**/deck")
 
-    # 7. free times
+    # 6. free times
     beat("times")
-    hold(0.8)
+    hold(0.4)
     tap(vol, vol.get_by_role("link", name="Me").last)
     vol.wait_for_url("**/profile")
-    hold(0.6)
     tap(vol, vol.get_by_role("link", name="Preferences").first)
     vol.wait_for_url("**/me/preferences")
-    hold(0.6)
     tap(vol, vol.locator("a[href='/me/preferences/when']"))
     vol.wait_for_url("**/me/preferences/when")
     smooth_to(vol, vol.locator("input[name=availability]").first)
@@ -352,45 +367,63 @@ def story(vol, org, adm, gst):
         target = label if label.count() else box
         point(vol, target)
         target.click(force=True)
-        hold(0.4)
+        hold(0.3)
     tap(vol, vol.get_by_role("button", name="Save", exact=True))
     vol.wait_for_url("**saved=1**")
 
-    # 8. the deck: like Jordan's opening
-    beat("like")
+    # 7. Riley needs hours confirmed (one checkbox); the deck then shows only nonprofits
+    # that do
+    beat("prefer")
+    tap(vol, vol.get_by_role("link", name="Me").last)
+    vol.wait_for_url("**/profile")
+    tap(vol, vol.get_by_role("link", name="Preferences").first)
+    vol.wait_for_url("**/me/preferences")
+    tap(vol, vol.locator("a[href='/me/preferences/causes']"))
+    vol.wait_for_url("**/me/preferences/causes")
+    need = vol.locator("label:has(input[name=verified_hours])")
+    smooth_to(vol, need)
     hold(0.6)
+    tap(vol, need)
+    if not need.locator("input").is_checked():
+        raise RuntimeError("the hours checkbox didn't tick")
+    hold(1.2)
+    tap(vol, vol.get_by_role("button", name="Save", exact=True))
+    vol.wait_for_url("**saved=1**")
+    # on to the deck, so the next beat opens on the cards that are left
     tap(vol, vol.get_by_role("link", name="Openings").last)
     vol.wait_for_url("**/deck**")
-    hold(2.0)
+    hold(0.6)
+
+    # 8. the deck: Jordan's opening, with its reasons; like it
+    beat("like")
+    hold(0.6)
     for _ in range(12):
-        if (
-            "Silver Lake Garden Friends"
-            in vol.locator("[data-swipe-card]").first.inner_text()
-        ):
+        card = vol.locator("[data-swipe-card]").first
+        if "Silver Lake Garden Friends" in card.inner_text():
             break
         tap(vol, vol.get_by_role("button", name="Pass").first)
-        hold(1.4)
+        hold(1.0)
     else:
         raise RuntimeError("Jordan's opening never came up in Riley's deck")
-    hold(1.6)
+    card.get_by_text("Confirms your hours").wait_for()
+    card.get_by_text("You're free Sat mornings").wait_for()  # the reason chips
+    mark("deck")
+    hold(5.0)  # the reasons are read out; the heart is tapped as the line says so
     tap(vol, vol.get_by_role("button", name="Like").first)
+    mark("liked")
     # a first like asks two optional questions: skip them, back to the deck
     vol.wait_for_url("**/onboarding/more**", timeout=8000)
-    hold(2.0)  # "Liked! When Silver Lake Garden Friends says yes, it's a match."
+    hold(1.5)  # "Liked! When Silver Lake Garden Friends says yes, it's a match."
     tap(vol, vol.get_by_role("button", name="Skip"))
     vol.wait_for_url("**/deck**")
-    hold(1.0)
-    # a second like, so Matches has one waiting below the match later on
-    tap(vol, vol.get_by_role("button", name="Like").first)
-    vol.get_by_text("Liked! When").first.wait_for()
-    hold(1.5)
-    vol.reload()  # the deck drops the second like's notice, so the takeover stands alone
-    hold(0.5)
+    hold(0.6)
+    vol.reload()  # the deck drops the liked notice, so the takeover stands alone
+    hold(0.4)
 
     # 9. Jordan's inbox
     beat("inbox")
     org.reload()
-    hold(1.5)
+    hold(1.0)
     tap(org, org.get_by_role("link", name="Inbox").first)
     org.wait_for_url("**/org/inbox")
     row = (
@@ -406,8 +439,9 @@ def story(vol, org, adm, gst):
     # once, so the takeover lands while the narration says so, not up to 10 s later.
     beat("accept")
     tap(org, row.get_by_role("button", name="Accept"))
+    mark("accepted")
     org.wait_for_url("**notice=accepted**")
-    hold(1.0)
+    hold(0.8)
     vol.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
     tap(org, org.get_by_role("link", name="Say hi").first)
     org.wait_for_url("**/org/chat/**")
@@ -420,11 +454,12 @@ def story(vol, org, adm, gst):
     tap(org, org.get_by_role("button", name="Send"))
     takeover = vol.locator("dialog.cm-moment[open]")
     takeover.wait_for(timeout=15000)  # no tap on Riley's side: the poll drew it
+    mark("takeover")
     hold(1.2)
 
     # 11. Riley: taps Say hi on the takeover, reads Jordan's message, replies
     beat("reply")
-    hold(1.5)
+    hold(1.2)
     tap(vol, takeover.get_by_role("link", name="Say hi").first)
     vol.wait_for_url("**/chat/**")
     hold(1.0)
@@ -434,95 +469,84 @@ def story(vol, org, adm, gst):
     # 12. the reply lands; the dashboard flags it
     beat("answer")
     org.get_by_text("see you then").wait_for()
-    hold(1.6)
+    hold(1.2)
     tap(org, org.get_by_role("link", name="Openings").first)
     org.wait_for_url("**/org")
     answer = org.get_by_role("link", name="1 message to answer")
     point(org, answer)
-    hold(0.8)
+    hold(0.6)
     answer.click()
     org.wait_for_url("**/org/inbox")
 
-    # 13. shifts
-    beat("shifts")
+    # 13. the shift is on the schedule; after it happens Jordan marks it attended, the
+    # hours already filled in
+    beat("attend")
     tap(org, org.get_by_role("link", name="Shifts").first)
     org.wait_for_url("**/org/shifts")
     hold(0.8)
     point(org, org.get_by_text("Riley").first)
-
-    # 14. a few days later: Jordan marks it attended, the hours already filled in
-    beat("attend")
+    hold(1.0)
     days_pass()
     org.reload()
-    hold(1.2)
+    hold(0.8)
+    mark("passed")
     hours = org.locator("form select[name=minutes]").first
     point(org, hours)
-    hold(1.8)  # the select reads "3 hours": the shift's own length
+    hold(1.2)  # the select reads "3 hours": the shift's own length
     if org.locator("form select[name=minutes] option[selected]").first.inner_text() != (
         f"{SHIFT_HOURS} hours"
     ):
         raise RuntimeError("the hours select isn't preset to the shift's length")
     tap(org, org.get_by_role("button", name="Attended").first)
     org.get_by_text(f"{SHIFT_HOURS} hours confirmed").wait_for()
-    hold(0.8)
+    hold(0.6)
+    # off camera, on a page of its own: a certificate carries the full name, so Riley's
+    # last name is added now (the recorded phone screen is untouched)
+    side = vol.context.new_page()  # its own recording is never composed
+    watch("riley (side page)", side)
+    side.goto("/me/profile")
+    side.get_by_label("Last name (optional)").fill("Chen")
+    side.get_by_role("button", name="Save profile").click()
+    side.wait_for_url("**notice=details**")
+    side.close()
 
-    # 15. Riley's hours, at the foot of Shifts and hours
+    # 14. Riley's hours, at the foot of Shifts and hours
     beat("hours")
-    # first the Matches tab: its badge clears, a match above the likes still waiting
-    tap(vol, vol.get_by_role("link", name="Matches").last)
-    vol.wait_for_url("**/matches**")
-    likes = vol.get_by_role("heading", name="Your likes")
-    likes.wait_for()
-    hold(1.0)
-    smooth_to(vol, likes)
-    hold(1.0)
+    hold(0.4)
     tap(vol, vol.get_by_role("link", name="Me").last)
     vol.wait_for_url("**/profile")
-    hold(0.8)
+    hold(0.4)
     tap(vol, vol.get_by_role("link", name="Shifts and hours").first)
     vol.wait_for_url("**/history")
     vol.get_by_text("Confirmed by").first.wait_for()
-    hold(1.0)
+    hold(0.6)
     smooth_to(vol, vol.get_by_text("Confirmed by").first)
+    hold(1.0)
 
-    # 16. Riley adds a last name (a certificate carries the full name), then gets one for
-    # Silver Lake Garden Friends: every confirmed shift, the total, a signature code
+    # 15. a certificate for Silver Lake Garden Friends: every confirmed shift, the total,
+    # a signature code
     beat("certificate")
-    tap(vol, vol.get_by_role("link", name="Me").last)
-    vol.wait_for_url("**/profile")
-    hold(0.5)
-    tap(vol, vol.get_by_role("link", name="Your profile").first)
-    vol.wait_for_url("**/me/profile")
-    hold(0.4)
-    last = vol.get_by_label("Last name (optional)")
-    smooth_to(vol, last)
-    type_in(vol, last, "Chen", 90)
-    tap(vol, vol.get_by_role("button", name="Save profile"))
-    vol.wait_for_url("**notice=details**")
-    hold(0.8)
-    tap(vol, vol.get_by_role("link", name="Me").last)
-    vol.wait_for_url("**/profile")
-    hold(0.4)
-    tap(vol, vol.get_by_role("link", name="Shifts and hours").first)
-    vol.wait_for_url("**/history")
     certificates = vol.get_by_role("heading", name="Certificates")
     smooth_to(vol, certificates)
     period = vol.locator("select[name=period]").first
     smooth_to(vol, period)
     period.select_option("all")
-    hold(1.0)
+    hold(0.6)
+    mark("cert")
     tap(vol, vol.get_by_role("button", name="Get a certificate").first)
     vol.wait_for_url("**/hours/certificate/**")
     vol.get_by_text("Volunteer hours certificate").wait_for()
-    hold(1.2)
+    hold(1.0)
     smooth_to(vol, vol.get_by_text("Signature code:"))
     hold(0.8)
     link = vol.get_by_text("/check/").first
+    check_path = urlsplit(link.inner_text().strip()).path  # the real, local link
+    link.evaluate("(el, text) => { el.textContent = text; }", PUBLIC + check_path)
     smooth_to(vol, link)
-    check_path = urlsplit(link.inner_text().strip()).path
-    hold(0.8)
+    mark("link")
+    hold(1.5)
 
-    # 17. anyone with the link: a fresh browser, signed out, on the laptop side
+    # 16. anyone with the link: a fresh browser, signed out, on the laptop side
     beat("check")
     gst.goto(check_path)
     gst.get_by_role("heading", name="Genuine certificate").wait_for()
@@ -531,32 +555,6 @@ def story(vol, org, adm, gst):
     hold(2.5)
     point(gst, gst.get_by_text("Signature code"))
     hold(1.0)
-
-    # 18. Riley needs hours confirmed (one checkbox); the deck shows only nonprofits that do
-    beat("prefer")
-    tap(vol, vol.get_by_role("link", name="Me").last)
-    vol.wait_for_url("**/profile")
-    hold(0.6)
-    tap(vol, vol.get_by_role("link", name="Preferences").first)
-    vol.wait_for_url("**/me/preferences")
-    hold(0.6)
-    tap(vol, vol.locator("a[href='/me/preferences/causes']"))
-    vol.wait_for_url("**/me/preferences/causes")
-    need = vol.locator("label:has(input[name=verified_hours])")
-    smooth_to(vol, need)
-    hold(0.8)
-    tap(vol, need)
-    if not need.locator("input").is_checked():
-        raise RuntimeError("the hours checkbox didn't tick")
-    hold(1.4)
-    tap(vol, vol.get_by_role("button", name="Save", exact=True))
-    vol.wait_for_url("**saved=1**")
-    tap(vol, vol.get_by_role("link", name="Openings").last)
-    vol.wait_for_url("**/deck**")
-    hold(2.0)
-    # only nonprofits that confirm hours are left: the top card says so
-    vol.locator("[data-swipe-card]").first.get_by_text("Confirms your hours").wait_for()
-    hold(1.5)
 
     beat("outro")  # waits for the last line; the outro itself is a card
     timeline.append({"id": "end", "t": round(time.monotonic() - t0, 2)})
@@ -635,6 +633,7 @@ def main():
                     "guest": round(off_guest, 3),
                 },
                 "beats": timeline,
+                "marks": marks,
             },
             indent=1,
         )

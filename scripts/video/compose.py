@@ -3,9 +3,17 @@
 python compose.py BEATS.json VOICE_DIR TAKE_DIR OUT.mp4
 Each beat is a segment with its own layout (card, laptop, phone, both), caption and voice
 line; the segments are joined, then encoded once (H.264, crf 23, faststart) with the audio
-normalised to -16 LUFS (two-pass loudnorm). Also writes demo-poster.jpg and demo.vtt (English captions of the narration, one cue
-per sentence, timed from each beat's start in the video) next to OUT.mp4.
-Fails if a voice line doesn't fit inside its beat.
+normalised to -16 LUFS (two-pass loudnorm). Also writes OUT-poster.jpg and OUT.vtt (English
+captions of the narration, one cue per sentence, timed from each beat's start in the video)
+next to OUT.mp4. Fails if a voice line doesn't fit inside its beat.
+
+The full video has one beat per beat of the recording, each as long as it was recorded. A
+shorter cut (any beat with a "from") is composed from the same recording, with its own
+voice lines: a beat takes the footage of the recorded beat "from" (default: its own id), and
+lasts as long as its voice line. Optional per beat: "mark" (start at that named moment of
+the take, in timeline.json), "pre" (seconds before it), "speed" (play the footage faster),
+"poster" (a mark: the poster is taken just after it). A beat with "then" and "switch" shows
+its "src" until the mark "switch", then "then".
 """
 
 import json
@@ -18,9 +26,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 BEATS = json.loads(Path(sys.argv[1]).read_text())
 VOICE, TAKE, OUT = Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4])
-ART, SEG = TAKE / "art", TAKE / "seg"
+ART, SEG = TAKE / f"art-{OUT.stem}", TAKE / f"seg-{OUT.stem}"
 ART.mkdir(exist_ok=True)
 SEG.mkdir(exist_ok=True)
+for old in SEG.glob("*.mp4"):  # a shorter take must not leave segments behind
+    old.unlink()
 W, H = 1920, 1080
 CREAM, INK, MUTED, LINE, SAND = "#FFF8F0", "#2D1E17", "#6E5A4E", "#EADCCD", "#F5E9DC"
 BRAND, BRAND_SOFT, GOOD, GOOD_SOFT = "#C0452A", "#FBE4DC", "#1F7A4D", "#DDF1E6"
@@ -125,6 +135,8 @@ def frame_art(b, n):
         "admin": "causematch / admin",
         "guest": "causematch / check a certificate",
     }.get(b.get("src"), "causematch / nonprofit dashboard")
+    if "then" in b:
+        url = "causematch"
     if lay == "laptop":
         laptop_frame(d, BIG_LAPTOP, url)
         caption_bar(d, n, role, b["caption"])
@@ -195,40 +207,56 @@ def card_art(name, lines):
 
 tl = json.loads((TAKE / "timeline.json").read_text())
 starts = {b["id"]: b["t"] for b in tl["beats"]}
+marks = tl.get("marks", {})
 order = [b["id"] for b in tl["beats"] if b["id"] != "end"]
 offsets = tl["offsets"]
 voice_len = json.loads((VOICE / "durations.json").read_text())
 CARDS = {
     "intro": [
-        ("From sign-up to first shift", 56, INK),
+        ("Post once. Volunteers swipe. You say yes.", 56, INK),
         (
-            "A new nonprofit and a new volunteer find each other on Causematch.",
+            "Volunteers nearby who care about your cause swipe right. After the shift, one tap confirms their hours.",
             28,
             MUTED,
         ),
         ("Recorded live in the app, on invented demo data", 22, MUTED),
     ],
     "outro": [
-        ("Swipe to volunteer.", 56, INK),
-        (
-            "Volunteers swipe, nonprofits say yes, a chat opens, and confirmed hours are kept.",
-            28,
-            MUTED,
-        ),
+        ("Join the Los Angeles County pilot.", 56, INK),
+        ("Nonprofits post and say yes. Volunteers swipe.", 28, MUTED),
+        ("https://slegroux.github.io/causematch/", 40, BRAND),
         ("Open source: github.com/slegroux/causematch", 22, MUTED),
     ],
 }
 
+short = any("from" in b for b in BEATS)
 segments = []
 begins = {}  # where each beat starts in the composed video
+took = {}  # where in the take each beat's footage starts, and how fast it plays
 running = 0.0
 n = 0
 for i, b in enumerate(BEATS):
-    bid, start = b["id"], starts[b["id"]]
-    if bid == "outro":
+    bid = b["id"]
+    src_id = b.get("from", bid)
+    speed = b.get("speed", 1.0)
+    start = starts[src_id]
+    if "mark" in b:
+        start = marks[b["mark"]] - b.get("pre", 0.0)
+    took[bid] = (start, speed)
+    if i == len(BEATS) - 1:  # the closing card
         dur = voice_len[bid] + 2.0
+    elif short:
+        dur = voice_len[bid] + b.get("tail", 1.0)
     else:
         dur = starts[order[order.index(bid) + 1]] - start
+    if short and b["layout"] != "card":
+        # the footage must stay inside the recorded beat it is taken from
+        end = starts[order[order.index(src_id) + 1]]
+        if start + dur * speed > end + 0.2:
+            raise SystemExit(
+                f"{bid}: {dur * speed:.1f}s of footage from {start:.1f}s runs past the end "
+                f"of the recorded beat {src_id} ({end:.1f}s)"
+            )
     if b["layout"] == "card":
         art = card_art(bid, CARDS[bid])
         inputs = ["-loop", "1", "-framerate", "30", "-t", f"{dur:.3f}", "-i", str(art)]
@@ -239,28 +267,36 @@ for i, b in enumerate(BEATS):
         art = frame_art(b, n)
         inputs = ["-loop", "1", "-framerate", "30", "-t", f"{dur:.3f}", "-i", str(art)]
         layers = []
-        if b["layout"] == "laptop":
-            layers.append((b["src"], BIG_LAPTOP))
+        if b["layout"] == "laptop" and "then" in b:
+            at = (marks[b["switch"]] - start) / speed  # the screen changes here
+            layers += [
+                (b["src"], BIG_LAPTOP, f"lt(t,{at:.3f})"),
+                (b["then"], BIG_LAPTOP, f"gte(t,{at:.3f})"),
+            ]
+        elif b["layout"] == "laptop":
+            layers.append((b["src"], BIG_LAPTOP, None))
         elif b["layout"] == "phone":
-            layers.append(("phone", BIG_PHONE))
+            layers.append(("phone", BIG_PHONE, None))
         else:
-            layers += [("phone", BOTH_PHONE), (b["src"], BOTH_LAPTOP)]
+            layers += [("phone", BOTH_PHONE, None), (b["src"], BOTH_LAPTOP, None)]
         graph, last = [], "0:v"
-        for k, (src, (x, y, w, h)) in enumerate(layers, start=1):
+        for k, (src, (x, y, w, h), enable) in enumerate(layers, start=1):
             ss = max(0.0, start - offsets[src])
             inputs += [
                 "-ss",
                 f"{ss:.3f}",
                 "-t",
-                f"{dur + 0.5:.3f}",
+                f"{dur * speed + 0.5:.3f}",
                 "-i",
                 str(TAKE / f"{src}.webm"),
             ]
             graph.append(
-                f"[{k}:v]fps=30,scale={w}:{h}:flags=lanczos,setsar=1,"
+                f"[{k}:v]setpts=(PTS-STARTPTS)/{speed},fps=30,"
+                f"scale={w}:{h}:flags=lanczos,setsar=1,"
                 f"tpad=stop_mode=clone:stop_duration=5[s{k}]"
             )
-            graph.append(f"[{last}][s{k}]overlay={x}:{y}:shortest=0[o{k}]")
+            gate = f":enable='{enable}'" if enable else ""
+            graph.append(f"[{last}][s{k}]overlay={x}:{y}:shortest=0{gate}[o{k}]")
             last = f"o{k}"
         graph.append(f"[{last}]format=yuv420p[v]")
         graph = ";".join(graph)
@@ -351,7 +387,7 @@ for b in BEATS:
         span = voice_len[b["id"]] * len(x) / total
         cues += [f"{stamp(t)} --> {stamp(t + span)}", x.strip(), ""]
         t += span
-OUT.with_name("demo.vtt").write_text("\n".join(cues))
+OUT.with_suffix(".vtt").write_text("\n".join(cues))
 
 # loudness: measure, then apply the measured values (linear), so the result lands on target
 TARGET = "I=-16:TP=-1.5:LRA=11"
@@ -409,7 +445,7 @@ subprocess.run(
     check=True,
 )
 
-# the poster: a still from the middle of the accept beat, both screens on show
+# the poster: a still from just after the beat's "poster" mark, both screens on show
 poster_at = 0.0
 cum = 0.0
 for p, b in zip(segments, BEATS, strict=True):
@@ -430,8 +466,9 @@ for p, b in zip(segments, BEATS, strict=True):
             check=True,
         ).stdout
     )
-    if b["id"] == "accept":
-        poster_at = cum + 3.0
+    if "poster" in b:
+        began, speed = took[b["id"]]
+        poster_at = cum + (marks[b["poster"]] - began) / speed + 0.8
         break
     cum += seg_len
 subprocess.run(
@@ -450,7 +487,7 @@ subprocess.run(
         "scale=1280:-1",
         "-q:v",
         "5",
-        str(OUT.with_name("demo-poster.jpg")),
+        str(OUT.with_name(f"{OUT.stem}-poster.jpg")),
     ],
     check=True,
 )
