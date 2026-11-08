@@ -45,7 +45,7 @@ CAUSE_CHIP = {
 DEMO_NOTICE = "Demo: sample openings, not affiliated with these organizations"
 PREVIEW_NOTICE = (
     "Preview · sample openings, not affiliated with these organizations · "
-    "don't enter real details"
+    "demo data, wiped at any time"
 )
 
 

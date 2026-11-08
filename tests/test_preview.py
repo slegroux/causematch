@@ -505,7 +505,7 @@ def test_robots_txt_disallows_everything(preview):
 def test_every_page_shows_the_preview_banner(guest, anon):
     assert PREVIEW_NOTICE == (
         "Preview · sample openings, not affiliated with these organizations · "
-        "don't enter real details"
+        "demo data, wiped at any time"
     )
     for path in ("/login", "/org/login", "/privacy"):
         page = guest.get(path).text
