@@ -115,6 +115,9 @@ ROUTES = {
     ("GET", "/org/zip"): ("coordinator", None),  # a public table lookup
     ("POST", "/org/openings/new"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
+    ("GET", "/org/openings/{opening_id}/edit"): ("coordinator", "own-org"),
+    ("POST", "/org/openings/{opening_id}/edit"): ("coordinator", "own-org"),
+    ("POST", "/org/openings/{opening_id}/reopen"): ("coordinator", "own-org"),
     ("GET", "/org/openings/{opening_id}/urgent"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/urgent"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/urgent/close"): ("coordinator", "own-org"),
@@ -471,6 +474,22 @@ def undo_checked(w):
 
 def close_other(w, oid):
     return w.org1.post(f"/org/openings/{oid}/close", follow_redirects=False)
+
+
+def edit_page_other(w, oid):
+    return w.org1.get(f"/org/openings/{oid}/edit", follow_redirects=False)
+
+
+def edit_other(w, oid):
+    return w.org1.post(
+        f"/org/openings/{oid}/edit",
+        data={"title": "Taken over", "about": "x", "slots": "9"},
+        follow_redirects=False,
+    )
+
+
+def reopen_other(w, oid):
+    return w.org1.post(f"/org/openings/{oid}/reopen", follow_redirects=False)
 
 
 LA = ZoneInfo("America/Los_Angeles")
@@ -1047,6 +1066,24 @@ OWNERSHIP = {
     ("POST", "/org/matches/{match_id}/undo"): undo_checked,
     ("POST", "/org/openings/{opening_id}/close"): path_id_check(
         close_other,
+        lambda w: w.opening.id,
+        lambda w: openings[w.opening.id].status == w.opening.status,
+    ),
+    ("GET", "/org/openings/{opening_id}/edit"): path_id_check(
+        edit_page_other,
+        lambda w: w.opening.id,
+        lambda w: openings[w.opening.id].title == w.opening.title,
+    ),
+    ("POST", "/org/openings/{opening_id}/edit"): path_id_check(
+        edit_other,
+        lambda w: w.opening.id,
+        lambda w: (
+            (openings[w.opening.id].title, openings[w.opening.id].slots)
+            == (w.opening.title, w.opening.slots)
+        ),
+    ),
+    ("POST", "/org/openings/{opening_id}/reopen"): path_id_check(
+        reopen_other,
         lambda w: w.opening.id,
         lambda w: openings[w.opening.id].status == w.opening.status,
     ),

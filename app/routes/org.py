@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -51,6 +52,7 @@ from app.ui import (
     CALENDAR,
     CARD,
     MATCH_STATUS,
+    NEXT,
     ORG_SECTION,
     ORG_TITLE,
     PIN,
@@ -58,6 +60,7 @@ from app.ui import (
     Checks,
     Choice,
     Field,
+    Icon,
     Meta,
     OrgShell,
     Pill,
@@ -147,7 +150,7 @@ def urgent_possible(starts_at):
 
 
 def UrgentLine(o, urgent, accepted):
-    """The opening's open urgent call and a way to stop it, or a link to post one."""
+    """The opening's open urgent call and a way to stop it."""
     if urgent:
         call = urgent["call"]
         return Div(
@@ -170,13 +173,21 @@ def UrgentLine(o, urgent, accepted):
             ),
             cls="space-y-2 rounded-2xl bg-cream p-3",
         )
-    if o.status == "open" and accepted < o.slots and urgent_possible(o.starts_at):
-        return Div(
-            A(
-                "Short of people? Post an urgent call",
-                href=f"/org/openings/{o.id}/urgent",
-                cls=SMALL_LINK + " text-sm",
-            )
+    return None
+
+
+def UrgentLink(o, urgent, accepted):
+    """A link to post an urgent call, while one could still fill the opening."""
+    if (
+        not urgent
+        and o.status == "open"
+        and accepted < o.slots
+        and urgent_possible(o.starts_at)
+    ):
+        return A(
+            "Short of people? Post an urgent call",
+            href=f"/org/openings/{o.id}/urgent",
+            cls=SMALL_LINK + " text-sm",
         )
     return None
 
@@ -184,6 +195,14 @@ def UrgentLine(o, urgent, accepted):
 def messages_to_answer(n):
     """The dashboard link and the inbox heading for the chats owed a reply."""
     return "1 message to answer" if n == 1 else f"{n} messages to answer"
+
+
+def reopenable(o):
+    """A closed opening whose start is still ahead can take volunteers again."""
+    return (
+        o.status == "closed"
+        and datetime.now(LA).strftime("%Y-%m-%dT%H:%M") < o.starts_at
+    )
 
 
 def OpeningRow(o, counts, urgent=None):
@@ -226,19 +245,48 @@ def OpeningRow(o, counts, urgent=None):
         if o.slots
         else None,
         UrgentLine(o, urgent, accepted),
-        A(
-            "Photo and event link",
-            href=f"/org/openings/{o.id}/media",
-            cls=SMALL_LINK + " text-sm",
+        Div(
+            A(
+                "Edit",
+                href=f"/org/openings/{o.id}/edit",
+                cls="uk-btn " + ButtonT.default,
+            )
+            if o.status in ("open", "filled")
+            else None,
+            PlainForm(
+                Button("Reopen", cls=ButtonT.default),
+                action=f"/org/openings/{o.id}/reopen",
+                method="post",
+            )
+            if reopenable(o)
+            else None,
+            cls="flex flex-wrap items-center gap-2 pt-1",
         ),
-        PlainForm(
-            Button("Close opening", cls=ButtonT.default),
-            action=f"/org/openings/{o.id}/close",
-            method="post",
-            cls="pt-1",
-        )
-        if o.status == "open"
-        else None,
+        Details(  # the rarely wanted actions, behind one tap (no script)
+            Summary(
+                "More",
+                Icon(NEXT, size=16, cls="rotate-90"),
+                cls="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 "
+                "text-sm font-semibold text-ink-muted underline underline-offset-4 "
+                "hover:text-ink [&::-webkit-details-marker]:hidden",
+            ),
+            Div(
+                A(
+                    "Photo and event link",
+                    href=f"/org/openings/{o.id}/media",
+                    cls=SMALL_LINK + " text-sm",
+                ),
+                UrgentLink(o, urgent, accepted),
+                PlainForm(
+                    Button("Close opening", cls=ButtonT.default),
+                    action=f"/org/openings/{o.id}/close",
+                    method="post",
+                )
+                if o.status == "open"
+                else None,
+                cls="flex flex-col items-start gap-1.5",
+            ),
+        ),
         cls="w-full space-y-2 p-4 " + CARD,
     )
 
@@ -398,8 +446,51 @@ def KindOfWork(f):
     )
 
 
-def OpeningForm(uid, f=None, error=None):
+def Locked(label, value, why):
+    """A fact of the opening that the edit form shows but doesn't change, and why."""
+    return Div(
+        P(label, cls="text-sm font-bold text-ink"),
+        P(value, cls="text-ink"),
+        P(why, cls=TextPresets.muted_sm),
+        cls="space-y-1",
+    )
+
+
+def opening_fields(o):
+    """The post form's fields as a posted opening has them, to prefill the edit form."""
+    causes = json.loads(o.causes or "[]")
+    return {
+        "org_id": str(o.org_id),
+        "title": o.title,
+        "about": o.about,
+        "cause": causes[0] if len(causes) == 1 else "",
+        "neighborhood": o.neighborhood or "",
+        "starts_at": o.starts_at,
+        "duration_minutes": str(o.duration_minutes or ""),
+        "recurrence": o.recurrence or "",
+        "slots": str(o.slots),
+        "orientation_required": o.orientation_required or "",
+        "notes": o.notes or "",
+        "reply_channel": o.reply_channel or "",
+        "adult_only_ok": "1",
+        "setting": o.setting or "",
+        "effort": o.effort or "",
+        "group_size": o.group_size or "",
+        "first_timer_ok": o.first_timer_ok,
+        "languages": json.loads(o.languages or "[]"),
+        "skills": json.loads(o.skills or "[]"),
+    }
+
+
+def OpeningForm(uid, f=None, error=None, editing=None):
+    """The post form, or with editing (an opening) the same form prefilled, which saves
+    to that opening. There the org, the place and the repeat are shown, not asked; the
+    date, time and cause only while data.opening_locks lets them change."""
     f = f or {}
+    locks = data.opening_locks(editing.id) if editing else {}
+    cause_fixed = bool(editing) and (
+        locks["cause"] or len(json.loads(editing.causes or "[]")) != 1
+    )
     my_orgs = data.coordinator_orgs(uid)
     org_id = f.get("org_id") or (str(my_orgs[0][0].id) if len(my_orgs) == 1 else "")
     reply_choices = reply_options(bool(data.get_profile(uid).contact_phone))
@@ -423,7 +514,7 @@ def OpeningForm(uid, f=None, error=None):
         Group(
             "The opening",
             Input(type="hidden", name="org_id", value=org_id)
-            if len(my_orgs) == 1
+            if len(my_orgs) == 1 or editing
             else Field(
                 "Organization",
                 Choice("org_id", [(str(o.id), o.name) for o, _ in my_orgs], org_id),
@@ -442,7 +533,16 @@ def OpeningForm(uid, f=None, error=None):
                     required=True,
                 ),
             ),
-            Field(
+            Locked(
+                "Cause",
+                ", ".join(data.cause_labels(json.loads(editing.causes or "[]"))),
+                "It can't change once volunteers have liked this opening, because "
+                "they were matched on it."
+                if locks["cause"]
+                else "This opening has more than one cause, which this form can't edit.",
+            )
+            if cause_fixed
+            else Field(
                 "Cause",
                 Choice(
                     "cause",
@@ -453,7 +553,13 @@ def OpeningForm(uid, f=None, error=None):
         ),
         Group(
             "Where and when",
-            Div(
+            Locked(
+                "Where",
+                editing.neighborhood or "Los Angeles County",
+                "The place can't change once posted. Post a new opening for another place.",
+            )
+            if editing
+            else Div(
                 Field(
                     "ZIP code",
                     TextInput(
@@ -474,7 +580,14 @@ def OpeningForm(uid, f=None, error=None):
                 ),
                 cls="grid gap-4 sm:grid-cols-2",
             ),
-            Field(
+            Locked(
+                "Date and time",
+                when(editing.starts_at, editing.duration_minutes),
+                "It can't change once volunteers have liked this opening, because they "
+                "chose it for that time. Close it and post a new one to move it.",
+            )
+            if editing and locks["when"]
+            else Field(
                 "Date and time of the next shift",
                 TextInput(
                     name="starts_at",
@@ -483,7 +596,9 @@ def OpeningForm(uid, f=None, error=None):
                     required=True,
                 ),
             ),
-            Field(
+            None
+            if editing and locks["when"]
+            else Field(
                 "How long is a shift?",
                 Choice(
                     "duration_minutes",
@@ -492,7 +607,13 @@ def OpeningForm(uid, f=None, error=None):
                     required=True,
                 ),
             ),
-            Field(
+            Locked(
+                "Repeats",
+                label_of(RECURRENCE, editing.recurrence) or "Not said",
+                "It can't change once posted.",
+            )
+            if editing
+            else Field(
                 "Does it repeat?",
                 # no preset: it decides who the opening fits (match.commitment_fits)
                 Choice("recurrence", RECURRENCE, f.get("recurrence", "")),
@@ -505,12 +626,18 @@ def OpeningForm(uid, f=None, error=None):
                 TextInput(
                     name="slots",
                     type="number",
-                    min="1",
+                    min=str(max(1, locks.get("accepted", 0))),
                     max="200",
                     inputmode="numeric",
                     value=f.get("slots", ""),
                     required=True,
                 ),
+                P(
+                    f"{locks['accepted']} accepted so far, so it can't go lower.",
+                    cls=TextPresets.muted_sm,
+                )
+                if locks.get("accepted")
+                else None,
             ),
             Field(
                 "Is an orientation or training required before the first shift?",
@@ -570,9 +697,12 @@ def OpeningForm(uid, f=None, error=None):
             ),
             cls="p-5 " + CARD,
         ),
-        Button("Post opening", cls=ButtonT.primary + " w-full h-12 text-lg"),
+        Button(
+            "Save changes" if editing else "Post opening",
+            cls=ButtonT.primary + " w-full h-12 text-lg",
+        ),
         A("Cancel", href="/org", cls=SMALL_LINK + " block text-center"),
-        action="/org/openings/new",
+        action=f"/org/openings/{editing.id}/edit" if editing else "/org/openings/new",
         method="post",
         # without :has() (static/theme.css), a redrawn form still shows the note
         cls="space-y-4"
@@ -582,14 +712,20 @@ def OpeningForm(uid, f=None, error=None):
         "openings",
         data.org_badges(uid),
         Div(
-            H1("Post an opening", cls=ORG_TITLE),
+            H1("Edit opening" if editing else "Post an opening", cls=ORG_TITLE),
             P(
-                "Volunteers who fit see it after you post it. You can close it any time.",
+                "Volunteers already accepted are told in their chat what you change."
+                if editing
+                else "Volunteers who fit see it after you post it. You can close it any time.",
                 cls=TextPresets.muted_sm + " mt-1 mb-4",
             ),
             Alert(error, cls=AlertT.error + " mb-4") if error else None,
             form,
-            Script(src="/static/zip.js", defer=True),  # the neighborhood, from the ZIP
+            None
+            if editing
+            else Script(
+                src="/static/zip.js", defer=True
+            ),  # the neighborhood, from the ZIP
             cls="mx-auto max-w-2xl",
         ),
     )
@@ -650,13 +786,10 @@ async def new_opening_save(req):
     return await run_in_threadpool(_sync_new_opening_save, req, form)
 
 
-def _sync_new_opening_save(req, form):
-    uid = req.scope["uid"]
-    profile = data.get_profile(uid)
-    if not profile.display_name:
-        return Redirect("/org")
+def opening_input(form):
+    """The post form's answers, trimmed, by field name."""
     text = lambda k: form.get(k, "").strip()
-    f = {
+    return {
         **{k: text(k) for k in LIMITS},
         "skills": form.getlist("skills"),
         "org_id": text("org_id"),
@@ -676,52 +809,66 @@ def _sync_new_opening_save(req, form):
         "languages": form.getlist("languages"),
     }
 
-    def fail(msg):
-        return OpeningForm(uid, f, msg)
 
+def opening_error(f, profile, skip=()):
+    """(the first thing wrong with the post form's answers as a message, else None; the
+    ZIP's (lat, lon); the start as a datetime). skip: parts an edit leaves alone, of
+    "cause", "where" (ZIP), "when" (start and length), "repeat", "orientation" and "reply", whose
+    answers aren't checked (an edit keeps what the opening has, even a seed's blank)."""
     if not re.fullmatch(r"[0-9]{1,18}", f["org_id"]):
-        return fail("Please choose your organization.")
+        return "Please choose your organization.", None, None
     if any(len(f[k]) > n for k, n in LIMITS.items()):
-        return fail("One of your answers is too long. Please shorten it.")
+        return "One of your answers is too long. Please shorten it.", None, None
     if any(hidden_chars(f[k], multiline=k in ("about", "notes")) for k in LIMITS):
-        return fail(HIDDEN_CHARS_MESSAGE)
+        return HIDDEN_CHARS_MESSAGE, None, None
     if not f["title"] or not f["about"]:
-        return fail("Please fill in the title and what volunteers will do.")
-    if f["cause"] not in {c.slug for c in data.active_causes()}:
-        return fail("Please pick a cause from the list.")
-    if not re.fullmatch(r"[0-9]{5}", f["zip"]):
-        return fail("Enter a five-digit ZIP code, like 90012.")
-    latlon = zip_latlon(f["zip"])
-    if not latlon:
-        return fail(
-            "Openings must be in Los Angeles County for now. Check the ZIP code."
-        )
-    f["neighborhood"] = f["neighborhood"] or zip_neighborhood(f["zip"])
-    try:
-        start = datetime.strptime(f["starts_at"], "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return fail("Please enter the date and time of the next shift.")
-    now = datetime.now(LA)
-    local = start.replace(tzinfo=LA)
-    if local.astimezone(UTC).astimezone(LA).replace(tzinfo=None) != start:
-        return fail("That time doesn't exist (clocks skip it). Pick another time.")
-    if local <= now:
-        return fail("The next shift has to be in the future.")
-    if local > now + MAX_AHEAD:
-        return fail("The next shift must be within the next 12 months.")
-    if f["duration_minutes"] not in {v for v, _ in SHIFT_LENGTHS}:
-        return fail("Please say how long a shift is.")
-    if f["recurrence"] not in {v for v, _ in RECURRENCE}:
-        return fail("Please say whether the opening repeats.")
+        return "Please fill in the title and what volunteers will do.", None, None
+    if "cause" not in skip and f["cause"] not in {c.slug for c in data.active_causes()}:
+        return "Please pick a cause from the list.", None, None
+    latlon = start = None
+    if "where" not in skip:
+        if not re.fullmatch(r"[0-9]{5}", f["zip"]):
+            return "Enter a five-digit ZIP code, like 90012.", None, None
+        latlon = zip_latlon(f["zip"])
+        if not latlon:
+            return (
+                "Openings must be in Los Angeles County for now. Check the ZIP code.",
+                None,
+                None,
+            )
+        f["neighborhood"] = f["neighborhood"] or zip_neighborhood(f["zip"])
+    if "when" not in skip:
+        try:
+            start = datetime.strptime(f["starts_at"], "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return "Please enter the date and time of the next shift.", None, None
+        now = datetime.now(LA)
+        local = start.replace(tzinfo=LA)
+        if local.astimezone(UTC).astimezone(LA).replace(tzinfo=None) != start:
+            return (
+                "That time doesn't exist (clocks skip it). Pick another time.",
+                None,
+                None,
+            )
+        if local <= now:
+            return "The next shift has to be in the future.", None, None
+        if local > now + MAX_AHEAD:
+            return "The next shift must be within the next 12 months.", None, None
+        if f["duration_minutes"] not in {v for v, _ in SHIFT_LENGTHS}:
+            return "Please say how long a shift is.", None, None
+    if "repeat" not in skip and f["recurrence"] not in {v for v, _ in RECURRENCE}:
+        return "Please say whether the opening repeats.", None, None
     if not re.fullmatch(r"[0-9]{1,3}", f["slots"]) or not 1 <= int(f["slots"]) <= 200:
-        return fail("Volunteers needed must be a number from 1 to 200.")
+        return "Volunteers needed must be a number from 1 to 200.", None, None
     if (
         not set(f["skills"]) <= {v for v, _ in SKILLS}
         or len(set(f["skills"])) > MAX_OPENING_SKILLS
     ):
-        return fail(prefs.UNRECOGNIZED)
-    if f["orientation_required"] not in {v for v, _ in ORIENTATION}:
-        return fail("Please say whether an orientation is required.")
+        return prefs.UNRECOGNIZED, None, None
+    if "orientation" not in skip and f["orientation_required"] not in {
+        v for v, _ in ORIENTATION
+    }:
+        return "Please say whether an orientation is required.", None, None
     if (
         f["setting"] not in {v for v, _ in SETTING} | {""}
         or f["effort"] not in {v for v, _ in EFFORT} | {""}
@@ -729,17 +876,33 @@ def _sync_new_opening_save(req, form):
         or f["first_timer_ok"] not in (None, "1")
         or not set(f["languages"]) <= {v for v, _ in LANGUAGES}
     ):
-        return fail(prefs.UNRECOGNIZED)
-    if f["reply_channel"] not in {
+        return prefs.UNRECOGNIZED, None, None
+    if "reply" not in skip and f["reply_channel"] not in {
         v for v, _ in reply_options(bool(profile.contact_phone))
     }:
-        return fail(
-            "Please choose how we should send you interested volunteers. Text needs a phone number in your details."
+        return (
+            "Please choose how we should send you interested volunteers. Text needs a phone number in your details.",
+            None,
+            None,
         )
     if f["adult_only_ok"] != "1":
-        return fail(
-            "Please confirm the opening is for adults with no one-to-one contact."
+        return (
+            "Please confirm the opening is for adults with no one-to-one contact.",
+            None,
+            None,
         )
+    return None, latlon, start
+
+
+def _sync_new_opening_save(req, form):
+    uid = req.scope["uid"]
+    profile = data.get_profile(uid)
+    if not profile.display_name:
+        return Redirect("/org")
+    f = opening_input(form)
+    error, latlon, start = opening_error(f, profile)
+    if error:
+        return OpeningForm(uid, f, error)
     try:
         data.create_opening(
             uid,
@@ -766,6 +929,94 @@ def _sync_new_opening_save(req, form):
         )
     except PermissionError:
         return Refusal(403)
+    return Redirect("/org")
+
+
+@ar("/org/openings/{opening_id}/edit", methods=["GET"])
+def edit_opening_page(req, opening_id: int):
+    uid = req.scope["uid"]
+    try:
+        o = data.coordinator_opening(uid, opening_id)
+    except PermissionError:
+        return Refusal(403)
+    if o.status == "closed":  # reopen it first
+        return Redirect("/org")
+    return OpeningForm(uid, opening_fields(o), editing=o)
+
+
+@ar("/org/openings/{opening_id}/edit", methods=["POST"])
+async def edit_opening_save(req, opening_id: int):
+    form = await str_form(req)
+    if form is None:
+        return Refusal(400)
+    return await run_in_threadpool(_sync_edit_opening_save, req, opening_id, form)
+
+
+def _sync_edit_opening_save(req, opening_id, form):
+    uid = req.scope["uid"]
+    try:
+        o = data.coordinator_opening(uid, opening_id)
+        locks = data.opening_locks(o.id)
+        fixed = opening_fields(o)
+        f = opening_input(form)
+        # what the form doesn't ask or may not change is the opening's own, unchecked
+        skip = {"where", "repeat"}
+        if f["orientation_required"] == fixed["orientation_required"]:
+            skip.add("orientation")
+        if f["reply_channel"] == fixed["reply_channel"]:
+            skip.add("reply")
+        f["org_id"], f["recurrence"] = fixed["org_id"], fixed["recurrence"]
+        if locks["cause"] or not fixed["cause"]:
+            skip.add("cause")
+        if locks["when"]:
+            f["starts_at"], f["duration_minutes"] = (
+                fixed["starts_at"],
+                fixed["duration_minutes"],
+            )
+        if (f["starts_at"], f["duration_minutes"]) == (
+            fixed["starts_at"],
+            fixed["duration_minutes"],
+        ):
+            skip.add("when")  # unchanged: it may even have started by now
+        error, _, start = opening_error(f, data.get_profile(uid), skip)
+        if error:
+            return OpeningForm(uid, {**fixed, **f}, error, editing=o)
+        changes = {
+            "title": f["title"],
+            "about": f["about"],
+            "notes": f["notes"],
+            "slots": int(f["slots"]),
+            "orientation_required": f["orientation_required"],
+            "reply_channel": f["reply_channel"],
+            "skills": f["skills"],
+            "setting": f["setting"],
+            "effort": f["effort"],
+            "group_size": f["group_size"],
+            "first_timer_ok": f["first_timer_ok"] == "1",
+            "languages": f["languages"],
+        }
+        if "cause" not in skip:
+            changes["cause"] = f["cause"]
+        if "when" not in skip:
+            changes["starts_at"] = start.isoformat(timespec="minutes")
+            changes["duration_minutes"] = int(f["duration_minutes"])
+        try:
+            data.update_opening(uid, o.id, **changes)
+        except ValueError as e:
+            return OpeningForm(uid, {**fixed, **f}, str(e), editing=o)
+    except PermissionError:
+        return Refusal(403)
+    return Redirect("/org")
+
+
+@ar("/org/openings/{opening_id}/reopen", methods=["POST"])
+def reopen(req, opening_id: int):
+    try:
+        data.reopen_opening(req.scope["uid"], opening_id)
+    except PermissionError:
+        return Refusal(403)
+    except ValueError:  # not closed, or started: the dashboard shows it as it is
+        pass
     return Redirect("/org")
 
 
