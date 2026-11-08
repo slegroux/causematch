@@ -508,8 +508,9 @@ DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo o
 # likes per volunteer a day that email the org (notify.on_new_like); later ones only
 # show in its inbox, so one volunteer can't spend the email ceiling's notices
 LIKE_NOTICES = (("like-notice-day", 20, 24 * 3600),)
-# per mailbox a day on /login while email goes through Gmail (notify.SMTPEmailer): its
-# daily limit is small, so a handful of accounts can't spend it on links
+# per mailbox a day on /login and /org/login while email goes through Gmail
+# (notify.SMTPEmailer): its daily limit is small, so a handful of accounts or known staff
+# addresses can't spend it on links
 LINK_PER_EMAIL_SMTP = (("link-email-smtp-day", 5, 24 * 3600),)
 
 
@@ -599,8 +600,8 @@ def ip_subject(req, v6_prefix=64):
 
 def link_limits(req, email, smtp=False):
     """Every limit one request for an emailed sign-in link counts against, by mailbox
-    (forms.abuse_key: a +tag or Gmail's dots are the same mailbox). smtp: a volunteer's
-    request while email goes through Gmail, also under LINK_PER_EMAIL_SMTP."""
+    (forms.abuse_key: a +tag or Gmail's dots are the same mailbox). smtp: email goes
+    through Gmail, so also under LINK_PER_EMAIL_SMTP."""
     key, ip = abuse_key(email), ip_subject(req)
     limits = (
         (LINK_PER_EMAIL_IP, f"{key}|{ip}"),

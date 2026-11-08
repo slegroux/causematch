@@ -5,6 +5,7 @@ import logging
 import smtplib
 import socket
 import ssl
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1078,6 +1079,24 @@ def test_a_batch_drops_its_connection_when_the_deadline_hit_just_after(
     assert steps(second)[-3:] == ["send", "quit", "close"]
 
 
+def run_alone(coro):
+    """asyncio.run(coro) in a thread of its own: the e2e tests leave an event loop running
+    in this one. Its exception, CancelledError included, is raised here."""
+    out = {}
+
+    def run():
+        try:
+            asyncio.run(coro)
+        except BaseException as e:  # noqa: BLE001  handed to the test's thread
+            out["error"] = e
+
+    t = threading.Thread(target=run)
+    t.start()
+    t.join()
+    if "error" in out:
+        raise out["error"]
+
+
 def test_notices_a_request_queues_go_out_after_its_response(monkeypatch):
     events = []
 
@@ -1090,7 +1109,7 @@ def test_notices_a_request_queues_go_out_after_its_response(monkeypatch):
     async def send(message):
         events.append(message["type"])
 
-    asyncio.run(notify.RunAfter(app)({"type": "http"}, None, send))
+    run_alone(notify.RunAfter(app)({"type": "http"}, None, send))
     assert events == [
         "http.response.start",
         "http.response.body",
@@ -1113,7 +1132,7 @@ def test_notices_after_the_response_have_their_own_threads(monkeypatch, caplog):
     async def app(scope, receive, send):
         notify.after(SimpleNamespace(scope=scope), notice)
 
-    asyncio.run(notify.RunAfter(app)({"type": "http"}, None, None))
+    run_alone(notify.RunAfter(app)({"type": "http"}, None, None))
     assert seen == [1]  # it held the notices' own token, not the routes' pool
     # the server stopping first: the count is logged and the stop goes through
 
@@ -1126,7 +1145,7 @@ def test_notices_after_the_response_have_their_own_threads(monkeypatch, caplog):
 
     monkeypatch.setattr(notify.anyio.to_thread, "run_sync", stopped)
     with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
-        asyncio.run(notify.RunAfter(queues_two)({"type": "http"}, None, None))
+        run_alone(notify.RunAfter(queues_two)({"type": "http"}, None, None))
     assert "up to 2 notices not sent: the server is stopping" in caplog.text
 
 
@@ -1161,3 +1180,37 @@ def test_one_volunteers_likes_email_the_org_up_to_a_daily_cap(clock, monkeypatch
     clock.advance(minutes=16)
     like(volunteer("Yuri"), third)
     assert len(emails()) == 2  # another volunteer's still emails
+
+
+def test_through_gmail_org_login_allows_a_mailbox_five_links_a_day(
+    anon, smtp_server, monkeypatch
+):
+    clock = [1_900_000_000.0]
+    monkeypatch.setattr(
+        security,
+        "time",
+        SimpleNamespace(time=lambda: clock[0], monotonic=time.monotonic),
+    )
+    _, email = coordinator_for(0, "staff@example.org")
+    monkeypatch.setattr(
+        notify, "_emailer", notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    )
+    for _ in range(5):
+        assert anon.post("/org/login/send", data={"email": email}).status_code == 200
+    clock[0] += 2 * 3600  # past the hourly per-mailbox-and-address limit
+    r = anon.post("/org/login/send", data={"email": email})
+    assert r.status_code == 429 and len(smtp_server) == 5  # the staff floor is kept
+
+
+def test_a_refused_password_stops_connects_for_ten_minutes(smtp_server, monkeypatch):
+    def refuse(self, user, password):
+        raise smtplib.SMTPAuthenticationError(535, b"5.7.8 not accepted")
+
+    monkeypatch.setattr(FakeSMTP, "login", refuse)
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    with pytest.raises(smtplib.SMTPAuthenticationError):  # logged by type: the alert
+        e.send("a@example.org", "s", "b")
+    assert e._no_connect_until > time.monotonic() + 9 * 60
+    with pytest.raises(notify.SMTPUnavailable):
+        e.send("b@example.org", "s", "b")
+    assert len(smtp_server) == 1  # no second sign-in attempt

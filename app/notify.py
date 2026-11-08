@@ -200,6 +200,9 @@ PUBLIC_SHARE, NOTICE_SHARE, SIGNUP_SHARE, URGENT_SHARE = 0.9, 0.5, 0.25, 0.25
 # what an emailer's send(kind=) takes; "staff" is send_login_link's
 KINDS = ("staff", "sign-in", "sign-up", "notice", "urgent")
 SMTP_BREAK = 60  # seconds without connecting after a deadline or a failed connect
+SMTP_AUTH_BREAK = (
+    600  # after Gmail refuses the password: it won't fix itself in a minute
+)
 
 
 class EmailCeiling(Exception):
@@ -331,7 +334,8 @@ class SMTPEmailer:
 
     def _signed_in(self, deadline):
         """A connection that greeted us with 220, is TLS and is signed in. A failed
-        connect or greeting stops connects for SMTP_BREAK."""
+        connect or greeting stops connects for SMTP_BREAK, a refused password for
+        SMTP_AUTH_BREAK."""
         server = smtplib.SMTP(timeout=SMTP_TIMEOUT)  # no host: it doesn't connect yet
         # the name STARTTLS checks the certificate against; smtplib sets it only from
         # the constructor's host, which would connect outside the deadline
@@ -350,7 +354,9 @@ class SMTPEmailer:
                 # SMTPNotSupportedError when the server doesn't offer it
                 server.starttls(context=self.context)
             server.login(self.username, self.password)
-        except BaseException:
+        except BaseException as e:
+            if isinstance(e, smtplib.SMTPAuthenticationError):
+                self._no_connect_until = time.monotonic() + SMTP_AUTH_BREAK
             server.close()
             raise
         return server
