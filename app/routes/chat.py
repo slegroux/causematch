@@ -19,6 +19,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app import data, notify, security
 from app.auth import ws_session_user
+from app.choices import AVAILABILITY
 from app.forms import bad_request, query, str_form
 from app.ui import (
     SEND,
@@ -32,6 +33,7 @@ from app.ui import (
     TextInput,
     VolunteerHeader,
     VolunteerShell,
+    when,
 )
 
 ar = Router()
@@ -78,6 +80,16 @@ def ChatError(text="", oob=False):
 def shift_day(s):
     """ "Sat Oct 18": the day of a shift (data's _EVENT_SELECT row)."""
     return datetime.fromisoformat(s["starts_at"]).strftime("%a %b %-d")
+
+
+def shift_line(head):
+    """ "Sat Nov 14 · 9:00 AM to 12:00 PM · Sawtelle": the next shift, else the opening's time."""
+    shift = head["shift"]
+    start = shift["starts_at"] if shift else head["starts_at"]
+    minutes = shift["duration_minutes"] if shift else head["duration_minutes"]
+    return " · ".join(
+        part for part in (when(start, minutes, sep=" · "), head["neighborhood"]) if part
+    )
 
 
 def ChatPage(uid, match_id, role, notice=""):
@@ -149,6 +161,14 @@ def ChatPage(uid, match_id, role, notice=""):
                 else f"{head['org']} · {head['other']}",
                 cls=TextPresets.muted_sm,
             ),
+            P(shift_line(head), id="chat-shift", cls="text-sm font-bold text-ink"),
+            P(
+                "Available: "
+                + ", ".join(dict(AVAILABILITY).get(a, a) for a in head["availability"]),
+                cls=TextPresets.muted_sm,
+            )
+            if role == "coordinator" and head["availability"]
+            else None,
             cls="space-y-1 border-b border-line pb-3",
         ),
         P(
@@ -177,7 +197,7 @@ def ChatPage(uid, match_id, role, notice=""):
         Script(src="/static/chat.js", defer=True),
     )
     if role == "coordinator":  # the nonprofit's own top nav, from the inbox
-        return OrgShell("inbox", data.org_waiting(uid), Div(*content, cls="max-w-md"))
+        return OrgShell("inbox", data.org_waiting(uid), Div(*content))
     return VolunteerShell("matches", *content, uid=uid)
 
 

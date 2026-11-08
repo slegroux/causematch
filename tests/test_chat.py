@@ -18,7 +18,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app import data, notify, security
-from app.db import blocks, matches, messages, openings, orgs
+from app.db import blocks, matches, messages, openings, orgs, profiles, shifts
 from main import app
 
 XSS = ["<script>alert(1)</script>", '"><img src=x onerror=alert(1)>']
@@ -156,6 +156,31 @@ def test_headers_show_only_what_each_side_may_see(chat):
     assert chat.opening.title in c and "Zelda" in c
     for secret in ("Quinn", chat.vol.phone, "coord0@example.org"):
         assert secret not in c and secret not in v
+
+
+def test_both_chat_pages_name_the_shift(chat):
+    profiles.update(id=chat.vol.uid, availability='["weekend_morning"]')
+    shift = data.chat_header(chat.vol.uid, chat.id)["shift"]
+    start = datetime.fromisoformat(shift["starts_at"])
+    line = f"{start:%a %b} {start.day} · {start:%-I:%M %p}"
+    for client, page in (
+        (chat.vol, f"/chat/{chat.id}"),
+        (chat.coord, f"/org/chat/{chat.id}"),
+    ):
+        html = client.get(page).text
+        assert line in html and shift["neighborhood"] in html
+    # the nonprofit alone sees when the volunteer is usually free
+    assert "Available: Weekend mornings" in chat.coord.get(f"/org/chat/{chat.id}").text
+    assert "Available:" not in chat.vol.get(f"/chat/{chat.id}").text
+
+
+def test_chat_line_falls_back_to_the_opening_time_without_an_upcoming_shift(chat):
+    for s in shifts(where="match_id = ?", where_args=[chat.id]):
+        shifts.update(id=s.id, starts_at="2020-01-01T09:00")
+    start = datetime.fromisoformat(chat.opening.starts_at)
+    html = chat.vol.get(f"/chat/{chat.id}").text
+    assert f"{start:%a %b} {start.day} · {start:%-I:%M %p}" in html
+    assert "Jan 1" not in html
 
 
 def test_third_parties_are_refused_on_http_and_ws(chat):
