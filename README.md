@@ -21,6 +21,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/OPERATIONS.md">Operations</a> ·
+  <a href="docs/ADMIN_GUIDE.md">Admin guide</a> ·
   <a href="docs/OPERATIONS.md#security">Security</a>
 </p>
 
@@ -67,7 +68,7 @@ app/routes/      volunteer, nonprofit and admin pages
 static/          htmx, Franken UI, compiled Tailwind, theme tokens, Nunito
 scripts/         demo, demo video (scripts/video), screenshots, admin and import tools, CSS build
 tests/           pytest suite
-docs/            architecture and operations
+docs/            architecture, operations and the admin guide
 ```
 
 ## Deploying
