@@ -2,6 +2,9 @@
 
 uv run python scripts/add_coordinator.py --email x@example.org --org-id 1 \
         --name "Maria Lopez, volunteer coordinator" [--phone "(310) 555-0123"] [--role owner]
+
+Refuses an address a volunteer signs in with unless --force is given: it would become a
+coordinator sign-in, and they'd reach their volunteer account only through Google or Apple.
 """
 
 import argparse
@@ -25,10 +28,20 @@ def main():
         "--phone", default="", help="optional; lets the coordinator choose Text"
     )
     p.add_argument("--role", choices=["owner", "coordinator"], default="coordinator")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="go ahead even when a volunteer signs in with this address",
+    )
     a = p.parse_args()
     phone = normalize_phone(a.phone) if a.phone else ""
     if a.phone and not phone:
         sys.exit(f"not a US phone number: {a.phone}")
+    if not a.force and data.volunteer_holds_address(a.email):
+        sys.exit(
+            data.volunteer_address_warning("coordinator")
+            + " Ask for a different address, or run again with --force."
+        )
     try:
         uid = data.add_coordinator(a.email, a.org_id, a.role, a.name.strip(), phone)
     except (LookupError, ValueError) as e:

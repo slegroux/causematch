@@ -2371,6 +2371,27 @@ def address_holder(email, provider):
     return None if has_one else uid
 
 
+def volunteer_holds_address(email):
+    """True when a live volunteer signs in with this exact address (_address_holders: an
+    emailed link's identity, or a Google or Apple one whose provider runs the mailbox).
+    Made a coordinator's or an admin's, it would get staff links from then on
+    (volunteer_link_kind), so approve_claim and scripts/add_coordinator.py and
+    add_admin.py ask first. A +tag is another address, and an emailed link to it stays
+    the volunteer's."""
+    email = email.strip().lower()
+    return email.isascii() and bool(_address_holders(email))
+
+
+def volunteer_address_warning(role):
+    """What an admin reads before a volunteer's sign-in address becomes a `role`'s."""
+    return (
+        "This person already volunteers on Causematch with this address. Making it a "
+        f"{role} sign-in sends every emailed sign-in link for it to the {role} side, so "
+        "they'd reach their volunteer account only by signing in with Google or Apple, "
+        "if they've connected one."
+    )
+
+
 def _warn_duplicates(provider, uid, email):
     """Several live volunteers hold one address: an operator merges or suspends them by
     hand (docs/ADMIN_GUIDE.md). Logs profile ids, never the address."""
@@ -4353,6 +4374,7 @@ def admin_claims(admin_uid):
                 if org
                 else None,
                 "members": _live_members(org.id) if org else [],
+                "volunteer": volunteer_holds_address(c.email),
             }
         )
     return out
@@ -4369,16 +4391,17 @@ def _pending_claim(claim_id):
     return found[0]
 
 
-def approve_claim(admin_uid, claim_id, confirm_claimed=False):
+def approve_claim(admin_uid, claim_id, confirm_claimed=False, confirm_volunteer=False):
     """Admin approval: the only way a claimant gets membership. Creates or links the
     coordinator, adds them to the org (owner when it has no live owner, else coordinator),
     verifies the org if it is not yet, and returns (profile id, email, org name) for the
     approval email.
 
     LookupError for a claim that is not pending; ValueError when no org has the EIN, the org
-    is deactivated, the address is an admin's or a suspended coordinator's, or the org
+    is deactivated, the address is an admin's or a suspended coordinator's, the org
     already has someone who can sign in (an owner or a coordinator) and confirm_claimed is
-    false."""
+    false, or a volunteer signs in with the address (volunteer_holds_address) and
+    confirm_volunteer is false."""
     _admin(admin_uid)
     c = _pending_claim(claim_id)
     org = _claim_org(c.ein)
@@ -4397,6 +4420,11 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
         where_args=[c.email],
     ):
         raise ValueError("that address belongs to a suspended coordinator")
+    if not confirm_volunteer and volunteer_holds_address(c.email):
+        raise ValueError(
+            "this person already volunteers with this address: read the warning, tick "
+            '"Yes, make it a coordinator sign-in", then tap Approve again'
+        )
     has_owner = any(m["role"] == "owner" for m in members)
     with _db.db.conn:
         existing = coordinator_by_email(c.email)

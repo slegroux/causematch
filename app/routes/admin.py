@@ -483,6 +483,13 @@ def ClaimCard(c, error=None):
         else None,
         note,
         P(f"Already claimed by {members}.", cls="font-semibold") if members else None,
+        Alert(
+            data.volunteer_address_warning("coordinator")
+            + " Ask the nonprofit for a different address if you can.",
+            cls=AlertT.warning,
+        )
+        if c["volunteer"]
+        else None,
         Alert(error, cls=AlertT.error) if error else None,
         Div(
             None
@@ -499,6 +506,13 @@ def ClaimCard(c, error=None):
                     f"Yes, approve for {org['name']}", name="name_checked", value="1"
                 )
                 if mismatch
+                else None,
+                LabelCheckboxX(
+                    "Yes, make it a coordinator sign-in",
+                    name="volunteer_ok",
+                    value="1",
+                )
+                if c["volunteer"]
                 else None,
                 PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
                 action=f"/admin/claims/{c['id']}/approve",
@@ -618,7 +632,10 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
         )
     try:
         _, email, org_name = data.approve_claim(
-            uid, claim_id, form.get("confirm") == "1"
+            uid,
+            claim_id,
+            form.get("confirm") == "1",
+            form.get("volunteer_ok") == "1",
         )
     except LookupError:
         return Redirect("/admin/claims")

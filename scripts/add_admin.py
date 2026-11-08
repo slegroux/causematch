@@ -2,6 +2,9 @@
 emailed link as a coordinator.
 
 uv run python scripts/add_admin.py --email x@example.org --name "Sylvain"
+
+Refuses an address a volunteer signs in with unless --force is given: it would become an
+admin sign-in, and they'd reach their volunteer account only through Google or Apple.
 """
 
 import argparse
@@ -17,7 +20,17 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--email", required=True)
     p.add_argument("--name", required=True)
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="go ahead even when a volunteer signs in with this address",
+    )
     a = p.parse_args()
+    if not a.force and data.volunteer_holds_address(a.email):
+        sys.exit(
+            data.volunteer_address_warning("admin")
+            + " Use a different address, or run again with --force."
+        )
     try:
         uid = data.add_admin(a.email, a.name.strip())
     except ValueError as e:
