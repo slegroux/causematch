@@ -40,6 +40,7 @@ from starlette.datastructures import UploadFile
 from app import data, notify, oauth, photos, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
 from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
+from app.config import demo_number, is_preview
 from app.forms import (
     EMAIL,
     HIDDEN_CHARS_MESSAGE,
@@ -48,7 +49,7 @@ from app.forms import (
     query,
     str_form,
 )
-from app.routes.auth import phone_off
+from app.routes.auth import PREVIEW_PHONES, phone_off
 from app.routes.prefs import Checks as ChipChecks
 from app.routes.safety import HubRow
 from app.ui import (
@@ -549,6 +550,8 @@ def _sync_phone_send(req, form, sess):
     e164 = normalize_phone(form.get("phone", ""))
     if not e164:
         return _phone_error(uid, BAD_PHONE)
+    if is_preview() and not demo_number(e164):  # as at sign-in (auth._sync_send)
+        return _phone_error(uid, PREVIEW_PHONES)
     if not security.allow(*security.sms_send_limits(req, e164)):
         return security.too_many()
     try:

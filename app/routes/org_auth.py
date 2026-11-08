@@ -7,7 +7,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import sign_in_staff
-from app.config import DEMO_COORDINATOR, demo_matches, is_preview
+from app.config import DEMO_COORDINATOR, demo_address, demo_matches, is_preview
 from app.forms import EMAIL, query, str_form
 from app.routes.auth import ProviderSignIn
 from app.ui import (
@@ -113,10 +113,13 @@ def link_sent(req, email):
         (security.LINK_PER_IP, security.ip_subject(req)),
     ):
         return security.too_many()
+    if is_preview() and not demo_address(email):
+        # A preview is demo-only: any other address gets an unknown address's answer and
+        # nothing is sent, so a real coordinator approved there can't be signed in as
+        return EmailForm(notice=SENT)
     if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
-        # Nothing is emailed, so the page shows a coordinator's link: anyone with the
-        # preview password may sign in as any coordinator, of the demo's data only. An
-        # admin's link stays in the log.
+        # Nothing is emailed, so the page shows a demo coordinator's link: anyone with the
+        # preview password may sign in as any of them. An admin's link stays in the log.
         uid = data.coordinator_by_email(email)
         if uid and data.coordinator_org_ids(uid):
             return EmailForm(notice=SENT, link=_send_link(email))

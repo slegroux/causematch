@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
@@ -206,9 +207,29 @@ def test_staff_sign_in_needs_the_provider_to_host_the_mailbox(
     assert r.status_code == 303 and r.headers["location"] == lands
     assert anon.get(lands).status_code == 200
     monkeypatch.setattr(oauth_routes, "is_preview", lambda: True)
-    c = TestClient(app)  # on a preview the fake signs in coordinators, never an admin
-    r, _ = google_sign_in(c, STAFF, email=email, hd=hd)
-    assert (NO_ACCOUNT in r.text and signed_out(c)) is (who == "admin")
+    c = TestClient(app)  # on a preview the fake signs in no admin, and nobody off the
+    r, _ = google_sign_in(c, STAFF, email=email, hd=hd)  # demo's domains
+    assert NO_ACCOUNT in r.text and signed_out(c)
+
+
+@pytest.mark.parametrize(
+    "email, signs_in",
+    [("lee@demo.causematch.test", True), ("coord0@example.org", False)],
+)
+def test_on_a_preview_the_fake_signs_in_demo_coordinators_only(
+    anon, monkeypatch, email, signs_in
+):
+    coordinator_for(0, email)
+    monkeypatch.setattr(oauth_routes, "is_preview", lambda: True)
+    r, _ = google_sign_in(anon, STAFF, email=email, hd=email.rpartition("@")[2])
+    assert (r.status_code == 303 and r.headers["location"] == "/org") is signs_in
+    assert (anon.get("/org", follow_redirects=False).status_code == 200) is signs_in
+
+
+def test_the_fake_consent_page_asks_for_a_subject_of_ones_own(anon):
+    page = anon.get("/auth/fake/consent", params={"provider": "google", **start(anon)})
+    (sub,) = re.findall(r'<input[^>]*name="sub"[^>]*>', page.text)
+    assert 'value=""' in sub and "required" in sub and "fake-1" not in page.text
 
 
 def test_coordinator_sign_in_with_an_unknown_email_creates_nothing(anon):

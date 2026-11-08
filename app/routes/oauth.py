@@ -21,7 +21,7 @@ from starlette.responses import RedirectResponse
 
 from app import data, notify, oauth, security
 from app.auth import sign_in, sign_in_staff
-from app.config import is_preview, is_production, public_base_url
+from app.config import demo_address, is_preview, is_production, public_base_url
 from app.forms import EMAIL, bad_request, query, str_form
 from app.routes.auth import SUSPENDED, PhoneForm
 from app.routes.org_auth import EmailForm, link_sent
@@ -256,10 +256,15 @@ def _staff_sign_in(req, sess, claims):
         sent = link_sent(req, email)
         return sent if isinstance(sent, Response) else FtResponse(sent)
     profile, is_coordinator = data.staff_by_email(email)
-    # A preview's fake consent page takes any typed email as verified, so there it never
-    # signs in an admin: as on /org/login, where a preview shows a coordinator's link on
-    # the page but an admin's stays in the log (org_auth.link_sent)
-    if profile and not is_coordinator and is_preview() and oauth.fake_enabled():
+    # A preview's fake consent page takes any typed email as verified, so there it signs
+    # in a demo coordinator only: never an admin (as on /org/login, where an admin's link
+    # stays in the log) and never an address off the demo's domains (org_auth.link_sent)
+    if (
+        profile
+        and is_preview()
+        and oauth.fake_enabled()
+        and not (is_coordinator and demo_address(email))
+    ):
         profile = None
     if profile is None:
         no_org = Span(NO_ORG, A("start a claim", href="/org/claim", cls="font-bold"))
@@ -310,7 +315,17 @@ def fake_consent(req):
         Form(
             Hidden(name="provider", value=fake.name),
             *[Hidden(name=k, value=query(req, k)) for k in _flow_fields(fake)],
-            Field("Subject", TextInput(name="sub", value="fake-1", required=True)),
+            # blank, not a shared default: the subject is the account, so two people who
+            # both keep a default would sign in to one account
+            Field(
+                "Subject",
+                TextInput(
+                    name="sub",
+                    value="",
+                    placeholder="Any word only you will use",
+                    required=True,
+                ),
+            ),
             Field("Email", TextInput(name="email", type="email", value="")),
             LabelCheckboxX(
                 "Email verified", name="email_verified", value="1", checked=True
