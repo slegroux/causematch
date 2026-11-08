@@ -15,13 +15,13 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import pytest
-from conftest import ROOT, coordinator_for, jpeg, sign_in, uid_of
+from conftest import ROOT, add_number, adder, coordinator_for, jpeg, sign_in, uid_of
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
 from test_photos import key_of, upload
 
-from app import data, demo_seed, notify, security
+from app import data, demo_seed, notify, oauth, security
 from app.auth import session_cookie, session_secret
 from app.config import (
     DEMO_COORDINATOR,
@@ -55,7 +55,6 @@ from app.db import (
 from app.db import (
     now as db_now,
 )
-from app.routes.auth import PREVIEW_PHONES
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
 
@@ -518,7 +517,7 @@ def test_no_banner_outside_a_preview(anon):
 
 def test_a_preview_shows_a_volunteers_link_on_the_page(guest):
     """As /org/login does for a coordinator: nothing is emailed, so the page shows it."""
-    page = guest.post("/login/send", data={"email": "new@example.org"}).text
+    page = guest.post("/login/send", data={"email": "new@demo.causematch.test"}).text
     link = re.search(
         r'href="https://causematch\.test(/login/verify\?token=[\w-]+)"', page
     )
@@ -531,18 +530,28 @@ def test_a_preview_shows_a_volunteers_link_on_the_page(guest):
     assert "Open your sign-in link" not in page and "token=" not in page
 
 
-def test_fake_codes_go_to_demo_numbers_only_in_a_preview(guest):
-    sent = len(notify.get_verifier().sent)
-    page = guest.post("/login/send", data={"phone": "(310) 555-1234"}).text
-    assert PREVIEW_PHONES in page and len(notify.get_verifier().sent) == sent
-    r = guest.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
-    assert r.status_code == 200 and "Enter your number to get a code." in r.text
+def test_a_preview_signs_up_and_in_demo_addresses_only(guest):
+    """Demo-only, as /org/login there: a real address gets the same answer, and no link
+    is made, shown, sent or logged, so it can neither sign up nor sign in."""
+    from app.db import login_tokens
+    from app.routes.auth import SENT
+
+    data.volunteer_for_identity(  # a real person's account on the preview, say
+        oauth.Claims("google", "g-real", "real@example.org", True, "Real", "", "")
+    )
+    for email in ("real@example.org", "someone.new@example.org"):
+        r = guest.post("/login/send", data={"email": email})
+        assert r.status_code == 200 and SENT in r.text and "token=" not in r.text
+    assert not notify.get_emailer().sent and login_tokens.count == 0
+    page = guest.post("/login/send", data={"email": demo_seed.ME_EMAIL}).text
+    assert "/login/verify?token=" in page  # a demo address still gets its link
 
 
-def test_outside_a_preview_any_number_gets_a_code(anon):
-    anon.post("/login/send", data={"phone": "(310) 555-1234"})
-    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/onboarding"
+def test_outside_a_preview_any_number_gets_a_code():
+    """Numbers are never a way in now; Me's add-a-number is where a code goes (on a
+    preview, to demo numbers only: test_profile)."""
+    assert add_number(adder(), "(310) 555-1234") == 303
+    assert notify.get_verifier().sent[-1][0] == "+13105551234"
 
 
 def test_a_preview_sends_nothing_to_an_address_off_the_demos_domains(guest, caplog):

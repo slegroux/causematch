@@ -10,7 +10,13 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, oauth, security
 from app.auth import sign_in
-from app.config import DEMO_PHONE, demo_matches, is_preview, phone_hash_key
+from app.config import (
+    DEMO_PHONE,
+    demo_address,
+    demo_matches,
+    is_preview,
+    phone_hash_key,
+)
 from app.forms import EMAIL, abuse_key, bad_request, query, str_form
 from app.ui import (
     BigButton,
@@ -207,6 +213,11 @@ def _sync_send(req, form, sess):
     # refusal says nothing about the account and the two pages share one budget
     if not security.allow(*security.link_limits(req, email)):
         return security.too_many()
+    if is_preview() and not demo_address(email):
+        # A preview is demo-only, as /org/login there (org_auth.link_sent): any other
+        # address gets the same answer and nothing is sent, shown or logged, so a real
+        # address neither signs up there nor gets a link
+        return LoginPage(notice=SENT)
     asked_for(sess, email)
     if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
         # As /org/login on a preview (org_auth.link_sent): nothing is emailed, so the page
