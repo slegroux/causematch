@@ -5,13 +5,14 @@ import smtplib
 import socket
 import ssl
 import threading
+import time
 import unicodedata
 from contextlib import contextmanager, nullcontext, suppress
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
+import anyio
 import httpx
-from starlette.concurrency import run_in_threadpool
 
 from app import data, security
 from app.config import (
@@ -190,16 +191,15 @@ class ResendEmailer:
 
 
 DAY = 24 * 3600
-# Shares of SMTP_MAX_PER_DAY, in every 24 hours: notices (urgent calls' emails among them,
-# with their own share inside, as urgent texts get half the SMS ceiling) and sign-up links
-# each have a cap, so links to existing accounts and staff always have at least a quarter.
-NOTICE_SHARE, SIGNUP_SHARE, URGENT_SHARE = 0.5, 0.25, 0.25
-KINDS = (
-    "sign-in",
-    "sign-up",
-    "notice",
-    "urgent",
-)  # what an emailer's send(kind=) takes
+# Shares of SMTP_MAX_PER_DAY, in every 24 hours. Staff's sign-in links get a floor
+# (1 - PUBLIC_SHARE) that nothing else can reach. Inside the public share, notices (urgent
+# calls' emails among them, with their own share inside, as urgent texts get half the SMS
+# ceiling) and sign-up links each have a cap, so volunteers' links to existing accounts
+# always have room too.
+PUBLIC_SHARE, NOTICE_SHARE, SIGNUP_SHARE, URGENT_SHARE = 0.9, 0.5, 0.25, 0.25
+# what an emailer's send(kind=) takes; "staff" is send_login_link's
+KINDS = ("staff", "sign-in", "sign-up", "notice", "urgent")
+SMTP_BREAK = 60  # seconds without connecting after a deadline or a failed connect
 
 
 class EmailCeiling(Exception):
@@ -207,12 +207,45 @@ class EmailCeiling(Exception):
     email used its share of it: not sent."""
 
 
-def _shut(server):
-    """SMTP_DEADLINE ran out: shut the socket, so the blocked call fails at once."""
-    sock = getattr(server, "sock", None)
-    if sock is not None:
-        with suppress(OSError):
-            sock.shutdown(socket.SHUT_RDWR)
+class SMTPUnavailable(Exception):
+    """A connect failed or a send ran out of time less than SMTP_BREAK ago: not tried."""
+
+
+class _Deadline:
+    """SMTP_DEADLINE for one send. watch(sock) keeps a duplicate of its descriptor, so
+    when time runs out the socket can be shut whatever is blocked on it (a TLS handshake,
+    the greeting, a reply), and the blocked call fails at once."""
+
+    def __init__(self):
+        self.end = time.monotonic() + SMTP_DEADLINE
+        self.hit = False
+        self._dup = None
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(SMTP_DEADLINE, self._shut)
+        self._timer.start()
+
+    def left(self):
+        return max(0.01, self.end - time.monotonic())
+
+    def watch(self, sock):
+        with self._lock:
+            if self.hit:
+                raise TimeoutError("SMTP deadline")
+            self._dup = socket.fromfd(sock.fileno(), sock.family, sock.type)
+
+    def _shut(self):
+        with self._lock:
+            self.hit = True
+            if self._dup is not None:
+                with suppress(OSError):
+                    self._dup.shutdown(socket.SHUT_RDWR)
+
+    def done(self):
+        """Stop the timer and wait for it, so hit is final."""
+        self._timer.cancel()
+        self._timer.join()
+        if self._dup is not None:
+            self._dup.close()
 
 
 def _close(server, polite):
@@ -228,12 +261,18 @@ class SMTPEmailer:
 
     Always TLS with the certificate checked: port 465 is TLS from the start, any other
     upgrades with STARTTLS, and a server that doesn't offer it is refused, so the password
-    never crosses in the clear. Each send has SMTP_DEADLINE in all, connecting and signing
-    in included. Inside batch() the sends of one thread share a signed-in connection.
+    never crosses in the clear. Each send has SMTP_DEADLINE in all (_Deadline), the
+    connect, TLS handshake and greeting included. One that runs out (or times out) once
+    the message may have reached the server raises TimeoutError, recorded "unknown"
+    (never retried: it may have gone); before that, SMTPUnavailable, recorded "failed"
+    (retried by the sweep). After either or a failed connect, no connect is tried for
+    SMTP_BREAK: those sends raise SMTPUnavailable too, spending no ceiling. Inside batch()
+    the sends of one thread share a connection.
 
-    Every send counts against SMTP_MAX_PER_DAY, and by its kind against a share of it:
-    "notice" NOTICE_SHARE, "urgent" that and URGENT_SHARE, "sign-up" SIGNUP_SHARE;
-    "sign-in" (a link to an existing account or staff) the whole only."""
+    Every send counts against SMTP_MAX_PER_DAY, and by its kind against shares of it:
+    anything but "staff" PUBLIC_SHARE; "notice" NOTICE_SHARE too, "urgent" that and
+    URGENT_SHARE, "sign-up" SIGNUP_SHARE; "sign-in" (a volunteer's link to their account)
+    the public share only."""
 
     def __init__(self, host, port, username, password, sender, per_day):
         self.host, self.port = host, port
@@ -241,6 +280,7 @@ class SMTPEmailer:
         self.sender = sender
         self.context = ssl.create_default_context()
         self._local = threading.local()  # .server: the open batch connection, if any
+        self._no_connect_until = 0.0  # time.monotonic(): SMTP_BREAK after a failure
 
         def share(name, part):
             return (
@@ -249,12 +289,14 @@ class SMTPEmailer:
             )
 
         whole = ((("email-smtp-day", per_day, DAY),), "all")
+        public = share("public", PUBLIC_SHARE)
         notices = share("notices", NOTICE_SHARE)
         self.limits = {
-            "sign-in": (whole,),
-            "sign-up": (whole, share("signups", SIGNUP_SHARE)),
-            "notice": (whole, notices),
-            "urgent": (whole, notices, share("urgent", URGENT_SHARE)),
+            "staff": (whole,),
+            "sign-in": (whole, public),
+            "sign-up": (whole, public, share("signups", SIGNUP_SHARE)),
+            "notice": (whole, public, notices),
+            "urgent": (whole, public, notices, share("urgent", URGENT_SHARE)),
         }
 
     @contextmanager
@@ -272,15 +314,45 @@ class SMTPEmailer:
             if server is not None:
                 _close(server, polite=True)
 
-    def _unconnected(self):
-        """An SMTP client not connected yet, so SMTP_DEADLINE covers connecting too."""
-        if self.port == SMTP_TLS_PORT:
-            server = smtplib.SMTP_SSL(timeout=SMTP_TIMEOUT, context=self.context)
-        else:
-            server = smtplib.SMTP(timeout=SMTP_TIMEOUT)
-        # the name TLS checks the certificate against; smtplib sets it only from the
-        # constructor's host, which would connect at once
+    def _open(self, deadline):
+        """A connected socket, already TLS on SMTP_TLS_PORT, watched by `deadline`."""
+        sock = socket.create_connection(
+            (self.host, self.port), timeout=min(SMTP_TIMEOUT, deadline.left())
+        )
+        try:
+            sock.settimeout(SMTP_TIMEOUT)
+            deadline.watch(sock)
+            if self.port == SMTP_TLS_PORT:
+                return self.context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
+        return sock
+
+    def _signed_in(self, deadline):
+        """A connection that greeted us with 220, is TLS and is signed in. A failed
+        connect or greeting stops connects for SMTP_BREAK."""
+        server = smtplib.SMTP(timeout=SMTP_TIMEOUT)  # no host: it doesn't connect yet
+        # the name STARTTLS checks the certificate against; smtplib sets it only from
+        # the constructor's host, which would connect outside the deadline
         server._host = self.host
+        try:
+            server.sock = self._open(deadline)
+            code, reply = server.getreply()
+            if code != 220:
+                raise smtplib.SMTPConnectError(code, reply)
+        except BaseException:
+            self._no_connect_until = time.monotonic() + SMTP_BREAK
+            server.close()
+            raise
+        try:
+            if self.port != SMTP_TLS_PORT:
+                # SMTPNotSupportedError when the server doesn't offer it
+                server.starttls(context=self.context)
+            server.login(self.username, self.password)
+        except BaseException:
+            server.close()
+            raise
         return server
 
     def send(self, to, subject, body, headers=None, kind="notice"):
@@ -291,35 +363,44 @@ class SMTPEmailer:
         for name, value in (headers or {}).items():
             message[name] = value
         message.set_content(body)
+        if (
+            time.monotonic() < self._no_connect_until
+            and getattr(self._local, "server", None) is None
+        ):
+            raise SMTPUnavailable  # before the ceiling: nothing is spent on it
         # security.allow logs "rate limit reached: email-smtp-..." (docs/OPERATIONS.md)
         if not security.allow(*self.limits[kind]):
             raise EmailCeiling
         batched = hasattr(self._local, "server")
         server = self._local.server if batched else None
-        fresh = server is None
-        if fresh:
-            server = self._unconnected()
-        timer = threading.Timer(SMTP_DEADLINE, _shut, (server,))
-        timer.start()
+        deadline = _Deadline()
+        sending = False  # once the message may have reached the server
         try:
-            if fresh:
-                server.connect(self.host, self.port)
-                if self.port != SMTP_TLS_PORT:
-                    # SMTPNotSupportedError when the server doesn't offer it
-                    server.starttls(context=self.context)
-                server.login(self.username, self.password)
+            if server is None:
+                server = self._signed_in(deadline)
+            else:
+                deadline.watch(server.sock)
+            sending = True
             server.send_message(message)
-        except BaseException:
+        except BaseException as e:
+            deadline.done()
             if batched:
                 self._local.server = None  # the next send connects afresh
-            _close(server, polite=False)
+            if server is not None:
+                _close(server, polite=False)
+            if deadline.hit or isinstance(e, TimeoutError):
+                self._no_connect_until = time.monotonic() + SMTP_BREAK
+                if sending:  # it may have gone: "unknown", never retried
+                    raise TimeoutError("SMTP deadline") from e
+                raise SMTPUnavailable from e  # nothing went: "failed", retried
             raise
-        finally:
-            timer.cancel()
-        if batched:
+        deadline.done()
+        if batched and not deadline.hit:
             self._local.server = server
-        else:
-            _close(server, polite=True)
+        else:  # out of a batch, or the deadline shut it just after the send
+            if batched:
+                self._local.server = None
+            _close(server, polite=not deadline.hit)
 
 
 def batch():
@@ -329,6 +410,9 @@ def batch():
 
 
 AFTER = "causematch.after"  # in a request's scope: what after() queued
+# worker threads for what after() queued, apart from anyio's shared pool (40), so a slow
+# mail server holds at most these and never the threads every sync route runs in
+AFTER_LIMITER = anyio.CapacityLimiter(4)
 
 
 def after(req, fn, *args):
@@ -343,7 +427,8 @@ def after(req, fn, *args):
 
 class RunAfter:
     """ASGI middleware: after an HTTP response, runs what after() queued, each in a worker
-    thread, as a BackgroundTask would. Never raises for them."""
+    thread under AFTER_LIMITER, as a BackgroundTask would. Never raises for them; when the
+    server stops first, logs how many may not have gone and lets the stop through."""
 
     def __init__(self, app):
         self.app = app
@@ -355,13 +440,19 @@ class RunAfter:
         try:
             await self.app(scope, receive, send)
         finally:
-            for fn, args in queued:
+            for i, (fn, args) in enumerate(queued):
                 try:
-                    await run_in_threadpool(fn, *args)
+                    await anyio.to_thread.run_sync(fn, *args, limiter=AFTER_LIMITER)
                 except Exception as e:  # noqa: BLE001  the response is out already
                     log.warning(
                         "a notice failed after the response: %s", type(e).__name__
                     )
+                except BaseException:
+                    log.warning(
+                        "up to %d notices not sent: the server is stopping",
+                        len(queued) - i,
+                    )
+                    raise
 
 
 def make_emailer(env=os.environ):
@@ -403,7 +494,7 @@ def send_login_link(email, token):
         "Your Causematch sign-in link",
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
-        kind="sign-in",
+        kind="staff",
     )
     return link
 

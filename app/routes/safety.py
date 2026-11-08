@@ -28,7 +28,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify
 from app.choices import SHARED_WITH_NONPROFIT
-from app.config import contact_email
+from app.config import contact_email, gmail_purge
 from app.forms import bad_request, str_form
 from app.ui import (
     CARD,
@@ -396,6 +396,15 @@ def Section(title, *paras):
     )
 
 
+# what /privacy says of the Gmail account's copies, by config.gmail_purge
+_GMAIL_COPIES = {
+    True: "Gmail keeps a copy of each email we send, and of any bounce or reply, in our "
+    "account: we move them to the bin after a day, and Gmail erases them 30 days later. ",
+    False: "Gmail keeps a copy of each email we send, and of any bounce or reply, in our "
+    "account, until we delete them or close the account. ",
+}
+
+
 @ar("/privacy", methods=["GET"])
 def privacy():
     contact = contact_email()
@@ -495,12 +504,7 @@ def privacy():
             f"Our email provider ({'Google, through Gmail' if gmail else 'Resend'}) "
             "sends everyone's sign-in links, coordinators' notices, and volunteers' "
             "notices when we can't text them. "
-            + (
-                "Gmail keeps a copy of each email in our account's Sent folder: we move "
-                "them to the bin after a day, and Gmail erases them 30 days later. "
-                if gmail
-                else ""
-            )
+            + (_GMAIL_COPIES[gmail_purge()] if gmail else "")
             + "If you add a "
             "mobile number, Twilio sends the code that confirms it and our texts. If "
             "you sign in with Google or Apple, that company confirms who you are, so it knows you use Causematch. Google Cloud hosts the "

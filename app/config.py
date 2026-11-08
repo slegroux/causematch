@@ -246,22 +246,35 @@ def smtp(env=os.environ):
     return host or "smtp.gmail.com", int(port), username, password, sender
 
 
-GMAIL_MAX_PER_DAY = 500  # recipients a free Gmail account may send to in a day
+# a free Gmail account may send to about 500 recipients a day: this keeps a margin
+GMAIL_MAX_PER_DAY = 450
 
 
 def smtp_max_per_day(env=os.environ):
     """The ceiling on emails sent over SMTP in any 24 hours, every kind together:
-    SMTP_MAX_PER_DAY, default 400. Through smtp.gmail.com (the default host) it may not
-    pass GMAIL_MAX_PER_DAY: Google may lock an account that goes over."""
+    SMTP_MAX_PER_DAY, default 400. Through smtp.gmail.com (the default host, in any
+    case) it may not pass GMAIL_MAX_PER_DAY: Google may lock an account that goes over."""
     raw = (env.get("SMTP_MAX_PER_DAY") or "").strip() or "400"
     if not raw.isdigit() or int(raw) < 1:
         raise RuntimeError("SMTP_MAX_PER_DAY must be a positive whole number")
-    host = (env.get("SMTP_HOST") or "").strip() or "smtp.gmail.com"
-    if host == "smtp.gmail.com" and int(raw) > GMAIL_MAX_PER_DAY:
+    host = (env.get("SMTP_HOST") or "").strip().lower() or "smtp.gmail.com"
+    if host.rstrip(".") == "smtp.gmail.com" and int(raw) > GMAIL_MAX_PER_DAY:
         raise RuntimeError(
             f"SMTP_MAX_PER_DAY may be at most {GMAIL_MAX_PER_DAY} through smtp.gmail.com"
         )
     return int(raw)
+
+
+def gmail_purge(env=os.environ):
+    """GMAIL_PURGE=daily: the Gmail account's daily purge is installed (docs/OPERATIONS.md,
+    Email through Gmail), so /privacy may say its copies go after a day. Unset: it says
+    they stay. Anything else refuses to start."""
+    raw = (env.get("GMAIL_PURGE") or "").strip().lower()
+    if raw not in ("", "daily"):
+        raise RuntimeError(
+            "GMAIL_PURGE must be daily (once the purge is installed) or unset"
+        )
+    return raw == "daily"
 
 
 def db_path(env=os.environ):
