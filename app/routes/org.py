@@ -920,11 +920,51 @@ INBOX_NOTICE = {
     "full": "That opening is full. You can decline instead, or post another opening.",
     "reported": "Thanks. A Causematch admin will review the report.",
     "blocked": "Blocked.",
+    "late": "Too late to undo that one.",
 }
 
 
 def Fact(term, value):
     return P(Span(f"{term}: ", cls="font-bold"), value, cls="text-sm text-ink")
+
+
+def ShiftFacts(m):
+    """What the like is for: the shift's date and time, the spots left, and whether it
+    falls in the volunteer's usual times (nothing under a block)."""
+    return Div(
+        P(
+            when(m["starts_at"], m["duration_minutes"]),
+            f" · {m['spots_left']} of {m['slots']} spots left",
+            cls="text-sm font-semibold text-ink",
+        ),
+        P(
+            "Fits their usual times" if m["fits"] else "Outside their usual times",
+            cls="text-sm text-ink-muted",
+        )
+        if m["fits"] is not None
+        else None,
+        cls="mt-1",
+    )
+
+
+def Declined(m):
+    """The note after a Decline, until the undo window closes: nothing was sent yet."""
+    return Div(
+        P(
+            f"Declined. {m['name']} hasn't been told yet.",
+            cls="text-sm font-semibold text-ink",
+        ),
+        PlainForm(
+            Button(
+                "Undo",
+                cls="min-h-11 px-2 text-sm font-semibold text-brand-ink underline "
+                "underline-offset-4 hover:text-brand",
+            ),
+            action=f"/org/matches/{m['id']}/undo",
+            method="post",
+        ),
+        cls="flex flex-wrap items-center justify-between gap-x-3 p-4 " + CARD,
+    )
 
 
 def InboxRow(m):
@@ -938,6 +978,7 @@ def InboxRow(m):
             Div(
                 VolunteerHeader(m["name"], m["photo_key"], m["pronouns"]),
                 P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
+                ShiftFacts(m),
                 cls="min-w-0 flex-1",
             ),
             status_pill(MATCH_STATUS, m["status"], "org"),
@@ -959,7 +1000,14 @@ def InboxRow(m):
         ),
         PlainForm(
             accept,
-            Button("Decline", name="decision", value="decline", cls=ButtonT.default),
+            # plain text, apart from Accept: a mis-tap costs one Undo, not a lost volunteer
+            Button(
+                "Decline",
+                name="decision",
+                value="decline",
+                cls="ml-auto min-h-11 px-3 text-sm font-semibold text-ink-muted "
+                "underline underline-offset-4 hover:text-ink",
+            ),
             action=f"/org/matches/{m['id']}/decide",
             method="post",
             cls="flex flex-wrap items-center gap-3",
@@ -1014,8 +1062,11 @@ def inbox(req):
     notice = query(req, "notice")
     chat_id = query(req, "match")
     chat_id = chat_id if chat_id.isascii() and chat_id.isdigit() else ""
+    declined = query(req, "declined")
     uid = req.scope["uid"]
     box = data.org_inbox(uid)
+    # the decline just made, while the volunteer has still been told nothing of it
+    undo = [m for m in box["decided"] if m["undoable"] and str(m["id"]) == declined]
     unanswered = data.org_unanswered(uid)
     return OrgShell(
         "inbox",
@@ -1043,7 +1094,7 @@ def inbox(req):
         Div(
             InboxSection(
                 "Waiting for you",
-                [InboxRow(m) for m in box["pending"]],
+                [*map(Declined, undo), *map(InboxRow, box["pending"])],
                 "No one is waiting.",
             ),
             Div(
@@ -1069,7 +1120,7 @@ async def decide(req, match_id: int):
 
 def _sync_decide(req, decision, match_id: int):
     try:
-        data.decide(req.scope["uid"], match_id, decision == "accept")
+        data.decide(req.scope["uid"], match_id, decision == "accept", undoable=True)
     except PermissionError:
         return Refusal(403)
     except ValueError as e:
@@ -1079,4 +1130,19 @@ def _sync_decide(req, decision, match_id: int):
     if decision == "accept":
         notify.on_accepted(match_id)
         return Redirect(f"/org/inbox?notice=accepted&match={match_id}")
+    return Redirect(f"/org/inbox?declined={match_id}")
+
+
+@ar("/org/matches/{match_id}/undo", methods=["POST"])
+async def undo_decline(req, match_id: int):
+    return await run_in_threadpool(_sync_undo, req, match_id)
+
+
+def _sync_undo(req, match_id: int):
+    try:
+        data.undo_decline(req.scope["uid"], match_id)
+    except PermissionError:
+        return Refusal(403)
+    except ValueError:
+        return Redirect("/org/inbox?notice=late")
     return Redirect("/org/inbox")

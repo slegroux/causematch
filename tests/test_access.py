@@ -120,6 +120,7 @@ ROUTES = {
     ("POST", "/org/openings/{opening_id}/urgent/close"): ("coordinator", "own-org"),
     ("GET", "/org/inbox"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
+    ("POST", "/org/matches/{match_id}/undo"): ("coordinator", "own-org"),
     ("GET", "/org/shifts"): ("coordinator", "own-org"),
     ("POST", "/org/shifts/{shift_id}/mark"): ("coordinator", "own-org"),
     ("POST", "/org/shifts/{shift_id}/cancel"): ("coordinator", "own-org"),
@@ -452,6 +453,20 @@ def decide_other(w, mid):
         data={"decision": "accept"},
         follow_redirects=False,
     )
+
+
+def undo_other(w, mid):
+    return w.org1.post(f"/org/matches/{mid}/undo", follow_redirects=False)
+
+
+def undo_checked(w):
+    """Declined (undoably) by its own org: another org's undo must leave it declined."""
+    data.decide(w.org0_uid, w.match.id, False, undoable=True)
+    path_id_check(
+        undo_other,
+        lambda w: w.match.id,
+        lambda w: matches[w.match.id].status == "declined",
+    )(w)
 
 
 def close_other(w, oid):
@@ -1029,6 +1044,7 @@ OWNERSHIP = {
         lambda w: w.match.id,
         lambda w: matches[w.match.id].status == "pending",
     ),
+    ("POST", "/org/matches/{match_id}/undo"): undo_checked,
     ("POST", "/org/openings/{opening_id}/close"): path_id_check(
         close_other,
         lambda w: w.opening.id,

@@ -206,6 +206,9 @@ class Match:
     decided_at: str
     decided_by: int
     withdrawn_at: str
+    # UTC; a coordinator's Decline stays undoable until then, and the volunteer is shown
+    # nothing of it before (data.decide, undo_decline)
+    undo_until: str
     org_blind: bool  # liked after the org blocked this volunteer: the org never sees it
     urgent_call_id: (
         int  # a like on an open UrgentCall's card: it counts toward that call

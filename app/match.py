@@ -100,6 +100,18 @@ def availability_slot(starts_at):
     return f"{DAY_KEYS[t.weekday()]}_{part}"
 
 
+def fits_usual_times(availability, starts_at):
+    """True when the shift's weekday-or-weekend part of the day is among the volunteer's
+    availability, compared as the weekday/weekend buckets a nonprofit already sees
+    (general_buckets), so it never tells which days. Nothing saved means any time."""
+    if not availability:
+        return True
+    return bool(
+        set(general_buckets([availability_slot(starts_at)]))
+        & set(general_buckets(availability))
+    )
+
+
 def day_slots(values):
     """Availability as day slots, in grid order: a slot stays, a bucket ('weekday_morning')
     becomes the slots it stands for (Mon-Fri mornings), the rest drops."""
