@@ -250,12 +250,13 @@ def _sync_callback(req, sess, provider, params):
         return _staff_sign_in(req, sess, claims)
     if intent == "link":
         return _link(sess, name, flow, claims)
-    if data.staff_mailbox(claims.email):
+    trusted = _trusted(provider)
+    if _refuses_staff(claims, trusted):
         return _staff_address(req, sess, claims)
     if params.get("user"):  # Apple's names, sent on first consent only
         given, family = oauth.apple_names(params["user"])
         claims = dataclasses.replace(claims, given_name=given, family_name=family)
-    profile = data.get_profile(data.volunteer_for_identity(claims, _trusted(provider)))
+    profile = data.get_profile(data.volunteer_for_identity(claims, trusted))
     if profile is None or profile.role != "volunteer":  # suspended by an admin
         sess.clear()
         return _login(SUSPENDED, 200)
@@ -275,9 +276,23 @@ def _trusted(provider):
     return not (is_preview() and isinstance(provider, oauth.Fake))
 
 
+def _refuses_staff(claims, trusted):
+    """One address, one role: a volunteer sign-up, or a join, whose verified email is a
+    coordinator's or admin's mailbox (data.staff_mailbox) is refused. A volunteer who
+    signed in with this identity before keeps signing in: a claim's unverified address,
+    approved as a coordinator's, mustn't lock them out. The fake on a preview proves no
+    address, and its answer mustn't tell a staff address from another, so there only a
+    demo address is checked; any other signs this browser's own account in or up."""
+    email = claims.email.strip()
+    if not (trusted or demo_address(email)):
+        return False
+    known = data.identity_owner(claims.provider, claims.subject)
+    return data.staff_mailbox(email) and not known
+
+
 def _staff_address(req, sess, claims):
-    """A volunteer sign-in whose verified email is a coordinator's or admin's mailbox
-    (data.staff_mailbox): one address, one role, so no volunteer is signed in or created.
+    """A volunteer sign-in refused for a staff mailbox (_refuses_staff): no volunteer is
+    signed in or created.
     The answer is the emailed link's for that address (/login/send): "check your email",
     and the staff link goes to an exact live staff address, nothing to a +tag of one."""
     sess.clear()

@@ -160,9 +160,10 @@ class Identity:
     subject: str  # the ID token's sub, or the link's address: unique per provider
     email: str
     created_at: str
-    # 1 when the email is the mailbox's current holder's: an emailed link's, or a Google
-    # or Apple one whose provider hosts that mailbox (oauth.authoritative). Only these
-    # join a sign-in by another way to this profile (data.volunteer_for_identity).
+    # data.HOLDER (1): the email may hold this account for a sign-in by another way to
+    # join (an emailed link's; Gmail on Google, iCloud on Apple). data.JOINER (2): a
+    # Workspace's (hd), which proved the mailbox but holds nothing. 0 or NULL: neither.
+    # Refreshed with the email at every sign-in (data.volunteer_for_identity).
     authoritative: int
 
 

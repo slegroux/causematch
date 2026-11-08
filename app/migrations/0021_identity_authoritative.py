@@ -1,11 +1,13 @@
-"""identity.authoritative: whether the identity's email is the mailbox's current holder's.
+"""identity.authoritative: whether the identity's email may hold its account for a join.
 
-A Google or Apple address counts only where the provider hosts the mailbox (as
-oauth.authoritative judges a staff sign-in); an emailed link's always does. A sign-in by one
-way joins the volunteer who holds that address by another only through such an identity
-(data.volunteer_for_identity). Runs before app/db.py declares the tables, so it adds the
-column itself. Existing rows are judged by their address alone: a Workspace account's hd
-was never stored, so its rows stay NULL, and an address that never joins is the safe side.
+1 (data.HOLDER): the emailed link's address, or a Google or Apple one on a mailbox the
+provider runs itself (Gmail, iCloud). A sign-in by another way with that exact address
+joins the volunteer (data.volunteer_for_identity). 2 (data.JOINER), set from then on, is
+a Workspace account's (hd): it proves the mailbox at sign-in but holds nothing, since a
+Workspace may give the address to someone else later. Runs before app/db.py declares
+the tables, so it adds the column itself. Existing rows are judged by their address
+alone; a Workspace row's hd was never stored, and it stays NULL, which holds nothing,
+as a JOINER would. Every later sign-in by the identity sets the column anew.
 """
 
 GOOGLE = ("gmail.com", "googlemail.com")

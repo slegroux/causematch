@@ -519,13 +519,17 @@ def test_only_the_exact_proven_address_joins(anon, monkeypatch, case):
 
 
 @pytest.mark.parametrize("variant", ["coord0@example.org", "coord0+vol@example.org"])
-def test_a_staff_address_never_signs_a_volunteer_in_or_up(anon, variant):
+def test_a_staff_address_never_signs_a_volunteer_up_or_joins_one(anon, variant):
     """By Google (the exact address or a +tag: the emailed link's answer, and only the
-    exact one gets the staff link), by the emailed link (+tag: nothing is sent) and by
-    Me's Connect. A volunteer whose Google account's address became staff's is refused."""
+    exact one gets the staff link), by the emailed link (+tag: nothing is sent), as a join
+    and by Me's Connect. A volunteer who signed in before the address became a staff
+    mailbox keeps signing in, by Google and by the emailed link (a claim's unverified
+    address, approved, mustn't lock them out)."""
     google_sign_in(TestClient(app), sub="g-before", email="coord0@gmail.com")
+    before_link = link_sign_in(TestClient(app), "vic@gmail.com")
     coordinator_for(0)
-    coordinator_for(1, "coord0@gmail.com")  # that volunteer's address, now staff's
+    coordinator_for(1, "c.o.o.r.d.0@gmail.com")  # that Google volunteer's mailbox
+    coordinator_for(2, "v.i.c+claim@gmail.com")  # the emailed-link volunteer's
     vol = volunteer()
     before, mails = counts(), len(notify.get_emailer().sent)
     r, _ = google_sign_in(anon, sub="g-staff", email=variant)
@@ -534,14 +538,18 @@ def test_a_staff_address_never_signs_a_volunteer_in_or_up(anon, variant):
     assert len(notify.get_emailer().sent) == mails + exact
     anon.post("/login/send", data={"email": "coord0+vol@example.org"})
     assert len(notify.get_emailer().sent) == mails + exact  # a +tag gets nothing
-    c = TestClient(app)
-    r, _ = google_sign_in(c, sub="g-before", email="coord0@gmail.com")
+    c = TestClient(app)  # a join into the emailed-link volunteer is refused too
+    r, _ = google_sign_in(c, sub="g-vic", email="vic@gmail.com")
     assert r.status_code == 200 and LINK_SENT in r.text and signed_out(c)
     flow = start(vol, "/me/identity/google/connect", "POST")
     callback = consent(vol, flow, sub="g-connect", email=variant.upper())
     r = vol.get(callback, follow_redirects=False)
     assert r.headers["location"] == "/me/profile?error=refused-google"
     assert counts() == before  # no profile and no identity
+    c = TestClient(app)  # those who signed in before still do
+    r, _ = google_sign_in(c, sub="g-before", email="coord0@gmail.com")
+    assert r.status_code == 303 and uid_of(c) == owner("g-before")
+    assert link_sign_in(TestClient(app), "vic@gmail.com") == before_link
 
 
 def test_a_suspended_account_or_mailbox_is_never_joined_by_a_new_way_in(anon):
@@ -590,3 +598,77 @@ def test_two_accounts_on_one_address_are_left_apart_and_logged(anon, caplog):
     shared = [m for m in caplog.messages if "share a sign-in address" in m]
     assert len(shared) == 3 and all(f"{first},{second}" in m for m in shared)
     assert not any("robin" in m for m in shared)  # ids only, never the address
+
+
+def test_an_address_the_provider_doesnt_run_holds_nothing_for_a_link(anon):
+    """The other way round: an emailed link never joins a Google account whose address
+    Google doesn't host, nor a Workspace one (hd matched), whose address the Workspace may
+    give to someone else; such a Workspace sign-in may still join into a holder."""
+    google_sign_in(anon, sub="g-plain", email="robin@example.org")
+    google_sign_in(TestClient(app), sub="g-ws", email="ana@corp.org", hd="corp.org")
+    for sub, email in (("g-plain", "robin@example.org"), ("g-ws", "ana@corp.org")):
+        assert link_sign_in(TestClient(app), email) != owner(sub)
+        assert sent_subject(email) == "Finish signing up for Causematch"
+    ben = link_sign_in(TestClient(app), "ben@corp.org")
+    for sub, hd, joins in (("g-1", "other.org", False), ("g-2", "corp.org", True)):
+        google_sign_in(TestClient(app), sub=sub, email="ben@corp.org", hd=hd)
+        assert (owner(sub) == ben) is joins
+
+
+def test_a_preview_fakes_account_is_never_joined_by_a_link_later(anon, monkeypatch):
+    monkeypatch.setattr(oauth_routes, "is_preview", lambda: True)
+    google_sign_in(anon, email=GMAIL)
+    fake = uid_of(anon)
+    monkeypatch.setattr(oauth_routes, "is_preview", lambda: False)
+    assert link_sign_in(TestClient(app), GMAIL) != fake
+
+
+def test_a_second_account_of_one_provider_or_a_non_ascii_address_never_joins(anon):
+    uid = link_sign_in(TestClient(app), GMAIL)
+    google_sign_in(anon, sub="g-1", email=GMAIL)
+    assert owner("g-1") == uid
+    google_sign_in(TestClient(app), sub="g-2", email=GMAIL)  # another Google account
+    assert owner("g-2") != uid and data.identities_of(uid)["google"] == GMAIL
+    karen = link_sign_in(TestClient(app), "karen@gmail.com")
+    kelvin = "\u212aaren@gmail.com"  # Python lowercases the Kelvin sign to "k"
+    claims = oauth.Claims("google", "g-k", kelvin, True, "", "", "")
+    assert data.volunteer_for_identity(claims) != karen
+    assert "google" not in data.identities_of(karen)
+
+
+def test_a_renamed_account_stops_holding_its_old_address(anon):
+    """Each sign-in refreshes the stored address: once Alice's Google account is renamed,
+    whoever has her old address next (Bob) gets his own account from the emailed link."""
+    google_sign_in(anon, sub="g-alice", email="alice@gmail.com")
+    alice = owner("g-alice")
+    google_sign_in(TestClient(app), sub="g-alice", email="alice.w@gmail.com")
+    assert data.identities_of(alice) == {"google": "alice.w@gmail.com"}
+    assert link_sign_in(TestClient(app), "alice@gmail.com") != alice
+    assert sent_subject("alice@gmail.com") == "Finish signing up for Causematch"
+    google_sign_in(TestClient(app), sub="g-ws", email="al@corp.org", hd="corp.org")
+    (row,) = identities(where="subject = ?", where_args=["g-ws"])
+    assert row.authoritative == data.JOINER  # a Workspace's: holds nothing
+    google_sign_in(TestClient(app), sub="g-ws", email="al@corp.org")  # hd gone
+    (row,) = identities(where="subject = ?", where_args=["g-ws"])
+    assert row.authoritative == 0
+
+
+def test_connect_refuses_an_address_another_volunteer_holds(anon):
+    link_sign_in(TestClient(app), GMAIL)
+    vol = volunteer()
+    flow = start(vol, "/me/identity/google/connect", "POST")
+    r = vol.get(consent(vol, flow, sub="g-mine", email=GMAIL), follow_redirects=False)
+    assert r.headers["location"] == "/me/profile?error=taken-google"
+    assert identities.count_where("subject = ?", ["g-mine"]) == 0
+
+
+def test_on_a_preview_the_fake_tells_no_staff_address_from_another(monkeypatch):
+    """The fake takes any typed email as verified, so its answer for a non-demo address
+    is the same whether staff's or not: this browser's own account, joined to nothing."""
+    coordinator_for(0)
+    monkeypatch.setattr(oauth_routes, "is_preview", lambda: True)
+    answers = set()
+    for email in ("coord0@example.org", "coord0+x@example.org", "nobody@example.org"):
+        r, _ = google_sign_in(TestClient(app), email=email)
+        answers.add((r.status_code, r.headers.get("location")))
+    assert answers == {(303, "/onboarding")}

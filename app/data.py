@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 import functools
 import hashlib
 import hmac
@@ -2233,10 +2234,11 @@ def volunteer_for_identity(claims, trusted=True):
     One address, one account: a first sign-in by one way joins the volunteer who already
     holds its exact address by another (address_holder), and the identity is attached to
     them, so the emailed link and Google or Apple open the same profile. Only proven
-    addresses join (the emailed link's, a provider's that it hosts), never the profile's
-    typed email. Nothing joins when the address's mailbox is suspended: that is refused as
-    before. trusted: False when the provider's "verified" means nothing (the fake on a
-    preview takes any typed email); such an identity neither joins nor is joined later."""
+    addresses join (the emailed link's, a provider's that it hosts: _authority), never the
+    profile's typed email. Nothing joins when the address's mailbox is suspended: that is
+    refused as before. Each sign-in by an existing identity refreshes its stored address
+    from the claims. trusted: False when the provider's "verified" means nothing (the fake
+    on a preview takes any typed email); such an identity neither joins nor is joined."""
     where = {
         "where": "provider = ? AND subject = ?",
         "where_args": [claims.provider, claims.subject],
@@ -2254,6 +2256,13 @@ def volunteer_for_identity(claims, trusted=True):
             for found in _db.identities(**where):
                 live = "id = ? AND deleted_at IS NULL"
                 if _db.profiles.count_where(live, [found.user_id]):
+                    # the address as the provider vouches for it now: a renamed account's
+                    # old address, which its mailbox's next holder may prove, holds nothing
+                    _db.identities.update(
+                        id=found.id,
+                        email=claims.email,
+                        authoritative=_authority(claims, trusted),
+                    )
                     if address and any(
                         h != found.user_id for h in _address_holders(address)
                     ):
@@ -2291,36 +2300,53 @@ def volunteer_for_identity(claims, trusted=True):
     return uid
 
 
-def _authoritative(claims):
-    """Whether this sign-in proves its email's mailbox is the signer's now: the emailed
-    link reached it, or Google or Apple hosts it (oauth.authoritative), not merely marked
-    it verified once, which a provider keeps after the mailbox passes to someone else."""
+# identity.authoritative: HOLDER, the address may hold an account that another way in
+# joins; JOINER, it proves the mailbox now (it may join into one) but holds none
+HOLDER, JOINER = 1, 2
+
+
+def _authority(claims, trusted=True):
+    """identity.authoritative for this sign-in. HOLDER: the emailed link reached the
+    mailbox, or Google or Apple runs it (Gmail, iCloud: oauth.authoritative by the address
+    alone). JOINER: Google vouches only as a Workspace's (hd is the address's domain),
+    which proves the mailbox is the signer's now, but the Workspace may hand the address
+    to someone else later, while Google keeps it on the old account. 0 for any other
+    address (a provider keeps it "verified" after the mailbox moves on), an unverified
+    one, and an untrusted provider's."""
     from app import oauth  # app.oauth imports app.auth, which imports this module
 
-    return claims.provider == EMAIL_SIGN_IN or oauth.authoritative(claims)
+    if not (trusted and claims.email_verified):
+        return 0
+    if claims.provider == EMAIL_SIGN_IN:
+        return HOLDER
+    if oauth.authoritative(dataclasses.replace(claims, hosted_domain="")):
+        return HOLDER
+    return JOINER if oauth.authoritative(claims) else 0
 
 
 def _proven_address(claims):
     """The exact lowercased address this sign-in proves, which it may join on, else None:
-    verified, ASCII (SQLite's lower() and Python's agree only there) and authoritative."""
-    email = claims.email.strip().lower()
-    if not (claims.email_verified and email and email.isascii()):
+    verified, ASCII before lowercasing (SQLite's lower() and Python's agree only there,
+    and Python turns the Kelvin sign into a "k") and a HOLDER's or a JOINER's."""
+    raw = claims.email.strip()
+    if not (raw and raw.isascii() and _authority(claims)):
         return None
-    return email if _authoritative(claims) else None
+    return raw.lower()
 
 
 def _address_holders(email):
     """Ids of the live volunteers (suspended ones too) holding this exact lowercased
     address as a proven way in: an emailed link's identity, or a Google or Apple one whose
-    provider hosts the mailbox (identity.authoritative). Exact, not forms.abuse_key: a
-    +tag is another account. Never profile.email, which anyone can type in Me."""
+    provider runs the mailbox (identity.authoritative HOLDER; never a Workspace's JOINER).
+    Exact, not forms.abuse_key: a +tag is another account. Never profile.email, which
+    anyone can type in Me."""
     rows = _db.db.q(
         "SELECT DISTINCT i.user_id FROM identity i JOIN profile p ON p.id = i.user_id "
         "WHERE p.deleted_at IS NULL AND p.role = 'volunteer' AND ("
         "(i.provider = ? AND i.subject = ?) OR "
-        "(i.provider != ? AND i.authoritative = 1 AND lower(i.email) = ?)"
+        "(i.provider != ? AND i.authoritative = ? AND lower(i.email) = ?)"
         ") ORDER BY i.user_id",
-        [EMAIL_SIGN_IN, email, EMAIL_SIGN_IN, email],
+        [EMAIL_SIGN_IN, email, EMAIL_SIGN_IN, HOLDER, email],
     )
     return [r["user_id"] for r in rows]
 
@@ -2370,7 +2396,7 @@ def _insert_identity(uid, claims, trusted=True):
             subject=claims.subject,
             email=claims.email,
             created_at=_now(),
-            authoritative=int(trusted and _authoritative(claims)),
+            authoritative=_authority(claims, trusted),
         )
     )
 
@@ -2395,8 +2421,9 @@ def link_identity(uid, claims, trusted=True):
     another account of this provider, "refused" when the profile isn't a live volunteer or
     a deleted account suspended with this identity left its hash, or a suspended account
     holds its verified address (mailbox_suspended), or a coordinator or admin does
-    (staff_mailbox: one address, one role). A deleted account's org blocks on it or on
-    that address apply to this profile, as at a sign-up. trusted: as at
+    (staff_mailbox: one address, one role). "taken" too when another live volunteer holds
+    its proven address (address_holder): one address, one account. A deleted account's org
+    blocks on it or on that address apply to this profile, as at a sign-up. trusted: as at
     volunteer_for_identity."""
     kept = _retained_identity(claims)
     if (kept and kept.suspended) or (
@@ -2419,6 +2446,9 @@ def link_identity(uid, claims, trusted=True):
             mine = "user_id = ? AND provider = ?"
             if _db.identities.count_where(mine, [uid, claims.provider]):
                 return "other"
+            address = _proven_address(claims) if trusted else None
+            if address and any(h != uid for h in _address_holders(address)):
+                return "taken"
             p = get_profile(uid)
             if p is None or p.role != "volunteer":
                 return "refused"
@@ -2941,15 +2971,19 @@ def volunteer_link_kind(email):
     volunteer holds it (email_sign_in_owner). "sign-up": no account holds it. None, and
     nothing is sent: a mailbox (forms.abuse_key, so a +tag or Gmail's dots don't dodge it)
     that a suspended account holds as a verified address, by any way in, live or deleted
-    with its hash kept; and a staff mailbox (staff_mailbox) that isn't this exact live
-    staff address: a +tag of it, or one that can't sign in (suspended, or a coordinator
-    without an org). One address, one role, as add_admin and claim approval keep it."""
+    with its hash kept; and, for a sign-up or a join, a staff mailbox (staff_mailbox) that
+    isn't this exact live staff address: a +tag of it, or one that can't sign in
+    (suspended, or a coordinator without an org). One address, one role, as add_admin and
+    claim approval keep it. A volunteer who signed up with the address keeps signing in:
+    a claim's unverified address, approved as a coordinator's, can't lock them out."""
     if staff_by_email(email)[0]:
         return "staff"
-    if staff_mailbox(email):
-        return None
     if mailbox_suspended(email):
         return None
+    if identity_owner(EMAIL_SIGN_IN, email):
+        return "sign-in"  # signed up before: an address made staff's later doesn't lock out
+    if staff_mailbox(email):
+        return None  # no sign-up and no join
     return "sign-in" if email_sign_in_owner(email) else "sign-up"
 
 
@@ -2984,11 +3018,19 @@ def email_sign_in_owner(email):
     that signed up with it, else the one it joins (address_holder: a volunteer whose
     Google or Apple account has it). None for a new account (a deleted account's identity
     signs nobody in)."""
+    if uid := identity_owner(EMAIL_SIGN_IN, email):
+        return uid
+    return address_holder(email, EMAIL_SIGN_IN) if email.isascii() else None
+
+
+def identity_owner(provider, subject):
+    """The live profile this exact identity signs in to, else None (a deleted account's
+    identity signs nobody in)."""
     where = "provider = ? AND subject = ?"
-    for found in _db.identities(where=where, where_args=[EMAIL_SIGN_IN, email]):
+    for found in _db.identities(where=where, where_args=[provider, subject]):
         if not _db.profiles[found.user_id].deleted_at:
             return found.user_id
-    return address_holder(email, EMAIL_SIGN_IN) if email.isascii() else None
+    return None
 
 
 def create_opening(

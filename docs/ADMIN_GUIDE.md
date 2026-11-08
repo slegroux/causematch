@@ -14,7 +14,7 @@ Contents: [1. Signing in](#1-who-is-an-admin-and-how-to-sign-in) · [2. Claims](
 
 ## 1. Who is an admin, and how to sign in
 
-An admin can see the admin pages and nothing else: the volunteer pages and the nonprofit pages (`/org`) are closed to you, so an admin can't swipe, post openings or chat. A person has one role per email address. An address that is already a coordinator can't also be an admin, and a coordinator's or admin's address (or a `+tag` of it) can't sign in as a volunteer, by emailed link, Google or Apple.
+An admin can see the admin pages and nothing else: the volunteer pages and the nonprofit pages (`/org`) are closed to you, so an admin can't swipe, post openings or chat. A person has one role per email address. An address that is already a coordinator can't also be an admin, and a coordinator's or admin's address (or a `+tag` of it) can't sign up as a volunteer or join a volunteer's account, by emailed link, Google or Apple. A volunteer who already signed in with that address keeps their account.
 
 ### Becoming an admin
 
