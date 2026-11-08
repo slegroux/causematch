@@ -8,7 +8,16 @@ from types import SimpleNamespace
 
 import apsw
 import pytest
-from conftest import FORM, ORIGIN, ROOT, admin_client, coordinator_for, sign_in
+from conftest import (
+    FORM,
+    ORIGIN,
+    ROOT,
+    add_number,
+    adder,
+    admin_client,
+    coordinator_for,
+    sign_in,
+)
 from starlette.testclient import TestClient
 from test_access import ROUTES
 
@@ -143,18 +152,17 @@ def codes_sent():
     return len(notify.get_verifier().sent)
 
 
-def test_sixth_code_request_within_ten_minutes_is_429(anon):
-    for _ in range(5):
-        assert anon.post("/login/send", data={"phone": "3105550111"}).status_code == 200
-    r = anon.post(
-        "/login/send", data={"phone": "(310) 555-0111"}
-    )  # same number, written another way
+def test_sixth_code_request_within_ten_minutes_is_429():
+    c = adder()
+    assert [add_number(c, "3105550111") for _ in range(5)] == [303] * 5
+    r = c.post(
+        "/me/phone/send", data={"phone": "(310) 555-0111"}
+    )  # written another way
     assert r.status_code == 429 and "Too many tries" in r.text
     assert r.headers["retry-after"]
     assert codes_sent() == 5
     # another number from another address is untouched
-    other = TestClient(app, client=("203.0.113.9", 1))
-    assert other.post("/login/send", data={"phone": "3105550112"}).status_code == 200
+    assert add_number(adder("203.0.113.9"), "3105550112") == 303
 
 
 def test_code_limits_per_phone_and_address_slide_and_cap_the_day():
@@ -170,56 +178,23 @@ def test_code_limits_per_phone_and_address_slide_and_cap_the_day():
     assert security.allow(*rules, now=t + 24 * 3600 + 1)
 
 
-def test_the_demo_number_keeps_per_phone_limits_unless_a_demo_shares_it(monkeypatch):
-    """Without config.demo_matches (production can't have it), the demo number is any
-    number: 5 codes per address in 10 minutes. In a demo every visitor shares it, so only
-    the address and network limits count."""
-    from app import demo_seed
-    from app.auth import normalize_phone
-    from app.config import DEMO_PHONE
-
-    assert normalize_phone(demo_seed.ME_PHONE) == DEMO_PHONE
-
-    def sends(n, at):
-        c = TestClient(app, client=(at, 1))
-        return [c.post("/login/send", data={"phone": DEMO_PHONE[2:]}).status_code
-                for _ in range(n)]  # fmt: skip
-
-    assert sends(6, "198.51.100.70") == [200] * 5 + [429]
-    assert security.verify_limits(DEMO_PHONE)  # wrong codes still lock it
-    for env in ({"CAUSEMATCH_ENV": "production"}, {"K_SERVICE": "x"}):
-        assert not security.shared_demo_phone(DEMO_PHONE, env)
-    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
-    rate_events.delete_where()
-    assert sends(25, "198.51.100.71") == [200] * 25  # past 5 per address, 20 a day
-    assert security.verify_limits(DEMO_PHONE) == ()
-    assert security.verify_limits("+13105550130")  # any other number: as before
-
-
 def test_someone_else_hammering_a_number_does_not_lock_its_owner_out():
     """L1: the 10-minute limit is per (phone, address), so the owner, elsewhere, still
     gets a code; the per-phone cap across addresses is 20 a day."""
-    attacker = TestClient(app, client=("198.51.100.66", 1))
-    codes = [
-        attacker.post("/login/send", data={"phone": "3105550130"}).status_code
-        for _ in range(6)
-    ]
-    assert codes == [200] * 5 + [429]
-    owner = TestClient(app, client=("203.0.113.40", 1))
-    assert owner.post("/login/send", data={"phone": "3105550130"}).status_code == 200
+    attacker = adder("198.51.100.66")
+    codes = [add_number(attacker, "3105550130") for _ in range(6)]
+    assert codes == [303] * 5 + [429]
+    assert add_number(adder("203.0.113.40"), "3105550130") == 303
     for i in range(14):  # spread over addresses: 20 in all for the number today
-        c = TestClient(app, client=(f"192.0.2.{i + 1}", 1))
-        assert c.post("/login/send", data={"phone": "3105550130"}).status_code == 200
-    late = TestClient(app, client=("203.0.113.41", 1))
-    assert late.post("/login/send", data={"phone": "3105550130"}).status_code == 429
+        assert add_number(adder(f"192.0.2.{i + 1}"), "3105550130") == 303
+    assert add_number(adder("203.0.113.41"), "3105550130") == 429
 
 
 def test_codes_per_ip_cap_at_sixty_an_hour():
-    c = TestClient(app, client=("198.51.100.70", 1))
+    c = adder("198.51.100.70")
     for i in range(60):
-        r = c.post("/login/send", data={"phone": f"310555{1000 + i}"})
-        assert r.status_code == 200
-    assert c.post("/login/send", data={"phone": "3105551999"}).status_code == 429
+        assert add_number(c, f"310555{1000 + i}") == 303
+    assert add_number(c, "3105551999") == 429
     assert codes_sent() == 60
 
 
@@ -228,24 +203,17 @@ def test_ipv6_clients_share_a_slash_48_for_codes(monkeypatch):
     monkeypatch.setenv("SMS_MAX_PER_HOUR", "1000")  # this test is about the /48
     codes = []
     for i in range(121):
-        c = TestClient(app, client=(f"2001:db8:aa:{i:x}::1", 1))
-        codes.append(
-            c.post("/login/send", data={"phone": f"310555{2000 + i}"}).status_code
-        )
-    assert codes == [200] * 120 + [429]
-    other = TestClient(app, client=("2001:db8:bb::1", 1))
-    assert other.post("/login/send", data={"phone": "3105552999"}).status_code == 200
+        codes.append(add_number(adder(f"2001:db8:aa:{i:x}::1"), f"310555{2000 + i}"))
+    assert codes == [303] * 120 + [429]
+    assert add_number(adder("2001:db8:bb::1"), "3105552999") == 303
 
 
 def test_the_global_sms_ceiling_stops_codes(monkeypatch):
     monkeypatch.setenv("SMS_MAX_PER_HOUR", "3")
     codes = [
-        TestClient(app, client=(f"192.0.2.{i + 1}", 1))
-        .post("/login/send", data={"phone": f"310555{3000 + i}"})
-        .status_code
-        for i in range(4)
+        add_number(adder(f"192.0.2.{i + 1}"), f"310555{3000 + i}") for i in range(4)
     ]
-    assert codes == [200] * 3 + [429]
+    assert codes == [303] * 3 + [429]
     assert codes_sent() == 3
 
 
@@ -276,42 +244,40 @@ def test_a_bad_sms_ceiling_refuses_to_start(env, match):
 def test_a_rate_limit_trip_is_logged_by_name_only(anon, caplog):
     with caplog.at_level(logging.WARNING, logger="causematch"):
         for _ in range(6):
-            anon.post("/login/send", data={"phone": "3105550131"})
+            anon.post("/login/send", data={"email": "who@example.org"})
     (msg,) = [r.getMessage() for r in caplog.records if "rate limit" in r.getMessage()]
-    assert msg == "rate limit reached: sms-phone-ip-10m"
+    assert msg == "rate limit reached: link-email-ip"
 
 
-def test_a_suspended_number_is_counted_like_any_other(anon):
+def test_a_suspended_number_is_counted_like_any_other():
     """The limit runs before the suspended check, so a 429 says nothing about the account."""
-    sign_in(TestClient(app), "3105550114")
     profiles.update(
         id=data.get_or_create_volunteer("+13105550114"), suspended_at="2026-01-01"
     )
-    rate_events.delete_where()  # the sign-in's own send
-    codes = [
-        anon.post("/login/send", data={"phone": "3105550114"}).status_code
-        for _ in range(6)
-    ]
-    assert codes == [200] * 5 + [429]
+    c = adder()
+    codes = [add_number(c, "3105550114") for _ in range(6)]
+    assert codes == [303] * 5 + [429] and codes_sent() == 0
 
 
-def test_right_codes_are_not_counted_against_the_check_limit(anon):
-    anon.post("/login/send", data={"phone": "3105550132"})
+def test_right_codes_are_not_counted_against_the_check_limit():
+    c = adder()
+    add_number(c, "3105550132")
     for _ in range(9):
-        anon.post("/login/verify", data={"code": "123456"})
-    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
-    assert r.status_code == 303
+        c.post("/me/phone/verify", data={"code": "123456"})
+    r = c.post("/me/phone/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/me/profile?notice=phone"
     assert len([e for e in rate_events() if e.key.startswith("verify-phone:")]) == 9
 
 
-def test_eleventh_code_check_in_ten_minutes_is_429_even_with_the_right_code(anon):
-    anon.post("/login/send", data={"phone": "3105550115"})
+def test_eleventh_code_check_in_ten_minutes_is_429_even_with_the_right_code():
+    c = adder()
+    add_number(c, "3105550115")
     for _ in range(10):
-        r = anon.post("/login/verify", data={"code": "123456"})
-        assert r.status_code == 200 and "didn't work" in r.text
-    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+        r = c.post("/me/phone/verify", data={"code": "123456"})
+        assert r.status_code == 400 and "didn't work" in r.text
+    r = c.post("/me/phone/verify", data={"code": "000000"}, follow_redirects=False)
     assert r.status_code == 429
-    assert anon.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    assert profiles(where="phone = ?", where_args=["+13105550115"]) == []
 
 
 def test_sign_in_links_cap_per_address_whether_or_not_it_is_a_coordinator(anon):
@@ -380,17 +346,19 @@ def test_propublica_lookups_and_imports_share_a_limit(monkeypatch):
 
 
 def test_counters_hold_no_phone_email_or_ip(anon):
-    anon.post("/login/send", data={"phone": "3105550116"})
-    anon.post("/org/login/send", data={"email": "who@example.org"})
+    add_number(adder(), "3105550116")
+    anon.post("/login/send", data={"email": "who@example.org"})
     keys = " ".join(e.key for e in rate_events())
     assert keys and not re.search(r"3105550116|who@|testclient|\+1", keys)
 
 
 def test_counters_live_in_the_database_so_a_restart_keeps_them(anon):
     for _ in range(5):
-        anon.post("/login/send", data={"phone": "3105550117"})
+        anon.post("/login/send", data={"email": "who@example.org"})
     security.reset_buckets()  # what a restart clears
-    assert anon.post("/login/send", data={"phone": "3105550117"}).status_code == 429
+    assert (
+        anon.post("/login/send", data={"email": "who@example.org"}).status_code == 429
+    )
     assert rate_events.count >= 5
 
 
@@ -454,9 +422,11 @@ def test_every_post_route_refuses_a_foreign_origin(anon, path):
 
 
 def test_cross_origin_post_is_403_and_does_nothing(anon):
-    r = anon.post("/login/send", data={"phone": "3105550118"}, headers={"Origin": EVIL})
+    r = anon.post(
+        "/login/send", data={"email": "x@example.org"}, headers={"Origin": EVIL}
+    )
     assert r.status_code == 403
-    assert codes_sent() == 0
+    assert notify.get_emailer().sent == []
 
 
 @pytest.mark.parametrize("who", ["user", "coord", "admin"])
@@ -472,18 +442,13 @@ def test_cross_origin_is_refused_for_signed_in_users_too(who, request):
 
 def test_no_origin_needs_a_same_origin_referer(anon):
     del anon.headers["origin"]
-    assert anon.post("/login/send", data={"phone": "3105550119"}).status_code == 403
+    form = {"email": "x@example.org"}
+    assert anon.post("/login/send", data=form).status_code == 403
     for ref in (EVIL + "/login", "https://causematch.test:8443/login", "not a url"):
-        r = anon.post(
-            "/login/send", data={"phone": "3105550119"}, headers={"Referer": ref}
-        )
+        r = anon.post("/login/send", data=form, headers={"Referer": ref})
         assert r.status_code == 403
-    r = anon.post(
-        "/login/send",
-        data={"phone": "3105550119"},
-        headers={"Referer": ORIGIN + "/login"},
-    )
-    assert r.status_code == 200 and codes_sent() == 1
+    r = anon.post("/login/send", data=form, headers={"Referer": ORIGIN + "/login"})
+    assert r.status_code == 200 and len(notify.get_emailer().sent) == 1
 
 
 def test_an_origin_is_matched_exactly(anon):
@@ -494,7 +459,7 @@ def test_an_origin_is_matched_exactly(anon):
         ORIGIN.upper(),
     ):
         r = anon.post(
-            "/login/send", data={"phone": "3105550120"}, headers={"Origin": origin}
+            "/login/send", data={"email": "x@example.org"}, headers={"Origin": origin}
         )
         assert r.status_code == 403, origin
 
@@ -606,18 +571,18 @@ def test_every_stylesheet_and_script_is_served(anon):
 
 
 def test_a_body_over_64_kb_is_413(anon):
-    r = anon.post("/login/send", data={"phone": "3" * 70_000})
-    assert r.status_code == 413 and codes_sent() == 0
+    r = anon.post("/login/send", data={"email": "3" * 70_000})
+    assert r.status_code == 413 and rate_events.count == 0
 
 
 def test_a_chunked_body_over_64_kb_is_413(anon):
-    body = iter([b"phone=" + b"3" * 40_000, b"3" * 40_000])
+    body = iter([b"email=" + b"3" * 40_000, b"3" * 40_000])
     r = anon.post(
         "/login/send",
         content=body,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert r.status_code == 413 and codes_sent() == 0
+    assert r.status_code == 413 and rate_events.count == 0
 
 
 # --- errors ---------------------------------------------------------------------------------
@@ -787,7 +752,7 @@ def test_trusted_hops_must_be_explicit_on_cloud_run_and_whole(env):
 def test_the_hashed_client_key_is_logged_at_debug_never_the_address(caplog):
     c = TestClient(app, client=("198.51.100.77", 1))
     with caplog.at_level(logging.DEBUG, logger="causematch"):
-        c.post("/login/send", data={"phone": "3105550133"})
+        c.post("/login/send", data={"email": "x@example.org"})
     keys = [r.getMessage() for r in caplog.records if "client key" in r.getMessage()]
     assert keys and all(re.fullmatch(r"client key [0-9a-f]{12}", k) for k in keys)
     assert not any("198.51.100" in r.getMessage() for r in caplog.records)
@@ -808,9 +773,7 @@ def test_ipv6_counts_per_64_and_per_48():
 
 
 def test_development_session_cookie(anon):
-    anon.post("/login/send", data={"phone": "3105550121"})
-    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
-    cookie = r.headers["set-cookie"]
+    cookie = sign_in(anon).headers["set-cookie"]
     assert cookie.startswith("cm_session=")
     assert "httponly" in cookie.lower() and "samesite=lax" in cookie.lower()
     assert "path=/" in cookie.lower()

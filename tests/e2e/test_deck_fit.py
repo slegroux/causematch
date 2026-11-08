@@ -78,7 +78,7 @@ def test_a_tall_urgent_card_fits_above_pass_and_like(
     data.dismiss_photo_nudge(p.id)  # one nudge at a time: the photo prompt comes first
     page.goto("/deck")
     assert page.locator("#a2hs").is_visible()  # the iPhone toast is part of the case
-    assert "don't enter real details" in page.locator("[role=note]").inner_text()
+    assert "demo data, wiped at any time" in page.locator("[role=note]").inner_text()
     width = page.evaluate("[document.scrollingElement.scrollWidth, innerWidth]")
     assert width[0] == width[1]  # the full-width strip adds no sideways scroll
     row = page.locator(".cm-swipe-buttons").bounding_box()

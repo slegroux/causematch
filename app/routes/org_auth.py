@@ -7,9 +7,15 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import sign_in_staff
-from app.config import DEMO_COORDINATOR, demo_matches, is_preview
+from app.config import DEMO_COORDINATOR, demo_address, demo_matches, is_preview
 from app.forms import EMAIL, query, str_form
-from app.routes.auth import ProviderSignIn
+from app.routes.auth import (
+    BAD_EMAIL,
+    BAD_LINK,
+    ConfirmPage,
+    ProviderSignIn,
+    asked_for,
+)
 from app.ui import (
     BigButton,
     DemoSignIn,
@@ -24,8 +30,6 @@ ar = Router()
 log = logging.getLogger("causematch")
 
 SENT = "If that address belongs to a coordinator, a sign-in link is on its way."
-BAD_EMAIL = "Enter your email address."
-BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
 
 
 def EmailForm(email="", error=None, notice=None, link=None):
@@ -63,7 +67,7 @@ def EmailForm(email="", error=None, notice=None, link=None):
         intro=notice or "Sign in to post volunteer openings.",
         aside=P(
             "Volunteering? ",
-            A("Sign in with your phone", href="/login", cls="text-brand font-bold"),
+            A("Volunteer sign in", href="/login", cls="text-brand font-bold"),
             cls="mt-8 text-center text-ink-muted",
         ),
     )
@@ -87,36 +91,37 @@ def _send_link(email):
 
 
 @ar("/org/login/send", methods=["POST"])
-async def org_login_send(req):
+async def org_login_send(req, sess):
     form = await str_form(req)
     if form is None:
         return Response("Bad request", status_code=400)
-    return await run_in_threadpool(_sync_org_login_send, req, form)
+    return await run_in_threadpool(_sync_org_login_send, req, form, sess)
 
 
-def _sync_org_login_send(req, form):
+def _sync_org_login_send(req, form, sess):
     raw = form.get("email", "").strip()
     # not ASCII is refused before lowercasing, which would turn the Kelvin sign into a "k"
     if len(raw) > 254 or not raw.isascii() or not EMAIL.fullmatch(raw):
         return EmailForm(raw[:254], BAD_EMAIL)
-    return link_sent(req, raw.lower())
+    return link_sent(req, raw.lower(), sess)
 
 
-def link_sent(req, email):
+def link_sent(req, email, sess):
     """What a request for a sign-in link to this (lowercased) address answers: the
     "check your email" page, the link sent after the response, under the link limits. Also
     a staff provider sign-in's answer when the provider doesn't host the mailbox
     (app/routes/oauth.py). A page, a (page, BackgroundTask), or the 429 response."""
     # every valid-shape address is counted, so a refusal says nothing about the account
-    if not security.allow(
-        (security.LINK_PER_EMAIL, email),
-        (security.LINK_PER_IP, security.ip_subject(req)),
-    ):
+    if not security.allow(*security.link_limits(req, email)):
         return security.too_many()
+    if is_preview() and not demo_address(email):
+        # A preview is demo-only: any other address gets an unknown address's answer and
+        # nothing is sent, so a real coordinator approved there can't be signed in as
+        return EmailForm(notice=SENT)
+    asked_for(sess, email)
     if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
-        # Nothing is emailed, so the page shows a coordinator's link: anyone with the
-        # preview password may sign in as any coordinator, of the demo's data only. An
-        # admin's link stays in the log.
+        # Nothing is emailed, so the page shows a demo coordinator's link: anyone with the
+        # preview password may sign in as any of them. An admin's link stays in the log.
         uid = data.coordinator_by_email(email)
         if uid and data.coordinator_org_ids(uid):
             return EmailForm(notice=SENT, link=_send_link(email))
@@ -145,18 +150,17 @@ def org_login_confirm(req, sess):
 
     The emailed link's token moves into the session and the browser is sent to the same
     path without it, so the page and its assets' Referers never carry it; the button's POST
-    reads it from the session. Only the link's own request line still shows it. The policy
-    is same-origin, not no-referrer: under no-referrer a browser sends `Origin: null` with
-    the button's POST, which security.Guard refuses."""
+    reads it from the session. Only the link's own request line still shows it. The page
+    (auth.ConfirmPage) peeks at the token to name the account it signs in to."""
     token = query(req, "token")
     if token:
         sess["login_token"] = token[:200]
         return Redirect("/org/login/verify")
-    return HttpHeader("Referrer-Policy", "same-origin"), SignInPage(
-        "Sign in to Causematch",
-        Form(BigButton("Sign in"), action="/org/login/verify", method="post"),
-        intro="Press the button to finish signing in.",
-    )
+    uid, _ = data.peek_login_token(sess.get("login_token", ""))
+    profile = data.get_profile(uid) if uid else None
+    if profile is None or not profile.email:
+        return HttpHeader("Referrer-Policy", "same-origin"), EmailForm(error=BAD_LINK)
+    return ConfirmPage("/org/login/verify", profile.email, sess, profile.id)
 
 
 @ar("/org/login/verify", methods=["POST"])

@@ -10,7 +10,26 @@ import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
 MAX_URL = 500
-EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # fullmatch: an address's rough shape
+# fullmatch: a bare address. The local part is a dot-atom (RFC 5322 with no quotes or
+# comments), the domain dot-separated labels ending in a TLD of letters: no display name,
+# angle brackets, quoting, or leading, trailing or doubled dot.
+_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+EMAIL = re.compile(
+    rf"{_ATOM}(?:\.{_ATOM})*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{{2,}}"
+)
+GMAIL = ("gmail.com", "googlemail.com")  # one mailbox, and dots in its name don't count
+
+
+def abuse_key(email):
+    """The mailbox behind an address, for what must not be dodged by writing it another
+    way: suspensions and kept hashes, and the per-address rate limits. Lowercased, without
+    a +tag, and for Gmail without dots and under gmail.com. Mail still goes to the address
+    as typed."""
+    local, _, domain = email.lower().rpartition("@")
+    local = local.split("+", 1)[0] or local  # "+x@d" keeps its whole local part
+    if domain in GMAIL:
+        local, domain = local.replace(".", ""), GMAIL[0]
+    return f"{local}@{domain}"
 
 
 async def str_form(req):

@@ -62,14 +62,14 @@ def test_no_handler_takes_user_input_through_a_parameter():
 # --- the sign-in forms -------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["phone", "code"])
+@pytest.mark.parametrize("name", ["email", "token"])
 def test_login_form_beats_a_cookie(name):
-    c = with_cookie(
-        TestClient(app), name, "3105559999" if name == "phone" else "111111"
+    c = with_cookie(TestClient(app), name, "evil@example.org")
+    c.post("/login/send", data={"email": "me@example.org"})
+    assert notify.get_emailer().sent[-1][0] == "me@example.org"
+    r = c.post(
+        "/login/verify", data={"token": last_link_token()}, follow_redirects=False
     )
-    c.post("/login/send", data={"phone": "(310) 555-0111"})
-    assert notify.get_verifier().sent[-1][0] == "+13105550111"
-    r = c.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/onboarding"
 
 

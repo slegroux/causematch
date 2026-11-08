@@ -9,7 +9,7 @@ atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ["CAUSEMATCH_DB"] = os.path.join(_tmp, "test.db")
 os.environ["CAUSEMATCH_FAKE_SMS"] = "1"
 os.environ["CAUSEMATCH_FAKE_EMAIL"] = "1"
-os.environ["CAUSEMATCH_FAKE_OAUTH"] = "1"
+os.environ["CAUSEMATCH_FAKE_OAUTH"] = "google,apple"  # "1" would be Google alone
 os.environ["PUBLIC_BASE_URL"] = "https://causematch.test"
 os.environ["CAUSEMATCH_ENV"] = "test"
 os.environ.pop("K_SERVICE", None)
@@ -52,6 +52,7 @@ from app import data, notify, security
 from app.auth import normalize_phone
 from app.choices import ANY_DISTANCE_KM
 from app.db import (
+    Identity,
     Opening,
     blocks,
     causes,
@@ -145,12 +146,67 @@ FORM = {
 
 
 def sign_in(client, phone=None):
+    """Sign in as this number's volunteer (a new one by default) through the emailed
+    link's POST, the way a volunteer who signed up by email does. The number stays on the
+    profile so tests can find it (client.phone); the profile gets the email identity a
+    sign-up by link leaves, and no profile email (as a phone-era profile had none). The
+    link is made directly, so /login/send's rate limits aren't spent; its own tests cover
+    sending."""
     phone = phone or str(next(_phones))
     client.phone = normalize_phone(phone)
-    client.post("/login/send", data={"phone": phone})
-    r = client.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    uid = data.get_or_create_volunteer(client.phone)
+    email = client.email = f"v{client.phone[1:]}@example.org"
+    mine = "user_id = ? AND provider = ?"
+    if not identities(where=mine, where_args=[uid, data.EMAIL_SIGN_IN]):
+        identities.insert(
+            Identity(
+                user_id=uid,
+                provider=data.EMAIL_SIGN_IN,
+                subject=email,
+                email=email,
+                created_at=now(),
+            )
+        )
+    token = data.create_email_token(email)
+    r = client.post("/login/verify", data={"token": token}, follow_redirects=False)
     assert r.status_code == 303
     return r
+
+
+def adder(ip="testclient"):
+    """A signed-in, onboarded volunteer without a number, at this address: Me's
+    add-a-number is what texts codes now (sign-in is the emailed link's)."""
+    c = TestClient(app, client=(ip, 1))
+    sign_in(c)
+    profiles.update(
+        id=data.get_or_create_volunteer(c.phone),
+        phone=None,
+        display_name="Sam",
+        onboarded_at="2026-01-01T00:00:00",
+        heard_from="skipped",
+    )
+    return c
+
+
+def add_number(client, phone):
+    """POST Me's add-a-number; 303 when a code went out (or was skipped, unseen)."""
+    r = client.post("/me/phone/send", data={"phone": phone}, follow_redirects=False)
+    return r.status_code
+
+
+def link_sign_in(client, email):
+    """Sign in or up the way a volunteer does: ask /login/send for the emailed link, then
+    use it (the fake emailer keeps it). Returns the profile id."""
+    client.post("/login/send", data={"email": email})
+    r = client.post(
+        "/login/verify", data={"token": last_link_token()}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    (i,) = identities(
+        where="provider = ? AND subject = ?",
+        where_args=[data.EMAIL_SIGN_IN, email.lower()],
+    )
+    return i.user_id
 
 
 @pytest.fixture

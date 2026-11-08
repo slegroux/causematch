@@ -8,8 +8,11 @@ from e2e.helpers import (
     accepted_match,
     certificate_id,
     coordinator_page,
+    email_of,
     guard,
+    open_link,
     sign_in_page,
+    sign_up,
 )
 
 pytestmark = pytest.mark.e2e
@@ -248,12 +251,7 @@ def test_a_full_card_keeps_pass_and_like_above_the_tab_bar(phone):
 
 
 def test_onboarding_fills_and_submits_on_a_small_phone(phone):
-    phone.goto("/login")
-    phone.get_by_label("Mobile number").fill("(310) 555-0165")
-    phone.get_by_role("button", name="Text me a code").click()
-    phone.get_by_label("Code").fill("000000")
-    phone.get_by_role("button", name="Sign in").click()
-    phone.wait_for_url("**/onboarding")
+    sign_up(phone, "(310) 555-0165")
     width = phone.evaluate("[document.scrollingElement.scrollWidth, window.innerWidth]")
     assert width[0] <= width[1], width
     phone.locator("input[name=first_name]").fill("Sam")
@@ -280,9 +278,10 @@ def test_a_new_volunteer_reaches_the_first_card_in_nine_taps_or_fewer(phone):
             locator.fill(text)
 
     phone.goto("/login")
-    tap(phone.get_by_label("Mobile number"), "(310) 555-0167")
-    tap(phone.get_by_role("button", name="Text me a code"))
-    tap(phone.get_by_label("Code"), "000000")
+    tap(phone.get_by_label("Email"), email_of("(310) 555-0167"))
+    tap(phone.get_by_role("button", name="Email me a link"))
+    taps += 1  # opening the link in the email
+    open_link(phone, email_of("(310) 555-0167"))
     tap(phone.get_by_role("button", name="Sign in"))
     phone.wait_for_url("**/onboarding")
     assert phone.locator("input[name=first_name]").evaluate(

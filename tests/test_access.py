@@ -57,7 +57,8 @@ SECRETS = [NAME, PANTRY]
 #   scope: None | own-record (the signed-in volunteer's) | own-org (the coordinator's org's)
 ROUTES = {
     ("GET", "/login"): ("public", None),
-    ("POST", "/login/send"): ("public", None),
+    ("POST", "/login/send"): ("public", None),  # the emailed link, rate-limited
+    ("GET", "/login/verify"): ("public", None),  # the link's button; uses nothing up
     ("POST", "/login/verify"): ("public", None),
     ("POST", "/logout"): ("volunteer", None),  # any signed-in role may sign out
     ("GET", "/org/login"): ("public", None),
