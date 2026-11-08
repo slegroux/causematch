@@ -1,0 +1,14 @@
+# Litestream's config for production (entrypoint.sh, docs/OPERATIONS.md "Production
+# deploy"): the SQLite file streamed to a GCS bucket about every second, and restored from
+# it when an instance starts. Litestream expands the variables: entrypoint.sh sets
+# LITESTREAM_DB to the file the app opens (CAUSEMATCH_DB, else data/causematch.db), and
+# LITESTREAM_BUCKET comes from the service's environment. Credentials are the service
+# account's, from Cloud Run's metadata server: nothing secret here.
+#
+# One writer only: Litestream assumes it is the only process replicating this database,
+# so the service runs with --max-instances 1. Litestream's defaults otherwise: a snapshot
+# a day, 24 hours of history to restore from, a final sync on shutdown.
+dbs:
+  - path: ${LITESTREAM_DB}
+    replica:
+      url: gs://${LITESTREAM_BUCKET}/causematch.db

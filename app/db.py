@@ -11,6 +11,9 @@ from app.match import LA
 DB_PATH = db_path()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 db = database(DB_PATH)
+# Litestream (production) takes short write locks when it checkpoints: wait up to 5 s for
+# one, as its docs advise, rather than apsw's 100 ms, which fails the write.
+db.conn.setbusytimeout(5000)
 # An early build installed this trigger. It names the shift table, so any rebuild of that
 # table (a migration's, say) fails half-way and strands its rows.
 db.execute("DROP TRIGGER IF EXISTS shift_with_match")
