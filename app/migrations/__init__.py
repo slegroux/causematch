@@ -93,14 +93,18 @@ def migrate(conn, steps=None):
 
 def check(conn, tables):
     """Stop when a table lacks a column its class declares; warn about one only the table
-    has (kept, never dropped). tables: {name: [column, ...]} from app/db.py's classes."""
+    has (kept, never dropped). tables: {name: [column, ...]} from app/db.py's classes.
+
+    Names only: a changed type, primary key or NOT NULL, and a table whose class is gone,
+    pass unnoticed here and need a migration all the same."""
     for name, want in tables.items():
         have = [r[1] for r in conn.execute(f"PRAGMA table_info([{name}])")]
         if missing := [c for c in want if c not in have]:
             raise RuntimeError(
                 f"table {name} has no column {', '.join(missing)}, which its class in "
                 f"app/db.py declares: add a migration "
-                f"app/migrations/{available()[-1][0] + 1:04d}_<what>.py that adds it "
+                f"app/migrations/{available()[-1][0] + 1:04d}_<what>.py that adds "
+                f"{'them' if len(missing) > 1 else 'it'} "
                 f"(ALTER TABLE {name} ADD COLUMN ...)"
             )
         if extra := [c for c in have if c not in want]:

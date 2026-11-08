@@ -473,6 +473,8 @@ db.execute(
     "WHERE role = 'admin' AND deleted_at IS NULL"
 )
 # Every table above against its class: a column only the class has stops the app here.
+# The index statements run first, so a missing column one of them names stops it there
+# instead, with SQLite's bare "no such column" (all such columns date from the baseline).
 migrations.check(
     db.conn,
     {

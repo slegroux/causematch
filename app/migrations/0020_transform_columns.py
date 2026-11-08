@@ -1,10 +1,14 @@
 """The columns `transform=True` added from the classes, with no migration of their own.
 
-Between the baseline (0001) and the end of transform, these columns reached an existing
-database only through app/db.py's `db.create(..., transform=True)`. app/db.py no longer
-reshapes tables, and stops when a table lacks a column its class declares, so a database
-last started before one of them was added gets it here. Runs before app/db.py declares the
+From the baseline (0001) to the end of transform, these columns reached an existing database
+only through app/db.py's `db.create(..., transform=True)`. The list covers every table: for
+each, the fields its class has today that it lacked in some version of app/db.py since the
+baseline commit (cd2c74a), less those 0010 and 0012 to 0019 add. app/db.py no longer
+reshapes tables and stops when a table lacks a column its class declares, so a database last
+started before one of these was added gets it here. Runs before app/db.py declares the
 tables, so it adds the columns itself; existing rows keep NULL, as transform left them.
+ALTER TABLE appends, so a migrated table's column order differs from a new one's: nothing
+reads columns by position.
 """
 
 COLUMNS = (
@@ -44,6 +48,9 @@ COLUMNS = (
     ("profile", "urgent_per_week", "INTEGER"),
     ("login_token", "email", "TEXT"),
     ("match", "urgent_call_id", "INTEGER"),
+    ("urgent_call", "waves", "INTEGER"),
+    ("urgent_call", "wave_at", "TEXT"),
+    ("urgent_call", "refill", "INTEGER"),
 )
 
 

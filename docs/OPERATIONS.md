@@ -186,7 +186,7 @@ PREVIEW_PASSWORD="$(gcloud secrets versions access latest --secret PREVIEW_PASSW
 
 ### Schema changes
 
-Adding a table: edit `app/db.py`; startup creates it. Everything else (a new column, renames, data changes, index changes, anything touching triggers) needs a numbered migration in `app/migrations/`, plus the class changed to the end state; its docstring says how. Startup never rebuilds a table or drops a column, and it stops when a table lacks a column its class declares. Pending migrations run at startup, or by hand with `uv run python -m app.migrations [--db PATH]`.
+Adding a table: edit `app/db.py`; startup creates it. Everything else (a new column, renames, data changes, index changes, anything touching triggers) needs a numbered migration in `app/migrations/`, plus the class changed to the end state; its docstring says how. Startup never rebuilds a table or drops a column, and it stops when a table lacks a column its class declares. A start that stops there (`table X has no column Y ...`) means the revision is missing a migration: fix forward with that migration in a new revision, and never alter the production database by hand. The failed revision's migrations stay applied, since they commit before the check, while the previous revision keeps serving on that schema, so every migration must be safe for the release before it: add columns, don't rename or drop them in the same release that stops reading them. Pending migrations run at startup, or by hand with `uv run python -m app.migrations [--db PATH]`.
 
 ### Secret scan
 
