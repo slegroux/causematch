@@ -79,11 +79,10 @@ def onboard_page(page, number, where="90012"):
     place it saves (sign_in_page skips onboarding: a profile from before places)."""
     p = sign_up(page, number)
     page.locator("input[name=first_name]").fill("Sam")
-    page.get_by_text("I'm 18 or older").click()
     page.get_by_label("Neighborhood or ZIP").fill(where)
     for slug in ("food-insecurity", "environment-parks", "animal-shelters"):
         page.locator(f"label:has(input[name='cause_{slug}'][value=love])").click()
-    page.get_by_text("I agree to the").click()
+    page.locator("input[name=consent]").check()  # 18+ and the privacy policy, one box
     page.get_by_role("button", name="Start swiping").click()
     page.wait_for_url("**/deck")
     return p

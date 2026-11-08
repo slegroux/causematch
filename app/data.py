@@ -1504,7 +1504,8 @@ _BLOCKED = (
 _SHIFT_SELECT = (
     "SELECT s.id, s.match_id, s.starts_at, s.duration_minutes, s.confirmed_minutes, "
     "s.status, s.marked_at, "
-    "s.corrected_at, s.confirmed_at, o.title, o.recurrence, g.name AS org, p.display_name, "
+    "s.corrected_at, s.confirmed_at, o.title, o.recurrence, o.org_id, g.name AS org, "
+    "p.display_name, "
     "p.last_name, p.photo_key, "
     "m.status AS match_status, " + _BLOCKED + " AS blocked, "
     "g.logo_key AS org_logo, coalesce(o.photo_key, g.photo_key) AS opening_photo, "
@@ -1540,6 +1541,7 @@ def my_shifts(uid):
                 "status",
                 "title",
                 "org",
+                "org_id",
             )
         }
         row["logo"], row["photo"] = r["org_logo"], r["opening_photo"]

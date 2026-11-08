@@ -139,6 +139,24 @@ def test_certificate_lists_only_the_hours_one_nonprofit_confirmed():
     assert certificates.count == 2
 
 
+def test_the_attended_card_links_to_its_certificate_block_and_the_latest_month_is_preselected():
+    a, mine, org = _hired("Zelda")
+    _shift(mine, 20, 120, org.uid, month=9, marked_at="2026-09-30T10:00:00")
+    _shift(mine, 3, 180, org.uid)
+    _shift(mine, 12, None, org.uid)  # attended, hours never confirmed
+    page = a.get("/history").text
+    anchor = f"certificate-{orgs()[0].id}"
+    # the two confirmed shifts link to the block; the unconfirmed one does not
+    assert page.count(f'href="#{anchor}"') == 2
+    block = page.split(f'id="{anchor}"')[1].split("</form>")[0]
+    assert re.search(r'<option value="2026-10"\s+selected', block)
+    assert not re.search(r'<option value="2026-09"\s+selected', block)
+    assert page.index(f'id="{anchor}"') < page.index(
+        "Confirmed by"
+    )  # Certificates above Hours
+    assert "uk-btn-primary" in block.split("<form")[1]
+
+
 def test_certificate_is_the_owners_to_see(anon):
     a, m, org = _hired("Zelda")
     _shift(m, 3, 180, org.uid)

@@ -255,10 +255,9 @@ def test_onboarding_fills_and_submits_on_a_small_phone(phone):
     width = phone.evaluate("[document.scrollingElement.scrollWidth, window.innerWidth]")
     assert width[0] <= width[1], width
     phone.locator("input[name=first_name]").fill("Sam")
-    phone.get_by_text("I'm 18 or older").click()
     phone.get_by_label("Neighborhood or ZIP").fill("90012")
     phone.locator("label:has(input[name='cause_food-insecurity'][value=love])").click()
-    phone.get_by_text("I agree to the").click()
+    phone.locator("input[name=consent]").check()
     start = phone.get_by_role("button", name="Start swiping")
     box = start.bounding_box()
     assert box["height"] >= 44 and box["y"] + box["height"] <= SE["height"], box
@@ -288,10 +287,9 @@ def test_a_new_volunteer_reaches_the_first_card_in_nine_taps_or_fewer(phone):
         "e => e === document.activeElement"
     )
     phone.keyboard.type("Sam")  # autofocus: no tap needed
-    tap(phone.get_by_text("I'm 18 or older"))
     tap(phone.get_by_label("Neighborhood or ZIP"), "90012")
     tap(phone.locator("label:has(input[name='cause_food-insecurity'][value=love])"))
-    tap(phone.get_by_text("I agree to the"))
+    tap(phone.locator("input[name=consent]"))
     tap(phone.get_by_role("button", name="Start swiping"))
     phone.wait_for_url("**/deck")
     assert phone.locator("[data-swipe-card]").count() == 1

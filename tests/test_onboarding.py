@@ -44,12 +44,15 @@ def test_travel_time_maps_to_radius(new_user):
     assert home.max_minutes == 0
 
 
-def test_under_18_blocked(new_user):
-    form = {k: v for k, v in FORM.items() if k != "adult"}
+def test_unticked_box_blocks_onboarding_and_the_error_sits_by_the_button(new_user):
+    """One box confirms 18+ and the privacy policy; without it nothing is saved."""
+    form = {k: v for k, v in FORM.items() if k not in ("adult", "consent")}
     r = new_user.post("/onboarding", data=form, follow_redirects=False)
     assert r.status_code == 200
-    assert "Causematch is for adults 18+" in r.text
     assert not profile_of(new_user).onboarded_at
+    message = "Please confirm you're 18 or older and agree to the privacy policy"
+    bar = r.text.split("cm-savebar")[1]
+    assert message in r.text and message in bar
     assert (
         new_user.get("/deck", follow_redirects=False).headers["location"]
         == "/onboarding"
@@ -87,11 +90,36 @@ def test_unknown_cause_rejected(new_user):
     assert not profile_of(new_user).onboarded_at
 
 
-def test_consent_required(new_user):
-    form = {k: v for k, v in FORM.items() if k != "consent"}
-    r = new_user.post("/onboarding", data=form, follow_redirects=False)
-    assert r.status_code == 200
-    assert not profile_of(new_user).onboarded_at
+def test_first_name_and_the_box_alone_start_onboarding(new_user):
+    """Every cause starts at "Open to it", so a volunteer who only types a name and ticks
+    the box gets through; the browser posts those defaults."""
+    page = new_user.get("/onboarding").text
+    slugs = [c.slug for c in data.active_causes()]
+    for slug in slugs:
+        assert f'name="cause_{slug}" value="open" checked' in page
+    r = new_user.post(
+        "/onboarding",
+        data={
+            "first_name": "Sam",
+            "consent": "1",
+            "place1_where": "90012",
+            "place1_mode": "car",
+            "place1_minutes": "30",
+            **{f"cause_{s}": "open" for s in slugs},
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/deck"
+    p = profile_of(new_user)
+    assert p.adult_attested and p.onboarded_at
+    assert json.loads(p.cause_prefs) == {s: "open" for s in slugs}
+
+
+def test_an_empty_name_shows_the_error_by_the_button_and_at_the_top(new_user):
+    r = new_user.post("/onboarding", data={**FORM, "first_name": " "})
+    assert r.status_code == 200 and not profile_of(new_user).onboarded_at
+    assert r.text.count("Please enter your first name.") == 2
+    assert "Please enter your first name." in r.text.split("cm-savebar")[1]
 
 
 def test_newly_activated_cause_is_offered(homelessness_off, new_user):
@@ -345,8 +373,8 @@ def test_the_short_form_has_only_what_the_first_card_needs(new_user):
     for gone in ("last_name", "email", "neighborhood", "availability", "heard_from",
                  "volunteered_last_year", "other_causes"):  # fmt: skip
         assert f'name="{gone}"' not in page
-    assert 'name="adult"' in page and 'name="consent"' in page
-    assert 'href="/privacy"' in page and "I agree to the" in page
+    assert 'name="adult"' not in page and 'name="consent"' in page
+    assert 'href="/privacy"' in page and "I'm 18 or older and I agree to the" in page
 
 
 def test_the_short_form_saves_and_the_deck_has_a_card_without_availability(new_user):

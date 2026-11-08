@@ -36,6 +36,7 @@ from app.ui import (
     SMALL_LINK,
     TITLE,
     BackLink,
+    BigButton,
     Choice,
     Router,
     SimplePage,
@@ -92,14 +93,21 @@ def MonthCard(m):
     )
 
 
+def certificate_anchor(org_id):
+    """The id of a nonprofit's certificate block: the Attended cards link to it."""
+    return f"certificate-{org_id}"
+
+
 def CertificateCard(o):
-    """One nonprofit's block: a period to choose and the button that issues the certificate."""
+    """One nonprofit's block: a period to choose (the latest month with hours is
+    preselected) and the button that issues the certificate."""
     period = Choice(
         "period",
         [
             *((m["period"], month_name(m["period"])) for m in o["months"]),
             ("all", "All my hours here"),
         ],
+        selected=o["months"][0]["period"],
         placeholder="Which hours?",
         required=True,
     )
@@ -118,24 +126,37 @@ def CertificateCard(o):
         ),
         PlainForm(
             period,
-            Button("Get a certificate", cls=ButtonT.default),
+            BigButton("Get a certificate"),
             action=f"/hours/orgs/{o['org_id']}/certificate",
             method="post",
             cls="space-y-3",
         ),
-        cls="w-full space-y-3 p-4 " + CARD,
+        id=certificate_anchor(o["org_id"]),
+        cls="w-full scroll-mt-4 space-y-3 p-4 " + CARD,
     )
 
 
 def HoursSection(uid, notice=""):
-    """The Hours part of /history: confirmed hours by month, the certificates one can get
-    for them, then earlier shifts with none."""
+    """The Hours part of /history: the certificates one can get, confirmed hours by month,
+    then earlier shifts with none."""
     mine = data.my_hours(uid)
     options = data.certificate_options(uid)
     left = mine["unconfirmed"]
     return Div(
-        H2("Hours", cls=ORG_SECTION),
         Alert(NOTICE[notice], cls=AlertT.warning) if notice in NOTICE else None,
+        Div(
+            H2("Certificates", cls=ORG_SECTION),
+            P(
+                "A certificate lists the hours one nonprofit confirmed for you, with a "
+                "signature code. You choose whether to share it.",
+                cls=TextPresets.muted_sm,
+            ),
+            *(CertificateCard(o) for o in options),
+            cls="flex flex-col gap-3",
+        )
+        if options
+        else None,
+        H2("Hours", cls=ORG_SECTION),
         P(
             "Hours a nonprofit confirmed when it marked you as attended.",
             cls=TextPresets.muted_sm,
@@ -146,18 +167,6 @@ def HoursSection(uid, notice=""):
             if mine["months"]
             else [P("No confirmed hours yet.", cls=TextPresets.muted_sm)]
         ),
-        Div(
-            H2("Certificates", cls=ORG_SECTION),
-            P(
-                "A certificate lists the hours one nonprofit confirmed for you, with a "
-                "signature code. You choose whether to share it.",
-                cls=TextPresets.muted_sm,
-            ),
-            *(CertificateCard(o) for o in options),
-            cls="flex flex-col gap-3 pt-3",
-        )
-        if options
-        else None,
         Div(
             H2("Hours not confirmed", cls=ORG_SECTION),
             P(

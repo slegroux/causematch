@@ -17,7 +17,7 @@ from app import data, notify
 from app.choices import SHIFT_HOURS, SHIFT_LENGTHS, minutes_label
 from app.config import public_base_url
 from app.forms import query, str_form
-from app.routes.hours import HoursSection
+from app.routes.hours import HoursSection, certificate_anchor
 from app.ui import (
     CARD,
     ORG_SECTION,
@@ -348,6 +348,19 @@ def _sync_new_shift_save(req, form, match_id: int):
     return Redirect("/org/shifts")
 
 
+def CertificateLink(s):
+    """An Attended card's way to the nonprofit's certificate block further down."""
+    if s["status"] != "completed" or not s["confirmed_minutes"]:
+        return []
+    return [
+        A(
+            "Get a certificate",
+            href=f"#{certificate_anchor(s['org_id'])}",
+            cls="uk-btn uk-btn-default inline-flex",
+        )
+    ]
+
+
 @ar("/history", methods=["GET"])
 def history(req):
     mine = data.my_shifts(req.scope["uid"])
@@ -361,7 +374,7 @@ def history(req):
         ),
         Section(
             "Past",
-            [ShiftCard(s, for_org=False) for s in mine["past"]],
+            [ShiftCard(s, *CertificateLink(s), for_org=False) for s in mine["past"]],
             "Nothing yet.",
         ),
         HoursSection(req.scope["uid"], query(req, "notice")),
