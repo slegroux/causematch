@@ -50,6 +50,11 @@ MAX_SOCKETS = 20  # one user's sockets overall
 
 
 def Bubble(m, viewer_uid):
+    if m["sender_uid"] == data.SYSTEM_SENDER:  # the app's line, not either side's
+        return P(
+            m["body"],
+            cls="self-center max-w-[85%] text-center text-xs font-semibold text-ink-muted",
+        )
     mine = m["sender_uid"] == viewer_uid
     # theirs on the left in white, mine on the right in the brand's soft tint
     return Div(

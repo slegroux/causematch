@@ -3,11 +3,19 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, deck_titles, org_sign_in, uid_of
+from conftest import (
+    PANTRY,
+    coordinator_for,
+    deck_titles,
+    org_sign_in,
+    uid_of,
+    volunteer,
+)
 from starlette.testclient import TestClient
 
 from app import data, geo
-from app.db import causes, openings, orgs
+from app.db import causes, matches, messages, openings, orgs
+from app.routes.org import opening_fields
 from main import app
 
 LA = ZoneInfo("America/Los_Angeles")
@@ -656,3 +664,75 @@ def test_urgent_link_only_within_48_hours(coord):
 def test_the_needs_you_strip_is_absent_when_nothing_waits(coord):
     html = coord.get("/org").text
     assert "Needs you" not in html and "to mark" not in html
+
+
+def pantry():
+    return openings(where="title = ?", where_args=[PANTRY])[0]
+
+
+def edit(c, o, **over):
+    """Post the edit form of opening o as its page sends it (prefilled), with changes."""
+    f = {k: v for k, v in opening_fields(o).items() if v not in ("", False, None)}
+    f["duration_minutes"] = f.get("duration_minutes", "180")
+    return c.post(
+        f"/org/openings/{o.id}/edit", data={**f, **over}, follow_redirects=False
+    )
+
+
+def test_editing_a_title_keeps_the_matches_and_tells_the_accepted(coord):
+    o = pantry()
+    accepted, waiting = volunteer(), volunteer()
+    keep = data.swipe(accepted.uid, o.id, True)
+    data.decide(coordinator_for(0)[0], keep.id, True)
+    data.swipe(waiting.uid, o.id, True)
+    data.send_message(accepted.uid, keep.id, "Is there parking?")
+    page = coord.get(f"/org/openings/{o.id}/edit")
+    assert page.status_code == 200 and PANTRY in page.text
+    r = edit(coord, o, title="Pantry boxes, new location")
+    assert r.status_code == 303 and r.headers["location"] == "/org"
+    assert openings[o.id].title == "Pantry boxes, new location"
+    assert sorted(m.status for m in matches()) == ["accepted", "pending"]
+    (line,) = [m for m in messages() if m.sender_id == data.SYSTEM_SENDER]
+    assert line.match_id == keep.id
+    assert line.body == "Westside Pantry Collective updated this opening: title."
+    # the line neither answers the volunteer's question nor reads as a person's message
+    assert [u["id"] for u in data.org_unanswered(coordinator_for(0)[0])] == [keep.id]
+    assert data.list_messages(accepted.uid, keep.id)[-1]["sender"] == ""
+
+
+def test_spots_cannot_go_below_the_accepted_and_the_time_is_locked(coord):
+    o = pantry()
+    for _ in range(2):
+        m = data.swipe(volunteer().uid, o.id, True)
+        data.decide(coordinator_for(0)[0], m.id, True)
+    r = edit(coord, o, slots="1")
+    assert r.status_code == 200 and "at least 2 spots" in r.text
+    assert openings[o.id].slots == o.slots
+    assert edit(coord, o, slots="2").status_code == 303 and openings[o.id].slots == 2
+    assert openings[o.id].status == "filled"  # the two accepted fill it
+    # the time is not asked once someone is accepted, and the data layer refuses it
+    page = coord.get(f"/org/openings/{o.id}/edit").text
+    assert 'name="starts_at"' not in page and "planned around" in page
+    edit(coord, o, starts_at=future(30))
+    assert openings[o.id].starts_at == o.starts_at
+    with pytest.raises(ValueError, match="date and time"):
+        data.update_opening(coordinator_for(0)[0], o.id, starts_at=future(30))
+
+
+def test_reopening_a_closed_opening_restores_it_and_its_fill(coord):
+    o = pantry()
+    data.update_opening(coordinator_for(0)[0], o.id, slots=1)
+    m = data.swipe(volunteer().uid, o.id, True)
+    data.decide(coordinator_for(0)[0], m.id, True)
+    coord.post(f"/org/openings/{o.id}/close")
+    assert openings[o.id].status == "closed"
+    assert f"/org/openings/{o.id}/reopen" in coord.get("/org").text
+    coord.post(f"/org/openings/{o.id}/reopen")
+    assert (
+        openings[o.id].status == "filled"
+    )  # its one accepted volunteer fills it again
+    coord.post(f"/org/openings/{o.id}/close")
+    openings.update(id=o.id, starts_at="2020-01-01T09:00")  # started: no way back
+    coord.post(f"/org/openings/{o.id}/reopen")
+    assert openings[o.id].status == "closed"
+    assert f"/org/openings/{o.id}/reopen" not in coord.get("/org").text

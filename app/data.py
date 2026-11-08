@@ -1329,7 +1329,8 @@ def org_unanswered(coordinator_uid):
         "FROM match m JOIN opening o ON o.id = m.opening_id "
         "JOIN org g ON g.id = o.org_id "
         "JOIN profile p ON p.id = m.volunteer_id "
-        "JOIN message x ON x.id = (SELECT max(id) FROM message WHERE match_id = m.id) "
+        "JOIN message x ON x.id = (SELECT max(id) FROM message WHERE match_id = m.id "
+        f"AND sender_id != {SYSTEM_SENDER}) "
         "WHERE o.org_id IN (SELECT org_id FROM org_member WHERE user_id = ?) "
         "AND m.status = 'accepted' AND x.sender_id = m.volunteer_id "
         "AND p.deleted_at IS NULL AND p.suspended_at IS NULL "
@@ -2003,6 +2004,9 @@ def org_shifts(coordinator_uid):
     return out
 
 
+# message.sender_id of a line the app wrote, not a person: shown without a sender, and
+# never the volunteer's turn to be answered (org_unanswered)
+SYSTEM_SENDER = 0
 MAX_MESSAGE = 2000
 
 
@@ -2055,7 +2059,9 @@ def volunteer_name(first, last, full=False):
 def _message_row(msg, volunteer_id, names, blocked=False):
     """blocked: a block stands between the volunteer and the org, so the volunteer's
     messages carry BLOCKED_NAME, not their live (and still editable) first name."""
-    if msg.sender_id != volunteer_id:
+    if msg.sender_id == SYSTEM_SENDER:
+        sender = ""
+    elif msg.sender_id != volunteer_id:
         sender = names.get(msg.sender_id) or "Coordinator"
     else:
         sender = BLOCKED_NAME if blocked else _first_name(names.get(msg.sender_id))
@@ -2176,6 +2182,12 @@ def chat_header(uid, match_id):
 
 def active_causes():
     return [c for c in _db.causes(order_by="sort") if c.active]
+
+
+def cause_labels(slugs):
+    """The labels of cause slugs, active or not."""
+    labels = {c.slug: c.label for c in _db.causes()}
+    return [labels.get(s, s) for s in slugs]
 
 
 def get_or_create_volunteer(phone):
@@ -3001,6 +3013,122 @@ def close_opening(coordinator_uid, opening_id):
             "(SELECT id FROM match WHERE opening_id = ?)",
             [_now(), coordinator_uid, _local_now(), opening_id],
         )
+
+
+# What a coordinator may change on a posted opening, by the words the accepted volunteers
+# read in their chat. The org, the place and the repeat never change; reply_channel does,
+# unannounced (it is the coordinator's own business).
+_OPENING_EDITS = {
+    "title": "title",
+    "about": "what you'll do",
+    "notes": "good to know",
+    "slots": "spots",
+    "starts_at": "date and time",
+    "duration_minutes": "date and time",
+    "causes": "cause",
+    "orientation_required": "orientation",
+    "skills": "kind of work",
+    "setting": "kind of work",
+    "effort": "kind of work",
+    "group_size": "kind of work",
+    "first_timer_ok": "kind of work",
+    "languages": "kind of work",
+    "reply_channel": None,
+}
+
+
+def opening_locks(opening_id):
+    """What can't change on this opening now: {"accepted": volunteers who fill it,
+    "when": True once one is accepted (they planned around the time), "cause": True once
+    anyone liked it (the deck ranked it by its cause for them)}."""
+    accepted = _accepted(opening_id)
+    return {
+        "accepted": accepted,
+        "when": accepted > 0,
+        "cause": _db.matches.count_where("opening_id = ?", [opening_id]) > 0,
+    }
+
+
+def update_opening(coordinator_uid, opening_id, **new):
+    """Change a posted opening: new maps the fields of _OPENING_EDITS (the cause as
+    "cause", a slug; skills and languages as lists) to their values. The likes and
+    matches stay. The names of the fields that changed, in volunteer words, each once.
+
+    PermissionError as coordinator_opening, and for a deactivated org. ValueError, its
+    message plain text for the coordinator: the opening is closed, spots below the
+    volunteers accepted, or a date, time or cause changed past opening_locks. Spots
+    flip open <-> filled. Accepted volunteers get one line about it in their chat.
+    """
+    if "cause" in new:
+        new["causes"] = json.dumps([new.pop("cause")])
+    for key in ("skills", "languages"):
+        if key in new:
+            new[key] = json.dumps(sorted(set(new[key])))
+    with _db.db.conn:
+        o = coordinator_opening(coordinator_uid, opening_id)
+        the_org = _db.orgs[o.org_id]
+        if the_org.deactivated_at:
+            raise PermissionError("this org is deactivated")
+        if o.status == "closed":
+            raise ValueError("A closed opening can't be edited. Reopen it first.")
+        locks = opening_locks(opening_id)
+
+        # NULL, "" and False all say "not said", and a seed may have stored any of them;
+        # a list is compared as the sorted set it is stored as
+        def same(key, v):
+            now = getattr(o, key)
+            if key in ("skills", "languages"):
+                now = json.dumps(sorted(set(json.loads(now or "[]"))))
+            return (now or None) == (v or None)
+
+        changed = {k for k, v in new.items() if not same(k, v)}
+        if "slots" in changed and new["slots"] < locks["accepted"]:
+            n = locks["accepted"]
+            raise ValueError(
+                f"{n} volunteer{'s' if n > 1 else ''} already accepted, "
+                f"so there have to be at least {n} spot{'s' if n > 1 else ''}."
+            )
+        if locks["when"] and changed & {"starts_at", "duration_minutes"}:
+            raise ValueError(
+                "The date and time can't change while volunteers are accepted: they "
+                "planned around it. Close this opening and post a new one."
+            )
+        if locks["cause"] and "causes" in changed:
+            raise ValueError("The cause can't change once volunteers have liked it.")
+        if not changed:
+            return []
+        _db.openings.update(id=opening_id, **{k: new[k] for k in changed})
+        _sync_fill(opening_id)
+        told = sorted({_OPENING_EDITS[k] for k in changed} - {None})
+        if told:
+            body = f"{the_org.name} updated this opening: {', '.join(told)}."
+            for m in _db.matches(
+                where="opening_id = ? AND status = 'accepted'", where_args=[opening_id]
+            ):
+                if not _blocked_either(m.volunteer_id, o.org_id):
+                    _db.messages.insert(
+                        match_id=m.id,
+                        sender_id=SYSTEM_SENDER,
+                        body=body,
+                        created_at=_now(),
+                    )
+    return told
+
+
+def reopen_opening(coordinator_uid, opening_id):
+    """A closed opening whose start is still ahead takes volunteers again: open, or
+    filled when its accepted volunteers already fill it. ValueError (plain text) for one
+    that is not closed or has started. Shifts cancelled by the close stay cancelled."""
+    with _db.db.conn:
+        o = coordinator_opening(coordinator_uid, opening_id)
+        if _db.orgs[o.org_id].deactivated_at:
+            raise PermissionError("this org is deactivated")
+        if o.status != "closed":
+            raise ValueError("This opening is not closed.")
+        if o.starts_at <= _local_now():
+            raise ValueError("This opening has started, so it can't be reopened.")
+        _db.openings.update(id=opening_id, status="open")
+        _sync_fill(opening_id)
 
 
 URGENT_HOURS = 48  # an urgent call is for a shift starting this soon
