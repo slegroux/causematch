@@ -760,16 +760,9 @@ def AddToCalendar(s):
 
 
 def NextShift(s):
-    """An accepted match's next shift (data's _EVENT_SELECT row), and the way out of just
-    that one, which keeps the match."""
-    return Div(
-        Span(
-            Icon(CALENDAR, size=16, cls="text-ink-muted"),
-            f"Next shift: {when(s['starts_at'], s.get('duration_minutes'))}",
-            cls="inline-flex items-center gap-2 font-semibold text-ink",
-        ),
-        A("Can't make this one", href=f"/shifts/{s['id']}/cancel", cls=SMALL_LINK),
-        cls="flex flex-wrap items-center gap-x-4 text-sm",
+    """An accepted match's next shift (data's _EVENT_SELECT row), as one line."""
+    return Meta(
+        CALENDAR, f"Next shift: {when(s['starts_at'], s.get('duration_minutes'))}"
     )
 
 

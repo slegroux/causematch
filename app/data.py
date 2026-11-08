@@ -2063,7 +2063,8 @@ def chat_header(uid, match_id):
     The volunteer sees the org name and the contact name of the coordinator who accepted
     them; the coordinator sees the volunteer's name as volunteer_name gives it, and their
     photo when data.photo_for would serve it. Also whether the caller may still write,
-    the org's face (_face), and while accepted the next shift.
+    the org's face (_face), and while accepted the next shift. The opening's time and
+    neighborhood, and for the coordinator the volunteer's general availability.
     """
     role = chat_access(uid, match_id)
     m = _db.matches[match_id]
@@ -2071,6 +2072,7 @@ def chat_header(uid, match_id):
     the_org = _db.orgs[o.org_id]
     org = the_org.name
     photo = None
+    availability = []
     if role == "volunteer":
         decider = get_profile(m.decided_by) if m.decided_by else None
         other = decider.display_name if decider and decider.display_name else org
@@ -2095,6 +2097,10 @@ def chat_header(uid, match_id):
         )
         if seen:
             photo = volunteer.photo_key
+        if volunteer and not blocked:  # the inbox's summary, never the days
+            availability = _match.general_buckets(
+                json.loads(volunteer.availability or "[]")
+            )
     return {
         "role": role,
         "title": o.title,
@@ -2103,6 +2109,9 @@ def chat_header(uid, match_id):
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
         "duration_minutes": o.duration_minutes,  # the opening's shift length, if said
+        "starts_at": o.starts_at,  # the opening's time: the line when no shift is upcoming
+        "neighborhood": o.neighborhood,
+        "availability": availability,  # the volunteer's usual times, for the coordinator
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
         **_face(the_org, o),
     }
