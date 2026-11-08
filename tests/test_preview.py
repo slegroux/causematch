@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from conftest import ROOT, add_number, adder, coordinator_for, jpeg, sign_in, uid_of
@@ -42,6 +42,7 @@ from app.db import (
     Match,
     Profile,
     certificates,
+    identities,
     matches,
     messages,
     openings,
@@ -504,7 +505,7 @@ def test_robots_txt_disallows_everything(preview):
 def test_every_page_shows_the_preview_banner(guest, anon):
     assert PREVIEW_NOTICE == (
         "Preview · sample openings, not affiliated with these organizations · "
-        "demo data, wiped at any time"
+        "demo data, wiped at any time · no real details"
     )
     for path in ("/login", "/org/login", "/privacy"):
         page = guest.get(path).text
@@ -545,6 +546,117 @@ def test_a_preview_signs_up_and_in_demo_addresses_only(guest):
     assert not notify.get_emailer().sent and login_tokens.count == 0
     page = guest.post("/login/send", data={"email": demo_seed.ME_EMAIL}).text
     assert "/login/verify?token=" in page  # a demo address still gets its link
+
+
+def browser():
+    """A new browser in the preview, over https: its cookies are Secure there."""
+    return TestClient(
+        app, base_url="https://testserver", headers={"Authorization": basic()}
+    )
+
+
+def fake_flow(client):
+    r = client.get("/auth/google/start", follow_redirects=False)
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    return {k: q[k][0] for k in ("state", "nonce", "code_challenge")}
+
+
+def fake_google(client, sub="maria"):
+    """Through the fake Google page, posting a typed subject as an old page would: the
+    profile id behind this browser's subject cookie, which the sign-in lands in."""
+    flow = fake_flow(client)
+    page = client.get("/auth/fake/consent", params={"provider": "google", **flow})
+    assert 'name="sub"' not in page.text  # nothing to type
+    form = {**flow, "sub": sub, "email": "m@example.org", "email_verified": "1"}
+    r = client.post("/auth/fake/consent", data=form)
+    assert r.status_code == 200 and r.url.path == "/onboarding"
+    sub = oauth.browser_subject(client.cookies[oauth.fake_subject_cookie()])
+    (found,) = identities(where="provider = 'google' AND subject = ?", where_args=[sub])
+    return found.user_id
+
+
+def test_each_preview_browser_has_its_own_fake_google_account(preview):
+    """A typed subject was a shared account: B typing A's word landed in A's."""
+    a, b = browser(), browser()
+    first = fake_google(a)
+    assert fake_google(b) != first  # the same word typed
+    assert not identities(where="subject = 'maria'")
+    a.post("/logout")
+    assert fake_google(a) == first  # the same browser, back in its own account
+    assert identities.count_where("provider = 'google'") == 2
+
+
+CONSENT = {"email": "m@example.org", "email_verified": "1"}
+
+
+def test_a_preview_mints_a_code_only_for_this_browsers_own_flow(preview):
+    """The attack: B sends A a consent link carrying B's flow. Were a code minted for A's
+    subject, B's callback would redeem it and sign B in to A's account."""
+    victim, attacker = browser(), browser()
+    fake_google(victim)
+    before = identities.count_where("provider = 'google'")
+    theirs = fake_flow(attacker)
+    r = victim.post(
+        "/auth/fake/consent", data={**theirs, **CONSENT}, follow_redirects=False
+    )
+    assert r.status_code == 400 and "location" not in r.headers
+    own = fake_flow(victim)
+    for k in (
+        "nonce",
+        "code_challenge",
+    ):  # the victim's state, the attacker's other half
+        form = {**own, k: theirs[k], **CONSENT}
+        r = victim.post("/auth/fake/consent", data=form, follow_redirects=False)
+        assert r.status_code == 400, k
+    r = victim.post(
+        "/auth/fake/consent", data={**own, **CONSENT}, follow_redirects=False
+    )
+    replayed = attacker.get(r.headers["location"], follow_redirects=False)
+    assert replayed.status_code == 400  # the victim's callback: not the attacker's flow
+    assert attacker.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    assert identities.count_where("provider = 'google'") == before
+
+
+def test_a_shared_device_can_use_a_different_account(preview):
+    """The subject cookie outlives a sign-out, so the next person on the same device
+    would land in the last one's account: the page offers a fresh one."""
+    device = browser()
+    first = fake_google(device)
+    device.post("/logout")
+    flow = fake_flow(device)
+    page = device.get("/auth/fake/consent", params={"provider": "google", **flow})
+    assert "Use a different account" in page.text
+    r = device.post("/auth/fake/consent", data={**flow, **CONSENT, "fresh": "1"})
+    assert r.status_code == 200 and r.url.path == "/onboarding"
+    sub = oauth.browser_subject(device.cookies[oauth.fake_subject_cookie()])
+    (second,) = identities(
+        where="provider = 'google' AND subject = ?", where_args=[sub]
+    )
+    assert second.user_id != first
+    device.post("/logout")
+    assert fake_google(device) == second.user_id  # plain Continue keeps the new one
+
+
+@pytest.mark.parametrize("how", ["missing", "tampered", "foreign", "expired"])
+def test_a_bad_subject_cookie_signs_nobody_in(preview, monkeypatch, how):
+    """Never a typed subject in its place, nor a shared default: a 400."""
+    b = browser()
+    flow = fake_flow(b)
+    name = oauth.fake_subject_cookie()
+    value = b.cookies[name]
+    if how == "missing":
+        b.cookies.delete(name)
+    elif how == "tampered":  # the payload's first character: its signature fails
+        value = ("B" if value[0] == "A" else "A") + value[1:]
+        b.cookies.set(name, value, domain="testserver.local")
+    elif how == "foreign":  # our signature, another salt: the flow cookie
+        b.cookies.set(name, b.cookies[oauth.oauth_cookie()], domain="testserver.local")
+    else:
+        monkeypatch.setattr(oauth, "FAKE_SUBJECT_MAX_AGE", -1)
+    form = {**flow, "sub": "maria", **CONSENT}
+    r = b.post("/auth/fake/consent", data=form, follow_redirects=False)
+    assert r.status_code == 400
+    assert not identities(where="subject = 'maria'")
 
 
 def test_outside_a_preview_any_number_gets_a_code():

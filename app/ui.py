@@ -43,9 +43,11 @@ CAUSE_CHIP = {
     "homelessness-services": "bg-cause-homeless-soft text-cause-homeless-ink",
 }
 DEMO_NOTICE = "Demo: sample openings, not affiliated with these organizations"
+# Two lines on an iPhone SE, at most: a third pushes the deck card under its buttons
+# (tests/e2e/test_deck_fit.py). "No real details": names, photos, contact info.
 PREVIEW_NOTICE = (
     "Preview · sample openings, not affiliated with these organizations · "
-    "demo data, wiped at any time"
+    "demo data, wiped at any time · no real details"
 )
 
 

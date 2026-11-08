@@ -234,6 +234,16 @@ def test_on_a_preview_the_fake_signs_in_demo_coordinators_only(
     assert (anon.get("/org", follow_redirects=False).status_code == 200) is signs_in
 
 
+def test_a_fake_code_expires_with_its_flow(monkeypatch):
+    fake = oauth.Fake("google")
+    claims = oauth.Claims("google", "g-late", EMAIL, True, "", "", "")
+    code = fake.mint(claims, "n", oauth.challenge("v"))
+    assert fake.finish(fake.mint(claims, "n", oauth.challenge("v")), "v", "", "n")
+    monkeypatch.setattr(oauth, "COOKIE_MAX_AGE", -1)  # its 10 minutes are up
+    with pytest.raises(oauth.AuthError, match="expired"):
+        fake.finish(code, "v", "", "n")
+
+
 def test_the_fake_consent_page_asks_for_a_subject_of_ones_own(anon):
     page = anon.get("/auth/fake/consent", params={"provider": "google", **start(anon)})
     (sub,) = re.findall(r'<input[^>]*name="sub"[^>]*>', page.text)

@@ -364,7 +364,7 @@ class Fake:
     def __init__(self, name):
         self.name = name  # it serves this provider's routes
         self.pkce = name != "apple"  # as the real one: Apple has none
-        self._codes = {}  # code -> (Claims, nonce, code_challenge)
+        self._codes = {}  # code -> (Claims, nonce, code_challenge, minted)
         self._lock = threading.Lock()
 
     def authorize_url(self, redirect_uri, state, nonce, code_challenge):
@@ -378,7 +378,7 @@ class Fake:
         with self._lock:
             if len(self._codes) >= 1000:  # unused codes of a long dev session
                 self._codes.pop(next(iter(self._codes)))
-            self._codes[code] = (claims, nonce, code_challenge)
+            self._codes[code] = (claims, nonce, code_challenge, time.monotonic())
         return code
 
     def finish(self, code, verifier, redirect_uri, nonce):
@@ -386,7 +386,9 @@ class Fake:
             found = self._codes.pop(code, None)  # once
         if found is None:
             raise AuthError("unknown or used code")
-        claims, bound_nonce, code_challenge = found
+        claims, bound_nonce, code_challenge, minted = found
+        if time.monotonic() - minted > COOKIE_MAX_AGE:  # as long as its flow lives
+            raise AuthError("expired code")
         if self.pkce and not hmac.compare_digest(challenge(verifier), code_challenge):
             raise AuthError("PKCE mismatch")
         if not nonce or not hmac.compare_digest(bound_nonce, nonce):
@@ -395,6 +397,38 @@ class Fake:
 
 
 _fakes = {name: Fake(name) for name in LABELS}
+
+# On a preview the fake page lets nobody type the subject, which is the account: two
+# visitors who typed the same word would share one. Each browser gets a random subject in
+# a signed cookie, so it comes back to its own account and no other browser can reach it.
+FAKE_SUBJECT_MAX_AGE = 7 * 24 * 3600  # seconds a preview browser keeps its fake account
+
+
+def fake_subject_cookie(env=os.environ):
+    """The cookie holding a preview browser's fake subject: __Host- there, as oauth_cookie."""
+    return "__Host-cm_fake_sub" if is_production(env) else "cm_fake_sub"
+
+
+@functools.cache
+def _subject_serializer():
+    return URLSafeTimedSerializer(session_secret(os.environ), salt="fake-subject")
+
+
+def browser_subject(value):
+    """The subject sealed in a fake-subject cookie, or "" when it is missing, not ours or
+    older than FAKE_SUBJECT_MAX_AGE."""
+    if not value:
+        return ""
+    try:
+        sub = _subject_serializer().loads(value, max_age=FAKE_SUBJECT_MAX_AGE)
+    except BadData:
+        return ""
+    return sub if isinstance(sub, str) else ""
+
+
+def new_browser_subject():
+    """A fake-subject cookie's value: a random subject (128 bits) nobody can type, sealed."""
+    return _subject_serializer().dumps(secrets.token_urlsafe(16))
 
 
 def fake_names(env=os.environ):
