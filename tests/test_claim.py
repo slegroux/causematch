@@ -18,11 +18,13 @@ from conftest import (
     org_sign_in,
     sign_in,
     uid_of,
+    volunteer,
 )
 from starlette.testclient import TestClient
 
 from app import data, notify, propublica, security
 from app.db import claim_requests, org_members, orgs, profiles
+from app.oauth import Claims
 from main import app
 
 EIN = "861620575"
@@ -902,3 +904,86 @@ def test_the_add_scripts_refuse_a_volunteers_address_without_force(
     assert code == 0 and "vol@example.org is" in said
     assert is_staff("vol@example.org")
     assert data.volunteer_link_kind("vol@example.org") == "staff"
+
+
+def google(email, hd=""):
+    """A volunteer who signed up with Google, verified email `email`; returns `email`."""
+    data.volunteer_for_identity(
+        Claims("google", f"g-{email}", email, True, "Pat", "", "", hosted_domain=hd)
+    )
+    return email
+
+
+def typed_in_me():
+    """A volunteer who only typed the address in Me (profile.email, unverified)."""
+    profiles.update(id=volunteer().uid, email="typed@example.org")
+    return "typed@example.org"
+
+
+def deleted():
+    data.delete_account(held("gone@example.org"))
+    return "gone@example.org"
+
+
+@pytest.mark.parametrize(
+    "make,warns",
+    [
+        (lambda: google("pat@gmail.com"), True),  # Google runs Gmail: a holder
+        (lambda: google("pat@acme.example", hd="acme.example"), False),  # Workspace
+        (lambda: google("pat@example.org"), False),  # Google doesn't run the mailbox
+        (typed_in_me, False),
+        (deleted, False),
+    ],
+)
+def test_only_a_live_volunteers_proven_address_warns(admin, make, warns):
+    imported()
+    email = make()
+    claim(email=email)
+    cid = the_claim().id
+    assert (WARNING in admin.get("/admin/claims").text) is warns
+    assert approve(admin, cid).status_code == (200 if warns else 303)
+    assert (the_claim().status == "pending") is warns
+
+
+@pytest.mark.parametrize(
+    "theirs,email",
+    [
+        ("vol@example.org", "vol@example.org"),
+        ("vol@example.org", "vol+org@example.org"),
+        ("vol@gmail.com", "v.o.l@gmail.com"),
+    ],
+)
+def test_a_suspended_volunteers_mailbox_is_refused_even_when_confirmed(
+    admin, monkeypatch, theirs, email
+):
+    """A +tag or dotted form counts (forms.abuse_key): suspension is by mailbox."""
+    imported()
+    profiles.update(id=held(theirs), suspended_at=datetime.now(UTC).isoformat())
+    assert data.volunteer_holds_address(theirs)  # a suspended volunteer still holds it
+    claim(email=email)
+    cid = the_claim().id
+    page = admin.get("/admin/claims").text
+    assert "belongs to a suspended volunteer" in page
+    assert f"/admin/claims/{cid}/approve" not in page  # only Decline
+    r = approve(admin, cid, volunteer_ok="1", confirm="1", name_checked="1")
+    assert r.status_code == 200 and "suspended volunteer" in r.text
+    assert the_claim().status == "pending" and not data.coordinator_by_email(email)
+    for name, extra in (
+        ("add_coordinator", ["--org-id", str(orgs()[0].id)]),
+        ("add_admin", []),
+    ):
+        code, said = run_script(
+            name, monkeypatch, "--email", email, "--name", "Val", *extra, "--force"
+        )
+        assert code == 1 and "suspended volunteer" in said, name
+    assert not data.staff_by_email(email)[0]
+
+
+def test_an_address_that_already_gets_staff_links_needs_no_box(admin):
+    """Nothing changes for that volunteer: their address is a coordinator's already."""
+    imported()
+    held()
+    data.add_coordinator("vol@example.org", orgs()[0].id, allow_volunteer=True)
+    claim(email="vol@example.org")
+    assert WARNING not in admin.get("/admin/claims").text
+    assert approve(admin, the_claim().id).status_code == 303

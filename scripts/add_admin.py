@@ -5,6 +5,7 @@ uv run python scripts/add_admin.py --email x@example.org --name "Sylvain"
 
 Refuses an address a volunteer signs in with unless --force is given: it would become an
 admin sign-in, and they'd reach their volunteer account only through Google or Apple.
+A suspended volunteer's address is refused even with --force.
 """
 
 import argparse
@@ -26,13 +27,10 @@ def main():
         help="go ahead even when a volunteer signs in with this address",
     )
     a = p.parse_args()
-    if not a.force and data.volunteer_holds_address(a.email):
-        sys.exit(
-            data.volunteer_address_warning("admin")
-            + " Use a different address, or run again with --force."
-        )
     try:
-        uid = data.add_admin(a.email, a.name.strip())
+        uid = data.add_admin(a.email, a.name.strip(), allow_volunteer=a.force)
+    except data.VolunteerAddress as e:
+        sys.exit(f"{e} Use a different address, or run again with --force.")
     except ValueError as e:
         sys.exit(str(e))
     print(f"{a.email.strip().lower()} is an admin (profile {uid})")

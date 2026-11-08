@@ -471,6 +471,7 @@ def ClaimCard(c, error=None):
         note = P("This organization is deactivated: it can't be approved.")
     else:
         note = None
+    blocked = (org and org["deactivated"]) or c["suspended"]
     return Div(
         P(org["name"] if org else c["org_name"], cls=ORG_SECTION),
         P(f"{org['city']} · {ein}" if org and org["city"] else ein, cls="text-ink"),
@@ -488,12 +489,19 @@ def ClaimCard(c, error=None):
             + " Ask the nonprofit for a different address if you can.",
             cls=AlertT.warning,
         )
-        if c["volunteer"]
+        if c["volunteer"] and not c["suspended"]
+        else None,
+        Alert(
+            "This address belongs to a suspended volunteer: it can't be approved. "
+            "Decline it.",
+            cls=AlertT.error,
+        )
+        if c["suspended"]
         else None,
         Alert(error, cls=AlertT.error) if error else None,
         Div(
             None
-            if org and org["deactivated"]
+            if blocked
             else Form(
                 LabelCheckboxX(
                     "Yes, add them too (the people above can already sign in)",
