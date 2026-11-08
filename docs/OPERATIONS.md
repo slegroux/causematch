@@ -1,6 +1,6 @@
 # Operations
 
-Everything needed to configure, run, secure and deploy Causematch: environment variables, scheduled jobs, the security model, front-end assets, the demo, the preview deploy, schema changes, the secret scan and admin tasks. For what the app does, see the [README](../README.md); for how it is built, see [ARCHITECTURE.md](ARCHITECTURE.md).
+Everything needed to configure, run, secure and deploy Causematch: environment variables, scheduled jobs, the security model, front-end assets, the demo, the preview and production deploys, schema changes, the secret scan and admin tasks. For what the app does, see the [README](../README.md); for how it is built, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Configuration
 
@@ -50,7 +50,7 @@ Until there is a domain to send from with Resend, every email (volunteers' and s
      --member="serviceAccount:$SERVICE_ACCOUNT" --role=roles/secretmanager.secretAccessor
    ```
 
-   `SERVICE_ACCOUNT` is the account the Cloud Run service runs as. A new password later is `gcloud secrets versions add SMTP_PASSWORD --data-file=-` the same way, then a redeploy.
+   `SERVICE_ACCOUNT` is the account the Cloud Run service runs as. Production names the secret `SMTP_PASSWORD_PROD` and keeps the address in `SMTP_USERNAME_PROD` (Production deploy). A new password later is `gcloud secrets versions add SMTP_PASSWORD --data-file=-` the same way, then a redeploy.
 6. Empty the mailbox every day: Gmail keeps a copy of every email sent through it, and bounces and replies land in the Inbox. Signed in as the account, open [script.google.com](https://script.google.com), New project, name it `Purge mail`, and paste:
 
    ```js
@@ -66,9 +66,9 @@ Until there is a domain to send from with Resend, every email (volunteers' and s
 
    Save, run `purgeMail` once and grant it access to Gmail, then Triggers, Add Trigger: `purgeMail`, time-driven, day timer, any hour. Gmail erases the bin's contents after 30 days. **Then set `GMAIL_PURGE=daily`** on the service: only with it does the privacy page say copies go after a day. Without it the page says they stay in the account until deleted or the account is closed, which is true when nothing purges them; a manual purge doesn't count, so don't set it for one.
 7. Deploy. The checklist, beyond the other secrets:
-   - `SMTP_USERNAME` set to the account's address (an env var: it isn't secret), and the password from Secret Manager: `--set-secrets SMTP_PASSWORD=SMTP_PASSWORD:latest`. Leave `EMAIL_API_KEY` unset.
+   - `SMTP_USERNAME` set to the account's address (an env var: it isn't secret; production reads it from a secret anyway, to keep it out of the repo), and the password from Secret Manager: `--set-secrets SMTP_PASSWORD=SMTP_PASSWORD:latest` (production: `SMTP_PASSWORD_PROD`, see Production deploy). Leave `EMAIL_API_KEY` unset.
    - **`--max-instances 1`.** The ceilings below are counted in the instance's SQLite file, so a second instance would have its own count, and Gmail's limit is per account.
-   - **`--no-cpu-throttling`** (CPU always allocated, which is instance-based billing). Sign-in links and notices are sent after the response, and with the default request-based billing Cloud Run throttles the CPU once a response is out, so those sends can stall or be cut off. The trade-off is cost: an instance with CPU always allocated is billed for its whole life (all the time with `--min-instances 1`), not only while it serves requests. The deploy scripts don't set it; decide at deploy. Without it, expect some links and notices to arrive late or not at all.
+   - **`--no-cpu-throttling`** (CPU always allocated, which is instance-based billing). Sign-in links and notices are sent after the response, and with the default request-based billing Cloud Run throttles the CPU once a response is out, so those sends can stall or be cut off. The trade-off is cost: an instance with CPU always allocated is billed for its whole life (all the time with `--min-instances 1`), not only while it serves requests. The preview's script doesn't set it; `scripts/deploy_production.sh` asks for the choice on every run (`CPU_ALWAYS_ALLOCATED`). Without it, expect some links and notices to arrive late or not at all.
    - `GMAIL_PURGE=daily` once step 6's trigger runs.
 
 The variables: `SMTP_USERNAME` (the Gmail address), `SMTP_PASSWORD` (the app password; at least 16 characters in production), `SMTP_HOST` (default `smtp.gmail.com`), `SMTP_PORT` (default 587), `SMTP_MAX_PER_DAY` (default 400, at most 450 through `smtp.gmail.com`, a margin under Gmail's 500), `GMAIL_PURGE` (`daily` or unset, see step 6). All whitespace is dropped from `SMTP_PASSWORD`, which assumes a Gmail app password (it has none of its own): another provider's password with a space in it would break. From is `EMAIL_FROM` when set, else `SMTP_USERNAME`; Gmail rewrites From to the account signed in anyway, so only a display name such as `Causematch <causematch.example@gmail.com>` is worth setting there. A failed send logs only the exception's type, never the password, the address or the link.
@@ -99,7 +99,7 @@ The existing ceilings don't keep under Gmail's limit on their own: sign-up links
 
 The host scales to zero, so nothing runs in the background: Cloud Scheduler is to call two endpoints with `Authorization: Bearer $TASKS_TOKEN` (anything else gets 401).
 
-> **Not set up yet.** No scheduler jobs exist today, so shift reminders, retries and urgent waves don't go out on their own. Create the jobs below as part of the production launch. A preview can't be called this way at all: its password gate reads the same `Authorization` header, so a preview would first need `/tasks/*` exempted from `PreviewGate` or the token moved to its own header.
+> **Not set up yet.** No scheduler jobs exist today, so shift reminders, retries and urgent waves don't go out on their own. Create the jobs below as part of the production launch (Production deploy, step 7, has the commands). A preview can't be called this way at all: its password gate reads the same `Authorization` header, so a preview would first need `/tasks/*` exempted from `PreviewGate` or the token moved to its own header.
 
 | Job | Schedule | Does |
 |---|---|---|
@@ -185,6 +185,129 @@ PREVIEW_PASSWORD="$(gcloud secrets versions access latest --secret PREVIEW_PASSW
 ```
 
 `URL` is the bare `https://` address the deploy printed, without `?access=`; the script refuses a URL that has it, and a missing password. A run makes two demo copies of the volunteer, and an address may make 10 an hour. In a preview the access gate also covers `/check/...`, so the check link answers 401 without the access cookie; the script expects that. `--insecure` accepts a self-signed certificate, for running against a local preview served with its own (a preview refuses `http://` origins).
+
+### Production deploy
+
+`scripts/deploy_production.sh` deploys production (`CAUSEMATCH_ENV=production`) to Cloud Run: service `causematch` in project `causematch-la`, `us-west1`, on its `*.run.app` URL, running as `causematch-prod@causematch-la.iam.gserviceaccount.com` (override with `PROJECT`, `REGION`, `SERVICE`, `SERVICE_ACCOUNT`, `LITESTREAM_BUCKET`). It refuses a project whose name isn't `Causematch`, a leftover `preview-seed/`, and a missing secret, and seeds nothing. Its header lists every setting.
+
+**The database.** SQLite on the instance's disk, streamed by [Litestream](https://litestream.io) to `gs://$LITESTREAM_BUCKET/causematch.db` about every second (`litestream.yml`). `entrypoint.sh`, the image's start, restores the file from the bucket when an instance starts without one, then runs uvicorn under `litestream replicate -exec`. No replica yet (the very first start) is fine; any other restore error stops the start, and the previous revision keeps serving. A crash can lose about the last second of writes; on a normal stop (SIGTERM) uvicorn drains for 8 seconds and Litestream syncs once more. Litestream keeps 24 hours of history (a snapshot a day). Without `LITESTREAM_BUCKET` the entrypoint runs plain uvicorn, as the preview does, and on Cloud Run it refuses to start unless `CAUSEMATCH_ENV=preview`. The app waits up to 5 seconds for Litestream's short write locks (`busy_timeout`, `app/db.py`).
+
+**Exactly one instance**: `--min-instances 1 --max-instances 1`. Two instances would be two databases overwriting each other's replica, and the rate limits and Gmail's daily count live in that file too. Never raise `--max-instances` while on SQLite; move to Cloud SQL first. `--concurrency 80` (open chat websockets count against it) must stay at or under uvicorn's `--limit-concurrency 200`. 1 GiB, one CPU, startup CPU boost, `TRUSTED_PROXY_HOPS=1` for the `*.run.app` URL (2 behind a load balancer, see Security).
+
+**Deploys overlap.** `--max-instances` counts per revision: during a deploy the new revision's instance starts, restores from the bucket and replicates while the old one is still serving. Whatever the old instance writes after the new one restored (a message, a sign-in) is lost, and for that time two Litestreams write one replica (each snapshots over the other when it finds itself behind; the new one, which keeps running, ends up holding it). Deploy at a quiet hour and keep deploys few. The restore drill (step 8) runs exactly this path.
+
+**Secrets** have their own `_PROD` names, so production never shares a key with the preview (whose secrets are `SESSION_SECRET` and so on): `SESSION_SECRET_PROD`, `PHONE_HASH_KEY_PROD`, `CERTIFICATE_KEY_PROD`, `TASKS_TOKEN_PROD`, `SMTP_USERNAME_PROD` (the Gmail address: a secret here only to keep it out of the repo and the deploy command), `SMTP_PASSWORD_PROD`, and optionally `GOOGLE_CLIENT_ID_PROD` with `GOOGLE_CLIENT_SECRET_PROD`, passed only when both exist (the script checks with `gcloud secrets describe` and refuses one alone). The script maps each to the variable the app reads (`SESSION_SECRET=SESSION_SECRET_PROD:latest`, ...).
+
+**CPU.** `CPU_ALWAYS_ALLOCATED` is required on every run. `1` adds `--no-cpu-throttling`: sign-in links and notices go out after the response, and only with CPU always allocated do they reliably go (Email through Gmail, step 7). With the instance kept warm it is billed all month, about $45 at list price for 1 vCPU and 1 GiB, against about $10–15 without. `0` is cheaper and some links and notices arrive late or not at all. Production signs volunteers in by email, so choose `1`.
+
+#### One-time setup
+
+Each step is a command the operator runs, in order. Set these first, in the same shell:
+
+```sh
+PROJECT=causematch-la REGION=us-west1
+SA=causematch-prod@$PROJECT.iam.gserviceaccount.com
+BUCKET=$PROJECT-litestream   # the script's default LITESTREAM_BUCKET
+```
+
+1. **The bucket**, private, versioned, with deleted and replaced objects kept 30 days. Litestream deletes its own files after its 24 hours; versioning is the undo for a bad deploy or a replica wiped by mistake.
+
+   ```sh
+   gcloud storage buckets create gs://$BUCKET --project $PROJECT --location $REGION \
+     --uniform-bucket-level-access --public-access-prevention
+   gcloud storage buckets update gs://$BUCKET --versioning
+   printf '%s' '{"rule":[{"action":{"type":"Delete"},"condition":{"daysSinceNoncurrentTime":30}}]}' \
+     > lifecycle.json
+   gcloud storage buckets update gs://$BUCKET --lifecycle-file=lifecycle.json && rm lifecycle.json
+   ```
+
+2. **The service account**, with object access to that bucket only (nothing at the project level):
+
+   ```sh
+   gcloud iam service-accounts create causematch-prod --project $PROJECT \
+     --display-name "Causematch production"
+   gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+     --member serviceAccount:$SA --role roles/storage.objectAdmin
+   ```
+
+3. **The secrets.** The four keys are random, 64 characters (at least 32 are required), made and stored without being shown. The Gmail address and app password are typed with `read -rs`, so neither is shown or kept in the history (the app password as in Email through Gmail, step 5, under the `_PROD` name). Then the service account may read each one, and nothing else:
+
+   ```sh
+   for s in SESSION_SECRET PHONE_HASH_KEY CERTIFICATE_KEY TASKS_TOKEN; do
+     python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' |
+       gcloud secrets create ${s}_PROD --project $PROJECT --replication-policy=automatic --data-file=-
+   done
+   read -rs V && printf %s "$V" | gcloud secrets create SMTP_USERNAME_PROD --project $PROJECT \
+     --replication-policy=automatic --data-file=- ; unset V
+   read -rs V && printf %s "$V" | tr -d ' ' | gcloud secrets create SMTP_PASSWORD_PROD --project $PROJECT \
+     --replication-policy=automatic --data-file=- ; unset V
+   for s in SESSION_SECRET PHONE_HASH_KEY CERTIFICATE_KEY TASKS_TOKEN SMTP_USERNAME SMTP_PASSWORD; do
+     gcloud secrets add-iam-policy-binding ${s}_PROD --project $PROJECT \
+       --member serviceAccount:$SA --role roles/secretmanager.secretAccessor
+   done
+   ```
+
+   Google sign-in, later: create `GOOGLE_CLIENT_ID_PROD` and `GOOGLE_CLIENT_SECRET_PROD` the same way, grant them the same, register the redirect URI the script prints (Live providers), and redeploy.
+
+4. **Back up `CERTIFICATE_KEY_PROD`** outside Google Cloud, in the password manager that holds the other production credentials: a lost or changed key makes every certificate issued read as not genuine (Rotating `CERTIFICATE_KEY`). Print it there and nowhere else (no file, no chat): `gcloud secrets versions access latest --secret CERTIFICATE_KEY_PROD --project $PROJECT`. Back up `SESSION_SECRET_PROD` and `PHONE_HASH_KEY_PROD` the same way; losing them signs everyone out and forgets the blocks kept for deleted accounts.
+
+5. **First deploy**, from a clean checkout of `main`:
+
+   ```sh
+   CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=<the privacy page's address> scripts/deploy_production.sh
+   ```
+
+   The first run deploys with a placeholder `PUBLIC_BASE_URL`, then sets it to the service URL (a second revision). It prints the URL. Add `GMAIL_PURGE=daily` to the command once the mailbox purge runs (Email through Gmail, step 6): each deploy sets the whole environment, so a variable set by hand is gone after the next one.
+
+6. **Check it.** `/login` answers 200, the logs show Litestream replicating with no errors, and after the first sign-in the bucket holds Litestream's files:
+
+   ```sh
+   URL=$(gcloud run services describe causematch --project $PROJECT --region $REGION --format 'value(status.url)')
+   curl -s -o /dev/null -w '%{http_code}\n' "$URL/login"    # 200
+   gcloud run services logs read causematch --project $PROJECT --region $REGION --limit 50
+   gcloud storage ls gs://$BUCKET/causematch.db/
+   ```
+
+   Check `TRUSTED_PROXY_HOPS` too (Security, Client IP).
+
+7. **The scheduled jobs** (Scheduled jobs, above), with the token read from Secret Manager in the same shell and never typed. Cloud Scheduler keeps the header in the job's settings, readable by anyone who can view the jobs; after a new `TASKS_TOKEN_PROD` version and redeploy, update both jobs with `--update-headers`.
+
+   ```sh
+   gcloud services enable cloudscheduler.googleapis.com --project $PROJECT
+   TOKEN="$(gcloud secrets versions access latest --secret TASKS_TOKEN_PROD --project $PROJECT)"
+   gcloud scheduler jobs create http causematch-reminders --project $PROJECT --location $REGION \
+     --schedule='0 * * * *' --time-zone=America/Los_Angeles \
+     --uri="$URL/tasks/reminders" --http-method=POST --headers="Authorization=Bearer $TOKEN"
+   gcloud scheduler jobs create http causematch-urgent --project $PROJECT --location $REGION \
+     --schedule='*/10 * * * *' --time-zone=America/Los_Angeles \
+     --uri="$URL/tasks/urgent" --http-method=POST --headers="Authorization=Bearer $TOKEN"
+   unset TOKEN
+   gcloud scheduler jobs run causematch-urgent --project $PROJECT --location $REGION
+   ```
+
+   The run's `POST /tasks/urgent` shows in the service's logs with 200 (401 means the token doesn't match).
+
+8. **The restore drill**, before anyone else signs up: proof that the data outlives the instance.
+   1. Sign up at `$URL/login` with your own address and finish onboarding with a first name you'll recognize.
+   2. Force a new revision (a new instance, which starts from the bucket): `gcloud run services update causematch --project $PROJECT --region $REGION --update-env-vars RESTORE_DRILL=$(date +%s)`. The next deploy removes the variable.
+   3. `gcloud run revisions list --service causematch --project $PROJECT --region $REGION` shows the new revision serving; its logs show the restore.
+   4. Sign in again with a new emailed link: you land on the deck, not onboarding, and Me shows your name. Your account came back from the bucket.
+
+   To read the replica away from Cloud Run (optional), with [Litestream installed](https://litestream.io/install/) and `gcloud auth application-default login`: `litestream restore -o /tmp/check.db gs://$BUCKET/causematch.db`, then `sqlite3 /tmp/check.db 'select count(*) from profile'`. That copy holds personal data: delete it afterwards.
+
+#### Later deploys and rolling back
+
+Every later deploy is step 5's command again. Startup runs pending migrations before the new revision serves, and they stay applied if its start then fails, while the previous revision keeps serving on that schema: **every migration must be safe for the release before it** (Schema changes, below).
+
+To roll back the code, send the traffic to the previous revision:
+
+```sh
+gcloud run revisions list --service causematch --project $PROJECT --region $REGION
+gcloud run services update-traffic causematch --project $PROJECT --region $REGION \
+  --to-revisions <previous revision>=100
+```
+
+The data doesn't roll back: the old revision's instance restores the current replica, with the newer schema, which is why migrations must be safe for the release before. The switch is a deploy's overlap too (Deploys overlap, above). The next `scripts/deploy_production.sh` sends the traffic to the latest revision again. Putting the data itself back to an earlier point is not scripted: `litestream restore -timestamp <RFC 3339 time> -o <file> gs://$BUCKET/causematch.db` gives a copy from within the last 24 hours to inspect, and replacing the replica with it means stopping the service first. Plan that before doing it.
 
 ### Schema changes
 
