@@ -14,6 +14,7 @@ from e2e.helpers import (
     guard,
     onboard_page,
     sign_in_page,
+    sign_up,
 )
 
 pytestmark = pytest.mark.e2e
@@ -58,12 +59,7 @@ def test_volunteer_and_sign_in_pages_have_big_targets_and_no_overflow(phone):
     found = {}
     for path in ("/login", "/org/login", "/org/claim", "/privacy"):
         found[path] = check(phone, path)
-    phone.goto("/login")
-    phone.get_by_label("Mobile number").fill("(310) 555-0170")
-    phone.get_by_role("button", name="Text me a code").click()
-    phone.get_by_label("Code").fill("000000")
-    phone.get_by_role("button", name="Sign in").click()
-    phone.wait_for_url("**/onboarding")
+    sign_up(phone, "(310) 555-0170")
     found["/onboarding"] = check(phone, "/onboarding")
     phone.context.clear_cookies()
     p = sign_in_page(phone, "(310) 555-0171")

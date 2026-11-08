@@ -13,6 +13,8 @@ from app import data, notify
 from app.choices import INTERESTS, MAX_INTERESTS
 from app.db import profiles
 from app.forms import HIDDEN_CHARS_MESSAGE
+from app.routes import profile as profile_routes
+from app.routes.auth import PREVIEW_PHONES
 
 GOOD = {
     "first_name": "Sam",
@@ -326,6 +328,15 @@ def test_a_volunteer_adds_and_verifies_a_number_for_texts(anon):
     assert r.headers["location"] == "/me/profile?notice=phone"
     assert profiles[uid].phone == "+13105550177" and notify.channel(uid) == "sms"
     assert "***0177" in anon.get("/me/profile").text
+
+
+def test_a_preview_adds_demo_numbers_only(anon, monkeypatch):
+    uid = _phoneless(anon)
+    monkeypatch.setattr(profile_routes, "is_preview", lambda: True)
+    r = anon.post("/me/phone/send", data={"phone": "(310) 555-1234"})
+    assert r.status_code == 400 and PREVIEW_PHONES in r.text
+    anon.post("/me/phone/verify", data={"code": "000000"})
+    assert profiles[uid].phone is None
 
 
 def test_a_number_on_another_account_is_refused(anon, new_user):

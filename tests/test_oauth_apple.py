@@ -33,19 +33,44 @@ def ec_key():
     return ec.generate_private_key(ec.SECP256R1())
 
 
-def provider_with(key):
+def apple_env(key):
     pem = key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     ).decode()
-    env = {
+    return {
         "APPLE_CLIENT_ID": CLIENT_ID,
         "APPLE_TEAM_ID": "TEAM123456",
         "APPLE_KEY_ID": "KEY1234567",
         "APPLE_PRIVATE_KEY": pem.replace("\n", "\\n"),  # as Secret Manager may hold it
     }
-    return oauth.Apple(*apple_oauth(env))
+
+
+def provider_with(key):
+    return oauth.Apple(*apple_oauth(apple_env(key)))
+
+
+def test_the_fake_stands_in_for_google_alone_so_apple_shows_only_when_configured(
+    anon, monkeypatch, ec_key
+):
+    fake = {"CAUSEMATCH_ENV": "preview", "PREVIEW_PASSWORD": "p" * 16}
+    fake["CAUSEMATCH_FAKE_OAUTH"] = "1"  # what the deploy script and demo.py set
+    assert oauth.enabled_providers(fake) == [("google", "Google")]
+    assert oauth.get_provider("apple", fake) is None
+    real = {**fake, **apple_env(ec_key)}  # real Apple credentials: Apple shows
+    assert oauth.enabled_providers(real) == [("apple", "Apple"), ("google", "Google")]
+    assert isinstance(oauth.get_provider("apple", real), oauth.Apple)
+    assert isinstance(oauth.get_provider("google", real), oauth.Fake)
+    with pytest.raises(RuntimeError, match="CAUSEMATCH_FAKE_OAUTH"):
+        oauth.fake_names({**fake, "CAUSEMATCH_FAKE_OAUTH": "google,facebook"})
+    monkeypatch.setenv("CAUSEMATCH_FAKE_OAUTH", "1")
+    for page in ("/login", "/org/login"):
+        text = anon.get(page).text
+        assert "Continue with Google" in text and "Continue with Apple" not in text
+    for path in ("/auth/apple/start", "/auth/fake/consent?provider=apple"):
+        assert anon.get(path).status_code == 404, path
+    assert anon.post("/auth/apple/callback").status_code == 404
 
 
 def test_client_secret_is_an_es256_jwt_for_apple(ec_key):
@@ -179,7 +204,7 @@ def test_sessionless_apple_connect_needs_the_sealed_session_version():
 
 def test_other_cross_site_posts_are_still_refused():
     c = TestClient(app, base_url=HTTPS)
-    r = c.post("/login/send", data={"phone": "3105550131"}, headers=CROSS_SITE)
+    r = c.post("/login/send", data={"email": "x@example.org"}, headers=CROSS_SITE)
     assert r.status_code == 403
 
 
