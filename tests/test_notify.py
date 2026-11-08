@@ -1,6 +1,8 @@
 """Notifications: texts to volunteers, email to coordinators; once per event, throttled."""
 
 import logging
+import smtplib
+import ssl
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -687,3 +689,169 @@ def test_accept_notice_links_to_the_chat(world):
     )
     assert "Accepted · " in r.text
     assert f'href="/org/chat/{world.match.id}"' in r.text
+
+
+# --- email over SMTP (a Gmail account and its app password, for the beta) ---------------
+
+APP_PASSWORD = "abcdefghijklmnop"  # 16 letters, as Gmail's
+SMTP_ENV = {
+    "SMTP_USERNAME": "causematch.example@gmail.com",
+    "SMTP_PASSWORD": APP_PASSWORD,
+}
+RESEND = {"EMAIL_API_KEY": "k", "EMAIL_FROM": "hello@causematch.example"}
+
+
+CONNECTIONS = []  # every FakeSMTP made, in order
+
+
+class FakeSMTP:
+    """smtplib.SMTP and SMTP_SSL stand-in: records what the emailer does, no network."""
+
+    def __init__(self, host, port, timeout=None, context=None):
+        self.host, self.port, self.timeout, self.context = host, port, timeout, context
+        self.calls, self.messages = [], []
+        CONNECTIONS.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.calls.append("quit")
+
+    def starttls(self, context=None):
+        self.calls.append(("starttls", context))
+
+    def login(self, user, password):
+        self.calls.append(("login", user, password))
+
+    def send_message(self, message):
+        self.calls.append("send")
+        self.messages.append(message)
+
+
+@pytest.fixture
+def smtp_server(monkeypatch):
+    CONNECTIONS.clear()
+    monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(notify.smtplib, "SMTP_SSL", FakeSMTP)
+    return CONNECTIONS
+
+
+def test_email_picks_the_fake_then_resend_then_smtp_and_production_needs_one():
+    prod = {"CAUSEMATCH_ENV": "production"}
+    dev_fake = {"CAUSEMATCH_ENV": "development", "CAUSEMATCH_FAKE_EMAIL": "1"}
+    assert isinstance(notify.make_emailer({**dev_fake, **SMTP_ENV}), notify.FakeEmailer)
+    both = notify.make_emailer({**prod, **RESEND, **SMTP_ENV})
+    assert isinstance(both, notify.ResendEmailer)  # Resend wins: switching is config
+    e = notify.make_emailer({**prod, **SMTP_ENV})
+    assert isinstance(e, notify.SMTPEmailer)
+    assert (e.host, e.port, e.sender) == (
+        "smtp.gmail.com",
+        587,
+        SMTP_ENV["SMTP_USERNAME"],
+    )
+    named = "Causematch <causematch.example@gmail.com>"
+    assert (
+        notify.make_emailer({**prod, **SMTP_ENV, "EMAIL_FROM": named}).sender == named
+    )
+    for half in (
+        {"SMTP_USERNAME": "causematch.example@gmail.com"},
+        {"SMTP_PASSWORD": APP_PASSWORD},
+        {"SMTP_HOST": "smtp.gmail.com"},
+    ):
+        for env in ({**prod, **half}, {**prod, **RESEND, **half}):
+            with pytest.raises(RuntimeError, match="SMTP is half configured"):
+                notify.make_emailer(env)
+        with pytest.raises(RuntimeError, match="SMTP is half configured"):
+            config.require_volunteer_sign_in({**prod, **half})
+    with pytest.raises(RuntimeError, match="at least 16"):
+        notify.make_emailer({**prod, **SMTP_ENV, "SMTP_PASSWORD": "short"})
+    with pytest.raises(RuntimeError, match="SMTP_PORT"):
+        notify.make_emailer({**prod, **SMTP_ENV, "SMTP_PORT": "smtp"})
+    with pytest.raises(RuntimeError, match="SMTP_MAX_PER_DAY"):
+        notify.make_emailer({**prod, **SMTP_ENV, "SMTP_MAX_PER_DAY": "0"})
+    with pytest.raises(RuntimeError, match="EMAIL_FROM"):
+        notify.make_emailer({**prod, "EMAIL_API_KEY": "k"})
+    with pytest.raises(RuntimeError, match="Email is not configured"):
+        notify.make_emailer(prod)
+    with pytest.raises(RuntimeError, match="CAUSEMATCH_ENV"):
+        notify.make_emailer({**prod, **SMTP_ENV, "CAUSEMATCH_FAKE_EMAIL": "1"})
+    config.require_volunteer_sign_in({**prod, **SMTP_ENV})  # SMTP alone is a way in
+    with pytest.raises(RuntimeError, match="No volunteer sign-in"):
+        config.require_volunteer_sign_in(prod)
+
+
+def test_an_smtp_send_is_the_same_message_over_verified_starttls(
+    smtp_server, monkeypatch
+):
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "production", **SMTP_ENV})
+    e.send("vol@example.org", "Subject", "Body", {"List-Unsubscribe": "<https://x>"})
+    (server,) = smtp_server
+    assert (server.host, server.port, server.timeout) == ("smtp.gmail.com", 587, 10)
+    (tls, login, send, quit_) = server.calls
+    assert tls[0] == "starttls" and (send, quit_) == ("send", "quit")
+    assert tls[1].verify_mode == ssl.CERT_REQUIRED and tls[1].check_hostname
+    assert login == ("login", "causematch.example@gmail.com", APP_PASSWORD)
+    (m,) = server.messages
+    assert (m["To"], m["From"], m["Subject"]) == (
+        "vol@example.org",
+        "causematch.example@gmail.com",
+        "Subject",
+    )
+    assert m["List-Unsubscribe"] == "<https://x>"
+    assert m.get_content() == "Body\n"
+    # the sign-in link goes out with Resend's subject and text
+    resend = notify.ResendEmailer("k", "hello@causematch.example")
+    posted = []
+    resend.client.post = lambda path, json: (
+        posted.append(json) or SimpleNamespace(raise_for_status=lambda: None)
+    )
+    for emailer in (e, resend):
+        monkeypatch.setattr(notify, "_emailer", emailer)
+        link = notify.send_volunteer_link("vol@example.org", "tok", new=True)
+    m = smtp_server[-1].messages[0]
+    assert m["Subject"] == posted[0]["subject"] == "Finish signing up for Causematch"
+    assert (
+        m.get_content().rstrip("\n") == posted[0]["text"] and link in posted[0]["text"]
+    )
+    # port 465: TLS from the start, with the same verified context, and no STARTTLS
+    smtp_server.clear()
+    tls_e = notify.make_emailer(
+        {"CAUSEMATCH_ENV": "production", **SMTP_ENV, "SMTP_PORT": "465"}
+    )
+    tls_e.send("vol@example.org", "Subject", "Body")
+    (server,) = smtp_server
+    assert server.context.verify_mode == ssl.CERT_REQUIRED
+    assert not any(c[0] == "starttls" for c in server.calls if isinstance(c, tuple))
+
+
+def test_a_failed_smtp_send_logs_its_type_only(anon, smtp_server, monkeypatch, caplog):
+    from conftest import coordinator_for
+
+    _, email = coordinator_for(0, "known@example.org")
+
+    def refuse(self, user, password):
+        raise smtplib.SMTPAuthenticationError(535, f"bad {user} {password}".encode())
+
+    monkeypatch.setattr(FakeSMTP, "login", refuse)
+    monkeypatch.setattr(
+        notify, "_emailer", notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    )
+    with caplog.at_level(logging.DEBUG):
+        r = anon.post("/org/login/send", data={"email": email})
+    assert r.status_code == 200
+    assert "sending a sign-in link failed: SMTPAuthenticationError" in caplog.text
+    for secret in (APP_PASSWORD, "token=", "/org/login/verify", email):
+        assert secret not in caplog.text
+
+
+def test_smtp_stops_at_its_daily_ceiling_and_says_so(smtp_server, caplog):
+    env = {"CAUSEMATCH_ENV": "test", **SMTP_ENV, "SMTP_MAX_PER_DAY": "2"}
+    e = notify.make_emailer(env)
+    e.send("a@example.org", "s", "b")
+    e.send("b@example.org", "s", "b")
+    with caplog.at_level(logging.WARNING), pytest.raises(notify.EmailCeiling):
+        e.send("c@example.org", "s", "b")
+    assert len(smtp_server) == 2  # the third never connected
+    assert "rate limit reached: email-smtp-day" in caplog.text
+    assert config.smtp_max_per_day({}) == 400

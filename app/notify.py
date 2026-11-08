@@ -1,13 +1,23 @@
 import logging
 import os
 import re
+import smtplib
+import ssl
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 
 import httpx
 
 from app import data, security
-from app.config import contact_email, fakes_allowed, public_base_url
+from app.config import (
+    SMTP_TLS_PORT,
+    contact_email,
+    fakes_allowed,
+    public_base_url,
+    smtp,
+    smtp_max_per_day,
+)
 from app.match import LA
 
 log = logging.getLogger("causematch")
@@ -28,6 +38,7 @@ TWILIO_KEYS = (
     "TWILIO_FROM_NUMBER",
 )
 FAKE_KEPT = 1000  # the most recent sends a fake keeps: a preview runs for days
+SMTP_TIMEOUT = 10  # seconds, for the connection and each SMTP command
 
 
 def _record(sent, item):
@@ -173,15 +184,65 @@ class ResendEmailer:
         self.client.post("/emails", json=message).raise_for_status()
 
 
+class EmailCeiling(Exception):
+    """SMTP_MAX_PER_DAY emails were sent over SMTP in the last 24 hours: not sent."""
+
+
+class SMTPEmailer:
+    """Email over SMTP with a login: a Gmail account and its app password, for the beta.
+    Always TLS with the certificate checked: port 465 is TLS from the start, any other
+    upgrades with STARTTLS, and a server that doesn't offer it is refused, so the password
+    never crosses in the clear. Every send counts against SMTP_MAX_PER_DAY first."""
+
+    def __init__(self, host, port, username, password, sender, per_day):
+        self.host, self.port = host, port
+        self.username, self.password = username, password
+        self.sender = sender
+        self.ceiling = (("email-smtp-day", per_day, 24 * 3600),)
+        self.context = ssl.create_default_context()
+
+    def send(self, to, subject, body, headers=None):
+        # security.allow logs "rate limit reached: email-smtp-day" (docs/OPERATIONS.md)
+        if not security.allow((self.ceiling, "all")):
+            raise EmailCeiling
+        message = EmailMessage()
+        message["From"] = self.sender
+        message["To"] = to
+        message["Subject"] = subject
+        for name, value in (headers or {}).items():
+            message[name] = value
+        message.set_content(body)
+        if self.port == SMTP_TLS_PORT:
+            server = smtplib.SMTP_SSL(
+                self.host, self.port, timeout=SMTP_TIMEOUT, context=self.context
+            )
+        else:
+            server = smtplib.SMTP(self.host, self.port, timeout=SMTP_TIMEOUT)
+        with server:
+            if self.port != SMTP_TLS_PORT:
+                server.starttls(context=self.context)  # SMTPNotSupportedError if none
+            server.login(self.username, self.password)
+            server.send_message(message)
+
+
 def make_emailer(env=os.environ):
+    """The fake where allowed and asked for; else Resend when EMAIL_API_KEY is set; else
+    SMTP when it is configured (config.smtp). SMTP set halfway refuses to start even
+    beside Resend, and so does no emailer at all."""
     if _fake(env, "CAUSEMATCH_FAKE_EMAIL"):
         return FakeEmailer()
-    if not (env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM")):
-        raise RuntimeError(
-            "Email is not configured: set EMAIL_API_KEY and EMAIL_FROM "
-            "(or CAUSEMATCH_ENV=development with CAUSEMATCH_FAKE_EMAIL=1)"
-        )
-    return ResendEmailer(env["EMAIL_API_KEY"], env["EMAIL_FROM"])
+    settings = smtp(env)
+    if env.get("EMAIL_API_KEY"):
+        if not env.get("EMAIL_FROM"):
+            raise RuntimeError("Resend needs EMAIL_FROM beside EMAIL_API_KEY")
+        return ResendEmailer(env["EMAIL_API_KEY"], env["EMAIL_FROM"])
+    if settings:
+        return SMTPEmailer(*settings, smtp_max_per_day(env))
+    raise RuntimeError(
+        "Email is not configured: set EMAIL_API_KEY and EMAIL_FROM (Resend), or "
+        "SMTP_USERNAME and SMTP_PASSWORD (SMTP), or CAUSEMATCH_ENV=development with "
+        "CAUSEMATCH_FAKE_EMAIL=1"
+    )
 
 
 _emailer = None
@@ -364,7 +425,12 @@ def _deliver(kind, key, recipient_id, send, window=None, opt_out=None, gate=None
             if opt_out:
                 opt_out()
             status = "skipped"
-        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
+        except (
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.RemoteProtocolError,
+            TimeoutError,  # SMTP's: the server may have taken the message
+        ) as e:
             log.warning("%s notification outcome unknown: %s", kind, type(e).__name__)
             status = "unknown"
         except Exception as e:  # noqa: BLE001  a failed notice never fails the request
