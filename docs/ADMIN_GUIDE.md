@@ -1,8 +1,10 @@
 # Causematch admin guide
 
-A short how-to for the person running the beta (Katie, this is for you). You don't need to be technical: everything below happens in a web browser, except a few things only the **operator** can do. The operator is whoever deploys and looks after the Causematch server; each of those steps names the command, so you can paste it into a message.
+A short how-to for the admin running the beta. You don't need to be technical: everything below happens in a web browser, except a few things only the **operator** can do. The operator is whoever deploys and looks after the Causematch server; each of those steps names the command, so you can paste it into a message.
 
 The screenshots use demo data: invented organizations and example.org addresses.
+
+This guide is for the live (production) site. The **preview** is demo-only: it accepts only demo addresses, so a real address gets no link there, and the demo admin's link is in the server log instead of an email. Don't approve real claims on the preview.
 
 Nothing tells you when something new arrives. **No email or text goes to admins** when a nonprofit asks for access or someone files a report, so look at the Claims and Reports tabs every day or two.
 
@@ -19,10 +21,10 @@ An admin can see the admin pages and nothing else: the volunteer pages and the n
 Only the operator can add an admin. They run this against the live app (use your own address and name):
 
 ```sh
-uv run python scripts/add_admin.py --email admin@example.org --name "Katie"
+uv run python scripts/add_admin.py --email admin@example.org --name "Your Name"
 ```
 
-It prints `admin@example.org is an admin`. To take access away (you are signed out at once):
+It prints `admin@example.org is an admin (profile 2)`; the number is just an internal id. To take access away (you are signed out at once):
 
 ```sh
 uv run python scripts/remove_admin.py --email admin@example.org
@@ -34,14 +36,24 @@ There is no password. You get a link by email.
 
 1. Open `/org/login` on the Causematch site. This is the **nonprofit** sign-in page, and it is the one admins use too.
 2. Type your admin email address and tap **Email me a link**.
-3. Open the email "Your Causematch sign-in link" and tap the link. It works **once** and expires after **15 minutes**.
-4. On the page that opens, tap **Sign in**. You land on the Admin page.
+3. Open the email "Your Causematch sign-in link" and tap the link. It works **once** and expires after **15 minutes**. Only the **newest** link works: asking again cancels the one before.
+4. A confirm page opens. Check that it says **Sign in as** and your own address, then tap **Sign in**. You land on the Admin page.
 
 ![The nonprofit sign-in page](assets/admin/org-login.png)
 
-The page always answers "If that address belongs to a coordinator, a sign-in link is on its way", whether or not the address is known. That is on purpose, so strangers can't find out who has an account. If no email comes, see [When something's off](#6-when-somethings-off).
+#### The confirm page and its warnings
 
-If Google or Apple sign-in is switched on, you can use it instead, as long as the email on your Google or Apple account is the same one you were added with.
+The link only shows you this page; nothing happens until you tap **Sign in**. That is so someone can't sign you in to *their* account by sending you a link.
+
+![The confirm page, with the "didn't ask for this link" warning](assets/admin/sign-in-confirm.png)
+
+- **"This browser didn't ask for this link. If someone sent it to you, stop here: continuing would sign you in to their account."** This is expected when you asked for the link in one browser or on one device and opened it in another (you requested it on your laptop and tapped it on your phone, say). If you asked for it, carry on. If you didn't ask for it, don't tap Sign in.
+- **"This browser is signed in to another account. Continuing signs it out."** Tapping Sign in swaps that account for the one named on the page.
+- **"That sign-in link has expired or was already used. Ask for a new one."** The link is older than 15 minutes, has been used, or a newer link replaced it. Go back to `/org/login` and ask again.
+
+The sign-in page always answers "If that address belongs to a coordinator, a sign-in link is on its way", whether or not the address is known. That is on purpose, so strangers can't find out who has an account. If no email comes, see [When something's off](#6-when-somethings-off).
+
+A **Continue with Google** (or Apple) button shows only when that sign-in is switched on. It works for you only when the email on that account is the one you were added with **and** Google or Apple itself hosts that mailbox: a Gmail or Google Workspace address for Google, an iCloud address for Apple. For any other address, such as a nonprofit's own domain on another mail service, the button sends you an emailed link instead.
 
 ![The Admin page, with the tabs along the top](assets/admin/admin-home.png)
 
@@ -59,6 +71,8 @@ Nobody gets a nonprofit account by signing up. They ask, and an admin says yes. 
 2. They find their organization by typing its name (from IRS records) or by typing its **EIN**, then fill in the organization's name, their own name, their email and, optionally, a phone number.
 3. They tick **I'm authorized to represent this organization** and tap **Request access**.
 4. They see "Request received". They get no email at this point, and the page says the same thing whatever the EIN, so it never reveals which organizations exist.
+
+Heads-up: that page tells them "If it is approved, a sign-in link will be emailed to the address you gave", but the approval email does **not** contain a sign-in link. It tells them to go to `/org/login` and ask for one. If a coordinator writes to say they got no link, this is why.
 
 ![The claim form a coordinator fills in](assets/admin/claim-form.png)
 
@@ -90,19 +104,21 @@ Approving gives a stranger the right to post openings, accept volunteers and cha
 - **Approve.** Tap it. If the card has a checkbox, tick it first:
   - *Yes, approve for (name)* appears when the typed name differs from the IRS name. If you tap Approve without it, nothing is approved and the card explains: "IRS records name this EIN '...', not what they typed. Check it's right, tick ..., then tap Approve again."
   - *Yes, add them too (the people above can already sign in)* appears when the organization already has someone who can sign in. This is how you add a second coordinator ([see below](#a-nonprofit-needs-a-second-coordinator)).
-- **Decline.** Tap it. The person gets a short, neutral email ("not approved"), with no reason and none of what they typed.
+- **Decline.** Tap it. It happens **at once**: there is no "are you sure?" and no way to undo it. The person gets a short, neutral email ("not approved"), with no reason and none of what they typed. If they should have been approved, they have to file a new claim (up to 3 a day per email address).
 
-If the organization is **new to Causematch**, Approve fetches it from IRS records first. That can fail, and nothing changes when it does:
+If the organization is **new to Causematch**, the first tap on Approve fetches it from IRS records. If the IRS name differs from what the person typed, you may then get the "tick ... then tap Approve again" message: tick the box and tap Approve a second time. The fetch can also fail, and then nothing changes:
 
 - "We couldn't reach the IRS records (ProPublica)...": tap Approve again in a minute.
 - "Too many IRS lookups this hour": try later. Lookups are limited to 30 an hour for all admins together.
 - "Can't add this organization: ...": Causematch only takes organizations in Los Angeles County whose type of work fits one of its causes. Decline it, or ask the operator for help.
 
-A green banner confirms the decision: "Approved. We emailed them a link to sign in." or "Declined. We let them know by email." If the email didn't go out, the banner says so ("Approved, but the email didn't send..."). The decision still stands. Tell the person yourself that they can sign in at `/org/login` with the email they used.
+Approve can also be refused with a message on the card: the organization is **deactivated** (the card has no Approve button, only Decline), the address belongs to a **suspended coordinator**, or the address is an **admin's** (one address, one role). Decline those.
+
+A green banner confirms the decision: "Approved. We emailed them a link to sign in." or "Declined. We let them know by email." If the email didn't go out, the banner says so ("Approved, but the email didn't send..." or "Declined, but the email to them didn't send."). The decision still stands. Tell the person yourself; after an approval they can sign in at `/org/login` with the email they used.
 
 ### What the coordinator gets
 
-- An email, "You're approved on Causematch", with a link to `/org/login`. The email has no sign-in link itself. They type their email address there and Causematch sends the one-time sign-in link, as in section 1.
+- An email, "You're approved on Causematch", with a link to `/org/login`. The email has no sign-in link itself (see the heads-up above). They type their email address there and Causematch sends the one-time sign-in link, as in section 1.
 - Access to their organization: they are its **owner** if it had no owner who can sign in, otherwise a **coordinator**.
 - A **verified** organization: approving a claim also verifies the organization if it wasn't ([section 3](#3-verifying-a-nonprofit)).
 
@@ -123,14 +139,14 @@ Two ways an organization becomes verified:
 
 By hand:
 
-1. Open **Orgs**. Each organization shows **Verified**, **Not verified** or **Deactivated**, and its EIN.
-2. Type the organization's EIN (nine digits, like `53-0196605`) in its box and tap **Look up**.
+1. Open **Orgs**. Each organization shows **Verified**, **Not verified** or **Deactivated**, and its EIN (or "No EIN yet").
+2. Type the organization's EIN (nine digits, like `99-0000006`) in its box and tap **Look up**. The grey number you see in an empty box is only an example of how an EIN looks, not a real suggestion for that organization.
 3. Causematch asks ProPublica and shows what it found: "ProPublica: *name*, *city*, *state* (EIN ...)". Check that this is the right organization.
 4. Tap **Approve**.
 
 If something is off you will see a message instead: "An EIN is nine digits", "ProPublica has no nonprofit with that EIN", "Try again in a minute", or "another org already has that EIN".
 
-(The operator can do the same with `uv run python scripts/verify_org.py --ein 53-0196605 --org-id 1 --approve`.)
+(The operator can do the same with `uv run python scripts/verify_org.py --ein 99-0000006 --org-id 1 --approve`.)
 
 ---
 
@@ -149,7 +165,7 @@ What each button does:
 | Button | Shows on | What it does |
 |---|---|---|
 | **Dismiss** | every report | Closes this report. Nothing else changes. |
-| **Suspend user** | a report about a volunteer | The person **can't sign in**, every device they are signed in on is signed out, and their pending and accepted matches are withdrawn (future shifts cancelled). Every open report about them is closed as acted on. You can't suspend an admin. |
+| **Suspend user** | a report about a volunteer | The person **can't sign in**, every device they are signed in on is signed out, and their pending and accepted matches are withdrawn (future shifts cancelled). Every open report about them is closed as acted on. |
 | **Remove photo** | a report about a volunteer who has a photo | Deletes their photo (they can add another). This report is closed; others about them stay open. |
 | **Deactivate org** | a report about a nonprofit | The organization's openings close, pending matches are declined, accepted matches withdrawn, future shifts cancelled, and it leaves every deck and can't post, accept, schedule or message. Every open report about it is closed. |
 
@@ -157,12 +173,12 @@ Things to know before you tap:
 
 - **Suspending and deactivating can't be undone from the admin pages.** There is no "un-suspend" or "reactivate" button. Ask the operator if you got it wrong.
 - **The person isn't told.** Causematch sends no email or text for a suspension.
-- A volunteer who deletes their account after being suspended **stays suspended**: if the same phone number or Google or Apple account signs up again, the suspension and blocks come back with it.
+- A suspension follows the person's **email address** (a `+tag` or Gmail dots don't get around it) and their **Google or Apple account**, not a phone number: phones are only used for texts now. Even after they delete their account, a suspended person who signs up again with that address or account is refused.
 - If the card says "Already suspended" or "Already deactivated", the earlier action already covers it: Dismiss it.
 
 ### One person, several accounts
 
-**Suspend every account on the same mailbox.** A suspension belongs to a single account. It does **not** spread to other live accounts that already share the person's email address, so if you suspend one and leave the other, they can carry on under the other. If you learn that a person has more than one account (the reporter may tell you, or the operator may spot it), suspend each of them.
+**Suspend every account on the same mailbox.** A suspension belongs to a single account. It does **not** spread to other live accounts that already share the person's email address, so if you suspend one and leave the other, they can carry on under the other. Once one account is suspended, emailed links stop coming for that mailbox, but a separate Google or Apple account keeps working until it is suspended too. If you learn that a person has more than one account (the reporter may tell you, or the operator may spot it), suspend each of them.
 
 Suspend lives on a report, and the queue shows only first names. So for the second account, ask the reporter to report it too from the match they have with it, or ask the operator which accounts share the address. Then tap **Suspend user** on each report.
 
@@ -170,9 +186,7 @@ Suspend lives on a report, and the queue shows only first names. So for the seco
 
 Open **Blocks**. A block is one side shutting the other out: a volunteer blocking a nonprofit ("*Maya* (volunteer) blocked *Westside Pantry Collective*") or a nonprofit blocking a volunteer ("*Westside Pantry Collective* blocked *Jordan*").
 
-![The Blocks page](assets/admin/blocks.png)
-
-A blocked nonprofit's openings leave that volunteer's deck, their matches are ended and their chat becomes read-only. Only an admin can undo a block: tap **Unblock**. The matches the block ended **stay ended**; the two sides can match again from scratch.
+When a volunteer blocks a nonprofit, its openings leave that volunteer's deck, their matches are ended and their chat becomes read-only. When a nonprofit blocks a volunteer, the volunteer's waiting likes there are declined, an accepted match is closed, their future likes are dropped without telling them, and the chat becomes read-only. Only an admin can undo a block: tap **Unblock**. The matches the block ended **stay ended**; the two sides can match again from scratch.
 
 ---
 
@@ -200,14 +214,14 @@ The columns, in plain words:
 | Org replied < 48h | How often a nonprofit answered a like within two days. |
 | Median reply (h) | The middle time, in hours, a nonprofit took to answer. |
 | Pending > 48h | Likes still waiting after two days. A nonprofit to nudge. |
-| First shift done | Of the first shifts with a result, how many were completed. |
+| First shift done | Of the volunteers whose first shift has a result, how many completed it. |
 | First shift unmarked | First shifts that have happened but nobody has marked as done or a no-show. Ask the coordinator. |
 | Accepted, no shift | Accepted matches with no shift at all (the volunteer was accepted but nothing was scheduled). |
 | Withdrew before 1st shift | Accepted, then withdrawn before any shift. Counts as not showing up. |
 | Unmarked past shifts | Every started shift still unmarked, not only first ones. |
-| Repeat (2+ shifts) | Volunteers with two or more completed shifts, among those whose first shift was **at least 14 days ago**. |
+| Repeat (2+ shifts) | Volunteers with two or more completed shifts, among those whose first completed shift was **at least 14 days ago**. |
 | Repeat, same org | The same, with both shifts at one nonprofit. |
-| Eligible for repeat | How many volunteers are old enough (14+ days) to count in the repeat rates. |
+| Eligible for repeat | Shown as "of N": how many of the volunteers with a completed shift are old enough (first completed shift 14+ days ago) to count in the repeat rates. |
 | No-show rate | No-shows out of completed shifts plus no-shows. |
 
 "Empty decks" counts times a volunteer's filters left nothing to swipe. **Last-minute calls** shows urgent requests posted, how many were filled, the median minutes to fill and the no-show rate on those fills against ordinary shifts.
@@ -220,18 +234,20 @@ Remember: **only a volunteer's first shift is scheduled automatically.** The rep
 
 ### A coordinator never got their sign-in link
 
-1. Ask them to check spam and to wait a couple of minutes. The link is valid 15 minutes and works once.
+1. Ask them to check spam and to wait a couple of minutes. The link is valid 15 minutes and works once, and only the newest link works, so tell them not to click an older email after asking again.
 2. Make sure they typed the address **exactly** as in their claim or approval. Causematch says the same thing to every address, so it can't tell them it doesn't match.
-3. They can ask again at `/org/login`, but each address is limited to **5 links an hour**. Past that, wait an hour.
-4. Only a **live coordinator of an organization**, or an admin, receives a link. Not these: a request still waiting on the Claims page, one you declined, a suspended or deleted account, and an Apple "Hide my email" relay address (it never matches the email on file: they should use their real address, or the emailed link).
+3. They can ask again at `/org/login`, but there are limits: 5 links an hour from one device for an address, and 20 a day for an address (`+tags` and Gmail dots count as the same address). If they see "Too many tries", they should wait, up to an hour.
+4. Only a **live coordinator of an organization**, or an admin, receives a link. Not these: a request still waiting on the Claims page, one you declined, or a suspended or deleted account.
+   - An Apple "Hide my email" relay address never matches the email on file: they should use their real address, or the emailed link.
+   - A link that opens a page saying it "has expired or was already used" was older than 15 minutes, already used, or replaced by a newer one.
 5. Check the Claims page: if their request is still there, they are not approved yet.
 6. If the banner said "Approved, but the email didn't send", no email went to them at all. Tell them to sign in at `/org/login`.
 7. Still stuck: ask the operator to look at the email log.
 
 ### Someone wants their account deleted
 
-- **A volunteer** can do it themselves: **Me**, then **Your profile**, then **Delete my account** at the bottom (they confirm once). It erases their name, phone, email and location, withdraws their matches and cancels future shifts, and replaces their chat messages with "[message removed]". The answers behind the pilot's statistics stay, without a name. Reports they filed or that name them stay too. If they were blocked, reported or suspended, a one-way hash of their phone number is kept so a suspension can't be dodged by re-registering.
-- **A coordinator or an admin** can't do it themselves: ask the operator. For a coordinator: `uv run python scripts/remove_coordinator.py --email coordinator@example.org` (they are removed from their organizations and signed out at once). For an admin: `scripts/remove_admin.py`, as in section 1.
+- **A volunteer** can do it themselves: **Me**, then **Your profile**, then **Delete my account** at the bottom (they confirm once). It erases their name, phone, email and location, withdraws their matches and cancels future shifts, and replaces their chat messages with "[message removed]". The answers behind the pilot's statistics stay, without a name. Reports they filed or that name them stay too. If they were blocked, reported or suspended, Causematch keeps one-way hashes (not the values) of their email address, their phone number and any Google or Apple account, so a suspension or block can't be dodged by signing up again.
+- **A coordinator or an admin** can't do it themselves: ask the operator. For a coordinator: `uv run python scripts/remove_coordinator.py --email coordinator@example.org` (this deletes the **whole account**: they are removed from **every** organization they belonged to, signed out at once, and their name and email erased; their chat messages stay as the nonprofit's record). For an admin: `scripts/remove_admin.py`, as in section 1.
 - Anything else they ask to see or fix: the privacy page tells them to write to the contact address.
 
 ### A nonprofit needs a second coordinator
@@ -245,9 +261,9 @@ Two ways:
    uv run python scripts/add_coordinator.py --email second@example.org --org-id 1 --name "Maria Lopez, volunteer coordinator"
    ```
 
-   (`--org-id` is the organization's number. Add `--role owner` to make them an owner.)
+   (`--org-id` is the organization's number, which admins can't see in the app: give the operator the organization's **name and EIN** and they will find it. Add `--role owner` to make them an owner.)
 
-To remove a coordinator from an organization, the operator runs `scripts/remove_coordinator.py` as above.
+To remove a coordinator, the operator runs `scripts/remove_coordinator.py` as above. That removes the whole account from every organization; there is no script to take someone off just one.
 
 ### Quick reference
 
