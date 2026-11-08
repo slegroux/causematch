@@ -1,7 +1,8 @@
 """Continue with Google or Apple: /auth/{google,apple}/start and their callbacks. Google
 returns by a GET, Apple by a cross-site form POST (form_post). The flow and its checks live
-in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH=1 the fake provider serves the same routes
-through a local consent page, /auth/fake/consent.
+in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH the fake provider serves the same routes
+through a local consent page, /auth/fake/consent: for Google only with "1", for each
+provider it names otherwise (oauth.fake_names).
 
 One flow, three intents, sealed in the flow cookie: a volunteer signing in (/login), a
 coordinator or admin signing in (?for=org, from /org/login: the verified email must be the
@@ -262,7 +263,7 @@ def _staff_sign_in(req, sess, claims):
     if (
         profile
         and is_preview()
-        and oauth.fake_enabled()
+        and claims.provider in oauth.fake_names()
         and not (is_coordinator and demo_address(email))
     ):
         profile = None
@@ -290,7 +291,7 @@ def _link(sess, name, flow, claims):
     return Redirect("/me/profile?notice=connected")
 
 
-# --- the fake provider's consent page (CAUSEMATCH_FAKE_OAUTH=1 only) ----------------------
+# --- the fake provider's consent page (CAUSEMATCH_FAKE_OAUTH only) ----------------------
 
 FIELDS = ("sub", "email", "given_name", "family_name", "picture_url", "hd")
 

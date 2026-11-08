@@ -9,7 +9,7 @@ atexit.register(shutil.rmtree, _tmp, ignore_errors=True)
 os.environ["CAUSEMATCH_DB"] = os.path.join(_tmp, "test.db")
 os.environ["CAUSEMATCH_FAKE_SMS"] = "1"
 os.environ["CAUSEMATCH_FAKE_EMAIL"] = "1"
-os.environ["CAUSEMATCH_FAKE_OAUTH"] = "1"
+os.environ["CAUSEMATCH_FAKE_OAUTH"] = "google,apple"  # "1" would be Google alone
 os.environ["PUBLIC_BASE_URL"] = "https://causematch.test"
 os.environ["CAUSEMATCH_ENV"] = "test"
 os.environ.pop("K_SERVICE", None)
