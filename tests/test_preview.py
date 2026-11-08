@@ -724,11 +724,19 @@ def test_seed_preview_without_a_seed_dir_uses_the_invented_orgs(preview):
     assert any(m.status == "accepted" for m in matches())
 
 
-def test_seed_has_one_invented_org_that_confirms_hours(preview):
-    """So the demo's and the preview's deck show the "Confirms your hours" chip."""
+def test_invented_seed_confirms_hours_at_the_coordinators_org_and_the_confirming_org(
+    preview,
+):
+    """So the demo's and the preview's deck show the "Confirms your hours" chip, and a demo
+    copy's confirmed shift (at the coordinator's org) sits at an org that confirms hours."""
     _empty()
     demo_seed.seed_preview(None)
-    assert [o.name for o in orgs() if o.confirms_hours] == [demo_seed.CONFIRMING_ORG]
+    pat = data.coordinator_by_email(demo_seed.COORDINATOR[0])
+    (pats_org,) = data.coordinator_org_ids(pat)
+    assert {o.id for o in orgs() if o.confirms_hours} == {
+        pats_org,
+        orgs(where="name = ?", where_args=[demo_seed.CONFIRMING_ORG])[0].id,
+    }
 
 
 def test_seed_file_demo_nonprofit_is_invented_and_the_only_one_to_confirm_hours(
