@@ -14,6 +14,7 @@ from app.config import (
     contact_email,
     demo_banner,
     demo_matches,
+    gmail_purge,
     is_preview,
     is_production,
     phone_hash_key,
@@ -60,6 +61,7 @@ phone_hash_key()  # ... or deleted accounts' blocks can't be kept
 certificate_key()  # ... or hour certificates can't be signed
 trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
 sms_ceilings()  # ... or the SMS ceiling is unreadable
+gmail_purge()  # ... or what /privacy says of Gmail's copies is unreadable
 demo_banner()  # ... or production was asked to show the demo banner
 demo_matches()  # ... or production was asked to clone the demo volunteer and auto-accept
 # uvicorn settings; the Procfile runs the same ones.
@@ -84,7 +86,11 @@ app, rt = fast_app(
     before=(beforeware, security.throttle),
     # outside the session: covers every request. The preview's password, inside Guard so
     # its 401 carries the headers too.
-    middleware=(Middleware(security.Guard), Middleware(security.PreviewGate)),
+    middleware=(
+        Middleware(security.Guard),
+        Middleware(security.PreviewGate),
+        Middleware(notify.RunAfter),  # notify.after's notices, once the response is out
+    ),
     secret_key=session_secret(os.environ),
     session_cookie=session_cookie(),
     sess_https_only=is_production(),

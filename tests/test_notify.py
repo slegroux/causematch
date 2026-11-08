@@ -1,10 +1,17 @@
 """Notifications: texts to volunteers, email to coordinators; once per event, throttled."""
 
+import asyncio
 import logging
+import smtplib
+import socket
+import ssl
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import anyio
 import httpx
 import pytest
 from conftest import (
@@ -12,15 +19,17 @@ from conftest import (
     add_number,
     adder,
     coordinator,
+    coordinator_for,
     pantry_opening,
     volunteer,
 )
 from test_oauth import EMAIL, google_sign_in
 
-from app import config, data, notify
+from app import config, data, notify, security
 from app.db import (
     matches,
     notifications,
+    openings,
     orgs,
     profiles,
     rate_events,
@@ -687,3 +696,521 @@ def test_accept_notice_links_to_the_chat(world):
     )
     assert "Accepted · " in r.text
     assert f'href="/org/chat/{world.match.id}"' in r.text
+
+
+# --- email over SMTP (a Gmail account and its app password, for the beta) ---------------
+
+APP_PASSWORD = "abcdefghijklmnop"  # 16 letters, as Gmail's
+SMTP_ENV = {
+    "SMTP_USERNAME": "causematch.example@gmail.com",
+    "SMTP_PASSWORD": APP_PASSWORD,
+}
+RESEND = {"EMAIL_API_KEY": "k", "EMAIL_FROM": "hello@causematch.example"}
+
+
+CONNECTIONS = []  # every FakeSMTP made, in order
+
+
+class FakeSMTP:
+    """smtplib.SMTP stand-in: records what the emailer does, no network. Its socket is
+    one end of a local socketpair (see smtp_server). broken: the next send_message fails
+    as a dropped connection would. Tests set hang (send_message blocks on the socket
+    until it is shut) and greeting on the class."""
+
+    hang, greeting = False, 220
+
+    def __init__(self, host="", port=0, timeout=None):
+        self.host, self.port, self.timeout, self.sock = None, None, timeout, None
+        self.calls, self.messages = [], []
+        self.broken = False
+        CONNECTIONS.append(self)
+
+    def getreply(self):
+        self.calls.append("connect")
+        return self.greeting, b"smtp.example ready"
+
+    def starttls(self, context=None):
+        self.calls.append(("starttls", context))
+
+    def login(self, user, password):
+        self.calls.append(("login", user, password))
+
+    def send_message(self, message):
+        if self.hang:
+            self.sock.recv(1)  # until the deadline shuts the socket
+            raise smtplib.SMTPServerDisconnected
+        if self.broken:
+            raise smtplib.SMTPServerDisconnected
+        self.calls.append("send")
+        self.messages.append(message)
+
+    def quit(self):
+        self.calls.append("quit")
+
+    def close(self):
+        self.calls.append("close")
+
+
+def steps(server):
+    return [c if isinstance(c, str) else c[0] for c in server.calls]
+
+
+@pytest.fixture
+def smtp_server(monkeypatch):
+    """Every SMTPEmailer connects to a FakeSMTP over a local socketpair."""
+    CONNECTIONS.clear()
+    pairs = []
+
+    def fake_open(self, deadline):
+        CONNECTIONS[-1].host, CONNECTIONS[-1].port = self.host, self.port
+        pairs.append(socket.socketpair())
+        deadline.watch(pairs[-1][0])
+        return pairs[-1][0]
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(notify.SMTPEmailer, "_open", fake_open)
+    yield CONNECTIONS
+    for a, b in pairs:
+        a.close()
+        b.close()
+
+
+def test_email_picks_the_fake_then_resend_then_smtp_and_production_needs_one():
+    prod = {"CAUSEMATCH_ENV": "production"}
+    dev_fake = {"CAUSEMATCH_ENV": "development", "CAUSEMATCH_FAKE_EMAIL": "1"}
+    assert isinstance(notify.make_emailer({**dev_fake, **SMTP_ENV}), notify.FakeEmailer)
+    both = notify.make_emailer({**prod, **RESEND, **SMTP_ENV})
+    assert isinstance(both, notify.ResendEmailer)  # Resend wins: switching is config
+    e = notify.make_emailer({**prod, **SMTP_ENV})
+    assert isinstance(e, notify.SMTPEmailer)
+    assert (e.host, e.port, e.sender) == (
+        "smtp.gmail.com",
+        587,
+        SMTP_ENV["SMTP_USERNAME"],
+    )
+    named = "Causematch <causematch.example@gmail.com>"
+    assert (
+        notify.make_emailer({**prod, **SMTP_ENV, "EMAIL_FROM": named}).sender == named
+    )
+    for half in (
+        {"SMTP_USERNAME": "causematch.example@gmail.com"},
+        {"SMTP_PASSWORD": APP_PASSWORD},
+        {"SMTP_HOST": "smtp.gmail.com"},
+    ):
+        for env in ({**prod, **half}, {**prod, **RESEND, **half}):
+            with pytest.raises(RuntimeError, match="SMTP is half configured"):
+                notify.make_emailer(env)
+        with pytest.raises(RuntimeError, match="SMTP is half configured"):
+            config.require_volunteer_sign_in({**prod, **half})
+    with pytest.raises(RuntimeError, match="at least 16"):
+        notify.make_emailer({**prod, **SMTP_ENV, "SMTP_PASSWORD": "short"})
+    grouped = {**prod, **SMTP_ENV, "SMTP_PASSWORD": " abcd efgh\tijkl mnop\n"}
+    assert notify.make_emailer(grouped).password == APP_PASSWORD  # as Google shows it
+    with pytest.raises(RuntimeError, match="SMTP_PORT"):
+        notify.make_emailer({**prod, **SMTP_ENV, "SMTP_PORT": "smtp"})
+    with pytest.raises(RuntimeError, match="SMTP_MAX_PER_DAY"):
+        notify.make_emailer({**prod, **SMTP_ENV, "SMTP_MAX_PER_DAY": "0"})
+    with pytest.raises(RuntimeError, match="EMAIL_FROM"):
+        notify.make_emailer({**prod, "EMAIL_API_KEY": "k"})
+    with pytest.raises(RuntimeError, match="Email is not configured"):
+        notify.make_emailer(prod)
+    with pytest.raises(RuntimeError, match="CAUSEMATCH_ENV"):
+        notify.make_emailer({**prod, **SMTP_ENV, "CAUSEMATCH_FAKE_EMAIL": "1"})
+    config.require_volunteer_sign_in({**prod, **SMTP_ENV})  # SMTP alone is a way in
+    with pytest.raises(RuntimeError, match="No volunteer sign-in"):
+        config.require_volunteer_sign_in(prod)
+
+
+def test_an_smtp_send_is_the_same_message_over_verified_starttls(
+    smtp_server, monkeypatch
+):
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "production", **SMTP_ENV})
+    e.send("vol@example.org", "Subject", "Body", {"List-Unsubscribe": "<https://x>"})
+    (server,) = smtp_server
+    assert (server.host, server.port, server.timeout) == ("smtp.gmail.com", 587, 10)
+    assert steps(server) == ["connect", "starttls", "login", "send", "quit", "close"]
+    tls = server.calls[1]
+    assert tls[1].verify_mode == ssl.CERT_REQUIRED and tls[1].check_hostname
+    assert server._host == "smtp.gmail.com"  # the name the certificate must carry
+    login = server.calls[2]
+    assert login == ("login", "causematch.example@gmail.com", APP_PASSWORD)
+    (m,) = server.messages
+    assert (m["To"], m["From"], m["Subject"]) == (
+        "vol@example.org",
+        "causematch.example@gmail.com",
+        "Subject",
+    )
+    assert m["List-Unsubscribe"] == "<https://x>"
+    assert m.get_content() == "Body\n"
+    # the sign-in link goes out with Resend's subject and text
+    resend = notify.ResendEmailer("k", "hello@causematch.example")
+    posted = []
+    resend.client.post = lambda path, json: (
+        posted.append(json) or SimpleNamespace(raise_for_status=lambda: None)
+    )
+    for emailer in (e, resend):
+        monkeypatch.setattr(notify, "_emailer", emailer)
+        link = notify.send_volunteer_link("vol@example.org", "tok", new=True)
+    m = smtp_server[-1].messages[0]
+    assert m["Subject"] == posted[0]["subject"] == "Finish signing up for Causematch"
+    assert (
+        m.get_content().rstrip("\n") == posted[0]["text"] and link in posted[0]["text"]
+    )
+    # port 465: TLS from the start, with the same verified context, and no STARTTLS
+    smtp_server.clear()
+    tls_e = notify.make_emailer(
+        {"CAUSEMATCH_ENV": "production", **SMTP_ENV, "SMTP_PORT": "465"}
+    )
+    tls_e.send("vol@example.org", "Subject", "Body")
+    (server,) = smtp_server
+    assert tls_e.context.verify_mode == ssl.CERT_REQUIRED and server.port == 465
+    assert steps(server) == ["connect", "login", "send", "quit", "close"]
+    # a greeting that isn't 220 is refused before anything else
+    smtp_server.clear()
+    monkeypatch.setattr(FakeSMTP, "greeting", 554)
+    with pytest.raises(smtplib.SMTPConnectError):
+        e.send("vol@example.org", "Subject", "Body")
+    assert steps(smtp_server[0]) == ["connect", "close"]
+
+
+def test_a_failed_smtp_send_logs_its_type_only(anon, smtp_server, monkeypatch, caplog):
+    _, email = coordinator_for(0, "known@example.org")
+
+    def refuse(self, user, password):
+        raise smtplib.SMTPAuthenticationError(535, f"bad {user} {password}".encode())
+
+    monkeypatch.setattr(FakeSMTP, "login", refuse)
+    monkeypatch.setattr(
+        notify, "_emailer", notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    )
+    with caplog.at_level(logging.DEBUG):
+        r = anon.post("/org/login/send", data={"email": email})
+    assert r.status_code == 200
+    assert "sending a sign-in link failed: SMTPAuthenticationError" in caplog.text
+    for secret in (APP_PASSWORD, "token=", "/org/login/verify", email):
+        assert secret not in caplog.text
+
+
+def refused(caplog, send, share=None):
+    """send() is refused by the ceiling, logged by its share's name (None: the whole)."""
+    caplog.clear()
+    with caplog.at_level(logging.WARNING), pytest.raises(notify.EmailCeiling):
+        send()
+    name = f"email-smtp-{share}-day" if share else "email-smtp-day"
+    assert f"rate limit reached: {name}" in caplog.text
+
+
+def test_smtp_keeps_room_for_sign_in_links_under_its_daily_ceiling(
+    smtp_server, monkeypatch, caplog
+):
+    """Of 8: everything but staff 7 (int of 90%); inside it notices 4 (urgent calls' 2
+    among them) and sign-ups 2; staff the whole."""
+    env = {"CAUSEMATCH_ENV": "test", **SMTP_ENV, "SMTP_MAX_PER_DAY": "8"}
+    e = notify.make_emailer(env)
+    monkeypatch.setattr(notify, "_emailer", e)
+    for to in ("a", "b"):
+        notify.send_volunteer_link(f"{to}@example.org", "tok", new=True)
+    signup = lambda: notify.send_volunteer_link("c@example.org", "tok", True)
+    refused(caplog, signup, "signups")
+    for to in ("a", "b"):
+        e.send(f"{to}@example.org", "s", "b", kind="urgent")
+    refused(caplog, lambda: e.send("c@example.org", "s", "b", kind="urgent"), "urgent")
+    for to in ("a", "b"):
+        e.send(f"{to}@example.org", "s", "b")
+    refused(caplog, lambda: e.send("c@example.org", "s", "b"), "notices")
+    # a volunteer's link to their account: what's left of the public share
+    notify.send_volunteer_link("vol@example.org", "tok", new=False)
+    signin = lambda: notify.send_volunteer_link("vol@example.org", "tok", False)
+    refused(caplog, signin, "public")
+    # staff's links still go, up to the whole ceiling
+    notify.send_login_link("coord@example.org", "tok")
+    refused(caplog, lambda: notify.send_login_link("coord@example.org", "tok"))
+    assert len(smtp_server) == 8  # no refusal connected
+    assert config.smtp_max_per_day({}) == 400
+    for host in ("smtp.gmail.com", "SMTP.Gmail.COM", ""):
+        with pytest.raises(RuntimeError, match="at most 450"):
+            config.smtp_max_per_day({"SMTP_MAX_PER_DAY": "451", "SMTP_HOST": host})
+    other = {"SMTP_MAX_PER_DAY": "501", "SMTP_HOST": "smtp.example.org"}
+    assert config.smtp_max_per_day(other) == 501
+
+
+def test_a_flood_of_volunteer_links_never_blocks_a_staff_link(
+    smtp_server, monkeypatch, caplog
+):
+    e = notify.make_emailer(
+        {"CAUSEMATCH_ENV": "test", **SMTP_ENV, "SMTP_MAX_PER_DAY": "10"}
+    )
+    monkeypatch.setattr(notify, "_emailer", e)
+    for i in range(9):  # attacker-owned accounts' links: the public share is 9
+        notify.send_volunteer_link(f"v{i}@catchall.example", "tok", new=False)
+    signin = lambda: notify.send_volunteer_link("v9@catchall.example", "tok", False)
+    refused(caplog, signin, "public")
+    notify.send_login_link("coord@example.org", "tok")  # staff's floor
+    assert len(smtp_server) == 10
+
+
+def test_through_gmail_login_allows_a_mailbox_five_links_a_day(
+    anon, smtp_server, monkeypatch
+):
+    clock = [1_900_000_000.0]
+    monkeypatch.setattr(
+        security,
+        "time",
+        SimpleNamespace(time=lambda: clock[0], monotonic=time.monotonic),
+    )
+
+    def ask():
+        return anon.post("/login/send", data={"email": "flood@example.org"})
+
+    for _ in range(5):
+        assert ask().status_code == 200
+    clock[0] += 2 * 3600  # past the hourly per-mailbox-and-address limit
+    assert ask().status_code == 200  # 20 a day without Gmail
+    monkeypatch.setattr(
+        notify, "_emailer", notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    )
+    rate_events.delete_where()
+    for _ in range(5):
+        assert ask().status_code == 200
+    clock[0] += 2 * 3600
+    assert ask().status_code == 429  # 5 a day through Gmail
+
+
+def test_a_batch_signs_in_once_and_reconnects_after_a_dropped_send(
+    smtp_server, monkeypatch
+):
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    monkeypatch.setattr(notify, "_emailer", e)
+    with notify.batch():
+        e.send("a@example.org", "s", "b")
+        e.send("b@example.org", "s", "b")
+        smtp_server[0].broken = True
+        with pytest.raises(smtplib.SMTPServerDisconnected):
+            e.send("c@example.org", "s", "b")
+        e.send("d@example.org", "s", "b")  # a new connection
+    first, second = smtp_server
+    assert steps(first) == ["connect", "starttls", "login", "send", "send", "close"]
+    assert steps(second) == ["connect", "starttls", "login", "send", "quit", "close"]
+
+
+def test_an_orgs_coordinators_get_a_like_over_one_connection(
+    smtp_server, clock, monkeypatch
+):
+    coordinator_for(0, "one@example.org")
+    coordinator_for(0, "two@example.org")
+    vol = volunteer("Zelda")
+    monkeypatch.setattr(
+        notify, "_emailer", notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    )
+    like(vol)
+    (server,) = smtp_server
+    assert sorted(m["To"] for m in server.messages) == [
+        "one@example.org",
+        "two@example.org",
+    ]
+    assert steps(server).count("login") == 1
+
+
+@pytest.mark.parametrize("tls_from_the_start", [False, True])
+def test_an_smtp_connect_gives_up_at_its_deadline(tls_from_the_start, monkeypatch):
+    """A server that takes the connection and never greets (587) or never finishes the
+    TLS handshake (465): the send fails after SMTP_DEADLINE, not SMTP_TIMEOUT per read,
+    as SMTPUnavailable (nothing went: retried), and connects stop for SMTP_BREAK.
+    Loopback only."""
+    monkeypatch.setattr(notify, "SMTP_DEADLINE", 0.3)
+    monkeypatch.setattr(socket, "getfqdn", lambda *a: "test.invalid")  # no DNS
+    with socket.create_server(("127.0.0.1", 0)) as silent:  # never accepts or speaks
+        port = silent.getsockname()[1]
+        monkeypatch.setattr(
+            notify, "SMTP_TLS_PORT", port if tls_from_the_start else 465
+        )
+        monkeypatch.setattr(security, "allow", lambda *a: True)
+        e = notify.SMTPEmailer("127.0.0.1", port, "u", APP_PASSWORD, "u", 10)
+        began = time.monotonic()
+        with pytest.raises(notify.SMTPUnavailable):
+            e.send("a@example.org", "s", "b")
+        assert time.monotonic() - began < 2
+        assert e._no_connect_until > time.monotonic() + 50
+
+
+def test_a_send_the_deadline_cuts_is_unknown_and_later_sends_wait(
+    smtp_server, monkeypatch
+):
+    monkeypatch.setattr(notify, "SMTP_DEADLINE", 0.3)
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    monkeypatch.setattr(notify, "_emailer", e)
+    monkeypatch.setattr(FakeSMTP, "hang", True)
+    with pytest.raises(TimeoutError):  # it may have gone: "unknown", never retried
+        e.send("a@example.org", "s", "b")
+    assert len(smtp_server) == 1
+    events = len(rate_events())
+    with pytest.raises(notify.SMTPUnavailable):  # the break: no connect, no ceiling
+        e.send("b@example.org", "s", "b")
+    assert len(smtp_server) == 1 and len(rate_events()) == events
+    nid = []
+    monkeypatch.setattr(data, "notification_done", lambda n, status: nid.append(status))
+    monkeypatch.setattr(data, "notification_claim", lambda *a: 1)
+    notify._deliver("likes", "likes:x", 1, lambda: e.send("c@example.org", "s", "b"))
+    assert nid == ["failed"]  # for the sweep to retry
+    e._no_connect_until = 0  # a minute later
+    monkeypatch.setattr(FakeSMTP, "hang", False)
+    e.send("d@example.org", "s", "b")
+    assert steps(smtp_server[-1])[-3:] == ["send", "quit", "close"]
+
+
+def test_a_batch_drops_its_connection_when_the_deadline_hit_just_after(
+    smtp_server, monkeypatch
+):
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    monkeypatch.setattr(notify, "_emailer", e)
+    done = notify._Deadline.done
+
+    def late(self):  # the timer fired as the send finished
+        done(self)
+        self.hit = True
+
+    monkeypatch.setattr(notify._Deadline, "done", late)
+    with notify.batch():
+        e.send("a@example.org", "s", "b")
+        monkeypatch.setattr(notify._Deadline, "done", done)
+        e.send("b@example.org", "s", "b")
+    first, second = smtp_server
+    assert steps(first)[-2:] == ["send", "close"]  # dropped, no QUIT
+    assert steps(second)[-3:] == ["send", "quit", "close"]
+
+
+def run_alone(coro):
+    """asyncio.run(coro) in a thread of its own: the e2e tests leave an event loop running
+    in this one. Its exception, CancelledError included, is raised here."""
+    out = {}
+
+    def run():
+        try:
+            asyncio.run(coro)
+        except BaseException as e:  # noqa: BLE001  handed to the test's thread
+            out["error"] = e
+
+    t = threading.Thread(target=run)
+    t.start()
+    t.join()
+    if "error" in out:
+        raise out["error"]
+
+
+def test_notices_a_request_queues_go_out_after_its_response(monkeypatch):
+    events = []
+
+    async def app(scope, receive, send):
+        notify.after(SimpleNamespace(scope=scope), events.append, "notice")
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+        events.append("handler done")
+
+    async def send(message):
+        events.append(message["type"])
+
+    run_alone(notify.RunAfter(app)({"type": "http"}, None, send))
+    assert events == [
+        "http.response.start",
+        "http.response.body",
+        "handler done",
+        "notice",
+    ]
+    notify.after(SimpleNamespace(scope={}), events.append, "at once")  # no RunAfter
+    assert events[-1] == "at once"
+
+
+def test_notices_after_the_response_have_their_own_threads(monkeypatch, caplog):
+    monkeypatch.setattr(notify, "AFTER_LIMITER", anyio.CapacityLimiter(1))
+    seen = []
+
+    def notice():
+        seen.append(
+            anyio.from_thread.run_sync(lambda: notify.AFTER_LIMITER.borrowed_tokens)
+        )
+
+    async def app(scope, receive, send):
+        notify.after(SimpleNamespace(scope=scope), notice)
+
+    run_alone(notify.RunAfter(app)({"type": "http"}, None, None))
+    assert seen == [1]  # it held the notices' own token, not the routes' pool
+    # the server stopping first: the count is logged and the stop goes through
+
+    async def stopped(*a, **kw):
+        raise asyncio.CancelledError
+
+    async def queues_two(scope, receive, send):
+        notify.after(SimpleNamespace(scope=scope), notice)
+        notify.after(SimpleNamespace(scope=scope), notice)
+
+    monkeypatch.setattr(notify.anyio.to_thread, "run_sync", stopped)
+    with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
+        run_alone(notify.RunAfter(queues_two)({"type": "http"}, None, None))
+    assert "up to 2 notices not sent: the server is stopping" in caplog.text
+
+
+def test_the_apps_routes_queue_their_notices_after_the_response(world, monkeypatch):
+    queued, real = [], notify.after
+    monkeypatch.setattr(
+        notify,
+        "after",
+        lambda req, fn, *a: (
+            queued.append(notify.AFTER in req.scope),
+            real(req, fn, *a),
+        ),
+    )
+    accept(world.coord, world.match)
+    assert queued == [True] and len(texts()) == 1  # queued, and sent once out
+
+
+def test_one_volunteers_likes_email_the_org_up_to_a_daily_cap(clock, monkeypatch):
+    monkeypatch.setattr(security, "LIKE_NOTICES", (("like-notice-day", 1, 24 * 3600),))
+    coordinator()
+    copy = {**pantry_opening().__dict__, "id": None}
+    second, third = (
+        openings.insert(openings.dataclass()(**{**copy, "title": t}))
+        for t in ("Second", "Third")
+    )
+    vol = volunteer("Zelda")
+    like(vol)
+    assert len(emails()) == 1
+    clock.advance(minutes=16)  # past the org's window
+    like(vol, second)
+    assert len(emails()) == 1  # past this volunteer's cap: only the inbox shows it
+    clock.advance(minutes=16)
+    like(volunteer("Yuri"), third)
+    assert len(emails()) == 2  # another volunteer's still emails
+
+
+def test_through_gmail_org_login_allows_a_mailbox_five_links_a_day(
+    anon, smtp_server, monkeypatch
+):
+    clock = [1_900_000_000.0]
+    monkeypatch.setattr(
+        security,
+        "time",
+        SimpleNamespace(time=lambda: clock[0], monotonic=time.monotonic),
+    )
+    _, email = coordinator_for(0, "staff@example.org")
+    monkeypatch.setattr(
+        notify, "_emailer", notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    )
+    for _ in range(5):
+        assert anon.post("/org/login/send", data={"email": email}).status_code == 200
+    clock[0] += 2 * 3600  # past the hourly per-mailbox-and-address limit
+    r = anon.post("/org/login/send", data={"email": email})
+    assert r.status_code == 429 and len(smtp_server) == 5  # the staff floor is kept
+
+
+def test_a_refused_password_stops_connects_for_ten_minutes(smtp_server, monkeypatch):
+    def refuse(self, user, password):
+        raise smtplib.SMTPAuthenticationError(535, b"5.7.8 not accepted")
+
+    monkeypatch.setattr(FakeSMTP, "login", refuse)
+    e = notify.make_emailer({"CAUSEMATCH_ENV": "test", **SMTP_ENV})
+    with pytest.raises(smtplib.SMTPAuthenticationError):  # logged by type: the alert
+        e.send("a@example.org", "s", "b")
+    assert e._no_connect_until > time.monotonic() + 9 * 60
+    with pytest.raises(notify.SMTPUnavailable):
+        e.send("b@example.org", "s", "b")
+    assert len(smtp_server) == 1  # no second sign-in attempt

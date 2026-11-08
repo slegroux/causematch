@@ -122,17 +122,19 @@ def require_env(env=os.environ):
 
 def require_volunteer_sign_in(env=os.environ):
     """Refuse a production start where volunteers would have no way in: the emailed link
-    (Resend, or the fake on a preview), Google or Apple must be configured. Each one alone
-    is enough. Twilio plays no part: a number is never a way in."""
+    (Resend or SMTP, or the fake on a preview), Google or Apple must be configured. Each
+    one alone is enough. Twilio plays no part: a number is never a way in."""
     if not is_production(env):
         return
     resend = bool(env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM"))
     # the fake counts here; notify.make_emailer refuses it where fakes aren't allowed
     fake = env.get("CAUSEMATCH_FAKE_EMAIL") == "1"
-    if not (resend or fake or google_oauth(env) or apple_oauth(env)):
+    email = resend or fake or smtp(env) is not None
+    if not (email or google_oauth(env) or apple_oauth(env)):
         raise RuntimeError(
-            "No volunteer sign-in is configured: set email (EMAIL_API_KEY, EMAIL_FROM), "
-            "Google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) or Apple (APPLE_*)"
+            "No volunteer sign-in is configured: set email (EMAIL_API_KEY, EMAIL_FROM, "
+            "or SMTP_USERNAME, SMTP_PASSWORD), Google (GOOGLE_CLIENT_ID, "
+            "GOOGLE_CLIENT_SECRET) or Apple (APPLE_*)"
         )
 
 
@@ -206,6 +208,73 @@ def apple_oauth(env=os.environ):
         raise RuntimeError(f"Sign in with Apple needs all four APPLE_* set: {missing}")
     client_id, team_id, key_id, pem = values
     return client_id, team_id, key_id, pem.replace("\\n", "\n")
+
+
+SMTP_VARS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD")
+SMTP_TLS_PORT = 465  # TLS from the first byte; any other port upgrades with STARTTLS
+MIN_SMTP_PASSWORD = 16  # characters in production: a Gmail app password is 16 letters
+
+
+def smtp(env=os.environ):
+    """(host, port, username, password, sender) for email over SMTP (a Gmail account and
+    its app password, for the beta), or None when no SMTP_* is set. SMTP_HOST defaults
+    to smtp.gmail.com and SMTP_PORT to 587; sender is EMAIL_FROM, else the username, since
+    Gmail rewrites From to the account signed in. Some set without both the username and
+    password refuses to start. There is no plain SMTP: notify.SMTPEmailer always uses
+    TLS. The password is a secret, but MIN_SECRET doesn't fit an app password: production
+    asks for MIN_SMTP_PASSWORD."""
+    values = [(env.get(k) or "").strip() for k in SMTP_VARS]
+    if not any(values):
+        return None
+    host, port, username, password = values
+    # Gmail shows an app password in four groups, and it has no spaces of its own. This
+    # assumes every SMTP password is one: another provider's with a space would break.
+    password = "".join(password.split())
+    if not (username and password):
+        raise RuntimeError(
+            "SMTP is half configured: set SMTP_USERNAME and SMTP_PASSWORD, or none of "
+            f"{', '.join(SMTP_VARS)}"
+        )
+    port = port or "587"
+    if not port.isdigit() or not 0 < int(port) < 65536:
+        raise RuntimeError("SMTP_PORT must be a port number (587 or 465)")
+    if is_production(env) and len(password) < MIN_SMTP_PASSWORD:
+        raise RuntimeError(
+            f"SMTP_PASSWORD must be at least {MIN_SMTP_PASSWORD} characters"
+        )
+    sender = (env.get("EMAIL_FROM") or "").strip() or username
+    return host or "smtp.gmail.com", int(port), username, password, sender
+
+
+# a free Gmail account may send to about 500 recipients a day: this keeps a margin
+GMAIL_MAX_PER_DAY = 450
+
+
+def smtp_max_per_day(env=os.environ):
+    """The ceiling on emails sent over SMTP in any 24 hours, every kind together:
+    SMTP_MAX_PER_DAY, default 400. Through smtp.gmail.com (the default host, in any
+    case) it may not pass GMAIL_MAX_PER_DAY: Google may lock an account that goes over."""
+    raw = (env.get("SMTP_MAX_PER_DAY") or "").strip() or "400"
+    if not raw.isdigit() or int(raw) < 1:
+        raise RuntimeError("SMTP_MAX_PER_DAY must be a positive whole number")
+    host = (env.get("SMTP_HOST") or "").strip().lower() or "smtp.gmail.com"
+    if host.rstrip(".") == "smtp.gmail.com" and int(raw) > GMAIL_MAX_PER_DAY:
+        raise RuntimeError(
+            f"SMTP_MAX_PER_DAY may be at most {GMAIL_MAX_PER_DAY} through smtp.gmail.com"
+        )
+    return int(raw)
+
+
+def gmail_purge(env=os.environ):
+    """GMAIL_PURGE=daily: the Gmail account's daily purge is installed (docs/OPERATIONS.md,
+    Email through Gmail), so /privacy may say its copies go after a day. Unset: it says
+    they stay. Anything else refuses to start."""
+    raw = (env.get("GMAIL_PURGE") or "").strip().lower()
+    if raw not in ("", "daily"):
+        raise RuntimeError(
+            "GMAIL_PURGE must be daily (once the purge is installed) or unset"
+        )
+    return raw == "daily"
 
 
 def db_path(env=os.environ):

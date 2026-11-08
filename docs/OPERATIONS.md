@@ -7,7 +7,7 @@ Everything needed to configure, run, secure and deploy Causematch: environment v
 Environment variables (`.env.example` lists them all, without values). The app refuses to start in production without:
 
 - `CAUSEMATCH_ENV`, `SESSION_SECRET`, `PUBLIC_BASE_URL`, `TASKS_TOKEN`
-- `EMAIL_API_KEY`, `EMAIL_FROM`: email, which is also every volunteer's way in (the emailed link), with Google and Apple optional beside it (see below)
+- `EMAIL_API_KEY`, `EMAIL_FROM` (Resend), or `SMTP_USERNAME`, `SMTP_PASSWORD` (see Email through Gmail): email, which is also every volunteer's way in (the emailed link), with Google and Apple optional beside it (see below)
 - `CONTACT_EMAIL`: the address on the privacy page
 - `PHONE_HASH_KEY`: keys the hashes kept of a deleted account's phone and of its Google or Apple accounts when a block, report or suspension must outlive it, the rate-limit hashes, and the urgent unsubscribe links
 - `CERTIFICATE_KEY`: signs volunteers' hour certificates (HMAC); changing it makes every certificate issued before read as not genuine, so keep it like `SESSION_SECRET`
@@ -27,6 +27,72 @@ Volunteers sign in with the emailed link (email, above), or with Google or Apple
 - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`: all three or none, for texts (match news, messages, shift reminders, last-minute calls) to a volunteer who has a number. `TWILIO_VERIFY_SID` is optional on top: with it, Me offers "add a number", which texts a code through Twilio Verify and saves the number only once the code checks out; without it Me offers nothing and `/me/phone/send` and `/me/phone/verify` answer 404. Without Twilio volunteers get all of it by email.
 
 Setting the providers up is in Security, Live providers.
+
+### Email through Gmail (beta)
+
+Until there is a domain to send from with Resend, every email (volunteers' and staff's sign-in links, notices) can go through a free Gmail account over SMTP. `notify.make_emailer` uses Resend whenever `EMAIL_API_KEY` is set, else SMTP when `SMTP_USERNAME` and `SMTP_PASSWORD` are; SMTP set halfway refuses to start. The connection is always TLS with the certificate checked (STARTTLS on 587, TLS from the start on 465); a server without STARTTLS is refused, and there is no plain SMTP. Each send has 30 seconds in all (`notify.SMTP_DEADLINE`), the connect, the TLS handshake, the greeting (it must be 220) and signing in included. A send that runs out of time once the message may have reached Gmail is recorded `unknown` and never retried; one that fails before that is recorded `failed`, for the hourly sweep to retry. After a timeout or a failed connect, no connect is tried for 60 seconds (`notify.SMTP_BREAK`), and after Gmail refuses the password for 10 minutes (`notify.SMTP_AUTH_BREAK`): sends in that time fail at once as `SMTPUnavailable`, spending nothing. The sweeps and the emails to an org's coordinators share one signed-in connection. Notices a request triggers (a like, an accept, a withdrawal, a cancelled shift) go out after its response (`notify.after`), at most 4 at a time (`notify.AFTER_LIMITER`, apart from the threads the routes run in); sign-in links already did. An admin's claim emails stay in the request, since the page says whether they went.
+
+**The account is admin-equivalent.** Anyone signed in to it, or holding the app password, could read the Sent folder: every recipient's address and live sign-in links, staff's and admins' included. Keep the people who hold its password and second factor to the one or two who hold production's secrets.
+
+1. Create a Gmail account for the app alone (for example `causematch.example@gmail.com`), never a person's.
+2. Turn on 2-Step Verification for it (Google Account, Security). App passwords need it.
+3. In Gmail, Settings, See all settings, Forwarding and POP/IMAP: disable POP, disable IMAP if the page still offers it (Google has been making IMAP always on), and save. Sending needs neither. Where IMAP can't be turned off, the app password can read the mailbox, which is one more reason for step 6.
+4. Create an app password named `Causematch` (Google Account, Security, App passwords). Google shows 16 letters once, in four groups.
+5. Put it in Secret Manager. `read -rs` keeps it out of the shell history and off the screen; paste it and press Enter, and `tr` drops the spaces between the groups:
+
+   ```sh
+   read -rs SMTP_PASSWORD_VALUE
+   printf %s "$SMTP_PASSWORD_VALUE" | tr -d ' ' | gcloud secrets create SMTP_PASSWORD \
+     --project causematch-la --replication-policy=automatic --data-file=-
+   unset SMTP_PASSWORD_VALUE
+   gcloud secrets add-iam-policy-binding SMTP_PASSWORD --project causematch-la \
+     --member="serviceAccount:$SERVICE_ACCOUNT" --role=roles/secretmanager.secretAccessor
+   ```
+
+   `SERVICE_ACCOUNT` is the account the Cloud Run service runs as. A new password later is `gcloud secrets versions add SMTP_PASSWORD --data-file=-` the same way, then a redeploy.
+6. Empty the mailbox every day: Gmail keeps a copy of every email sent through it, and bounces and replies land in the Inbox. Signed in as the account, open [script.google.com](https://script.google.com), New project, name it `Purge mail`, and paste:
+
+   ```js
+   function purgeMail() {
+     const query = 'in:anywhere -in:trash older_than:1d';  // Sent, Inbox, Spam: all of it
+     let threads = GmailApp.search(query, 0, 100);
+     while (threads.length) {
+       GmailApp.moveThreadsToTrash(threads);
+       threads = GmailApp.search(query, 0, 100);
+     }
+   }
+   ```
+
+   Save, run `purgeMail` once and grant it access to Gmail, then Triggers, Add Trigger: `purgeMail`, time-driven, day timer, any hour. Gmail erases the bin's contents after 30 days. **Then set `GMAIL_PURGE=daily`** on the service: only with it does the privacy page say copies go after a day. Without it the page says they stay in the account until deleted or the account is closed, which is true when nothing purges them; a manual purge doesn't count, so don't set it for one.
+7. Deploy. The checklist, beyond the other secrets:
+   - `SMTP_USERNAME` set to the account's address (an env var: it isn't secret), and the password from Secret Manager: `--set-secrets SMTP_PASSWORD=SMTP_PASSWORD:latest`. Leave `EMAIL_API_KEY` unset.
+   - **`--max-instances 1`.** The ceilings below are counted in the instance's SQLite file, so a second instance would have its own count, and Gmail's limit is per account.
+   - **`--no-cpu-throttling`** (CPU always allocated, which is instance-based billing). Sign-in links and notices are sent after the response, and with the default request-based billing Cloud Run throttles the CPU once a response is out, so those sends can stall or be cut off. The trade-off is cost: an instance with CPU always allocated is billed for its whole life (all the time with `--min-instances 1`), not only while it serves requests. The deploy scripts don't set it; decide at deploy. Without it, expect some links and notices to arrive late or not at all.
+   - `GMAIL_PURGE=daily` once step 6's trigger runs.
+
+The variables: `SMTP_USERNAME` (the Gmail address), `SMTP_PASSWORD` (the app password; at least 16 characters in production), `SMTP_HOST` (default `smtp.gmail.com`), `SMTP_PORT` (default 587), `SMTP_MAX_PER_DAY` (default 400, at most 450 through `smtp.gmail.com`, a margin under Gmail's 500), `GMAIL_PURGE` (`daily` or unset, see step 6). All whitespace is dropped from `SMTP_PASSWORD`, which assumes a Gmail app password (it has none of its own): another provider's password with a space in it would break. From is `EMAIL_FROM` when set, else `SMTP_USERNAME`; Gmail rewrites From to the account signed in anyway, so only a display name such as `Causematch <causematch.example@gmail.com>` is worth setting there. A failed send logs only the exception's type, never the password, the address or the link.
+
+**The daily limit.** A free Gmail account sends to about 500 recipients a day, and Google may lock an account that goes over. The app counts every email sent over SMTP against `SMTP_MAX_PER_DAY` in any 24 hours (the `rate_event` table, as the SMS ceiling), and each kind against a share of it (`notify.NOTICE_SHARE` and the others):
+
+| Kind | May use |
+|---|---|
+| everything but staff's sign-in links (volunteers' links, sign-ups, every notice) | 90% |
+| notices (matches, messages, reminders, likes, cancellations, claim decisions), within that | 50% |
+| last-minute calls' emails, among the notices | 25% |
+| sign-up links (an address no account holds), within the 90% | 25% |
+| staff's sign-in links (`send_login_link`, from `/org/login` or `/login`) | the whole: the last 10% is theirs alone |
+
+The existing ceilings don't keep under Gmail's limit on their own: sign-up links alone may reach 500 a day. While email goes through Gmail, `/login` and `/org/login` also allow each mailbox only 5 links a day (`security.LINK_PER_EMAIL_SMTP`, beside the 20 a day they share), so a handful of accounts can't spend the volunteers' share, nor a few known staff addresses the staff's, and whatever volunteers do, staff keep their 10%. One volunteer's likes email the orgs for 20 likes a day (`security.LIKE_NOTICES`); later likes show in the org's inbox only. Past a ceiling nothing is sent (a sign-in link is lost, a notice is recorded `failed`) and each refusal logs a warning naming it: `rate limit reached: email-smtp-day` (everything), or `email-smtp-public-day`, `email-smtp-notices-day`, `email-smtp-urgent-day`, `email-smtp-signups-day` in its place.
+
+**Alerts.** Make three log-based alerts in Cloud Logging:
+
+- `textPayload:"rate limit reached: email-smtp"`: a share or the whole ceiling ran out. Notices or sign-ups are being dropped, or, for `email-smtp-day`, people are not getting their sign-in links. Either way it is time to move to Resend.
+- `textPayload:"SMTPAuthenticationError"` (it appears as `sending a sign-in link failed: SMTPAuthenticationError`, or `... notification failed: SMTPAuthenticationError`): Gmail refused the app password. It was revoked, the account's password changed (which revokes app passwords), or Google locked the account. Nobody gets email until it is fixed (after each refusal the app waits 10 minutes before trying again, so the alert fires about that often): make a new app password and add it as a new secret version.
+- `textPayload:"SMTPSenderRefused" OR textPayload:"SMTPDataError"`: Gmail refused a message after signing in, most often because the account hit Google's own daily sending limit (it says so in a 550 or 554 reply, which isn't logged) or was flagged for spam. Expect it to clear within 24 hours; if it recurs, lower `SMTP_MAX_PER_DAY` or move to Resend.
+
+**Spam.** Mail from a fresh Gmail account to many new recipients, all carrying links, is what spam filters look for: expect some sign-in links in spam or Promotions, more so at volume, and tell beta testers to look there. Don't buy volume by adding Gmail accounts: this is a stopgap until Resend.
+
+**Moving to Resend later** is configuration only: verify the sending domain in Resend, set `EMAIL_API_KEY` (a secret) and `EMAIL_FROM` (an address on that domain), and redeploy. With `EMAIL_API_KEY` set Resend is used and SMTP's settings are ignored (still checked, so remove them all, or leave them all), and the privacy page names Resend. Then delete the `SMTP_PASSWORD` secret, the app password and the Apps Script trigger, unset `GMAIL_PURGE`, and empty the account's mailbox and bin.
 
 ### Scheduled jobs
 

@@ -211,7 +211,8 @@ def _sync_send(req, form, sess):
     email = raw.lower()
     # every valid-shape address is counted, in the nonprofit link's own buckets, so a
     # refusal says nothing about the account and the two pages share one budget
-    if not security.allow(*security.link_limits(req, email)):
+    smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
+    if not security.allow(*security.link_limits(req, email, smtp)):
         return security.too_many()
     if is_preview() and not demo_address(email):
         # A preview is demo-only, as /org/login there (org_auth.link_sent): any other

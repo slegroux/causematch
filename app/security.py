@@ -505,6 +505,13 @@ VERIFY_PER_PHONE = (
 LINK_PER_EMAIL_IP = (("link-email-ip", 5, 3600),)
 LINK_PER_EMAIL = (("link-email-day", 20, 24 * 3600),)
 DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo only)
+# likes per volunteer a day that email the org (notify.on_new_like); later ones only
+# show in its inbox, so one volunteer can't spend the email ceiling's notices
+LIKE_NOTICES = (("like-notice-day", 20, 24 * 3600),)
+# per mailbox a day on /login and /org/login while email goes through Gmail
+# (notify.SMTPEmailer): its daily limit is small, so a handful of accounts or known staff
+# addresses can't spend it on links
+LINK_PER_EMAIL_SMTP = (("link-email-smtp-day", 5, 24 * 3600),)
 
 
 def verify_limits(phone):
@@ -538,6 +545,7 @@ assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
     + (VERIFY_PER_PHONE, LINK_PER_EMAIL_IP, LINK_PER_EMAIL, LINK_PER_IP, LINK_PER_NET)
+    + (LIKE_NOTICES, LINK_PER_EMAIL_SMTP)
     + (SIGNUP_ALL, CLAIM_PER_IP, CLAIM_PER_EMAIL)
     + (OAUTH_PER_IP,)
     + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL, CHECK_PER_IP)
@@ -590,16 +598,18 @@ def ip_subject(req, v6_prefix=64):
     return subject
 
 
-def link_limits(req, email):
+def link_limits(req, email, smtp=False):
     """Every limit one request for an emailed sign-in link counts against, by mailbox
-    (forms.abuse_key: a +tag or Gmail's dots are the same mailbox)."""
+    (forms.abuse_key: a +tag or Gmail's dots are the same mailbox). smtp: email goes
+    through Gmail, so also under LINK_PER_EMAIL_SMTP."""
     key, ip = abuse_key(email), ip_subject(req)
-    return (
+    limits = (
         (LINK_PER_EMAIL_IP, f"{key}|{ip}"),
         (LINK_PER_EMAIL, key),
         (LINK_PER_IP, ip),
         (LINK_PER_NET, ip_subject(req, 48)),
     )
+    return limits + ((LINK_PER_EMAIL_SMTP, key),) if smtp else limits
 
 
 def sms_send_limits(req, phone):
