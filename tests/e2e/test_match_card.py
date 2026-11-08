@@ -14,7 +14,16 @@ def test_tapping_an_accepted_cards_chat_button_opens_its_chat(phone):
     match_id = accepted_match(p.id)
     phone.goto("/matches")
     phone.get_by_role("button", name="Close").click()  # the match sheet
-    phone.get_by_role("link", name="Chat").click()
+    chat = phone.get_by_role("link", name="Chat")
+    # the card leads with Chat: it is the first link, above More and what is folded in it
+    card = chat.locator("xpath=ancestor::div[contains(@class, 'rounded-3xl')][1]")
+    first_link = card.get_by_role("link").first
+    assert first_link.inner_text().strip() == "Chat"
+    assert (
+        chat.bounding_box()["y"]
+        < card.get_by_text("More", exact=True).bounding_box()["y"]
+    )
+    chat.click()
     phone.wait_for_url(f"**/chat/{match_id}")
 
 

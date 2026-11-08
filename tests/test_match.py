@@ -6,7 +6,16 @@ from conftest import PANTRY, coordinator_for, org_sign_in, uid_of, volunteer
 from starlette.testclient import TestClient
 
 from app import data
-from app.db import db, identities, matches, openings, places, profiles, swipes
+from app.db import (
+    db,
+    identities,
+    matches,
+    openings,
+    places,
+    profiles,
+    shifts,
+    swipes,
+)
 from main import app
 
 FMT = "%Y-%m-%dT%H:%M"
@@ -238,6 +247,22 @@ def test_the_match_card_keeps_its_ways_out_under_more_and_links_to_the_chat_once
     for tail in ("withdraw", "report", "block"):
         assert f'href="/matches/{mid}/{tail}"' in more
     assert page.count(f'href="/chat/{mid}"') == 1
+
+
+def test_the_match_card_leads_with_chat_and_folds_the_rest_into_more(user):
+    user.post("/swipe", data={"opening_id": opening().id, "liked": "1"})
+    mid = matches()[0].id
+    data.decide(coordinator_for(0)[0], mid, True)
+    shift = data.my_matches(uid_of(user))[0]["shift"]
+    page = user.get("/matches").text.split("</dialog>")[-1]
+    card, more = page[: page.index("<details")], page[page.index("<details") :]
+    assert f'href="/chat/{mid}"' in card  # above More, not below the links
+    assert "Next shift" not in page  # it repeats the opening's own time
+    for link in (f"/shifts/{shift['id']}/cancel", f"/shifts/{shift['id']}.ics"):
+        assert f'href="{link}"' in more and link not in card
+    # a shift on another day is not a repeat of the opening's time: it is named
+    shifts.update(id=shift["id"], starts_at="2099-01-02T09:00")
+    assert "Next shift: Fri Jan 2" in user.get("/matches").text
 
 
 def test_a_withdrawn_volunteer_cannot_like_the_same_opening_again():
