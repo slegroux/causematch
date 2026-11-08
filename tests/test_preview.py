@@ -24,6 +24,7 @@ from test_photos import key_of, upload
 from app import data, demo_seed, notify, oauth, security
 from app.auth import session_cookie, session_secret
 from app.config import (
+    DEMO_ADMIN,
     DEMO_COORDINATOR,
     DEMO_PHONE,
     certificate_key,
@@ -781,7 +782,11 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
     _empty()
     caplog.set_level("INFO", logger="causematch")
     demo_seed.seed_preview(str(seed_dir))
-    harvest, pantry, shelter = sorted(orgs(), key=lambda o: o.name)
+    (garden,) = orgs(where="name = ?", where_args=[demo_seed.CLAIM_ORG[0]])
+    assert not garden.verified_at  # the admin's claim, beside the file's orgs too
+    harvest, pantry, shelter = sorted(
+        (o for o in orgs() if o.id != garden.id), key=lambda o: o.name
+    )
     assert harvest.name == demo_seed.CONFIRMING_ORG and harvest.verified_at
     assert pantry.name == "Invented Pantry" and pantry.logo_key and pantry.photo_key
     assert pantry.verified_at and shelter.verified_at
@@ -832,7 +837,9 @@ def test_seed_gives_the_free_today_switch_cards_in_several_causes(preview):
 def test_seed_preview_without_a_seed_dir_uses_the_invented_orgs(preview):
     _empty()
     demo_seed.seed_preview(None)
-    assert orgs.count and all(o.verified_at for o in orgs())  # not development
+    # not development; the admin's claim alone waits for approval
+    unverified = [o.name for o in orgs() if not o.verified_at]
+    assert orgs.count > 1 and unverified == [demo_seed.CLAIM_ORG[0]]
     assert any(m.status == "accepted" for m in matches())
 
 
@@ -1052,6 +1059,41 @@ def test_the_demo_buttons_sign_in_each_role_in_one_tap(demo):
     # a POST from another site is refused, like any form here
     evil = {"Authorization": basic(), "Origin": "https://evil.example"}
     assert TestClient(app, headers=evil).post("/login/demo").status_code == 403
+
+
+def test_try_it_as_an_admin_approves_the_seeded_claim_without_propublica(
+    demo, monkeypatch
+):
+    """The presenter's admin flow: one tap to the demo admin, the seeded claim on Claims,
+    and approving it makes the invented org and its coordinator, with nothing sent."""
+    import app.routes.admin as admin_routes
+
+    def no_lookup(*_):
+        raise AssertionError("approving the seeded claim asked ProPublica")
+
+    monkeypatch.setattr(admin_routes, "import_ein", no_lookup)
+    assert demo_seed.ADMIN[0] == DEMO_ADMIN
+    name, ein = demo_seed.CLAIM_ORG
+    (garden,) = orgs(where="name = ?", where_args=[name])
+    assert garden.ein == ein and not garden.verified_at  # in no deck before approval
+    assert not openings(where="org_id = ?", where_args=[garden.id])
+    browser = TestClient(app, headers={"Authorization": basic()})
+    assert "Try it as an admin" not in browser.get("/login").text
+    assert "Try it as an admin" in browser.get("/org/login").text
+    r = browser.post("/org/login/demo-admin", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/admin"
+    assert browser.get("/admin/metrics").status_code == 200
+    page = browser.get("/admin/claims").text
+    assert name in page and demo_seed.CLAIMANT[1] in page
+    (claim_id,) = re.findall(r"/admin/claims/(\d+)/approve", page)
+    r = browser.post(f"/admin/claims/{claim_id}/approve", follow_redirects=False)
+    assert r.headers["location"] == "/admin/claims?done=approved"
+    jordan = data.coordinator_by_email(demo_seed.CLAIMANT[0])
+    assert (
+        data.coordinator_org_ids(jordan) == [garden.id] and orgs[garden.id].verified_at
+    )
+    to, subject, _ = notify.get_emailer().sent[-1]
+    assert to == demo_seed.CLAIMANT[0] and subject == "You're approved on Causematch"
 
 
 def test_in_a_demo_the_coordinator_sees_demo_people_only(demo):
