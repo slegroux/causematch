@@ -160,6 +160,10 @@ class Identity:
     subject: str  # the ID token's sub, or the link's address: unique per provider
     email: str
     created_at: str
+    # 1 when the email is the mailbox's current holder's: an emailed link's, or a Google
+    # or Apple one whose provider hosts that mailbox (oauth.authoritative). Only these
+    # join a sign-in by another way to this profile (data.volunteer_for_identity).
+    authoritative: int
 
 
 class OrgMember:

@@ -243,7 +243,14 @@ def _sync_send(req, form, sess):
     # not ASCII is refused before lowercasing, which would turn the Kelvin sign into a "k"
     if len(raw) > 254 or not raw.isascii() or not EMAIL.fullmatch(raw):
         return LoginPage(raw[:254], BAD_EMAIL)
-    email = raw.lower()
+    return link_sent(req, raw.lower(), sess)
+
+
+def link_sent(req, email, sess):
+    """What a request for a volunteer's link to this (lowercased, valid) address answers:
+    the "check your email" page, the link sent after the response, under the link limits.
+    Also a volunteer's Google or Apple sign-in's answer when its address is staff's
+    (app/routes/oauth.py). A page, a (page, BackgroundTask), or the 429 response."""
     # every valid-shape address is counted, in the nonprofit link's own buckets, so a
     # refusal says nothing about the account and the two pages share one budget
     smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
