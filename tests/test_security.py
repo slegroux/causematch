@@ -929,6 +929,39 @@ def test_migration_19_adds_undo_until_and_the_app_start_keeps_the_table(tmp_path
     assert undo_cols() == [("undo_until", "TEXT")]
 
 
+def test_migration_21_marks_only_the_mailboxes_a_provider_hosts(tmp_path):
+    """identity.authoritative on a database from before it: an emailed link's address,
+    Gmail on Google and iCloud on Apple may join accounts; any other (a Workspace row's hd
+    was never kept) stays NULL and never does."""
+    db = v1_copy(tmp_path)
+    c = apsw.Connection(str(db))
+    c.execute("ALTER TABLE identity DROP COLUMN authoritative")
+    rows = [
+        ("email", "a@example.org", 1),
+        ("google", "b@GMail.com", 1),
+        ("google", "c@googlemail.com", 1),
+        ("google", "d@example.org", None),
+        ("apple", "e@icloud.com", 1),
+        ("apple", "f@privaterelay.appleid.com", None),
+        ("apple", "g@gmail.com", None),
+    ]
+    for n, (provider, email, _) in enumerate(rows):
+        c.execute(
+            "INSERT INTO identity (user_id, provider, subject, email, created_at) "
+            "VALUES (1, ?, ?, ?, 'x')",
+            [provider, f"m21-{n}", email],
+        )
+    c.close()
+    assert run_migrations(db).returncode == 0
+    c = apsw.Connection(str(db))
+    got = c.execute(
+        "SELECT provider, email, authoritative FROM identity "
+        "WHERE subject LIKE 'm21-%' ORDER BY subject"
+    ).fetchall()
+    c.close()
+    assert got == rows
+
+
 def test_a_missing_database_is_an_error(tmp_path):
     r = run_migrations(tmp_path / "none.db")
     assert r.returncode == 1 and not (tmp_path / "none.db").exists()

@@ -14,7 +14,7 @@ Contents: [1. Signing in](#1-who-is-an-admin-and-how-to-sign-in) · [2. Claims](
 
 ## 1. Who is an admin, and how to sign in
 
-An admin can see the admin pages and nothing else: the volunteer pages and the nonprofit pages (`/org`) are closed to you, so an admin can't swipe, post openings or chat. A person has one role per email address. An address that is already a coordinator can't also be an admin.
+An admin can see the admin pages and nothing else: the volunteer pages and the nonprofit pages (`/org`) are closed to you, so an admin can't swipe, post openings or chat. A person has one role per email address. An address that is already a coordinator can't also be an admin, and a coordinator's or admin's address (or a `+tag` of it) can't sign up as a volunteer or join a volunteer's account, by emailed link, Google or Apple. A volunteer who already signed in with that address keeps their account.
 
 ### Becoming an admin
 
@@ -178,7 +178,7 @@ Things to know before you tap:
 
 ### One person, several accounts
 
-**Suspend every account on the same mailbox.** A suspension belongs to a single account. It does **not** spread to other live accounts that already share the person's email address, so if you suspend one and leave the other, they can carry on under the other. Once one account is suspended, emailed links stop coming for that mailbox, but a separate Google or Apple account keeps working until it is suspended too. If you learn that a person has more than one account (the reporter may tell you, or the operator may spot it), suspend each of them.
+**Suspend every account on the same mailbox.** A volunteer's emailed link and their Google or Apple account now open one account when they share the exact address (and Google or Apple hosts it: Gmail, iCloud). But accounts made before that, and a `+tag` or another address on the same mailbox, are separate accounts. A suspension belongs to a single account. It does **not** spread to other live accounts that already share the person's email address, so if you suspend one and leave the other, they can carry on under the other. Once one account is suspended, emailed links stop coming for that mailbox and no new way in joins it, but a separate Google or Apple account that already exists keeps working until it is suspended too. If you learn that a person has more than one account (the reporter may tell you, or the operator may spot it), suspend each of them.
 
 Suspend lives on a report, and the queue shows only first names. So for the second account, ask the reporter to report it too from the match they have with it, or ask the operator which accounts share the address. Then tap **Suspend user** on each report.
 

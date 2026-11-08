@@ -160,6 +160,11 @@ class Identity:
     subject: str  # the ID token's sub, or the link's address: unique per provider
     email: str
     created_at: str
+    # data.HOLDER (1): the email may hold this account for a sign-in by another way to
+    # join (an emailed link's; Gmail on Google, iCloud on Apple). data.JOINER (2): a
+    # Workspace's (hd), which proved the mailbox but holds nothing. 0 or NULL: neither.
+    # Refreshed with the email at every sign-in (data.volunteer_for_identity).
+    authoritative: int
 
 
 class OrgMember:
