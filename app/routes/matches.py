@@ -24,7 +24,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 
-from app import data, notify
+from app import data, notify, security
 from app.forms import bad_request, query, str_form
 from app.routes.deck import DeckArea, MatchSheet, MomentSlot, deck_view
 from app.ui import (
@@ -109,7 +109,7 @@ def _sync_swipe(req, form):
         notice = "That opening isn't available any more."
     else:
         if m and m.status == "accepted":  # an urgent call took them: off to the chat
-            notify.on_auto_accepted(m.id)
+            notify.after(req, notify.on_auto_accepted, m.id)
             fresh = data.new_matches(uid)
             if [r["id"] for r in fresh] == [m.id]:  # the chat is its moment: no sheet
                 data.saw_new_matches(uid, fresh)
@@ -117,10 +117,10 @@ def _sync_swipe(req, form):
                 return Response(headers={"HX-Redirect": f"/chat/{m.id}?notice=in"})
             return Redirect(f"/chat/{m.id}?notice=in")
         if m:
-            if (
-                not m.org_blind
-            ):  # the org never hears of a blind like; the volunteer can't tell
-                notify.on_new_like(m.id)
+            # the org never hears of a blind like; the volunteer can't tell. Past the
+            # volunteer's daily share of like notices the org sees the like in its inbox.
+            if not m.org_blind and security.allow((security.LIKE_NOTICES, uid)):
+                notify.after(req, notify.on_new_like, m.id)
             notice = LIKE_SENT.format(data.org_name_of(m.opening_id))
             if not data.get_profile(uid).heard_from:  # the one optional card, once
                 more = (
@@ -138,6 +138,18 @@ def _sync_swipe(req, form):
 
 def MatchRow(m):
     accepted = m["status"] == "accepted"
+    shift = m["shift"]
+    extras = [
+        x
+        for x in (
+            Notes(m["notes"]),
+            # a later shift of a repeating opening; the first one is the line above
+            NextShift(shift)
+            if shift and shift["starts_at"] != m["starts_at"]
+            else None,
+        )
+        if x is not None
+    ]
     return Div(
         Div(
             status_pill(MATCH_STATUS, m["status"], "volunteer"),
@@ -161,16 +173,9 @@ def MatchRow(m):
                 CALENDAR,
                 f"{when(m['starts_at'], m['duration_minutes'])} · {m['neighborhood']}",
             ),
-            Notes(m["notes"]),
             cls="space-y-1.5",
         ),
-        Div(
-            NextShift(m["shift"]) if m["shift"] else None,
-            AddToCalendar(m["shift"]) if m["shift"] else None,
-            EventLink(m.get("event_url")),
-            cls="space-y-1.5",
-        ),
-        A(
+        A(  # the card's one job: right under the title block, before anything to read
             Icon(CHAT, size=18),
             "Chat",
             href=f"/chat/{m['id']}",
@@ -178,6 +183,7 @@ def MatchRow(m):
         )
         if accepted
         else None,
+        Div(*extras, cls="space-y-1.5") if extras else None,
         Details(  # the rarely wanted ways out, behind one tap (no script)
             Summary(
                 "More",
@@ -187,14 +193,26 @@ def MatchRow(m):
                 "hover:text-ink [&::-webkit-details-marker]:hidden",
             ),
             Div(
-                A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
-                if m["status"] in ("pending", "accepted")
-                else None,
-                A("Report", href=f"/matches/{m['id']}/report", cls=SMALL_LINK),
-                None
-                if m["blocked"]
-                else A("Block", href=f"/matches/{m['id']}/block", cls=SMALL_LINK),
-                cls="flex flex-wrap gap-x-5 text-sm",
+                AddToCalendar(shift) if shift else None,
+                Div(
+                    A(
+                        "Can't make this one",
+                        href=f"/shifts/{shift['id']}/cancel",
+                        cls=SMALL_LINK,
+                    )
+                    if shift
+                    else None,
+                    EventLink(m.get("event_url")),
+                    A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
+                    if m["status"] in ("pending", "accepted")
+                    else None,
+                    A("Report", href=f"/matches/{m['id']}/report", cls=SMALL_LINK),
+                    None
+                    if m["blocked"]
+                    else A("Block", href=f"/matches/{m['id']}/block", cls=SMALL_LINK),
+                    cls="flex flex-wrap items-center gap-x-5 text-sm",
+                ),
+                cls="space-y-1.5",
             ),
             cls="border-t border-line",
         ),
@@ -327,5 +345,5 @@ def withdraw(req, match_id: int):
         return Refusal(403)
     except ValueError:
         return Redirect("/matches")  # already withdrawn or declined: nothing to do
-    notify.on_withdrawn(match_id, was)
+    notify.after(req, notify.on_withdrawn, match_id, was)
     return Redirect("/matches")

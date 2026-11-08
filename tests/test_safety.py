@@ -25,7 +25,7 @@ from fasthtml.common import to_xml
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import data, notify, oauth, propublica
+from app import config, data, notify, oauth, propublica
 from app.choices import SHARED_WITH_NONPROFIT
 from app.db import (
     blocks,
@@ -808,6 +808,31 @@ def test_privacy_says_what_a_certificate_check_link_shows_and_what_stays(anon):
         "erases the name, the shifts and the signature",
     ):
         assert words in text, words
+
+
+def test_privacy_names_the_email_provider_in_use(anon, monkeypatch):
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    assert "Our email provider (Resend)" in text and "Sent folder" not in text
+    gmail = notify.make_emailer(
+        {
+            "CAUSEMATCH_ENV": "test",
+            "SMTP_USERNAME": "causematch.example@gmail.com",
+            "SMTP_PASSWORD": "abcdefghijklmnop",
+        }
+    )
+    monkeypatch.setattr(notify, "_emailer", gmail)
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    assert "Our email provider (Google, through Gmail)" in text and "Resend" not in text
+    assert "a copy of each email we send, and of any bounce or reply" in text
+    assert "until we delete them or close the account" in text  # no purge installed
+    assert "after a day" not in text
+    monkeypatch.setenv("GMAIL_PURGE", "daily")  # once the purge runs (OPERATIONS)
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    assert "we move them to the bin after a day" in text
+    assert "Gmail erases them 30 days later" in text
+    monkeypatch.setenv("GMAIL_PURGE", "weekly")
+    with pytest.raises(RuntimeError, match="GMAIL_PURGE"):
+        config.gmail_purge()
 
 
 def test_privacy_is_linked_from_consent_login_pages_and_footer(anon, new_user):

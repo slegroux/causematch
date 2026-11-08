@@ -112,7 +112,8 @@ def link_sent(req, email, sess):
     a staff provider sign-in's answer when the provider doesn't host the mailbox
     (app/routes/oauth.py). A page, a (page, BackgroundTask), or the 429 response."""
     # every valid-shape address is counted, so a refusal says nothing about the account
-    if not security.allow(*security.link_limits(req, email)):
+    smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
+    if not security.allow(*security.link_limits(req, email, smtp)):
         return security.too_many()
     if is_preview() and not demo_address(email):
         # A preview is demo-only: any other address gets an unknown address's answer and

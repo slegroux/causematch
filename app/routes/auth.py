@@ -3,7 +3,7 @@ import hmac
 import logging
 import time
 
-from fasthtml.common import H2, A, Div, Form, HttpHeader, P, Redirect
+from fasthtml.common import H2, A, Button, Div, Form, Hidden, HttpHeader, P, Redirect
 from monsterui.all import Alert, AlertT, TextPresets
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -41,7 +41,7 @@ SUSPENDED = "This account can't sign in. Contact us if that is a mistake."
 # (config.demo_number)
 PREVIEW_PHONES = "This preview uses demo numbers only, like (310) 555-0100."
 # The same answer for every address: it never says whether an account holds it
-SENT = "Check your email: if we can sign you in or up with that address, a link is on its way."
+SENT = "If we can sign you in or up with that address, a link is on its way."
 BAD_EMAIL = "Enter your email address."
 BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
 TOKEN_KEY = "volunteer_token"  # the link's token, between its GET and the button's POST
@@ -170,6 +170,41 @@ def LoginPage(email="", error=None, notice=None, link=None):
     )
 
 
+def SentPage(email, link=None):
+    """ "Check your email", after the form (the same page for every address, so it never
+    says whether an account holds it): the address it went to, a button that sends the link
+    again to it (the same route, so the same limits), and the way back to the form."""
+    return SignInPage(
+        "Check your email",
+        P(email, cls="break-all text-center text-lg font-bold text-ink"),
+        P(
+            A("Open your sign-in link", href=link, cls="text-brand font-bold"),
+            " (a preview sends no email)",
+        )
+        if link
+        else None,
+        Form(
+            Hidden(name="email", value=email),
+            Button(
+                "Send it again",
+                type="submit",
+                cls="uk-btn uk-btn-default w-full h-12 text-lg",
+            ),
+            action="/login/send",
+            method="post",
+        ),
+        P(
+            A("Use another address", href="/login", cls="text-brand font-bold"),
+            cls="text-center",
+        ),
+        P(
+            f"The link works once and expires in {data.TOKEN_MINUTES} minutes.",
+            cls=TextPresets.muted_sm + " text-center",
+        ),
+        intro=SENT,
+    )
+
+
 @ar("/login", methods=["GET"])
 def login_page():
     return LoginPage()
@@ -211,20 +246,21 @@ def _sync_send(req, form, sess):
     email = raw.lower()
     # every valid-shape address is counted, in the nonprofit link's own buckets, so a
     # refusal says nothing about the account and the two pages share one budget
-    if not security.allow(*security.link_limits(req, email)):
+    smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
+    if not security.allow(*security.link_limits(req, email, smtp)):
         return security.too_many()
     if is_preview() and not demo_address(email):
         # A preview is demo-only, as /org/login there (org_auth.link_sent): any other
         # address gets the same answer and nothing is sent, shown or logged, so a real
         # address neither signs up there nor gets a link
-        return LoginPage(notice=SENT)
+        return SentPage(email)
     asked_for(sess, email)
     if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
         # As /org/login on a preview (org_auth.link_sent): nothing is emailed, so the page
         # shows the link, for the demo's data only. An admin's stays in the log.
         link, shown = _send_link(email)
-        return LoginPage(notice=SENT, link=link if shown else None)
-    return LoginPage(notice=SENT), BackgroundTask(_send_link, email)
+        return SentPage(email, link if shown else None)
+    return SentPage(email), BackgroundTask(_send_link, email)
 
 
 @ar("/login/verify", methods=["GET"])
