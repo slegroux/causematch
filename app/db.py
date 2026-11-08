@@ -504,6 +504,32 @@ ORGS = [
     ),
 ]
 
+# What each invented org's page says about it.
+ORG_ABOUT = {
+    "Westside Pantry Collective": (
+        "A neighborhood pantry that packs and delivers groceries to families on the "
+        "Westside every week."
+    ),
+    "Downtown Harvest Kitchen": (
+        "A community kitchen serving hot meals downtown to anyone who walks in."
+    ),
+    "Arroyo Trail Keepers": (
+        "Neighbors who keep the arroyo trail clean, weeded and open to walkers."
+    ),
+    "Eastside Paws Rescue": (
+        "A small shelter that walks, fosters and finds homes for dogs and cats on the "
+        "Eastside."
+    ),
+    "Valley Street Outreach": (
+        "An outreach team that brings hygiene kits and a friendly face to people "
+        "living on Valley streets."
+    ),
+    "Baldwin Green Spaces": (
+        "A community garden where neighbors grow vegetables and paint the walls "
+        "together."
+    ),
+}
+
 # (org index, title, causes, skills, neighborhood, lat, lon, starts_at, slots, minutes, status)
 OPENINGS = [
     (
@@ -780,7 +806,7 @@ def _demo_org(name, cs, lat, lon):
             causes=json.dumps(cs),
             lat=lat,
             lon=lon,
-            about="An invented organization.",
+            about=ORG_ABOUT[name],
             intro="cold",
             created_at=now(),
             verified_at=now() if is_dev() else None,
