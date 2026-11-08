@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, oauth, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending, sign_in
-from app.config import DEMO_PHONE, demo_matches
+from app.config import DEMO_PHONE, demo_matches, demo_number, is_preview
 from app.forms import bad_request, str_form
 from app.ui import (
     BigButton,
@@ -29,6 +29,8 @@ demo_volunteer = None
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 SUSPENDED = "This account can't sign in. Contact us if that is a mistake."
+# A preview gives the fake code to the demo's fictional numbers only (config.demo_number)
+PREVIEW_PHONES = "This preview uses demo numbers only, like (310) 555-0100."
 
 
 def ProviderSignIn(for_org=False):
@@ -156,6 +158,8 @@ def _sync_send(req, form, sess):
     e164 = normalize_phone(phone)
     if not e164:
         return PhoneForm(phone, BAD_PHONE)
+    if is_preview() and not demo_number(e164):  # demo-only: no code, nothing counted
+        return PhoneForm(phone, PREVIEW_PHONES)
     # before the suspended check, so a refusal looks the same for every number
     if not security.allow(*security.sms_send_limits(req, e164)):
         return security.too_many()

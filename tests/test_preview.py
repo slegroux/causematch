@@ -55,6 +55,7 @@ from app.db import (
 from app.db import (
     now as db_now,
 )
+from app.routes.auth import PREVIEW_PHONES
 from app.ui import DEMO_NOTICE, PREVIEW_NOTICE
 from main import app
 
@@ -521,8 +522,32 @@ def test_fake_sign_in_codes_work_in_a_preview(guest):
     assert r.status_code == 303 and r.headers["location"] == "/onboarding"
 
 
+def test_fake_codes_go_to_demo_numbers_only_in_a_preview(guest):
+    sent = len(notify.get_verifier().sent)
+    page = guest.post("/login/send", data={"phone": "(310) 555-1234"}).text
+    assert PREVIEW_PHONES in page and len(notify.get_verifier().sent) == sent
+    r = guest.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 200 and "Enter your number to get a code." in r.text
+
+
+def test_outside_a_preview_any_number_gets_a_code(anon):
+    anon.post("/login/send", data={"phone": "(310) 555-1234"})
+    r = anon.post("/login/verify", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/onboarding"
+
+
+def test_a_preview_sends_nothing_to_an_address_off_the_demos_domains(guest, caplog):
+    _, email = coordinator_for(0)  # coord0@example.org: as a real coordinator would be
+    sent = len(notify.get_emailer().sent)
+    with caplog.at_level("WARNING", logger="causematch"):
+        page = guest.post("/org/login/send", data={"email": email}).text
+    assert "If that address belongs to a coordinator" in page
+    assert "Open your sign-in link" not in page and "token=" not in page
+    assert len(notify.get_emailer().sent) == sent and "FAKE EMAIL" not in caplog.text
+
+
 def test_a_preview_shows_the_sign_in_link_on_the_page(guest):
-    _, email = coordinator_for(0)
+    _, email = coordinator_for(0, "lee@demo.causematch.test")
     page = guest.post("/org/login/send", data={"email": email}).text
     link = re.search(
         r'href="https://causematch\.test(/org/login/verify\?token=[\w-]+)"', page
