@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 
 from app import data, geo
 from app.db import causes, matches, messages, openings, orgs, profiles
-from app.routes.org import opening_fields
+from app.routes.org import ADULT_SCREENED, SCREENING_REQUIRED, opening_fields
 from main import app
 
 LA = ZoneInfo("America/Los_Angeles")
@@ -520,6 +520,42 @@ def test_a_homelessness_opening_still_needs_the_adults_only_confirmation(coord):
     assert re.search(r'<form[^>]*class="[^"]*\bcm-homeless\b', r.text)
     assert NOTE in r.text and "background check" in r.text
     assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
+
+
+def test_a_screening_opening_stores_its_kind_and_its_card_says_so(coord, user):
+    """The nonprofit's own screening: the flag and its kind are stored, the adults box
+    reads the screened wording, and the deck card and sheet tell the volunteer."""
+    page = coord.get("/org/openings/new").text
+    assert SCREENING_REQUIRED in page and ADULT_SCREENED in page
+    r = post(coord, screening="1")  # no kind
+    assert r.status_code == 200 and "which screening" in r.text
+    assert re.search(r'class="[^"]*\bcm-adult-box\b[^"]*\bcm-screening\b', r.text)
+    assert post(coord, title="Plain one").status_code == 303
+    r = post(coord, starts_at=future(2), screening="1", screening_kind="live_scan")
+    assert r.status_code == 303
+    (o,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    assert (o.screening_required, o.screening_kind, o.adult_confirmed) == (
+        True,
+        "live_scan",
+        True,
+    )
+    plain = openings(where="title = ?", where_args=["Plain one"])[0]
+    assert not plain.screening_required and plain.screening_kind is None
+    html = user.get(f"/deck?card={o.id}").text
+    assert "Screening required" in html
+    assert "complete Live Scan fingerprinting first." in html
+    assert "Screening required" not in user.get(f"/deck?card={plain.id}").text
+    # the edit form can turn it on (and off) for now
+    assert (
+        edit(coord, plain, screening="1", screening_kind="training").status_code == 303
+    )
+    assert (
+        openings[plain.id].screening_required,
+        openings[plain.id].screening_kind,
+    ) == (
+        True,
+        "training",
+    )
 
 
 def test_kind_of_work_fields_are_optional_and_stored(coord):

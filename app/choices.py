@@ -122,6 +122,15 @@ FREQUENCY = [
     ("weekly", "About weekly"),
 ]
 
+# An opening's own screening (opening.screening_kind): the nonprofit runs it and confirms
+# each volunteer; the app never sees or stores a result
+SCREENING_KINDS = [
+    ("background_check", "Background check"),
+    ("live_scan", "Live Scan fingerprinting"),
+    ("training", "Training"),
+    ("other", "Other"),
+]
+
 # What a nonprofit sees of a volunteer after a like. The privacy page says exactly
 # this and org_inbox returns exactly these fields; tests/test_match.py keeps them equal.
 SHARED_WITH_NONPROFIT = (

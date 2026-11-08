@@ -68,7 +68,9 @@ class Opening:
     status: str  # open|filled|closed
     notes: str
     reply_channel: str  # email|text|either
-    adult_confirmed: bool  # 18+ and no one-to-one contact with vulnerable people
+    adult_confirmed: (
+        bool  # 18+, and no one-to-one contact or the nonprofit's own screening
+    )
     created_at: str
     # Kind of work, all optional ("" or NULL: not said)
     setting: str  # indoor|outdoor
@@ -81,6 +83,10 @@ class Opening:
     duration_minutes: (
         int  # how long a shift lasts (choices.SHIFT_LENGTHS); NULL: not said
     )
+    # the nonprofit's own screening before a first shift (migration 0021); the app
+    # stores only that it is required and its kind, never a result
+    screening_required: bool
+    screening_kind: str  # choices.SCREENING_KINDS key; NULL when not required
 
 
 class Profile:
