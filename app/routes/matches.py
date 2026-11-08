@@ -204,7 +204,7 @@ def MatchRow(m):
                     else None,
                     EventLink(m.get("event_url")),
                     A("Withdraw", href=f"/matches/{m['id']}/withdraw", cls=SMALL_LINK)
-                    if m["status"] in ("pending", "accepted")
+                    if m["status"] in ("pending", "accepted") and not m["held"]
                     else None,
                     A("Report", href=f"/matches/{m['id']}/report", cls=SMALL_LINK),
                     None

@@ -92,16 +92,16 @@ DEFINITIONS = {
 }
 # Last-minute calls (app/data.py post_urgent_call): one table, overall only
 URGENT = {
-    "urgent_posted": "Urgent calls posted",
+    "urgent_posted": "Last-minute calls posted",
     "urgent_filled_rate": "Filled",
     "urgent_median_fill_min": "Median minutes to fill",
-    "urgent_no_show_rate": "No-show, urgent fills",
+    "urgent_no_show_rate": "No-show, last-minute fills",
     "normal_no_show_rate": "No-show, other shifts",
 }
 URGENT_RATES = {"urgent_filled_rate", "urgent_no_show_rate", "normal_no_show_rate"}
 MEDIANS = {"median_reply_h", "urgent_median_fill_min"}
 URGENT_DEFINITIONS = {
-    "urgent_posted": "Urgent calls posted by nonprofits, open ones included.",
+    "urgent_posted": "Last-minute calls posted by nonprofits, open ones included.",
     "urgent_filled_rate": (
         "Calls that filled / calls that ended (filled, stopped by the org, their time "
         "passed or their opening closed). Open calls are in neither count."
@@ -111,7 +111,7 @@ URGENT_DEFINITIONS = {
         "calls counted."
     ),
     "urgent_no_show_rate": (
-        "No-shows / (completed + no-shows), over shifts of likes made on an urgent call. "
+        "No-shows / (completed + no-shows), over shifts of likes made on a last-minute call. "
         f"Withheld, with the other no-show rate, while either has fewer than "
         f"{MIN_GROUP_VOLUNTEERS} volunteers: overall's no-show rate minus one would give "
         "the other back."

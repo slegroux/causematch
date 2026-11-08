@@ -162,7 +162,7 @@ def test_both_chat_pages_name_the_shift(chat):
     profiles.update(id=chat.vol.uid, availability='["weekend_morning"]')
     shift = data.chat_header(chat.vol.uid, chat.id)["shift"]
     start = datetime.fromisoformat(shift["starts_at"])
-    line = f"{start:%a %b} {start.day} · {start:%-I:%M %p}"
+    line = f"{start:%a %b} {start.day}, {start:%-I:%M %p}"
     for client, page in (
         (chat.vol, f"/chat/{chat.id}"),
         (chat.coord, f"/org/chat/{chat.id}"),
@@ -179,7 +179,7 @@ def test_chat_line_falls_back_to_the_opening_time_without_an_upcoming_shift(chat
         shifts.update(id=s.id, starts_at="2020-01-01T09:00")
     start = datetime.fromisoformat(chat.opening.starts_at)
     html = chat.vol.get(f"/chat/{chat.id}").text
-    assert f"{start:%a %b} {start.day} · {start:%-I:%M %p}" in html
+    assert f"{start:%a %b} {start.day}, {start:%-I:%M %p}" in html
     assert "Jan 1" not in html
 
 

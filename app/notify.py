@@ -994,7 +994,7 @@ def _send_urgent_waves():
             f"{sms_safe(info['opening'])}. Interested? {link} (Turn these off in "
             "Preferences. Reply STOP to end all texts.)"
         )
-        subject = f"Last minute: {info['org']} needs {people} {info['when']}"
+        subject = f"Last-minute: {info['org']} needs {people} {info['when']}"
         for uid, how in recipients:
             key = f"urgent:{call_id}:{uid}"
             if how == "sms" and get_sms() is not None:  # else by email

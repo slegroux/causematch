@@ -46,7 +46,7 @@ def test_travel_time_maps_to_radius(new_user):
 
 def test_unticked_box_blocks_onboarding_and_the_error_sits_by_the_button(new_user):
     """One box confirms 18+ and the privacy policy; without it nothing is saved."""
-    form = {k: v for k, v in FORM.items() if k not in ("adult", "consent")}
+    form = {k: v for k, v in FORM.items() if k != "consent"}
     r = new_user.post("/onboarding", data=form, follow_redirects=False)
     assert r.status_code == 200
     assert not profile_of(new_user).onboarded_at

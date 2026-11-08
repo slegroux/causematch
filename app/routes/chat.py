@@ -93,7 +93,7 @@ def shift_line(head):
     start = shift["starts_at"] if shift else head["starts_at"]
     minutes = shift["duration_minutes"] if shift else head["duration_minutes"]
     return " · ".join(
-        part for part in (when(start, minutes, sep=" · "), head["neighborhood"]) if part
+        part for part in (when(start, minutes), head["neighborhood"]) if part
     )
 
 

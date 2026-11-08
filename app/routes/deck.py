@@ -190,7 +190,7 @@ def OpeningCard(c):
 
 
 ORIENTATION_WORDS = {
-    "same_day": "Orientation: done the same day, before the shift.",
+    "same_day": "Orientation: done the same day, before the first shift.",
     "separate": "Orientation: a separate session beforehand.",
 }
 

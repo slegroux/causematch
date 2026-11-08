@@ -719,7 +719,7 @@ def test_wave_after_stop_goes_by_email(shelter, sweep):
     assert sweep().text == "sent 1" and not notify.get_sms().sent
     ((to, subject, body),) = notify.get_emailer().sent
     assert to == "vol@example.org" and vol in notified()
-    assert subject == "Last minute: Eastside Paws Rescue needs 1 more person today 1 pm"
+    assert subject == "Last-minute: Eastside Paws Rescue needs 1 more person today 1 pm"
     assert f"/deck?card={shelter.opening.id}" in body
     off = f"https://causematch.test/urgent/off/{data.urgent_off_key(vol)}"
     assert f"To stop them: {off}" in body

@@ -328,12 +328,12 @@ def NeedsYou(waiting, to_mark):
 
 
 def waiting_first(openings, counts):
-    """An org's openings in dashboard order: the open ones with volunteers waiting, then
-    the other open ones, each soonest start first; then the closed, newest first (as
-    data.org_openings gives them)."""
-    live = [o for o in openings if o.status == "open"]
+    """An org's openings in dashboard order: the live ones (open or filled) with
+    volunteers waiting, then the other live ones, each soonest start first; then the
+    closed, newest first (as data.org_openings gives them)."""
+    live = [o for o in openings if o.status in ("open", "filled")]
     live.sort(key=lambda o: (not counts.get(o.id, {}).get("pending"), o.starts_at))
-    return live + [o for o in openings if o.status != "open"]
+    return live + [o for o in openings if o.status not in ("open", "filled")]
 
 
 @ar("/org", methods=["GET"])
@@ -1185,7 +1185,7 @@ def ShiftFacts(m):
     return Div(
         P(
             when(m["starts_at"], m["duration_minutes"]),
-            f" · {m['spots_left']} of {m['slots']} spots left",
+            f" · {m['spots_left']} of {m['slots']} spot{'' if m['slots'] == 1 else 's'} left",
             cls="text-sm font-semibold text-ink",
         ),
         P(
@@ -1229,7 +1229,7 @@ def InboxRow(m):
             Div(
                 VolunteerHeader(m["name"], m["photo_key"], m["pronouns"]),
                 P(f"Interested in: {m['opening']}", cls=TextPresets.muted_sm + " mt-1"),
-                ShiftFacts(m),
+                ShiftFacts(m) if m["status"] == "pending" else None,
                 cls="min-w-0 flex-1",
             ),
             status_pill(MATCH_STATUS, m["status"], "org"),
