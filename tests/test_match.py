@@ -6,7 +6,7 @@ from conftest import PANTRY, coordinator_for, org_sign_in, uid_of, volunteer
 from starlette.testclient import TestClient
 
 from app import data
-from app.db import db, matches, openings, places, profiles, swipes
+from app.db import db, identities, matches, openings, places, profiles, swipes
 from main import app
 
 FMT = "%Y-%m-%dT%H:%M"
@@ -642,17 +642,21 @@ def test_concurrent_decide_withdraw_and_sign_in_do_not_collide():
 def test_twenty_concurrent_swipes_over_http_with_sign_ins_in_flight(live_url):
     import httpx
 
-    def login(phone):
+    def login(email):
+        """Use an emailed link made here, which signs the address up (asking for one too
+        would race: the link sent after that response replaces this one)."""
         c = httpx.Client(base_url=live_url, headers={"Origin": live_url})
-        c.post("/login/send", data={"phone": phone})
-        r = c.post("/login/verify", data={"code": "000000"})
+        r = c.post("/login/verify", data={"token": data.create_email_token(email)})
         return c, r
 
     clients = []
     for i in range(20):
-        c, r = login(f"310555{8000 + i}")
+        c, r = login(f"v{8000 + i}@example.org")
         assert r.status_code == 303 or r.status_code == 200
-        uid = data.get_or_create_volunteer(f"+1310555{8000 + i}")
+        (ident,) = identities(
+            where="subject = ?", where_args=[f"v{8000 + i}@example.org"]
+        )
+        uid = ident.user_id
         profiles.update(
             id=uid, display_name=f"V{i}", onboarded_at="2026-01-01T00:00:00"
         )
@@ -668,7 +672,7 @@ def test_twenty_concurrent_swipes_over_http_with_sign_ins_in_flight(live_url):
                 headers={"HX-Request": "true"},
             )
         else:
-            _, r = login(f"310555{7000 + i}")
+            _, r = login(f"v{7000 + i}@example.org")
         codes.append(r.status_code)
 
     errors = run_threads(work, 28)

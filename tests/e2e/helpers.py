@@ -7,7 +7,7 @@ import time
 from conftest import coordinator_for, last_link_token
 
 from app import data, notify
-from app.db import openings, orgs, profiles, shifts
+from app.db import identities, openings, orgs, profiles, shifts
 
 SE = {"width": 375, "height": 667}  # iPhone SE, the smallest phone in common use
 EXTERNAL = re.compile(r"^(?!(http|ws)://127\.0\.0\.1)(https?|wss?)://")
@@ -34,21 +34,37 @@ def guard(ctx):
     return ctx
 
 
-def _sign_in(page, phone):
-    """Sign in by text message; lands on onboarding. Returns the profile row."""
+def email_of(number):
+    """The address a test volunteer signs up with, made from a test's number."""
+    return f"v{re.sub(r'\D', '', number)}@example.org"
+
+
+def open_link(page, email):
+    """Wait for the emailed link to this address (sent after the response), then open it:
+    a click returns before the server has answered, so reading `sent` straight away races
+    the request."""
+    deadline = time.monotonic() + 15
+    while not any(to == email for to, _, _ in notify.get_emailer().sent):
+        assert time.monotonic() < deadline, "no sign-in email"
+        time.sleep(0.02)
+    page.goto(f"/login/verify?token={last_link_token()}")
+
+
+def sign_up(page, number):
+    """Sign up with the emailed link; lands on onboarding. Returns the profile row."""
+    email = email_of(number)
     page.goto("/login")
-    page.get_by_label("Mobile number").fill(phone)
-    page.get_by_role("button", name="Text me a code").click()
-    page.get_by_label("Code").fill("000000")
+    page.get_by_label("Email").fill(email)
+    page.get_by_role("button", name="Email me a link").click()
+    open_link(page, email)
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url("**/onboarding")
-    e164 = "+1" + re.sub(r"\D", "", phone)
-    (p,) = profiles(where="phone = ?", where_args=[e164])
-    return p
+    (i,) = identities(where="subject = ?", where_args=[email])
+    return profiles[i.user_id]
 
 
-def sign_in_page(page, phone):
-    p = _sign_in(page, phone)
+def sign_in_page(page, number):
+    p = sign_up(page, number)
     profiles.update(
         id=p.id,
         display_name="Sam",
@@ -58,10 +74,10 @@ def sign_in_page(page, phone):
     return p
 
 
-def onboard_page(page, phone, where="90012"):
+def onboard_page(page, number, where="90012"):
     """Sign in and fill onboarding the way a volunteer does, so the profile has the Home
     place it saves (sign_in_page skips onboarding: a profile from before places)."""
-    p = _sign_in(page, phone)
+    p = sign_up(page, number)
     page.locator("input[name=first_name]").fill("Sam")
     page.get_by_text("I'm 18 or older").click()
     page.get_by_label("Neighborhood or ZIP").fill(where)

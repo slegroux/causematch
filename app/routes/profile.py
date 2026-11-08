@@ -49,7 +49,7 @@ from app.forms import (
     query,
     str_form,
 )
-from app.routes.auth import PREVIEW_PHONES, phone_off
+from app.routes.auth import PREVIEW_PHONES
 from app.routes.prefs import Checks as ChipChecks
 from app.routes.safety import HubRow
 from app.ui import (
@@ -256,9 +256,17 @@ def CodeInput():
     )
 
 
+def phone_off():
+    """Me's add-a-number's answer while Twilio Verify is unset (notify.phone_verify_enabled):
+    the 404 of a feature that isn't there."""
+    return security.page(
+        404, "Not found", "That page isn't here. Go back and try again."
+    )
+
+
 def ReachCard(p, pending=None):
     """How we reach this volunteer: texts to their number, or email; without a number
-    (and while texts can be sent) a form to add and verify one."""
+    (and while Twilio Verify can prove one) a form to add and verify one."""
     to = " to the address below." if p.email else ": add your email below."
     by_email = f"match news and shift reminders come by email{to}"
     if notify.channel(p.id) == "sms":
@@ -271,7 +279,7 @@ def ReachCard(p, pending=None):
                 cls=TextPresets.muted_sm,
             ),
         )
-    elif p.phone or not notify.phone_sign_in_enabled():
+    elif p.phone or not notify.phone_verify_enabled():
         content = (
             H2("Email", cls=ORG_SECTION),
             P(by_email.capitalize(), cls=TextPresets.muted_sm),
@@ -313,8 +321,9 @@ def ReachCard(p, pending=None):
 
 
 def SignInMethods(p):
-    """Me's sign-in methods: the number, and each provider either connected (with its
-    email and a Disconnect button) or offered (Connect), when it is configured."""
+    """Me's sign-in methods: the emailed link's address, and each provider either
+    connected (with its email and a Disconnect button) or offered (Connect), when it is
+    configured. A number is never one: it only gets texts (ReachCard)."""
     connected = data.identities_of(p.id)
 
     def button(label, action):
@@ -338,7 +347,7 @@ def SignInMethods(p):
     return Div(
         H2("Sign-in methods", cls=ORG_SECTION),
         P(
-            "Phone: " + (notify.mask(p.phone) if p.phone else "none"),
+            "Emailed link: " + connected.get(data.EMAIL_SIGN_IN, "none"),
             cls="text-ink",
         ),
         *rows,
@@ -532,9 +541,9 @@ def _phone_error(uid, error, pending=None):
 
 @ar("/me/phone/send", methods=["POST"])
 async def phone_send(req, sess):
-    """Text a code to the number a volunteer without one wants to add. Counted as a
-    sign-in code is (security.sms_send_limits); the number waits in the session for
-    /me/phone/verify, under Me's own keys."""
+    """Text a code to the number a volunteer without one wants to add, for texts (never a
+    sign-in), counted by security.sms_send_limits; the number waits in the session for
+    /me/phone/verify. A number is saved only once its code checks out."""
     form = await str_form(req)
     if form is None:
         return bad_request()
@@ -542,7 +551,7 @@ async def phone_send(req, sess):
 
 
 def _sync_phone_send(req, form, sess):
-    if not notify.phone_sign_in_enabled():
+    if not notify.phone_verify_enabled():
         return phone_off()
     uid = req.scope["uid"]
     if data.get_profile(uid).phone:
@@ -550,14 +559,12 @@ def _sync_phone_send(req, form, sess):
     e164 = normalize_phone(form.get("phone", ""))
     if not e164:
         return _phone_error(uid, BAD_PHONE)
-    if is_preview() and not demo_number(e164):  # as at sign-in (auth._sync_send)
+    if is_preview() and not demo_number(e164):  # a preview is demo-only (config)
         return _phone_error(uid, PREVIEW_PHONES)
     if not security.allow(*security.sms_send_limits(req, e164)):
         return security.too_many()
     try:
-        if not data.phone_suspended(
-            e164
-        ):  # as at sign-in: a suspended number costs no text
+        if not data.phone_suspended(e164):  # a suspended number costs no text
             notify.send_code(e164)
     except httpx.HTTPError as e:
         log.warning("sending a code to add a number failed: %s", type(e).__name__)
@@ -579,7 +586,7 @@ async def phone_verify(req, sess):
 
 
 def _sync_phone_verify(req, form, sess):
-    if not notify.phone_sign_in_enabled():
+    if not notify.phone_verify_enabled():
         return phone_off()
     uid = req.scope["uid"]
     e164 = pending_phone(sess, ME_PENDING)  # only the number a code was sent to

@@ -26,7 +26,7 @@ from app.choices import (
     SHIFT_LENGTHS,
 )
 from app.config import demo_matches, phone_hash_key
-from app.forms import BIDI, hidden_chars
+from app.forms import BIDI, abuse_key, hidden_chars
 from app.match import LA
 from app.metrics_rows import fetch_rows
 
@@ -2143,12 +2143,15 @@ def volunteer_for_identity(claims):
     the first one: no phone, the provider's verified email, the given name as first name.
     An identity whose profile was deleted reads as absent. A suspended profile's id is
     returned too: get_profile is None for it, and the caller refuses the sign-in. As with
-    a phone, a deleted account's suspension and org blocks on this identity come back."""
+    a phone, a deleted account's suspension and org blocks on this identity come back, and
+    so do those on its verified address: a mailbox a suspended account holds, live or
+    deleted (mailbox_suspended), gives a suspended profile, whichever way in it used."""
     where = {
         "where": "provider = ? AND subject = ?",
         "where_args": [claims.provider, claims.subject],
     }
     kept = _retained_identity(claims)
+    mailbox = _mailbox_of(claims)
     # onboarding's check on the first name: a name that fails it is dropped, not kept
     name = " ".join(claims.given_name.split())[:80]
     try:
@@ -2166,14 +2169,26 @@ def volunteer_for_identity(claims):
                     display_name=name if name and not hidden_chars(name) else None,
                     session_version=1,
                     created_at=_now(),
-                    suspended_at=_now() if kept and kept.suspended else None,
+                    suspended_at=_now()
+                    if (kept and kept.suspended)
+                    or (claims.email and mailbox_suspended(claims.email))
+                    else None,
                 )
             ).id
             _insert_identity(uid, claims)
             _reapply_blocks(uid, kept)
+            _reapply_blocks(uid, mailbox)
     except apsw.ConstraintError:  # a concurrent first sign-in won the race
         return _db.identities(**where)[0].user_id
     return uid
+
+
+def _mailbox_of(claims):
+    """The kept hash of a Google or Apple sign-in's verified address, whose org blocks
+    follow it (an emailed link's own identity hash is already that address's)."""
+    if claims.provider == EMAIL_SIGN_IN or not claims.email:
+        return None
+    return _retained_mailbox(claims.email)
 
 
 def _insert_identity(uid, claims):
@@ -2206,11 +2221,13 @@ def link_identity(uid, claims):
     connected (or it already was), else why not: "taken" when the identity is on another
     live profile (the unique index decides a race), "other" when this profile already has
     another account of this provider, "refused" when the profile isn't a live volunteer or
-    a deleted account suspended with this identity left its hash. A deleted account's org
-    blocks on it apply to this profile, as at a sign-up."""
+    a deleted account suspended with this identity left its hash, or a suspended account
+    holds its verified address (mailbox_suspended). A deleted account's org blocks on it
+    or on that address apply to this profile, as at a sign-up."""
     kept = _retained_identity(claims)
-    if kept and kept.suspended:
+    if (kept and kept.suspended) or (claims.email and mailbox_suspended(claims.email)):
         return "refused"
+    mailbox = _mailbox_of(claims)
     where = "provider = ? AND subject = ?"
     try:
         with _db.db.conn:
@@ -2230,16 +2247,17 @@ def link_identity(uid, claims):
                 return "refused"
             _insert_identity(uid, claims)
             _reapply_blocks(uid, kept)
+            _reapply_blocks(uid, mailbox)
     except apsw.ConstraintError:
         return "taken"
     return None
 
 
-def unlink_identity(uid, provider, phone_works, working_providers):
+def unlink_identity(uid, provider, working_providers):
     """Disconnect this profile's sign-in with `provider`. False, and nothing changed, when
-    it is the last way in that works: its phone only counts when `phone_works` (codes can
-    be texted), another provider only when it is in `working_providers` (configured). The
-    check and the delete are one statement, so two disconnects at once can't both pass.
+    it is the last way in that works: another identity only counts when its provider is in
+    `working_providers` (configured, or the emailed link). The check and the delete are one
+    statement, so two disconnects at once can't both pass.
     When a block, an open or actioned report or a suspension stands against this profile,
     the disconnected identity's hash is kept, as at a deletion (_retain), so signing in
     with it again, as a new profile or on another, brings them back. Nobody is signed out
@@ -2251,12 +2269,10 @@ def unlink_identity(uid, provider, phone_works, working_providers):
             return True  # nothing to disconnect
         working = ",".join("?" * len(working_providers))
         _db.db.execute(
-            "DELETE FROM identity WHERE user_id = ? AND provider = ? AND ("
-            " (? AND (SELECT coalesce(phone, '') FROM profile WHERE id = ?) != '')"
-            " OR EXISTS (SELECT 1 FROM identity WHERE user_id = ? AND provider != ?"
-            f" AND provider IN ({working})))",
-            [uid, provider, int(bool(phone_works)), uid, uid, provider]
-            + list(working_providers),
+            "DELETE FROM identity WHERE user_id = ? AND provider = ? AND EXISTS ("
+            "SELECT 1 FROM identity WHERE user_id = ? AND provider != ?"
+            f" AND provider IN ({working}))",
+            [uid, provider, uid, provider] + list(working_providers),
         )
         if _db.db.conn.changes() != 1:
             return False
@@ -2658,29 +2674,132 @@ def metrics_rows():
 
 
 def create_login_token(uid):
-    """A fresh single-use token for the emailer; only its SHA-256 is stored."""
+    """A fresh single-use token for a staff profile's emailed link; only its SHA-256 is
+    stored, and it replaces the profile's last one."""
+    return _new_login_token("user_id", uid)
+
+
+def create_email_token(email):
+    """A fresh single-use token for a volunteer's emailed link (/login), tied to the
+    lowercased address, not to a profile: none is created until the link is used
+    (volunteer_for_identity). Only its SHA-256 is stored; it replaces the address's last."""
+    return _new_login_token("email", email)
+
+
+def _new_login_token(column, value):
+    """The replacement is one transaction, so two requests at once leave one live token."""
     token = secrets.token_urlsafe(32)
-    _db.login_tokens.delete_where("user_id = ? OR expires_at < ?", [uid, _now()])
-    _db.login_tokens.insert(
-        _db.LoginToken(
-            token_hash=_hash(token),
-            user_id=uid,
-            expires_at=(datetime.now(UTC) + timedelta(minutes=TOKEN_MINUTES)).isoformat(
-                timespec="seconds"
-            ),
+    with _db.db.conn:
+        _db.login_tokens.delete_where(
+            f"{column} = ? OR expires_at < ?", [value, _now()]
         )
-    )
+        _db.login_tokens.insert(
+            _db.LoginToken(
+                token_hash=_hash(token),
+                **{column: value},
+                expires_at=(
+                    datetime.now(UTC) + timedelta(minutes=TOKEN_MINUTES)
+                ).isoformat(timespec="seconds"),
+            )
+        )
     return token
 
 
-def consume_login_token(token):
-    """User id the token was issued to, or None. Marks it used in one statement."""
+def peek_login_token(token):
+    """The (user id, address) a live, unused token is for, without using it up: the
+    confirm pages name the account before the button signs anyone in. (None, None) for
+    any other token. The address is a volunteer link's; a staff link's is its profile's."""
+    if not 0 < len(token) <= 200:
+        return None, None
     rows = _db.db.q(
-        "UPDATE login_token SET used_at = ? WHERE token_hash = ? "
+        "SELECT user_id, email FROM login_token WHERE token_hash = ? "
+        "AND used_at IS NULL AND expires_at > ?",
+        [_hash(token), _now()],
+    )
+    return (rows[0]["user_id"], rows[0]["email"]) if rows else (None, None)
+
+
+def consume_login_token(token):
+    """User id a staff link's token was issued to, or None. Marks it used in one statement.
+    A volunteer's token is left alone: /org/login/verify can't use it up."""
+    rows = _db.db.q(
+        "UPDATE login_token SET used_at = ? WHERE token_hash = ? AND user_id IS NOT NULL "
         "AND used_at IS NULL AND expires_at > ? RETURNING user_id",
         [_now(), _hash(token), _now()],
     )
     return rows[0]["user_id"] if rows else None
+
+
+def consume_email_token(token):
+    """The address a volunteer's link was sent to, or None; create_email_token's half of
+    consume_login_token, which leaves a staff link's token alone."""
+    rows = _db.db.q(
+        "UPDATE login_token SET used_at = ? WHERE token_hash = ? AND email IS NOT NULL "
+        "AND used_at IS NULL AND expires_at > ? RETURNING email",
+        [_now(), _hash(token), _now()],
+    )
+    return rows[0]["email"] if rows else None
+
+
+# identity.provider of a volunteer's emailed link: its subject is the lowercased address,
+# so the link signs in whoever signed up with that address, as Google's sub does
+EMAIL_SIGN_IN = "email"
+
+
+def volunteer_link_kind(email):
+    """What /login's emailed link does for this lowercased ASCII address. "staff": a live
+    coordinator's or admin's, who gets their own link (/org/login/verify). "sign-in": a live
+    volunteer signed up with it. "sign-up": no account holds it. None, and nothing is sent:
+    a mailbox (forms.abuse_key, so a +tag or Gmail's dots don't dodge it) that a suspended
+    account holds as a verified address, by any way in, live or deleted with its hash kept;
+    and a staff address that can't sign in (suspended, or a coordinator without an org):
+    one address, one role, as add_admin and claim approval keep it."""
+    if staff_by_email(email)[0]:
+        return "staff"
+    staff = (
+        "role IN ('coordinator', 'admin') AND lower(email) = ? AND deleted_at IS NULL"
+    )
+    if _db.profiles.count_where(staff, [email]):
+        return None
+    if mailbox_suspended(email):
+        return None
+    return "sign-in" if email_sign_in_owner(email) else "sign-up"
+
+
+def mailbox_suspended(email):
+    """True when a suspended account holds this mailbox (forms.abuse_key, so a +tag or
+    Gmail's dots don't dodge it) as a verified address, by any way in: live, through any
+    identity (an emailed link's, Google's or Apple's), or deleted with its mailbox hash
+    kept as suspended (delete_account). A profile's typed email doesn't count: it is
+    unverified, and counting it would let anyone block someone else's address."""
+    key = abuse_key(email)
+    held = _db.db.q(  # few: only suspended accounts, compared by mailbox below
+        "SELECT i.email FROM identity i JOIN profile p ON p.id = i.user_id "
+        "WHERE p.suspended_at IS NOT NULL AND p.deleted_at IS NULL "
+        "AND coalesce(i.email, '') != ''"
+    )
+    if any(abuse_key(r["email"]) == key for r in held):
+        return True
+    kept = _retained_mailbox(email)
+    return bool(kept and kept.suspended)
+
+
+def _retained_mailbox(email):
+    """The kept hash of a deleted account's verified address (delete_account), if any."""
+    kept = _db.retained_identities(
+        where="hash = ?", where_args=[_identity_hash(EMAIL_SIGN_IN, email)]
+    )
+    return kept[0] if kept else None
+
+
+def email_sign_in_owner(email):
+    """The live profile that signed up with this emailed-link address, else None (a
+    deleted account's identity signs nobody in)."""
+    where = "provider = ? AND subject = ?"
+    for found in _db.identities(where=where, where_args=[EMAIL_SIGN_IN, email]):
+        if not _db.profiles[found.user_id].deleted_at:
+            return found.user_id
+    return None
 
 
 def create_opening(
@@ -3990,6 +4109,10 @@ def _phone_hash(phone):
 
 
 def _identity_hash(provider, subject):
+    """An emailed link's identity is hashed by its mailbox (forms.abuse_key), so a kept
+    suspension or block can't be dodged with a +tag or Gmail's dots."""
+    if provider == EMAIL_SIGN_IN:
+        subject = abuse_key(subject)
     key = f"{provider}:{subject}".encode()
     return hmac.new(phone_hash_key().encode(), key, "sha256").hexdigest()
 
@@ -4093,6 +4216,9 @@ def delete_account(uid):
             _retain_phone(uid, p.phone, bool(p.suspended_at))
         for i in _db.identities(where="user_id = ?", where_args=[uid]):
             _retain_identity(uid, i.provider, i.subject, bool(p.suspended_at))
+            if i.provider != EMAIL_SIGN_IN and i.email:  # Google's or Apple's, verified
+                # so an emailed-link sign-up to that address brings them back too
+                _retain_identity(uid, EMAIL_SIGN_IN, i.email, bool(p.suspended_at))
         for m in _db.matches(
             where="volunteer_id = ? AND status IN ('pending', 'accepted')",
             where_args=[uid],
@@ -4107,6 +4233,12 @@ def delete_account(uid):
             [uid],
         )
         _db.db.execute("DELETE FROM login_token WHERE user_id = ?", [uid])
+        # a link sent to the account's address must not sign it up again once deleted
+        _db.db.execute(
+            "DELETE FROM login_token WHERE email IN (SELECT subject FROM identity "
+            "WHERE user_id = ? AND provider = ?)",
+            [uid, EMAIL_SIGN_IN],
+        )
         _db.db.execute("DELETE FROM identity WHERE user_id = ?", [uid])
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         # certificates carry the name and every shift: withdrawn, and nothing left to read

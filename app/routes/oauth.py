@@ -1,7 +1,8 @@
 """Continue with Google or Apple: /auth/{google,apple}/start and their callbacks. Google
 returns by a GET, Apple by a cross-site form POST (form_post). The flow and its checks live
-in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH=1 the fake provider serves the same routes
-through a local consent page, /auth/fake/consent.
+in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH the fake provider serves the same routes
+through a local consent page, /auth/fake/consent: for Google only with "1", for each
+provider it names otherwise (oauth.fake_names).
 
 One flow, three intents, sealed in the flow cookie: a volunteer signing in (/login), a
 coordinator or admin signing in (?for=org, from /org/login: the verified email must be the
@@ -19,11 +20,11 @@ from monsterui.all import LabelCheckboxX
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
-from app import data, notify, oauth, security
+from app import data, oauth, security
 from app.auth import sign_in, sign_in_staff
 from app.config import demo_address, is_preview, is_production, public_base_url
 from app.forms import EMAIL, bad_request, query, str_form
-from app.routes.auth import SUSPENDED, PhoneForm
+from app.routes.auth import SUSPENDED, LoginPage
 from app.routes.org_auth import EmailForm, link_sent
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
@@ -35,7 +36,7 @@ DOWN = "We couldn't sign you in with {} just now. Try again in a minute."
 CANCELLED = "{} sign-in was cancelled."
 UNVERIFIED = (
     "Your {} account's email isn't verified yet, so it can't sign in here. "
-    "Verify it with {}, or {}."
+    "Verify it with {}, or get an emailed link."
 )
 NO_ORG = "No nonprofit account uses this email. Claim your nonprofit: "
 MAX_PICTURE_URL = 2000  # characters kept in the session for onboarding's photo choice
@@ -104,15 +105,14 @@ def _connect(req, name):
 
 
 def _disconnect(req, sess, name):
-    """Only ways in that work now count as another: the phone while codes can be texted,
-    a provider while it is configured. A disconnect ends every other session and open
-    chat, because a reason to disconnect is often that the provider account is no longer
-    only theirs; this browser stays signed in."""
+    """Only ways in that work now count as another: a provider while it is configured,
+    and the emailed link (email is always configured). A disconnect ends every other
+    session and open chat, because a reason to disconnect is often that the provider
+    account is no longer only theirs; this browser stays signed in."""
     uid = req.scope["uid"]
-    providers = [n for n, _ in oauth.enabled_providers()]
-    phone_works = notify.phone_sign_in_enabled()
+    working = [n for n, _ in oauth.enabled_providers()] + [data.EMAIL_SIGN_IN]
     had = name in data.identities_of(uid)
-    if not data.unlink_identity(uid, name, phone_works, providers):
+    if not data.unlink_identity(uid, name, working):
         return Redirect("/me/profile?error=last")
     if had:
         data.sign_out_everywhere(uid)
@@ -181,7 +181,7 @@ def _login(error, status, intent="volunteer", name=""):
             if status == 400
             else Redirect(f"/me/profile?error=failed-{name}")
         )
-    return FtResponse(PhoneForm(error=error), status_code=status)
+    return FtResponse(LoginPage(error=error), status_code=status)
 
 
 def _sync_callback(req, sess, provider, params):
@@ -217,8 +217,7 @@ def _sync_callback(req, sess, provider, params):
     if not claims.subject:
         return _login(FAILED.format(label), 400, intent, name)
     if not (claims.email_verified and claims.email):
-        other = "get an emailed link" if intent == "staff" else "use your phone number"
-        return _login(UNVERIFIED.format(label, label, other), 400, intent, name)
+        return _login(UNVERIFIED.format(label, label), 400, intent, name)
     if intent == "staff":
         return _staff_sign_in(req, sess, claims)
     if intent == "link":
@@ -253,7 +252,7 @@ def _staff_sign_in(req, sess, claims):
         return FtResponse(EmailForm(error=no_org), status_code=200)
     email = raw.lower()
     if not oauth.authoritative(claims):
-        sent = link_sent(req, email)
+        sent = link_sent(req, email, sess)
         return sent if isinstance(sent, Response) else FtResponse(sent)
     profile, is_coordinator = data.staff_by_email(email)
     # A preview's fake consent page takes any typed email as verified, so there it signs
@@ -262,7 +261,7 @@ def _staff_sign_in(req, sess, claims):
     if (
         profile
         and is_preview()
-        and oauth.fake_enabled()
+        and claims.provider in oauth.fake_names()
         and not (is_coordinator and demo_address(email))
     ):
         profile = None
@@ -290,7 +289,7 @@ def _link(sess, name, flow, claims):
     return Redirect("/me/profile?notice=connected")
 
 
-# --- the fake provider's consent page (CAUSEMATCH_FAKE_OAUTH=1 only) ----------------------
+# --- the fake provider's consent page (CAUSEMATCH_FAKE_OAUTH only) ----------------------
 
 FIELDS = ("sub", "email", "given_name", "family_name", "picture_url", "hd")
 

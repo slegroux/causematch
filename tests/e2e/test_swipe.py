@@ -102,12 +102,7 @@ def test_mouse_drag_works_too(phone_context):
 def test_buttons_work_with_javascript_off(browser, live_url):
     ctx = guard(browser.new_context(base_url=live_url, java_script_enabled=False))
     page = ctx.new_page()
-    page.goto("/login")
-    page.get_by_label("Mobile number").fill("(310) 555-0145")
-    page.get_by_role("button", name="Text me a code").click()
-    page.get_by_label("Code").fill("000000")
-    page.get_by_role("button", name="Sign in").click()
-    (p,) = profiles(where="phone = ?", where_args=["+13105550145"])
+    p = sign_in_page(page, "(310) 555-0145")  # forms post without JavaScript too
     profiles.update(
         id=p.id,
         display_name="Jo",

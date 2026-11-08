@@ -1,5 +1,6 @@
-"""Sign-in with an outside provider: Google, Apple, or the fake that stands in for either
-in development and tests (CAUSEMATCH_FAKE_OAUTH=1).
+"""Sign-in with an outside provider: Google, Apple, or the fake that stands in for them
+in development, tests and a preview (CAUSEMATCH_FAKE_OAUTH: "1" for Google only, or a
+list such as "google,apple").
 
 Authorization code flow with `state` and `nonce`, and PKCE (S256) for Google. Apple ignores
 PKCE: its proof is the client secret, a JWT signed with our key. /auth/{provider}/start
@@ -396,16 +397,25 @@ class Fake:
 _fakes = {name: Fake(name) for name in LABELS}
 
 
-def fake_enabled(env=os.environ):
-    """CAUSEMATCH_FAKE_OAUTH=1: development, test and preview only, as app/notify.py's fakes;
-    RuntimeError anywhere else, so production with it set refuses to start (main.py)."""
-    if env.get("CAUSEMATCH_FAKE_OAUTH") != "1":
-        return False
+def fake_names(env=os.environ):
+    """The providers the fake stands in for: CAUSEMATCH_FAKE_OAUTH=1 is Google alone, so a
+    preview shows no Apple button it was never configured for; "google,apple" (the tests)
+    names each. Development, test and preview only, as app/notify.py's fakes; RuntimeError
+    anywhere else, or for a name that isn't a provider, so production with it set refuses
+    to start (main.py)."""
+    value = env.get("CAUSEMATCH_FAKE_OAUTH") or ""
+    if not value:
+        return ()
     if not fakes_allowed(env):
         raise RuntimeError(
-            "CAUSEMATCH_FAKE_OAUTH=1 needs CAUSEMATCH_ENV=development, test or preview"
+            "CAUSEMATCH_FAKE_OAUTH needs CAUSEMATCH_ENV=development, test or preview"
         )
-    return True
+    names = ("google",) if value == "1" else tuple(value.split(","))
+    if not set(names) <= set(LABELS):
+        raise RuntimeError(
+            'CAUSEMATCH_FAKE_OAUTH must be "1" or names like google,apple'
+        )
+    return names
 
 
 def get_provider(name, env=os.environ):
@@ -413,7 +423,7 @@ def get_provider(name, env=os.environ):
     and its routes answer 404) for one not configured or not known."""
     if name not in LABELS:
         return None
-    if fake_enabled(env):
+    if name in fake_names(env):
         return _fakes[name]
     if name == "google" and (creds := google_oauth(env)):
         return Google(*creds)

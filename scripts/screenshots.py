@@ -10,6 +10,7 @@ chromium (uv run playwright install chromium).
 """
 
 import argparse
+import re
 import sys
 import threading
 import time
@@ -37,11 +38,26 @@ def start_server(port):
     return server
 
 
-def volunteer_sign_in(page, phone):
+def emailed_link(email):
+    """The link in the last email to this address: the demo's fake emailer keeps it, and
+    sends it just after the page answers."""
+    from app import notify
+
+    deadline = time.monotonic() + 15
+    while True:
+        for to, _, body in reversed(notify.get_emailer().sent):
+            if to == email:
+                return re.search(r"https?://\S+/login/verify\?token=[\w-]+", body)[0]
+        if time.monotonic() > deadline:
+            raise SystemExit(f"no sign-in email to {email}")
+        time.sleep(0.05)
+
+
+def volunteer_sign_in(page, email):
     page.goto("/login")
-    page.get_by_label("Mobile number").fill(phone)
-    page.get_by_role("button", name="Text me a code").click()
-    page.get_by_label("Code").fill("000000")
+    page.get_by_label("Email").fill(email)
+    page.get_by_role("button", name="Email me a link").click()
+    page.goto(emailed_link(email))
     page.get_by_role("button", name="Sign in").click()
 
 
@@ -93,16 +109,16 @@ def main():
         v = phone.new_page()
         v.goto("/login")
         shot(v, "v01-login", full_page=False)
-        v.get_by_label("Mobile number").fill("(310) 555-0142")
-        v.get_by_role("button", name="Text me a code").click()
-        v.get_by_label("Code").wait_for()
-        shot(v, "v02-code", full_page=False)
-        v.get_by_label("Code").fill("000000")
+        v.get_by_label("Email").fill("new@example.org")
+        v.get_by_role("button", name="Email me a link").click()
+        v.wait_for_load_state("networkidle")
+        shot(v, "v02-link-sent", full_page=False)
+        v.goto(emailed_link("new@example.org"))
         v.get_by_role("button", name="Sign in").click()
         v.wait_for_url("**/onboarding")
         shot(v, "v03-onboarding")
         phone.clear_cookies()
-        volunteer_sign_in(v, demo_seed.ME_PHONE)
+        volunteer_sign_in(v, demo_seed.ME_EMAIL)
         v.wait_for_url("**/deck")
         # the Home Screen toast shows (an iPhone user agent, in a tab); then dismiss it, so
         # it covers nothing in the other shots
@@ -177,7 +193,7 @@ def main():
         # a volunteer with no photo: the deck's "Add a photo" nudge
         bare = browser.new_context(**pw.devices["iPhone 13"], base_url=url)
         n = bare.new_page()
-        volunteer_sign_in(n, demo_seed.NO_PHOTO_PHONE)
+        volunteer_sign_in(n, demo_seed.NO_PHOTO_EMAIL)
         n.wait_for_url("**/deck")
         close_match_sheet(n)  # no Dismiss: without a photo the deck shows the nudge
         shot(n, "v10-deck-photo-nudge")

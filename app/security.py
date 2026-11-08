@@ -32,10 +32,10 @@ from app.config import (
     is_production,
     phone_hash_key,
     public_base_url,
-    shared_demo_phone,
     sms_ceilings,
     trusted_proxy_hops,
 )
+from app.forms import abuse_key
 
 log = logging.getLogger("causematch")
 
@@ -489,8 +489,9 @@ def _subject(ip, v6_prefix=64):
 
 # (name, limit, window seconds), counted in a SQLite table so a restart doesn't reset
 # them: these send texts or email (which cost money) or would let someone enumerate.
-# Codes are limited per (phone, client address) first, so someone else hammering a
-# number from elsewhere doesn't lock its owner out; the per-phone day cap is looser.
+# Me's add-a-number codes are limited per (phone, client address) first, so someone else
+# hammering a number from elsewhere doesn't lock its owner out; the per-phone day cap is
+# looser. Sign-in is the emailed link's (LINK_*) and the providers' (OAUTH_PER_IP).
 SMS_PER_PHONE_IP = (("sms-phone-ip-10m", 5, 600), ("sms-phone-ip-day", 10, 24 * 3600))
 SMS_PER_PHONE = (("sms-phone-day", 20, 24 * 3600),)
 SMS_PER_IP = (("sms-ip", 60, 3600),)  # IPv4 address or IPv6 /64
@@ -498,16 +499,26 @@ SMS_PER_NET = (("sms-net", 120, 3600),)  # IPv6 /48 (IPv4: the address again)
 VERIFY_PER_PHONE = (
     ("verify-phone", 10, 600),
 )  # wrong codes; then locked for the window
-LINK_PER_EMAIL = (("link-email", 5, 3600),)
+# Sign-in links (/login and /org/login share them, see link_limits): per mailbox and client
+# address first, so someone asking for a person's links elsewhere doesn't hold theirs off,
+# then a looser cap per mailbox a day
+LINK_PER_EMAIL_IP = (("link-email-ip", 5, 3600),)
+LINK_PER_EMAIL = (("link-email-day", 20, 24 * 3600),)
 DEMO_PER_IP = (("demo-ip", 10, 3600),)  # demo copies made per address (a demo only)
 
 
 def verify_limits(phone):
-    """The wrong-code limit of a number: none for the shared demo number of a demo."""
-    return () if shared_demo_phone(phone) else ((VERIFY_PER_PHONE, phone),)
+    """The wrong-code limit of a number Me's add-a-number is proving."""
+    return ((VERIFY_PER_PHONE, phone),)
 
 
 LINK_PER_IP = (("link-ip", 20, 3600),)
+LINK_PER_NET = (("link-net", 40, 3600),)  # IPv6 /48 (IPv4: the address again)
+# Every sign-up link the app sends, subject "all": unknown addresses cost email (Resend's
+# quota, and bounces that could get the sender suspended). Checked when sending, after the
+# page has answered, so it changes nothing a visitor sees; sign-in and staff links don't
+# count against it, so a flood of sign-ups can't lock existing accounts out.
+SIGNUP_ALL = (("signup-all-hour", 100, 3600), ("signup-all-day", 500, 24 * 3600))
 # OAuth callbacks: each may call the provider's token endpoint with our client secret
 OAUTH_PER_IP = (("oauth-ip", 30, 600),)
 CLAIM_PER_IP = (("claim-ip", 5, 3600),)
@@ -526,7 +537,8 @@ CHECK_PER_IP = (("check-ip", 30, 600),)
 assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
-    + (VERIFY_PER_PHONE, LINK_PER_EMAIL, LINK_PER_IP, CLAIM_PER_IP, CLAIM_PER_EMAIL)
+    + (VERIFY_PER_PHONE, LINK_PER_EMAIL_IP, LINK_PER_EMAIL, LINK_PER_IP, LINK_PER_NET)
+    + (SIGNUP_ALL, CLAIM_PER_IP, CLAIM_PER_EMAIL)
     + (OAUTH_PER_IP,)
     + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL, CHECK_PER_IP)
     for _, _, w in rules
@@ -541,7 +553,7 @@ def sms_all():
 
 def sms_urgent():
     """Urgent calls' own ceiling, half of each of sms_all's, subject "urgent": waves never
-    take the whole budget, so sign-in codes always have room."""
+    take the whole budget, so verification codes and other texts always have room."""
     hour, day = sms_ceilings()
     return (
         ("sms-urgent-hour", max(1, hour // 2), 3600),
@@ -578,17 +590,24 @@ def ip_subject(req, v6_prefix=64):
     return subject
 
 
-def sms_send_limits(req, phone):
-    """Every limit one sign-in code counts against; the shared demo number of a demo
-    (config.shared_demo_phone) counts against its address and network only."""
-    ip = ip_subject(req)
-    per_phone = (
-        ()
-        if shared_demo_phone(phone)
-        else ((SMS_PER_PHONE_IP, f"{phone}|{ip}"), (SMS_PER_PHONE, phone))
-    )
+def link_limits(req, email):
+    """Every limit one request for an emailed sign-in link counts against, by mailbox
+    (forms.abuse_key: a +tag or Gmail's dots are the same mailbox)."""
+    key, ip = abuse_key(email), ip_subject(req)
     return (
-        *per_phone,
+        (LINK_PER_EMAIL_IP, f"{key}|{ip}"),
+        (LINK_PER_EMAIL, key),
+        (LINK_PER_IP, ip),
+        (LINK_PER_NET, ip_subject(req, 48)),
+    )
+
+
+def sms_send_limits(req, phone):
+    """Every limit one of Me's add-a-number codes counts against."""
+    ip = ip_subject(req)
+    return (
+        (SMS_PER_PHONE_IP, f"{phone}|{ip}"),
+        (SMS_PER_PHONE, phone),
         (SMS_PER_IP, ip),
         (SMS_PER_NET, ip_subject(req, 48)),
         (sms_all(), "all"),
