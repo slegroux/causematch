@@ -56,9 +56,11 @@ def demo_matches(env=os.environ):
 
 
 # The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164, which
-# "Try it as a volunteer" copies, and the demo coordinator's address (demo_seed.COORDINATOR)
+# "Try it as a volunteer" copies, and the demo coordinator's and admin's addresses
+# (demo_seed.COORDINATOR and ADMIN)
 DEMO_PHONE = "+13105550100"
 DEMO_COORDINATOR = "pat@demo.causematch.test"
+DEMO_ADMIN = "ada@demo.causematch.test"
 # What a preview lets sign in: the demo seed's addresses (the demo coordinator and admin,
 # and the stand-in coordinators at data.DEMO_TEAM_DOMAIN) and the fictional numbers
 # 555-0100 to 555-0199, in any area code (the seed's are (310) 555-0100 to 0103)

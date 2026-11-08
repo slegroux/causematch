@@ -25,6 +25,7 @@ PUBLIC = [
     r"/org/login/send",
     r"/org/login/verify",
     r"/org/login/demo",
+    r"/org/login/demo-admin",
     r"/org/claim",
     r"/org/claim/search",  # IRS records only (ProPublica), rate-limited
     r"/privacy",

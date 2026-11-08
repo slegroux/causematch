@@ -7,7 +7,13 @@ from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
 from app.auth import sign_in_staff
-from app.config import DEMO_COORDINATOR, demo_address, demo_matches, is_preview
+from app.config import (
+    DEMO_ADMIN,
+    DEMO_COORDINATOR,
+    demo_address,
+    demo_matches,
+    is_preview,
+)
 from app.forms import EMAIL, query, str_form
 from app.routes.auth import (
     BAD_EMAIL,
@@ -143,6 +149,22 @@ def demo_sign_in(req, sess):
     if not (profile and data.coordinator_org_ids(uid)):
         return Refusal(403)  # a demo without its coordinator
     return sign_in_staff(sess, profile, True)
+
+
+@ar("/org/login/demo-admin", methods=["POST"])
+def demo_admin_sign_in(req, sess):
+    """ "Try it as an admin" (config.demo_matches only; production answers 403): the demo
+    admin, with a normal admin session, so a presenter can show the admin pages on demo
+    data. Counted against the same sign-in link limit as the other demo buttons."""
+    if not demo_matches():
+        return Refusal(403)
+    if not security.allow((security.LINK_PER_IP, security.ip_subject(req))):
+        return security.too_many()
+    uid = data.admin_by_email(DEMO_ADMIN)
+    profile = data.get_profile(uid) if uid else None
+    if profile is None:
+        return Refusal(403)  # a demo without its admin
+    return sign_in_staff(sess, profile, False)
 
 
 @ar("/org/login/verify", methods=["GET"])
