@@ -147,13 +147,15 @@ def email_count():
     return LOG.read_text().count("FAKE EMAIL")
 
 
-def link_after(before, masked):
+def link_after(before, masked, path="/org/login/verify"):
+    """The sign-in link in the fake emailer's log line for the masked address (the
+    nonprofit sign-in's by default, the volunteer's with path="/login/verify")."""
     deadline = time.time() + 15
     while time.time() < deadline:
         text = LOG.read_text()
         if text.count("FAKE EMAIL") > before:
             hits = re.findall(
-                rf"FAKE EMAIL to {re.escape(masked)}.*?(/org/login/verify\?token=[\w-]+)",
+                rf"FAKE EMAIL to {re.escape(masked)}.*?({re.escape(path)}\?token=[\w-]+)",
                 text,
                 re.DOTALL,
             )
@@ -321,15 +323,16 @@ def story(vol, org, adm, gst):
     org.wait_for_url("**/org")
     hold(0.6)
 
-    # 4. Riley registers with a phone number
+    # 4. Riley signs up with an email address and opens the emailed link
     beat("register")
     hold(0.6)
-    type_in(vol, vol.get_by_label("Mobile number"), "(213) 555-0142", 60)
-    tap(vol, vol.get_by_role("button", name="Text me a code"))
-    code = vol.get_by_label("Code")
-    code.wait_for()
-    hold(0.6)
-    type_in(vol, code, "000000", 100)
+    before = email_count()
+    type_in(vol, vol.get_by_label("Email"), "riley@example.org", 40)
+    tap(vol, vol.get_by_role("button", name="Email me a link"))
+    link = link_after(before, "r***@e", "/login/verify")
+    hold(1.2)  # the "check your email" page
+    vol.goto(link)
+    hold(0.5)
     tap(vol, vol.get_by_role("button", name="Sign in"))
     vol.wait_for_url("**/onboarding")
 

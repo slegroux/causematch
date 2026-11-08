@@ -44,7 +44,7 @@ Nothing is installed into the repo's virtualenv except what `uv sync` already in
 | --- | --- |
 | `setup` | `uv sync`, `uv run playwright install chromium`, and a Python 3.12 virtualenv for Kokoro (`uv pip install kokoro soundfile`, plus the spaCy model that matches the installed spaCy). Idempotent. |
 | `voice` | `tts.py` voices each line of `beats.json` (voice `af_heart`, or `CAUSEMATCH_VIDEO_VOICE`; changing it re-voices every line) into `voice/<id>.wav` and `durations.json`, then the same for the short cut's `beats-short.json` into `voice-short/`. A line whose text is unchanged keeps its `.wav`. |
-| `record` | Starts `serve.py` (the demo's invented data, on a new throwaway database, with the fake SMS, code `000000`, and the fake emailer) and runs `record.py`, which plays the whole story in the app and holds each beat until its voice line has finished. Fails, after saving the recordings, on any console error, page error, failed request, 5xx answer or server error. |
+| `record` | Starts `serve.py` (the demo's invented data, on a new throwaway database, with the fake SMS and the fake emailer, whose log holds the sign-in links) and runs `record.py`, which plays the whole story in the app and holds each beat until its voice line has finished. Fails, after saving the recordings, on any console error, page error, failed request, 5xx answer or server error. |
 | `compose` | `compose.py` builds one segment per beat (layout, caption, voice), joins them, normalises the loudness to -16 LUFS (two-pass `loudnorm`), encodes H.264 (crf 23, faststart) and takes the poster and writes `demo.vtt`: one caption cue per sentence of the narration, timed from the beat's start. Fails if a voice line doesn't fit its beat. It runs twice, on the same recording: `beats.json` makes `demo.mp4`, `beats-short.json` makes `demo-short.mp4` (see "The short cut"). |
 | `install` | Copies `demo.mp4`, `demo-poster.jpg`, `demo.vtt` and the three `demo-short` files into `site/assets/`. |
 
@@ -158,8 +158,8 @@ take, and the narration is lined up with them (the heart is tapped as the line s
 
 ## Timing
 
-The result of one run (2026-11-07): the full video 2:29 (149.7 s), 1920x1080, 6.8 MB; the
-short cut 1:07 (67.6 s), 2.8 MB; both -16.1 LUFS. Recording the story takes about 2 minutes
+The result of one run (2026-11-07): the full video 2:30 (150.4 s), 1920x1080, 6.6 MB; the
+short cut 1:07 (67.6 s), 2.7 MB; both -16.1 LUFS. Recording the story takes about 2 minutes
 20 seconds (paced by the voice lines), composing both videos about 40 seconds, and voicing a
 changed line or two about 20 seconds. The first volunteer appears at about 0:34, and no
 stretch of the full video is silent for more than 3 seconds (the longest gap between caption
