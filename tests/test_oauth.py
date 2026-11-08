@@ -616,11 +616,23 @@ def test_an_address_the_provider_doesnt_run_holds_nothing_for_a_link(anon):
 
 
 def test_a_preview_fakes_account_is_never_joined_by_a_link_later(anon, monkeypatch):
+    """Signing in again refreshes the row, and it stays untrusted: never a holder."""
     monkeypatch.setattr(oauth_routes, "is_preview", lambda: True)
     google_sign_in(anon, email=GMAIL)
     fake = uid_of(anon)
+    google_sign_in(anon, email=GMAIL)  # this browser's own account again
+    assert uid_of(anon) == fake
+    (row,) = identities(where="user_id = ?", where_args=[fake])
+    assert row.provider == "google" and row.authoritative == 0
     monkeypatch.setattr(oauth_routes, "is_preview", lambda: False)
     assert link_sign_in(TestClient(app), GMAIL) != fake
+
+
+def test_an_unverified_hosted_address_has_no_authority():
+    verified = oauth.Claims("google", "g-u", GMAIL, True, "", "", "")
+    assert data._authority(verified) == data.HOLDER
+    unverified = oauth.Claims("google", "g-u", GMAIL, False, "", "", "")
+    assert data._authority(unverified) == 0
 
 
 def test_a_second_account_of_one_provider_or_a_non_ascii_address_never_joins(anon):
