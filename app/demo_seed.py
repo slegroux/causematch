@@ -401,14 +401,15 @@ def seed(seed_file=None):
         _fill_invented_openings([o.id for o in invented])
     else:
         seed_demo()
+        org = orgs()[0]
+        # The coordinator's org confirms hours too: a demo copy's confirmed shift is there
         for o in orgs():  # app/db.py verifies them in development only; a preview's too
             orgs.update(
                 id=o.id,
                 verified_at=o.verified_at or now(),
-                confirms_hours=o.name == CONFIRMING_ORG,
+                confirms_hours=o.name == CONFIRMING_ORG or o.id == org.id,
             )
         _fill_invented_openings()
-        org = orgs()[0]
     coord = data.add_coordinator(COORDINATOR[0], org.id, name=COORDINATOR[1])
     data.add_admin(*ADMIN)
     first = next(
