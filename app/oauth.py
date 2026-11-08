@@ -396,6 +396,38 @@ class Fake:
 
 _fakes = {name: Fake(name) for name in LABELS}
 
+# On a preview the fake page lets nobody type the subject, which is the account: two
+# visitors who typed the same word would share one. Each browser gets a random subject in
+# a signed cookie, so it comes back to its own account and no other browser can reach it.
+FAKE_SUBJECT_MAX_AGE = 7 * 24 * 3600  # seconds a preview browser keeps its fake account
+
+
+def fake_subject_cookie(env=os.environ):
+    """The cookie holding a preview browser's fake subject: __Host- there, as oauth_cookie."""
+    return "__Host-cm_fake_sub" if is_production(env) else "cm_fake_sub"
+
+
+@functools.cache
+def _subject_serializer():
+    return URLSafeTimedSerializer(session_secret(os.environ), salt="fake-subject")
+
+
+def browser_subject(value):
+    """The subject sealed in a fake-subject cookie, or "" when it is missing, not ours or
+    older than FAKE_SUBJECT_MAX_AGE."""
+    if not value:
+        return ""
+    try:
+        sub = _subject_serializer().loads(value, max_age=FAKE_SUBJECT_MAX_AGE)
+    except BadData:
+        return ""
+    return sub if isinstance(sub, str) else ""
+
+
+def new_browser_subject():
+    """A fake-subject cookie's value: a random subject (128 bits) nobody can type, sealed."""
+    return _subject_serializer().dumps(secrets.token_urlsafe(16))
+
 
 def fake_names(env=os.environ):
     """The providers the fake stands in for: CAUSEMATCH_FAKE_OAUTH=1 is Google alone, so a

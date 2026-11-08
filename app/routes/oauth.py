@@ -2,7 +2,8 @@
 returns by a GET, Apple by a cross-site form POST (form_post). The flow and its checks live
 in app/oauth.py. With CAUSEMATCH_FAKE_OAUTH the fake provider serves the same routes
 through a local consent page, /auth/fake/consent: for Google only with "1", for each
-provider it names otherwise (oauth.fake_names).
+provider it names otherwise (oauth.fake_names). On a preview that page sets no subject:
+the browser's own, random and sealed in a cookie at /start, is the account.
 
 One flow, three intents, sealed in the flow cookie: a volunteer signing in (/login), a
 coordinator or admin signing in (?for=org, from /org/login: the verified email must be the
@@ -60,7 +61,7 @@ def _redirect_uri(name):
     return public_base_url() + f"/auth/{name}/callback"
 
 
-def _start(name, intent="volunteer", uid=None, sv=None):
+def _start(req, name, intent="volunteer", uid=None, sv=None):
     provider = oauth.get_provider(name)
     if provider is None:
         return _not_found()
@@ -77,6 +78,19 @@ def _start(name, intent="volunteer", uid=None, sv=None):
         max_age=oauth.COOKIE_MAX_AGE,
         **_cookie_options(name),
     )
+    subject = oauth.fake_subject_cookie()
+    if (
+        is_preview()
+        and isinstance(provider, oauth.Fake)
+        and not oauth.browser_subject(req.cookies.get(subject))
+    ):
+        # read by the fake page's same-site POST, which a Lax cookie rides along on
+        r.set_cookie(
+            subject,
+            oauth.new_browser_subject(),
+            max_age=oauth.FAKE_SUBJECT_MAX_AGE,
+            **_cookie_options("google"),
+        )
     return r
 
 
@@ -86,12 +100,12 @@ def _sign_in_intent(req):
 
 @ar("/auth/google/start", methods=["GET"])
 def google_start(req):
-    return _start("google", _sign_in_intent(req))
+    return _start(req, "google", _sign_in_intent(req))
 
 
 @ar("/auth/apple/start", methods=["GET"])
 def apple_start(req):
-    return _start("apple", _sign_in_intent(req))
+    return _start(req, "apple", _sign_in_intent(req))
 
 
 # --- Me: connect and disconnect (signed-in volunteers; the beforeware checks) -----------
@@ -101,7 +115,7 @@ def _connect(req, name):
     """Start a link flow for the signed-in volunteer: their uid and session version go
     into the sealed flow cookie, and the callback connects to nobody else."""
     profile = data.get_profile(req.scope["uid"])
-    return _start(name, "link", profile.id, profile.session_version or 1)
+    return _start(req, name, "link", profile.id, profile.session_version or 1)
 
 
 def _disconnect(req, sess, name):
@@ -309,14 +323,18 @@ def fake_consent(req):
     if fake is None:
         return _not_found()
     label = oauth.LABELS[fake.name]
+    preview = is_preview()
     return SignInPage(
         f"Fake {label} sign-in",
         Form(
             Hidden(name="provider", value=fake.name),
             *[Hidden(name=k, value=query(req, k)) for k in _flow_fields(fake)],
             # blank, not a shared default: the subject is the account, so two people who
-            # both keep a default would sign in to one account
-            Field(
+            # both keep a default would sign in to one account. A preview's is the
+            # browser's own (fake_consent_post), so there is nothing to type.
+            None
+            if preview
+            else Field(
                 "Subject",
                 TextInput(
                     name="sub",
@@ -341,7 +359,10 @@ def fake_consent(req):
             method="post",
             cls="space-y-4",
         ),
-        intro=f"Development only: nothing goes to {label}.",
+        intro=f"Preview only: nothing goes to {label}. This browser keeps its own "
+        "account, which no other browser can sign in to."
+        if preview
+        else f"Development only: nothing goes to {label}.",
     )
 
 
@@ -355,6 +376,8 @@ async def fake_consent_post(req):
         return _not_found()
     flow = _flow_fields(fake)
     f = {k: form.get(k, "").strip() for k in (*flow, *FIELDS)}
+    if is_preview():  # never a typed subject: this browser's own, sealed at /start
+        f["sub"] = oauth.browser_subject(req.cookies.get(oauth.fake_subject_cookie()))
     if not all(f[k] for k in (*flow, "sub")):
         return bad_request()
     apple = fake.name == "apple"

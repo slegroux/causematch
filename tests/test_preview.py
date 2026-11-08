@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from conftest import ROOT, add_number, adder, coordinator_for, jpeg, sign_in, uid_of
@@ -42,6 +42,7 @@ from app.db import (
     Match,
     Profile,
     certificates,
+    identities,
     matches,
     messages,
     openings,
@@ -504,7 +505,7 @@ def test_robots_txt_disallows_everything(preview):
 def test_every_page_shows_the_preview_banner(guest, anon):
     assert PREVIEW_NOTICE == (
         "Preview · sample openings, not affiliated with these organizations · "
-        "demo data, wiped at any time"
+        "demo data, wiped at any time · no real details"
     )
     for path in ("/login", "/org/login", "/privacy"):
         page = guest.get(path).text
@@ -545,6 +546,47 @@ def test_a_preview_signs_up_and_in_demo_addresses_only(guest):
     assert not notify.get_emailer().sent and login_tokens.count == 0
     page = guest.post("/login/send", data={"email": demo_seed.ME_EMAIL}).text
     assert "/login/verify?token=" in page  # a demo address still gets its link
+
+
+def browser():
+    """A new browser in the preview, over https: its cookies are Secure there."""
+    return TestClient(
+        app, base_url="https://testserver", headers={"Authorization": basic()}
+    )
+
+
+def fake_flow(client):
+    r = client.get("/auth/google/start", follow_redirects=False)
+    q = parse_qs(urlsplit(r.headers["location"]).query)
+    return {k: q[k][0] for k in ("state", "nonce", "code_challenge")}
+
+
+def fake_google(client, sub="maria"):
+    """Through the fake Google page, posting a typed subject as an old page would: the
+    profile id behind this browser's subject cookie, which the sign-in lands in."""
+    flow = fake_flow(client)
+    page = client.get("/auth/fake/consent", params={"provider": "google", **flow})
+    assert 'name="sub"' not in page.text  # nothing to type
+    form = {**flow, "sub": sub, "email": "m@example.org", "email_verified": "1"}
+    r = client.post("/auth/fake/consent", data=form)
+    assert r.status_code == 200 and r.url.path == "/onboarding"
+    sub = oauth.browser_subject(client.cookies[oauth.fake_subject_cookie()])
+    (found,) = identities(where="provider = 'google' AND subject = ?", where_args=[sub])
+    return found.user_id
+
+
+def test_each_preview_browser_has_its_own_fake_google_account(preview):
+    """A typed subject was a shared account: B typing A's word landed in A's."""
+    a, b = browser(), browser()
+    first = fake_google(a)
+    assert fake_google(b) != first  # the same word typed
+    assert not identities(where="subject = 'maria'")
+    a.post("/logout")
+    assert fake_google(a) == first  # the same browser, back in its own account
+    assert identities.count_where("provider = 'google'") == 2
+    form = {**fake_flow(a), "sub": "maria", "email": "m@example.org"}
+    no_cookie = browser()  # never a typed subject in its place
+    assert no_cookie.post("/auth/fake/consent", data=form).status_code == 400
 
 
 def test_outside_a_preview_any_number_gets_a_code():
