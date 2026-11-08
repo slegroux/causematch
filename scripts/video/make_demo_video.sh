@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Make Causematch's narrated demo video and install it on the website.
+# Make Causematch's narrated demo videos (the full walkthrough and a short cut) and install
+# them on the website.
 #
 #   scripts/video/make_demo_video.sh [STEP ...]     (no step: all of them, in order)
 #
 # Steps: setup (tools, the TTS virtualenv and models), voice (narration lines), record
 # (the app, live, on a new throwaway database), compose (1080p video, loudness), install
-# (site/assets/demo.mp4, demo-poster.jpg and the captions demo.vtt). See scripts/video/README.md.
+# (site/assets/demo.mp4, demo-poster.jpg and the captions demo.vtt, and the short cut's
+# demo-short.mp4, demo-short-poster.jpg and demo-short.vtt, composed from the same
+# recording with its own narration: beats-short.json). See scripts/video/README.md.
 #
 # Outside the repo: CAUSEMATCH_VIDEO_CACHE (default ~/.cache/causematch: the TTS virtualenv
 # and the espeak-ng data) and CAUSEMATCH_VIDEO_WORK (default $CACHE/video-work: voice,
@@ -64,10 +67,15 @@ setup() {
 voice() {
   say "voice ($VOICE): the first run downloads Kokoro's model (about 330 MB) from Hugging Face"
   rm -f "$WORK/voice/durations.json"  # a failed run must leave no stale list behind
-  "$TTS_PY" "$HERE/tts.py" "$HERE/beats.json" "$WORK/voice" "$CACHE" "$VOICE" \
-    >"$WORK/voice.log" 2>&1 || { cat "$WORK/voice.log" >&2; echo "tts.py failed" >&2; exit 1; }
+  rm -f "$WORK/voice-short/durations.json"
+  : >"$WORK/voice.log"
+  for set in "beats.json voice" "beats-short.json voice-short"; do
+    set -- $set
+    "$TTS_PY" "$HERE/tts.py" "$HERE/$1" "$WORK/$2" "$CACHE" "$VOICE" \
+      >>"$WORK/voice.log" 2>&1 || { cat "$WORK/voice.log" >&2; echo "tts.py failed" >&2; exit 1; }
+    test -s "$WORK/$2/durations.json"
+  done
   grep -v -i -E "warn|torch\.|deprecat|^\s*$" "$WORK/voice.log" || true
-  test -s "$WORK/voice/durations.json"
 }
 
 record() {
@@ -105,6 +113,7 @@ compose() {
   say "compose"
   need
   uv run python "$HERE/compose.py" "$HERE/beats.json" "$WORK/voice" "$WORK/take" "$WORK/demo.mp4"
+  uv run python "$HERE/compose.py" "$HERE/beats-short.json" "$WORK/voice-short" "$WORK/take" "$WORK/demo-short.mp4"
 }
 
 install() {
@@ -112,7 +121,10 @@ install() {
   cp "$WORK/demo.mp4" "$ROOT/site/assets/demo.mp4"
   cp "$WORK/demo-poster.jpg" "$ROOT/site/assets/demo-poster.jpg"
   cp "$WORK/demo.vtt" "$ROOT/site/assets/demo.vtt"
-  ls -l "$ROOT/site/assets/demo.mp4" "$ROOT/site/assets/demo-poster.jpg" "$ROOT/site/assets/demo.vtt"
+  cp "$WORK/demo-short.mp4" "$ROOT/site/assets/demo-short.mp4"
+  cp "$WORK/demo-short-poster.jpg" "$ROOT/site/assets/demo-short-poster.jpg"
+  cp "$WORK/demo-short.vtt" "$ROOT/site/assets/demo-short.vtt"
+  ls -l "$ROOT"/site/assets/demo*.mp4 "$ROOT"/site/assets/demo*-poster.jpg "$ROOT"/site/assets/demo*.vtt
 }
 
 steps=("$@")

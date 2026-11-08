@@ -1,0 +1,11 @@
+[
+ {"id": "intro", "layout": "card", "role": "", "caption": "", "say": "Post an opening once. Volunteers nearby swipe right. You say yes, and after the shift one tap confirms their hours."},
+ {"id": "post", "from": "post", "layout": "laptop", "src": "jordan", "role": "Nonprofit", "caption": "Jordan confirms hours, then posts an opening in one short form.", "say": "Jordan says the nonprofit confirms hours, then posts an opening in one short form, written once."},
+ {"id": "like", "from": "like", "mark": "deck", "pre": 0.5, "speed": 1.2, "layout": "phone", "role": "Volunteer", "caption": "Each card says why it's shown. Riley likes Jordan's opening.", "say": "Each card says why it's shown: close by, free Saturday morning, confirms hours. Riley taps the heart."},
+ {"id": "accept", "from": "accept", "mark": "accepted", "pre": 0.4, "speed": 1.1, "tail": 1.0, "poster": "takeover", "layout": "both", "src": "jordan", "role": "Nonprofit", "caption": "Jordan says yes. On Riley's phone it's a match, with no tap.", "say": "Jordan says yes and says hi. On Riley's phone, it's a match, with no tap."},
+ {"id": "reply", "from": "reply", "layout": "both", "src": "jordan", "role": "Volunteer", "caption": "Riley reads Jordan's message and replies.", "say": "Riley taps Say hi, reads Jordan's message, and replies."},
+ {"id": "attend", "from": "attend", "mark": "passed", "pre": 2.0, "layout": "laptop", "src": "jordan", "role": "Nonprofit", "caption": "After the shift: one tap marks Riley attended, hours filled in.", "say": "After the shift, Jordan marks Riley attended in one tap, with the hours already filled in."},
+ {"id": "certificate", "from": "certificate", "mark": "cert", "pre": 0.3, "layout": "phone", "role": "Volunteer", "caption": "A certificate: every confirmed shift, the total, a signature code.", "say": "Riley gets a certificate for Silver Lake Garden Friends: every confirmed shift, the total, a signature code."},
+ {"id": "check", "from": "check", "layout": "laptop", "src": "guest", "role": "Anyone", "caption": "Anyone with the link can check it's genuine.", "say": "Anyone with the link can check that it's genuine, with no sign-in: same nonprofit, same total."},
+ {"id": "outro", "layout": "card", "role": "", "caption": "", "say": "Causematch. Nonprofits post and say yes. Volunteers swipe. Join the Los Angeles County pilot."}
+]

@@ -1,7 +1,8 @@
 # The narrated demo video
 
-`site/assets/demo.mp4` (the video on the website, with `demo-poster.jpg` and the captions
-`demo.vtt`) is made from the
+`site/assets/demo.mp4` (the full walkthrough on the website, with `demo-poster.jpg` and the
+captions `demo.vtt`) and `site/assets/demo-short.mp4` (a short cut for the page's hero, with
+`demo-short-poster.jpg` and `demo-short.vtt`) are made from the
 running app, on invented demo data, in three steps: Playwright drives the demo app in four
 browser sessions (Riley on a phone, Jordan on a laptop, a Causematch admin on a laptop, and a
 signed-out visitor on a laptop) and
@@ -42,13 +43,14 @@ Nothing is installed into the repo's virtualenv except what `uv sync` already in
 | Step | What it does |
 | --- | --- |
 | `setup` | `uv sync`, `uv run playwright install chromium`, and a Python 3.12 virtualenv for Kokoro (`uv pip install kokoro soundfile`, plus the spaCy model that matches the installed spaCy). Idempotent. |
-| `voice` | `tts.py` voices each line of `beats.json` (voice `af_heart`, or `CAUSEMATCH_VIDEO_VOICE`; changing it re-voices every line) into `voice/<id>.wav` and `durations.json`. A line whose text is unchanged keeps its `.wav`. |
+| `voice` | `tts.py` voices each line of `beats.json` (voice `af_heart`, or `CAUSEMATCH_VIDEO_VOICE`; changing it re-voices every line) into `voice/<id>.wav` and `durations.json`, then the same for the short cut's `beats-short.json` into `voice-short/`. A line whose text is unchanged keeps its `.wav`. |
 | `record` | Starts `serve.py` (the demo's invented data, on a new throwaway database, with the fake SMS, code `000000`, and the fake emailer) and runs `record.py`, which plays the whole story in the app and holds each beat until its voice line has finished. Fails, after saving the recordings, on any console error, page error, failed request, 5xx answer or server error. |
-| `compose` | `compose.py` builds one segment per beat (layout, caption, voice), joins them, normalises the loudness to -16 LUFS (two-pass `loudnorm`), encodes H.264 (crf 23, faststart) and takes the poster and writes `demo.vtt`: one caption cue per sentence of the narration, timed from the beat's start. Fails if a voice line doesn't fit its beat. |
-| `install` | Copies `demo.mp4`, `demo-poster.jpg` and `demo.vtt` into `site/assets/`. |
+| `compose` | `compose.py` builds one segment per beat (layout, caption, voice), joins them, normalises the loudness to -16 LUFS (two-pass `loudnorm`), encodes H.264 (crf 23, faststart) and takes the poster and writes `demo.vtt`: one caption cue per sentence of the narration, timed from the beat's start. Fails if a voice line doesn't fit its beat. It runs twice, on the same recording: `beats.json` makes `demo.mp4`, `beats-short.json` makes `demo-short.mp4` (see "The short cut"). |
+| `install` | Copies `demo.mp4`, `demo-poster.jpg`, `demo.vtt` and the three `demo-short` files into `site/assets/`. |
 
 Files that matter: `beats.json` (each beat: `id`, `layout` of card, laptop, phone or
-both, `src` and `role` for the caption chip, `caption`, and the spoken `say`), `serve.py`,
+both, `src` and `role` for the caption chip, `caption`, and the spoken `say`), `beats-short.json`
+(the short cut, below), `serve.py`,
 `record.py` (the story, one block per beat, in the order of `beats.json`), `compose.py`
 (layouts, colours, title and closing cards) and `tts.py`.
 
@@ -66,19 +68,21 @@ Outside the repo, so nothing here can be committed by accident:
   `rec.db` (the throwaway database), `server.log`, and the finished `demo.mp4` and
   `demo-poster.jpg` and `demo.vtt`.
 
-The only things written into the repo are `site/assets/demo.mp4`, `demo-poster.jpg` and
-`demo.vtt`, by `install`. Commit those with the change that needed them.
+The only things written into the repo are `site/assets/demo.mp4`, `demo-poster.jpg`,
+`demo.vtt` and the three `demo-short` files, by `install`. Commit those with the change that needed them.
 
 ## Change one narration line
 
-Edit its `say` (and `caption`) in `beats.json`, then:
+Edit its `say` (and `caption`) in `beats.json` (or `beats-short.json`), then:
 
 ```
 scripts/video/make_demo_video.sh voice record compose install
 ```
 
-`voice` voices only the changed line. `record` has to run again, because every beat is
-paced by its line's length (about 3 minutes). Keep the words about hours to "hours a
+`voice` voices only the changed line. `record` has to run again for a line of `beats.json`,
+because every beat is paced by its line's length (about 2 minutes 20 seconds). A line of
+`beats-short.json` needs only `voice compose install`: the short cut takes its footage from
+the same recording and lasts as long as its lines. Keep the words about hours to "hours a
 nonprofit confirms" and the one example the preference page gives, school: the
 video says nothing more about why anyone needs them.
 
@@ -87,15 +91,25 @@ are reused. To change what happens on screen, edit `record.py` and run
 `record compose install`. `compose` reads the take in `$CAUSEMATCH_VIDEO_WORK/take`, so a
 good take can be composed again and again.
 
-## Why "a few days later" is staged
+## Why "after the shift" is staged
 
 A shift can only be marked attended once it has started, and a recording can't wait for
 that. The `attend` beat moves the one shift's start two days into the past (9 am Los
 Angeles time) directly in the throwaway database (`days_pass()` in `record.py`), and the
-narration says "a few days later". `days_pass()` refuses to run in production, on a path
+narration says "after the shift". The opening is posted for the next Saturday at 9 am (so
+Riley's card shows the "You're free Sat mornings" reason), which means the date on the
+schedule after the move is earlier than the one on Riley's card: the narration stays
+neutral about how many days passed. `days_pass()` refuses to run in production, on a path
 inside the repo, or on a database without the demo seed; it opens the file read-write only
 (never creates one), changes exactly one row in one transaction (rolled back otherwise)
 and closes the connection.
+
+## Riley's last name is added off camera
+
+A certificate carries the volunteer's full name, so Riley needs a last name. At the end of
+the `attend` beat (a laptop-only beat), `record.py` opens a second page in the phone's
+browser context, saves "Chen" on the profile form there and closes it. The recorded phone
+screen is untouched; that page's own recording is never composed.
 
 ## Why the takeover is nudged
 
@@ -123,12 +137,30 @@ The repo is public. The video uses the demo seed (`app/demo_seed.py`) and made-u
 (Riley, Jordan, Silver Lake Garden Friends, EIN `99-0000001`). Never record with
 `--seed-file` or against any real database, and never show the private preview.
 
+## The short cut
+
+`beats-short.json` makes `demo-short.mp4` (about 1 minute 7 seconds, for the website's hero)
+from the same recording as the full video: no second take and no second story in
+`record.py`. Each beat has its own, shorter voice line (voiced into `voice-short/`) and lasts
+as long as that line plus a tail, and takes its footage from a beat of the recording:
+
+- `from`: the recorded beat the footage comes from (cards have none).
+- `mark`, `pre`: start at a named moment `record.py` noted inside the beat (`marks` in
+  `timeline.json`: `form`, `deck`, `liked`, `accepted`, `takeover`, `passed`, `cert`, `link`),
+  `pre` seconds earlier.
+- `speed`: play the footage faster, so a longer action fits a shorter line.
+- `tail` (default 1 second), `poster` (a mark: the poster is taken just after it).
+
+`compose.py` stops, naming the beat, when a beat's footage would run past the end of the
+recorded beat it comes from: lengthen the line less, raise `speed`, or move `pre`. After a
+new `record`, check the short cut's stills: the marks move by a second or so from take to
+take, and the narration is lined up with them (the heart is tapped as the line says so).
+
 ## Timing
 
-Run end to end from nothing (no TTS environment, no espeak data, no Kokoro voice files,
-no repo `.venv`; Hugging Face's model cache and Playwright's Chromium kept): 4 minutes 55
-seconds on an Apple-silicon Mac (2026-10-31). Of that, setup and voice took about 1
-minute 20 seconds, recording 3 minutes 10 seconds (the story itself is 2 minutes 47
-seconds, paced by the voice lines) and composing under 30 seconds. With everything set
-up, one change to a line and a re-run is about 4 minutes. The result (with the certificate and its check link, and the confirmed-hours checkbox): 3:29, 1920x1080,
-9.1 MB, -16.1 LUFS; the voice and record steps now take about 4 minutes 40 seconds together with compose.
+The result of one run (2026-11-07): the full video 2:29 (149.7 s), 1920x1080, 6.8 MB; the
+short cut 1:07 (67.6 s), 2.8 MB; both -16.1 LUFS. Recording the story takes about 2 minutes
+20 seconds (paced by the voice lines), composing both videos about 40 seconds, and voicing a
+changed line or two about 20 seconds. The first volunteer appears at about 0:34, and no
+stretch of the full video is silent for more than 3 seconds (the longest gap between caption
+cues in `demo.vtt` is 2.6 seconds).
