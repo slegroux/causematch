@@ -97,23 +97,25 @@ def test_post_puts_the_call_first_in_the_deck_with_its_badge(shelter, user):
     )
     top = data.deck(uid_of(user), 50)[0]
     assert top["title"] == DOGS and top["starts_at"] == tomorrow()
-    assert top["urgent"] == "Urgent · tomorrow 9 am · needs 2"
+    assert top["urgent"] == "Last-minute · tomorrow 9 am · needs 2"
     page = user.get("/deck")
-    assert DOGS in page.text and "Urgent · tomorrow 9 am · needs 2" in page.text
+    assert DOGS in page.text and "Last-minute · tomorrow 9 am · needs 2" in page.text
 
 
 def test_deck_today_also_shows_the_call_first(shelter, user):
     post_call(shelter, starts_at=in_hours(30))
     cards = data.deck(uid_of(user), 50, today=True)
-    assert cards[0]["title"] == DOGS and cards[0]["urgent"].startswith("Urgent · ")
+    assert cards[0]["title"] == DOGS and cards[0]["urgent"].startswith("Last-minute · ")
 
 
 def test_deck_label_says_today_and_minutes():
-    assert data.urgent_label(local(datetime.now(LA)), 1).startswith("Urgent · today ")
+    assert data.urgent_label(local(datetime.now(LA)), 1).startswith(
+        "Last-minute · today "
+    )
     soon = datetime.now(LA) + timedelta(days=1)
     assert (
         data.urgent_label(f"{soon.date()}T14:30", 3)
-        == "Urgent · tomorrow 2:30 pm · needs 3"
+        == "Last-minute · tomorrow 2:30 pm · needs 3"
     )
 
 
@@ -147,7 +149,7 @@ def test_deck_like_on_a_card_drawn_before_the_call_shows_the_call_first(
     r = user.post("/swipe", data=form, headers={"HX-Request": "true"})
     assert r.status_code == 200
     assert "This opening now needs people tomorrow 9 am." in r.text
-    assert DOGS in r.text.split("Pass")[0] and "Urgent · tomorrow 9 am" in r.text
+    assert DOGS in r.text.split("Pass")[0] and "Last-minute · tomorrow 9 am" in r.text
     assert not matches(where="opening_id = ?", where_args=[shelter.opening.id])
     assert not swipes(where="opening_id = ?", where_args=[shelter.opening.id])
     assert not shifts()
@@ -219,7 +221,7 @@ def test_post_refuses_a_fourth_call_in_a_day(shelter):
         stop = shelter.post(f"/org/openings/{oid}/urgent/close", follow_redirects=False)
         assert stop.status_code == 303
     r = post_call(shelter)
-    assert r.status_code == 200 and "You can post 3 urgent calls a day." in r.text
+    assert r.status_code == 200 and "You can post 3 last-minute calls a day." in r.text
     assert len(urgent_calls()) == 3
     # a day later the org may post again
     urgent_calls.update(id=urgent_calls()[0].id, created_at="2020-01-01T00:00:00+00:00")
@@ -229,7 +231,7 @@ def test_post_refuses_a_fourth_call_in_a_day(shelter):
 def test_post_refuses_a_second_open_call_on_one_opening(shelter):
     assert post_call(shelter).status_code == 303
     r = post_call(shelter, starts_at=tomorrow("15:00"))
-    assert "already has an urgent call" in r.text
+    assert "already has a last-minute call" in r.text
     assert len(urgent_calls()) == 1
 
 
@@ -242,7 +244,7 @@ def test_post_refuses_a_closed_opening(shelter):
 
 def test_post_page_prefills_a_soon_opening_start(shelter):
     page = shelter.get(f"/org/openings/{shelter.opening.id}/urgent")
-    assert page.status_code == 200 and "Urgent call" in page.text
+    assert page.status_code == 200 and "Last-minute call" in page.text
     assert 'value=""' in page.text  # 9 days out: no default time
     openings.update(id=shelter.opening.id, starts_at=tomorrow("10:00"))
     page = shelter.get(f"/org/openings/{shelter.opening.id}/urgent")
@@ -253,8 +255,8 @@ def test_close_by_the_org_takes_it_out_of_the_deck(shelter, user):
     openings.update(id=shelter.opening.id, starts_at=tomorrow("10:00"))
     post_call(shelter)
     dash = shelter.get("/org")
-    assert "Urgent · tomorrow 9 am · needs 2" in dash.text
-    assert "0 of 2 found" in dash.text and "Stop urgent call" in dash.text
+    assert "Last-minute · tomorrow 9 am · needs 2" in dash.text
+    assert "0 of 2 found" in dash.text and "Stop last-minute call" in dash.text
     r = shelter.post(
         f"/org/openings/{shelter.opening.id}/urgent/close", follow_redirects=False
     )
@@ -263,14 +265,14 @@ def test_close_by_the_org_takes_it_out_of_the_deck(shelter, user):
     assert call.status == "closed" and call.ended_at
     top = data.deck(uid_of(user), 50)
     assert not any(c["urgent"] for c in top)
-    assert "Post an urgent call" in shelter.get("/org").text  # still within 48 h
+    assert "Post a last-minute call" in shelter.get("/org").text  # still within 48 h
 
 
 def test_close_when_its_time_passes(shelter, user):
     post_call(shelter)
     urgent_calls.update(id=urgent_calls()[0].id, starts_at=in_hours(-1))
     assert not any(c["urgent"] for c in data.deck(uid_of(user), 50))
-    assert "Stop urgent call" not in shelter.get("/org").text
+    assert "Stop last-minute call" not in shelter.get("/org").text
     assert urgent_calls()[0].status == "open"  # reads write nothing
     data.urgent_waves_due(datetime.now(UTC))  # the task's sweep stamps it
     call = urgent_calls()[0]
@@ -316,7 +318,7 @@ def test_deck_demo_seeds_an_urgent_call_first_in_the_deck(user):
     (call,) = urgent_calls()
     assert (call.opening_id, call.needed, call.auto_accept) == (oid, 2, True)
     top = data.deck(uid_of(user), 50)[0]
-    assert top["id"] == oid and top["urgent"] == "Urgent · tomorrow 9 am · needs 2"
+    assert top["id"] == oid and top["urgent"] == "Last-minute · tomorrow 9 am · needs 2"
 
 
 # --- the volunteer's opt-in (/me/preferences) -----------------------------------------
@@ -1134,7 +1136,7 @@ def test_late_cancel_on_a_full_one_time_opening_frees_the_spot_and_calls(
         False,  # the org never posted a call: off
     )
     assert "spot: it's open again" in cancel_email()
-    assert "posted an urgent call for 1 person" in cancel_email()
+    assert "posted a last-minute call for 1 person" in cancel_email()
     assert sweep().text == "sent 1"
     ((to, text),) = notify.get_sms().sent
     assert to == phone(vol) and "needs 1 more person today 1 pm" in text

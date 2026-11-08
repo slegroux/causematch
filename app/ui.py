@@ -355,7 +355,10 @@ MATCH_STATUS = {
         "volunteer": ("Waiting for the nonprofit", "wait"),
         "org": ("Waiting for you", "wait"),
     },
-    "accepted": ("Accepted", "good"),
+    "accepted": {
+        "volunteer": ("Matched", "good"),
+        "org": ("Accepted", "good"),
+    },
     "declined": {
         "volunteer": ("Not this time", "off"),
         "org": ("Declined", "off"),
@@ -366,7 +369,7 @@ SHIFT_STATUS = {
     "upcoming": ("Upcoming", "info"),
     "confirmed": ("Confirmed", "good"),  # "Still coming?" answered yes
     "to_mark": {  # started, not marked by the nonprofit yet
-        "volunteer": ("Waiting for the nonprofit", "wait"),
+        "volunteer": ("Waiting for the nonprofit to mark you present", "wait"),
         "org": ("Not marked yet", "wait"),
     },
     "completed": ("Attended", "good"),

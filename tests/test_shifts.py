@@ -235,7 +235,10 @@ def test_shift_states_read_the_same_on_both_sides(accepted, clock):
     )
     data.add_shift(accepted.org0.uid, accepted.match.id, clock.local(days=3))
     vol, org = accepted.a.get("/history").text, accepted.org0.get("/org/shifts").text
-    assert "Waiting for the nonprofit" in vol and "Not marked yet" in org
+    assert (
+        "Waiting for the nonprofit to mark you present" in vol
+        and "Not marked yet" in org
+    )
     assert vol.count("Upcoming") == 2 and org.count("Upcoming") == 2  # section + pill
     assert "Not marked yet" not in vol and "Waiting for the nonprofit" not in org
 

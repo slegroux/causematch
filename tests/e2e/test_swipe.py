@@ -66,7 +66,7 @@ def test_swipe_right_makes_a_pending_match_the_coordinator_accepts(
     coord.get_by_role("link", name="Say hi").wait_for()
 
     page.goto("/matches")
-    page.get_by_text("Accepted").wait_for()
+    page.get_by_text("Matched", exact=True).wait_for()
     assert matches[m.id].status == "accepted"
     assert pantry_opening().status == "open"
 

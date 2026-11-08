@@ -3314,8 +3314,8 @@ def urgent_when(starts_at, today=None):
 
 
 def urgent_label(starts_at, left):
-    """ "Urgent · today 9 am · needs 2": the deck's badge and the org's pill."""
-    return f"Urgent · {urgent_when(starts_at)} · needs {left}"
+    """ "Last-minute · today 9 am · needs 2": the deck's badge and the org's pill."""
+    return f"Last-minute · {urgent_when(starts_at)} · needs {left}"
 
 
 URGENT_WAVES = 2  # notification waves per call

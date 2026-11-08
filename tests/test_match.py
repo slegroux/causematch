@@ -215,6 +215,8 @@ def test_matches_page_and_withdraw(user):
     user.post("/swipe", data={"opening_id": o.id, "liked": "1"})
     r = user.get("/matches")
     assert PANTRY in r.text and "Waiting for the nonprofit" in r.text
+    # a like not yet accepted is not an unmarked shift
+    assert "to mark you present" not in r.text
     mid = matches()[0].id
     r = user.post(f"/matches/{mid}/withdraw", follow_redirects=False)
     assert r.status_code == 303
@@ -296,7 +298,7 @@ def test_coordinator_inbox_accept_and_volunteer_sees_it(user, coord):
         follow_redirects=False,
     )
     assert r.status_code == 303
-    assert "Accepted" in user.get("/matches").text
+    assert "Matched" in user.get("/matches").text
     again = coord.post(
         f"/org/matches/{mid}/decide",
         data={"decision": "decline"},

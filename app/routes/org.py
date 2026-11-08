@@ -167,7 +167,7 @@ def UrgentLine(o, urgent, accepted):
                 cls="text-xs font-semibold text-ink-muted",
             ),
             PlainForm(
-                Button("Stop urgent call", cls=ButtonT.default),
+                Button("Stop last-minute call", cls=ButtonT.default),
                 action=f"/org/openings/{o.id}/urgent/close",
                 method="post",
             ),
@@ -185,7 +185,7 @@ def UrgentLink(o, urgent, accepted):
         and urgent_possible(o.starts_at)
     ):
         return A(
-            "Short of people? Post an urgent call",
+            "Short of people? Post a last-minute call",
             href=f"/org/openings/{o.id}/urgent",
             cls=SMALL_LINK + " text-sm",
         )
@@ -1030,10 +1030,10 @@ def close(req, opening_id: int):
 
 
 URGENT_ERRORS = {
-    "not open": "This opening is filled or closed, so it can't take an urgent call.",
-    "already": "This opening already has an urgent call. Stop it first to post another.",
+    "not open": "This opening is filled or closed, so it can't take a last-minute call.",
+    "already": "This opening already has a last-minute call. Stop it first to post another.",
     "time": "Pick a time in the next 48 hours.",
-    "limit": f"You can post {data.URGENT_PER_DAY} urgent calls a day. Try again tomorrow.",
+    "limit": f"You can post {data.URGENT_PER_DAY} last-minute calls a day. Try again tomorrow.",
 }
 AUTO_ACCEPT = (
     "Accept the first ones who say yes, up to that number, without asking me "
@@ -1052,7 +1052,7 @@ def UrgentPage(uid, opening_id, f=None, error=None):
         "openings",
         data.org_badges(uid),
         A("Back to your openings", href="/org", cls=SMALL_LINK + " mb-2 text-sm"),
-        H1("Urgent call", cls=ORG_TITLE),
+        H1("Last-minute call", cls=ORG_TITLE),
         P(o.title, cls="pb-4 font-semibold text-ink-muted"),
         Form(
             P(
@@ -1089,7 +1089,7 @@ def UrgentPage(uid, opening_id, f=None, error=None):
                 checked=f.get("auto_accept") == "1",
             ),
             Alert(error, cls=AlertT.error) if error else None,
-            Button("Post urgent call", cls=ButtonT.primary),
+            Button("Post last-minute call", cls=ButtonT.primary),
             action=f"/org/openings/{o.id}/urgent",
             method="post",
             cls="max-w-md space-y-4 p-5 " + CARD,

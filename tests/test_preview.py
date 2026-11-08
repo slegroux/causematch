@@ -1043,7 +1043,7 @@ def test_the_demo_buttons_sign_in_each_role_in_one_tap(demo):
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     (copy,) = [p for p in profiles() if p.id not in before]
     assert copy.phone.startswith(data.DEMO_PHONE_PREFIX) and copy.display_name == "Sam"
-    assert "Urgent" in browser.get("/deck").text  # signed in, on their own deck
+    assert "Last-minute" in browser.get("/deck").text  # signed in, on their own deck
     pat = TestClient(app, headers={"Authorization": basic()})
     r = pat.post("/org/login/demo", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/org"

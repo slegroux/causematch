@@ -126,7 +126,7 @@ def OpeningCard(c):
     return Div(
         CardImage(c),
         Div(
-            # an urgent call: "Urgent · today 9 am · needs 2"
+            # a last-minute call: "Last-minute · today 9 am · needs 2"
             P(
                 c["urgent"],
                 cls="inline-flex rounded-full bg-red-700 px-3 py-1 text-xs "
@@ -292,11 +292,11 @@ def EmptyDeck(today=False, relax=None):
     return Div(
         Img(src="/static/img/empty-deck.svg", alt="", cls="mx-auto h-40 w-40"),
         H2(
-            "Nothing in the next 48 hours" if today else "You're all caught up",
+            "No openings in the next 48 hours" if today else "You're all caught up",
             cls="font-display text-xl font-extrabold text-ink",
         ),
         P(
-            "No shift you could reach starts that soon."
+            "None of the openings you could reach start that soon."
             if today
             else "You have seen every opening for now. Check back soon.",
             cls="mx-auto max-w-xs text-ink-muted",
@@ -332,7 +332,7 @@ def EmptyDeck(today=False, relax=None):
 
 
 def TodaySwitch(today):
-    """ "Next 48h": only shifts starting in the next 48 hours, soonest first. A plain
+    """ "Next 48h": only openings starting in the next 48 hours, soonest first. A plain
     GET form, so it works without script; the button says whether it is on."""
     return PlainForm(
         Hidden(name="today", value="0" if today else "1"),
@@ -347,7 +347,7 @@ def TodaySwitch(today):
                 aria_hidden="true",
             ),
             Span("Next 48h", aria_hidden="true"),
-            Span("Only shifts starting within 48 hours", cls="sr-only"),
+            Span("Only openings starting within 48 hours", cls="sr-only"),
             type="submit",
             aria_pressed="true" if today else "false",
             cls="flex min-h-11 items-center gap-2.5 rounded-full px-1 text-sm font-bold "
@@ -635,7 +635,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
         note,
         sheet,
         P(
-            f"{count} shift{'' if count == 1 else 's'} in the next 48 hours",
+            f"{count} opening{'' if count == 1 else 's'} in the next 48 hours",
             cls="mb-2 text-center text-sm font-semibold text-ink-muted",
         )
         if today
