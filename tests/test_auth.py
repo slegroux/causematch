@@ -34,6 +34,11 @@ def send_link(client, email, **kw):
     return client.post("/login/send", data={"email": email}, **kw)
 
 
+def sans_address(r, email):
+    """The page without the one thing that may differ: the address it echoes (lowercased)."""
+    return r.text.replace(email.lower(), "ADDRESS")
+
+
 def verify(client, token):
     return client.post("/login/verify", data={"token": token}, follow_redirects=False)
 
@@ -61,12 +66,11 @@ def test_every_address_gets_the_same_answer_and_only_the_right_link(anon):
         id=email_volunteers(suspended)[0].user_id, suspended_at="2026-01-01"
     )
     _, staff = coordinator_for(0)
-    pages = [
-        send_link(anon, e)
-        for e in (known, "New@Example.org", suspended, staff, "nobody@example.org")
-    ]
+    emails = (known, "New@Example.org", suspended, staff, "nobody@example.org")
+    pages = [send_link(anon, e) for e in emails]
     assert {r.status_code for r in pages} == {200}
-    assert len({r.text for r in pages}) == 1 and SENT in pages[0].text
+    same = {sans_address(r, e) for r, e in zip(pages, emails)}
+    assert len(same) == 1 and SENT in pages[0].text
     sent = {to: (subject, body) for to, subject, body in notify.get_emailer().sent}
     assert sent[known][0] == "Your Causematch sign-in link"
     assert sent["new@example.org"][0] == "Finish signing up for Causematch"
@@ -183,11 +187,34 @@ def test_ipv6_link_requests_share_a_slash_48():
 def test_sign_up_links_stop_at_the_app_wide_ceiling_but_sign_ins_still_go(monkeypatch):
     monkeypatch.setattr(security, "SIGNUP_ALL", (("signup-all-hour", 2, 3600),))
     sign_in(TestClient(app), "3105550010")  # an account: v13105550010@example.org
-    pages = [send_link(at(f"192.0.2.{i}"), f"new{i}@example.org") for i in range(3)]
-    assert {r.status_code for r in pages} == {200} and len({r.text for r in pages}) == 1
+    emails = [f"new{i}@example.org" for i in range(3)]
+    pages = [send_link(at(f"192.0.2.{i}"), e) for i, e in enumerate(emails)]
+    assert {r.status_code for r in pages} == {200}
+    assert len({sans_address(r, e) for r, e in zip(pages, emails)}) == 1
     assert len(notify.get_emailer().sent) == 2  # the third sign-up link isn't sent
     send_link(at("192.0.2.9"), "v13105550010@example.org")
     assert notify.get_emailer().sent[-1][0] == "v13105550010@example.org"
+
+
+def test_the_check_your_email_page_echoes_the_address_and_can_resend(anon):
+    page = send_link(anon, "Pat@Example.org").text
+    assert "Check your email" in page and "pat@example.org" in page
+    assert re.search(r'<input[^>]*type="hidden"[^>]*value="pat@example.org"', page)
+    assert 'action="/login/send"' in page and "Send it again" in page
+    assert 'href="/login"' in page and "Use another address" in page
+    # the button posts the same address back: a second link goes to it
+    again = anon.post("/login/send", data={"email": "pat@example.org"})
+    assert again.status_code == 200 and "Check your email" in again.text
+    assert [to for to, _, _ in notify.get_emailer().sent] == ["pat@example.org"] * 2
+
+
+def test_sending_it_again_stays_under_the_per_address_limit(anon):
+    codes = [send_link(anon, "pat@example.org").status_code for _ in range(12)]
+    assert codes[0] == 200 and 429 in codes
+    sent = len(notify.get_emailer().sent)
+    assert 1 < sent < 12  # the limit stops the links, not just the page
+    assert send_link(anon, "pat@example.org").status_code == 429
+    assert len(notify.get_emailer().sent) == sent
 
 
 def test_a_suspended_google_volunteers_address_gets_no_link_live_or_deleted(anon):
