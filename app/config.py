@@ -55,8 +55,8 @@ def demo_matches(env=os.environ):
     return True
 
 
-# The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164, and
-# the demo coordinator's address (demo_seed.COORDINATOR)
+# The demo volunteer's number (app/demo_seed.py ME_PHONE, "(310) 555-0100"), E.164, which
+# "Try it as a volunteer" copies, and the demo coordinator's address (demo_seed.COORDINATOR)
 DEMO_PHONE = "+13105550100"
 DEMO_COORDINATOR = "pat@demo.causematch.test"
 # What a preview lets sign in: the demo seed's addresses (the demo coordinator and admin,
@@ -76,12 +76,6 @@ def demo_number(e164):
     """A fictional 555-01xx number, in E.164: on a preview, the only ones that get a
     (fake) code."""
     return bool(DEMO_NUMBER.fullmatch(e164))
-
-
-def shared_demo_phone(phone, env=os.environ):
-    """The demo number while demo_matches is on: every visitor signs in with it (each gets
-    their own copy), so per-number sign-in limits would lock the demo for everyone."""
-    return phone == DEMO_PHONE and demo_matches(env)
 
 
 def is_dev(env=os.environ):
@@ -127,20 +121,17 @@ def require_env(env=os.environ):
 
 
 def require_volunteer_sign_in(env=os.environ):
-    """Refuse a production start where volunteers would have no way in: Twilio Verify
-    (texted codes, or the fake on a preview), Google or Apple must be configured. Each
-    one alone is enough; Twilio is optional when Google or Apple is set."""
+    """Refuse a production start where volunteers would have no way in: the emailed link
+    (Resend, or the fake on a preview), Google or Apple must be configured. Each one alone
+    is enough. Twilio plays no part: a number is never a way in."""
     if not is_production(env):
         return
-    twilio = all(
-        env.get(k)
-        for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
-    )
-    # the fake counts here; notify.make_verifier refuses it where fakes aren't allowed
-    fake = env.get("CAUSEMATCH_FAKE_SMS") == "1"
-    if not (twilio or fake or google_oauth(env) or apple_oauth(env)):
+    resend = bool(env.get("EMAIL_API_KEY") and env.get("EMAIL_FROM"))
+    # the fake counts here; notify.make_emailer refuses it where fakes aren't allowed
+    fake = env.get("CAUSEMATCH_FAKE_EMAIL") == "1"
+    if not (resend or fake or google_oauth(env) or apple_oauth(env)):
         raise RuntimeError(
-            "No volunteer sign-in is configured: set Twilio Verify (TWILIO_*), "
+            "No volunteer sign-in is configured: set email (EMAIL_API_KEY, EMAIL_FROM), "
             "Google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) or Apple (APPLE_*)"
         )
 

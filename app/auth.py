@@ -13,12 +13,12 @@ log = logging.getLogger("causematch")
 # Used only when CAUSEMATCH_ENV is explicitly development or test and SESSION_SECRET is unset.
 DEV_SECRET = "dev-only-secret-do-not-use-in-production"
 SESSION_MAX_AGE = 30 * 24 * 3600
-PENDING_TTL = 15 * 60  # seconds a sent code's number is kept in the session
+PENDING_TTL = 15 * 60  # seconds Me's add-a-number keeps the number a code went to
 
 PUBLIC = [
     r"/login",
-    r"/login/send",
-    r"/login/verify",
+    r"/login/send",  # the emailed link (app/routes/auth.py), rate-limited
+    r"/login/verify",  # GET shows a button, POST uses the link up
     r"/login/demo",  # a demo's one-tap sign-in (config.demo_matches; 403 elsewhere)
     r"/auth/.*",  # Google and Apple sign-in (app/routes/oauth.py): 404 when not set
     r"/org/login",
@@ -82,15 +82,14 @@ def is_admin_path(path):
     return path == "/admin" or path.startswith("/admin/")
 
 
-def set_pending(sess, phone, key="pending"):
-    """Remember the number a code was just sent to, with when. key: "pending" for
-    sign-in, "me_pending" for Me's add-a-number (app/routes/profile.py), so neither
-    overwrites the other."""
+def set_pending(sess, phone, key):
+    """Remember the number a code was just sent to, with when, under `key`'s session keys
+    (Me's add-a-number, app/routes/profile.py ME_PENDING)."""
     sess[f"{key}_phone"] = phone
     sess[f"{key}_at"] = int(time.time())
 
 
-def pending_phone(sess, key="pending"):
+def pending_phone(sess, key):
     """The number a code was sent to in the last 15 minutes, else None. An older one is
     dropped from the session: it is signed, not encrypted, and lives 30 days."""
     phone, at = sess.get(f"{key}_phone"), sess.get(f"{key}_at")
@@ -108,8 +107,9 @@ def _fresh_session(sess, profile):
 
 
 def sign_in(sess, profile):
-    """Every volunteer sign-in method ends here, with a live profile: a fresh session for
-    it, then the deck, or onboarding when it hasn't been done."""
+    """Every volunteer sign-in method (the emailed link, Google, Apple, the demo's button)
+    ends here, with a live profile: a fresh session for it, then the deck, or onboarding
+    when it hasn't been done."""
     _fresh_session(sess, profile)
     return Redirect("/deck" if profile.onboarded_at else "/onboarding")
 
@@ -125,9 +125,8 @@ def check_session(req, sess):
     """Sign-in, then role: volunteers get the volunteer pages, coordinators /org/*, admins
     /admin/*; nobody more than one."""
     path = req.url.path
-    for key in ("pending", "me_pending"):
-        if f"{key}_phone" in sess:
-            pending_phone(sess, key)  # drops an expired one on any page
+    if "me_pending_phone" in sess:
+        pending_phone(sess, "me_pending")  # drops an expired one on any page
     profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
     if not profile or sess.get("sv") != (profile.session_version or 1):
         sess.pop("uid", None)

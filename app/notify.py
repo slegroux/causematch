@@ -86,8 +86,9 @@ def _fake(env, var):
 
 def _twilio(env, keys):
     """The values of `keys`, or None when no Twilio variable is set at all (Twilio is
-    optional: Google or Apple sign-in may stand in, see config.require_volunteer_sign_in).
-    Some set but not these refuses to start: a half-configured Twilio is a mistake."""
+    optional: volunteers sign in by email, Google or Apple, and get email instead of
+    texts). Some set but not these refuses to start: a half-configured Twilio is a
+    mistake."""
     if not any(env.get(k) for k in TWILIO_KEYS):
         return None
     if not all(env.get(k) for k in keys):
@@ -100,9 +101,13 @@ def _twilio(env, keys):
 
 
 def make_verifier(env=os.environ):
-    """The sign-in code sender, or None when Twilio is not configured: no phone sign-in."""
+    """The code sender that proves a number before Me's add-a-number saves it
+    (app/routes/profile.py), or None while TWILIO_VERIFY_SID is unset: then no number can
+    be added. Never a sign-in: volunteers sign in by email, Google or Apple."""
     if _fake(env, "CAUSEMATCH_FAKE_SMS"):
         return FakeVerifier()
+    if not env.get("TWILIO_VERIFY_SID"):
+        return None
     keys = _twilio(
         env, ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SID")
     )
@@ -120,15 +125,15 @@ def get_verifier():
     return _verifier
 
 
-def phone_sign_in_enabled():
-    """Whether codes can be texted: /login's phone form and Me's add-a-number need it."""
+def phone_verify_enabled():
+    """Whether a number can be proven by a texted code: Me's add-a-number needs it."""
     return get_verifier() is not None
 
 
 def send_code(phone):
-    """The one place a sign-in code leaves the app, so rate limiting can wrap it."""
+    """The one place a verification code leaves the app, so rate limiting can wrap it."""
     if (verifier := get_verifier()) is None:
-        raise RuntimeError("phone sign-in is off: Twilio is not configured")
+        raise RuntimeError("adding a number is off: Twilio Verify is not configured")
     verifier.send(phone)
 
 
@@ -190,13 +195,28 @@ def get_emailer():
 
 
 def send_login_link(email, token):
-    """The one place a coordinator sign-in link leaves the app. Returns the link."""
+    """The one place a coordinator's or admin's sign-in link leaves the app. Returns the
+    link."""
     link = f"{public_base_url()}/org/login/verify?token={token}"
     get_emailer().send(
         email,
         "Your Causematch sign-in link",
         f"Sign in to Causematch:\n\n{link}\n\nThis link works once and expires in "
         "15 minutes. If you didn't ask for it, ignore this email.",
+    )
+    return link
+
+
+def send_volunteer_link(email, token, new):
+    """The one place a volunteer's emailed link leaves the app (/login): to sign in, or,
+    for an address no account holds (new), to sign up. Returns the link."""
+    link = f"{public_base_url()}/login/verify?token={token}"
+    get_emailer().send(
+        email,
+        "Finish signing up for Causematch" if new else "Your Causematch sign-in link",
+        ("Finish signing up for Causematch:" if new else "Sign in to Causematch:")
+        + f"\n\n{link}\n\nThis link works once and expires in 15 minutes. If you "
+        "didn't ask for it, ignore this email.",
     )
     return link
 

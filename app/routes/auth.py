@@ -1,15 +1,23 @@
+import hashlib
+import hmac
 import logging
-import re
+import time
 
-import httpx
-from fasthtml.common import H2, A, Div, Form, P, Redirect
-from monsterui.all import AT, TextPresets
+from fasthtml.common import H2, A, Div, Form, HttpHeader, P, Redirect
+from monsterui.all import Alert, AlertT, TextPresets
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, oauth, security
-from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending, sign_in
-from app.config import DEMO_PHONE, demo_matches, demo_number, is_preview
-from app.forms import bad_request, str_form
+from app.auth import sign_in
+from app.config import (
+    DEMO_PHONE,
+    demo_address,
+    demo_matches,
+    is_preview,
+    phone_hash_key,
+)
+from app.forms import EMAIL, abuse_key, bad_request, query, str_form
 from app.ui import (
     BigButton,
     CauseChip,
@@ -24,27 +32,76 @@ from app.ui import (
 ar = Router()
 log = logging.getLogger("causematch")
 # The demo seed's demo_volunteer, set by main.py (no route imports the demo seed): with
-# config.demo_matches on, the demo number signs in as a fresh copy of the demo volunteer
+# config.demo_matches on, "Try it as a volunteer" signs in as a fresh copy of it
 demo_volunteer = None
 
 INTRO = "Causematch connects you with Los Angeles nonprofits that need a hand."
 SUSPENDED = "This account can't sign in. Contact us if that is a mistake."
-# A preview gives the fake code to the demo's fictional numbers only (config.demo_number)
+# Me's add-a-number on a preview: the fake code goes to the demo's fictional numbers only
+# (config.demo_number)
 PREVIEW_PHONES = "This preview uses demo numbers only, like (310) 555-0100."
+# The same answer for every address: it never says whether an account holds it
+SENT = "Check your email: if we can sign you in or up with that address, a link is on its way."
+BAD_EMAIL = "Enter your email address."
+BAD_LINK = "That sign-in link has expired or was already used. Ask for a new one."
+TOKEN_KEY = "volunteer_token"  # the link's token, between its GET and the button's POST
+# The mailbox this browser last asked for a link to (both pages), as [keyed digest, unix
+# time]: the session is signed, not encrypted, so the address itself is never kept in it
+LINK_FOR = "link_for"
+NOT_ASKED = (
+    "This browser didn't ask for this link. If someone sent it to you, stop here: "
+    "continuing would sign you in to their account."
+)
+SIGNED_IN = "This browser is signed in to another account. Continuing signs it out."
+
+
+def _mailbox_digest(email):
+    key = phone_hash_key().encode()
+    return hmac.new(key, abuse_key(email).encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def asked_for(sess, email):
+    """Remember that this browser asked for a link to this address (ConfirmPage), as a
+    keyed digest of its mailbox and when."""
+    sess[LINK_FOR] = [_mailbox_digest(email), int(time.time())]
+
+
+def _asked(sess, email):
+    """Whether this browser asked for a link to this address within a link's lifetime."""
+    found = sess.get(LINK_FOR)
+    if not (isinstance(found, list) and len(found) == 2):
+        return False
+    digest, at = found
+    fresh = isinstance(at, int) and 0 <= time.time() - at <= data.TOKEN_MINUTES * 60
+    return fresh and hmac.compare_digest(str(digest), _mailbox_digest(email))
+
+
+def ConfirmPage(action, email, sess, owner):
+    """An emailed link's confirm page (both sign-ins): the account it signs in to by
+    address, and a warning when this browser didn't ask for the link or is signed in as
+    someone else, since pressing the button on a link someone sent you would sign you in
+    as them (login CSRF). owner: the profile id the link signs in to, None for a new one.
+    Referrer-Policy same-origin, not no-referrer: under no-referrer a browser sends
+    `Origin: null` with the button's POST, which security.Guard refuses."""
+    warnings = [
+        None if _asked(sess, email) else NOT_ASKED,
+        SIGNED_IN if sess.get("uid") and sess.get("uid") != owner else None,
+    ]
+    return HttpHeader("Referrer-Policy", "same-origin"), SignInPage(
+        "Sign in to Causematch",
+        *[Alert(w, cls=AlertT.warning) for w in warnings if w],
+        Form(BigButton("Sign in"), action=action, method="post"),
+        intro=f"Sign in as {email}",
+    )
 
 
 def ProviderSignIn(for_org=False):
     """Continue with Apple, then Google: each when a provider serves it (app/oauth.py
-    enabled_providers). for_org: the nonprofit sign-in's, for coordinators and admins."""
+    enabled_providers), then the emailed link's heading. for_org: the nonprofit sign-in's,
+    for coordinators and admins."""
     providers = oauth.enabled_providers()
     if not providers:
         return None
-    if for_org:
-        then = H2("Or get an emailed link", cls="pt-6 font-bold text-ink")
-    elif notify.phone_sign_in_enabled():  # goes with PhoneForm's phone form
-        then = H2("Or use your phone number", cls="pt-6 font-bold text-ink")
-    else:
-        then = None
     return Div(
         *[
             A(
@@ -54,40 +111,50 @@ def ProviderSignIn(for_org=False):
             )
             for name, label in providers
         ],
-        then,
+        H2("Or get an emailed link", cls="pt-6 font-bold text-ink"),
         cls="flex flex-col gap-3",  # one button per line, apart: they never run together
     )
 
 
-def PhoneForm(phone="", error=None):
+def LoginPage(email="", error=None, notice=None, link=None):
+    """/login: the demo's buttons, Google and Apple when configured, then the emailed
+    link, which signs a volunteer in or, for a new address, up."""
     return SignInPage(
         "Sign in",
         DemoSignIn(),
         ProviderSignIn(),
+        P(
+            A("Open your sign-in link", href=link, cls="text-brand font-bold"),
+            " (a preview sends no email)",
+        )
+        if link
+        else None,
         Form(
             Field(
-                "Mobile number",
+                "Email",
                 TextInput(
-                    name="phone",
-                    value=phone,
-                    type="tel",
-                    inputmode="tel",
-                    autocomplete="tel",
-                    placeholder="(310) 555-0123",
-                    aria_label="Mobile number",
+                    name="email",
+                    value=email,
+                    type="email",
+                    inputmode="email",
+                    autocomplete="email",
+                    placeholder="you@example.com",
+                    aria_label="Email",
                     required=True,
                 ),
             ),
-            BigButton("Text me a code"),
-            P("We text you a 6-digit code. No password.", cls=TextPresets.muted_sm),
+            BigButton("Email me a link"),
+            P(
+                "We email you a link to sign in, or to sign up if you're new. "
+                "No password.",
+                cls=TextPresets.muted_sm,
+            ),
             action="/login/send",
             method="post",
             cls="space-y-4",
-        )
-        if notify.phone_sign_in_enabled()  # off while Twilio is unset
-        else None,
+        ),
         error=error,
-        intro=INTRO,
+        intro=notice or INTRO,
         aside=Div(
             Div(
                 *[CauseChip(c.slug, c.label) for c in data.active_causes()],
@@ -103,44 +170,29 @@ def PhoneForm(phone="", error=None):
     )
 
 
-def CodeForm(phone, error=None):
-    return SignInPage(
-        "Enter your code",
-        Form(
-            Field(
-                "Code",
-                TextInput(
-                    name="code",
-                    inputmode="numeric",
-                    autocomplete="one-time-code",
-                    maxlength="6",
-                    aria_label="Code",
-                    required=True,
-                    cls="h-14 text-center text-2xl font-bold tracking-[0.4em]",
-                ),
-            ),
-            BigButton("Sign in"),
-            action="/login/verify",
-            method="post",
-            cls="space-y-4",
-        ),
-        P("Wrong number? ", A("Start over", href="/login", cls=AT.muted)),
-        error=error,
-        intro=f"We texted a code to {phone}.",
-    )
-
-
-def phone_off():
-    """The phone-code routes' answer while Twilio is unset (notify.phone_sign_in_enabled)."""
-    return security.page(
-        404, "Not found", "That page isn't here. Go back and try again."
-    )
-
-
 @ar("/login", methods=["GET"])
-def login_page(sess):
-    pending_phone(sess)  # an expired number leaves the cookie
-    return PhoneForm()
+def login_page():
+    return LoginPage()
+
+
+def _send_link(email):
+    """After the response, so every address takes the same time to answer
+    (data.volunteer_link_kind decides what is sent). (link, whether a preview may show
+    it: not an admin's), or (None, False) when nothing was sent."""
+    kind = data.volunteer_link_kind(email)
+    if kind == "sign-up" and not security.allow((security.SIGNUP_ALL, "all")):
+        return None, False  # past the app-wide ceiling (logged by name): nothing sent
+    try:
+        if kind == "staff":  # the nonprofit sign-in's own link, as /org/login sends
+            profile, is_coordinator = data.staff_by_email(email)
+            token = data.create_login_token(profile.id)
+            return notify.send_login_link(email, token), is_coordinator
+        if kind:
+            token = data.create_email_token(email)
+            return notify.send_volunteer_link(email, token, kind == "sign-up"), True
+    except Exception as e:  # noqa: BLE001  nothing here may reach the user: it would reveal the account
+        log.warning("sending a sign-in link failed: %s", type(e).__name__)
+    return None, False
 
 
 @ar("/login/send", methods=["POST"])
@@ -152,28 +204,43 @@ async def send(req, sess):
 
 
 def _sync_send(req, form, sess):
-    if not notify.phone_sign_in_enabled():
-        return phone_off()
-    phone = form.get("phone", "")
-    e164 = normalize_phone(phone)
-    if not e164:
-        return PhoneForm(phone, BAD_PHONE)
-    if is_preview() and not demo_number(e164):  # demo-only: no code, nothing counted
-        return PhoneForm(phone, PREVIEW_PHONES)
-    # before the suspended check, so a refusal looks the same for every number
-    if not security.allow(*security.sms_send_limits(req, e164)):
+    raw = form.get("email", "").strip()
+    # not ASCII is refused before lowercasing, which would turn the Kelvin sign into a "k"
+    if len(raw) > 254 or not raw.isascii() or not EMAIL.fullmatch(raw):
+        return LoginPage(raw[:254], BAD_EMAIL)
+    email = raw.lower()
+    # every valid-shape address is counted, in the nonprofit link's own buckets, so a
+    # refusal says nothing about the account and the two pages share one budget
+    if not security.allow(*security.link_limits(req, email)):
         return security.too_many()
-    try:
-        if not data.phone_suspended(e164):  # a suspended number costs no text
-            notify.send_code(e164)
-    except httpx.HTTPError as e:
-        log.warning("sending a sign-in code failed: %s", type(e).__name__)
-        return PhoneForm(
-            phone, "We couldn't send a text just now. Try again in a minute."
-        )
-    sess.clear()
-    set_pending(sess, e164)
-    return CodeForm(e164)
+    if is_preview() and not demo_address(email):
+        # A preview is demo-only, as /org/login there (org_auth.link_sent): any other
+        # address gets the same answer and nothing is sent, shown or logged, so a real
+        # address neither signs up there nor gets a link
+        return LoginPage(notice=SENT)
+    asked_for(sess, email)
+    if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
+        # As /org/login on a preview (org_auth.link_sent): nothing is emailed, so the page
+        # shows the link, for the demo's data only. An admin's stays in the log.
+        link, shown = _send_link(email)
+        return LoginPage(notice=SENT, link=link if shown else None)
+    return LoginPage(notice=SENT), BackgroundTask(_send_link, email)
+
+
+@ar("/login/verify", methods=["GET"])
+def confirm(req, sess):
+    """Consumes nothing, so a mail scanner that fetches the link can't use it up: the
+    token moves into the session and the browser comes back here without it, as on
+    /org/login/verify, to ConfirmPage, which only peeks at it."""
+    token = query(req, "token")
+    if token:
+        sess[TOKEN_KEY] = token[:200]
+        return Redirect("/login/verify")
+    _, email = data.peek_login_token(sess.get(TOKEN_KEY, ""))
+    if not email:
+        return HttpHeader("Referrer-Policy", "same-origin"), LoginPage(error=BAD_LINK)
+    owner = data.email_sign_in_owner(email)
+    return ConfirmPage("/login/verify", email, sess, owner)
 
 
 @ar("/login/verify", methods=["POST"])
@@ -181,55 +248,44 @@ async def verify(req, sess):
     form = await str_form(req)
     if form is None:
         return bad_request()
-    return await run_in_threadpool(_sync_verify, req, form, sess)
+    return await run_in_threadpool(_sync_verify, form, sess)
 
 
-def _sync_verify(req, form, sess):
-    if not notify.phone_sign_in_enabled():
-        return phone_off()
-    e164 = pending_phone(sess)  # only the number a code was sent to, for 15 minutes
-    if not e164:
-        return PhoneForm(error="Enter your number to get a code.")
-    code = form.get("code", "").strip()
-    if not re.fullmatch(r"[0-9]{6}", code):
-        return CodeForm(e164, "Enter the 6-digit code from the text.")
-    # only wrong codes count, so the right one always gets through below the limit
-    if not security.allow(*security.verify_limits(e164), record=False):
-        return security.too_many()
-    try:
-        ok = notify.check_code(e164, code)
-    except httpx.HTTPError as e:
-        log.warning("checking a sign-in code failed: %s", type(e).__name__)
-        return CodeForm(e164, "We couldn't check that code just now. Try again.")
-    if not ok:
-        security.allow(*security.verify_limits(e164))
-        return CodeForm(e164, "That code didn't work. Check the text and try again.")
-    uid = None
-    if demo_matches() and demo_volunteer and e164 == DEMO_PHONE:
-        if not security.allow((security.DEMO_PER_IP, security.ip_subject(req))):
-            return security.too_many()  # a fresh copy each time: 10 an hour per address
-        uid = demo_volunteer(e164)
-    uid = uid or data.get_or_create_volunteer(e164)
-    profile = data.get_profile(uid)
-    sess.clear()  # the code is used: the number leaves the session either way
-    if profile is None:  # suspended by an admin
-        return PhoneForm(
-            error="This number can't sign in. Contact us if that is a mistake."
-        )
+def _sync_verify(form, sess):
+    """Uses the token up, then signs in the volunteer who signed up with its address, or
+    creates them (data.volunteer_for_identity, as a first Google sign-in does): a deleted
+    account's suspension and org blocks on the address come back."""
+    token = sess.pop(TOKEN_KEY, "") or form.get("token", "")
+    email = data.consume_email_token(token) if 0 < len(token) <= 200 else None
+    # checked again: the address may have become staff's, or suspended, since it was sent
+    if not email or data.volunteer_link_kind(email) not in ("sign-in", "sign-up"):
+        return LoginPage(error=BAD_LINK)
+    claims = oauth.Claims(
+        provider=data.EMAIL_SIGN_IN,
+        subject=email,
+        email=email,
+        email_verified=True,  # the link reached this mailbox
+        given_name="",
+        family_name="",
+        picture_url="",
+    )
+    profile = data.get_profile(data.volunteer_for_identity(claims))
+    if profile is None or profile.role != "volunteer":  # suspended by an admin
+        sess.clear()
+        return LoginPage(error=SUSPENDED)
     return sign_in(sess, profile)
 
 
 @ar("/login/demo", methods=["POST"])
 def demo_sign_in(req, sess):
     """ "Try it as a volunteer" (config.demo_matches only; production answers 403): a fresh
-    copy of the demo volunteer, as signing in with the demo number gives. Counted against
-    the address's sign-in limits, so it can't make copies in a loop."""
+    copy of the demo volunteer. Counted against the address's sign-in link limit, as the
+    nonprofit's demo is, so it can't make copies in a loop."""
     if not (demo_matches() and demo_volunteer):
         return Refusal(403)
     if not security.allow(
         (security.DEMO_PER_IP, security.ip_subject(req)),
-        (security.SMS_PER_IP, security.ip_subject(req)),
-        (security.SMS_PER_NET, security.ip_subject(req, 48)),
+        (security.LINK_PER_IP, security.ip_subject(req)),
     ):
         return security.too_many()
     return sign_in(sess, data.get_profile(demo_volunteer(DEMO_PHONE)))

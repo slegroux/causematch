@@ -120,6 +120,7 @@ def pages(anon, user, coord):
         (anon, "/login"),
         (anon, "/org/login"),
         (anon, "/org/login/verify"),
+        (anon, "/login/verify"),
         (anon, "/auth/fake/consent"),  # the fake Google page (CAUSEMATCH_FAKE_OAUTH=1)
         (anon, "/org/claim"),
         (anon, "/privacy"),
@@ -193,15 +194,17 @@ def test_every_field_has_its_franken_class(pages):
     assert seen > 50  # the pages above really hold forms
 
 
-def test_code_step_field_has_its_class(anon):
-    r = anon.post("/login/send", data={"phone": "3105550177"})
-    assert 'name="code"' in r.text
-    assert unstyled(r.text)[0] == []
+def test_link_steps_fields_have_their_class(anon):
+    for r in (
+        anon.post("/login/send", data={"email": "x@example.org"}),
+        anon.get("/login/verify"),
+    ):
+        assert unstyled(r.text)[0] == []
 
 
 def test_sign_in_pages_keep_their_labels_and_buttons(anon):
     login = anon.get("/login").text
-    assert 'aria-label="Mobile number"' in login and "Text me a code" in login
+    assert 'aria-label="Email"' in login and "Email me a link" in login
     org = anon.get("/org/login").text
     assert 'aria-label="Email"' in org and "Email me a link" in org
 

@@ -26,6 +26,9 @@ log = logging.getLogger("causematch")
 LA = ZoneInfo("America/Los_Angeles")
 ME_PHONE = "(310) 555-0100"  # Sam, with matches, a chat and shifts (demo_volunteer)
 NO_PHOTO_PHONE = "(310) 555-0103"  # Priya, who has no photo yet
+# Their emailed-link sign-in, without config.demo_matches only (_email_sign_in)
+ME_EMAIL = "sam@demo.causematch.test"
+NO_PHOTO_EMAIL = "priya@demo.causematch.test"
 COORDINATOR = ("pat@demo.causematch.test", "Pat Doe, volunteer lead")
 # the stand-in coordinators of the other orgs (data.DEMO_TEAM_DOMAIN), by turns
 TEAM_NAMES = ("Rosa", "Alex", "Jamie", "Noor", "Luis", "Kim", "Theo", "Dana")
@@ -370,8 +373,10 @@ def seed(seed_file=None):
     9 am, the first card in ME_PHONE's deck, and its first wave (the fake SMS log shows
     ME_PHONE's text). Returns what a demo needs to sign in.
 
-    With config.demo_matches on, ME_PHONE signs each visitor in as a fresh copy of Sam
-    instead (demo_volunteer); this one stays for the coordinator's inbox and chat."""
+    Without config.demo_matches, Sam and Priya sign in with the emailed link (ME_EMAIL,
+    NO_PHOTO_EMAIL). With it on, "Try it as a volunteer" signs each visitor in as a fresh
+    copy of Sam instead (demo_volunteer), and this one stays for the coordinator's inbox
+    and chat."""
     from app import data, photos
     from app.auth import normalize_phone
     from app.db import (
@@ -469,6 +474,8 @@ def seed(seed_file=None):
 
     _teams(org.id)
     me = _sam(data.get_or_create_volunteer(normalize_phone(ME_PHONE)))
+    _email_sign_in(me, ME_EMAIL)
+    _email_sign_in(others[2], NO_PHOTO_EMAIL)
     m = data.swipe(me, first.id, True)
     data.decide(coord, m.id, True)
     data.send_message(
@@ -491,6 +498,18 @@ def seed(seed_file=None):
         "urgent_opening_id": urgent,
         "soon_opening_ids": soon,
     }
+
+
+def _email_sign_in(uid, email):
+    """Let a seeded volunteer sign in with the emailed link to `email`, as one who signed
+    up by email can (a phone is never a way in). Not with config.demo_matches on: every
+    visitor would share the one account; there "Try it as a volunteer" gives each a copy."""
+    from app import data, oauth
+    from app.config import demo_matches
+
+    if not demo_matches():
+        claims = oauth.Claims(data.EMAIL_SIGN_IN, email, email, True, "", "", "")
+        data.link_identity(uid, claims)
 
 
 def _sam(uid):
@@ -580,7 +599,7 @@ def _matches(uid, coordinator_org_id, kinds):
 
 
 def demo_volunteer(phone):
-    """Signing in with ME_PHONE while config.demo_matches is on (the auth route's hook,
+    """ "Try it as a volunteer" while config.demo_matches is on (the auth route's hook,
     set by main.py): a fresh Sam for this visitor alone, with their preferences and photo
     and a full deck whose first card is the urgent call. Sam also arrives with a history
     at the coordinator's org: a match accepted 15 days ago on its first opening (whatever

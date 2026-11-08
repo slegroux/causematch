@@ -6,7 +6,14 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import coordinator_for, org_sign_in, uid_of, volunteer
+from conftest import (
+    add_number,
+    adder,
+    coordinator_for,
+    org_sign_in,
+    uid_of,
+    volunteer,
+)
 from starlette.testclient import TestClient
 
 from app import data, notify
@@ -958,7 +965,7 @@ def test_wave_waits_out_quiet_hours_instead_of_spending_itself(shelter, sweep):
     assert urgent_calls[call.id].waves == 1
 
 
-def test_wave_urgent_texts_leave_half_the_sms_budget_to_sign_in_codes(
+def test_wave_urgent_texts_leave_half_the_sms_budget_to_other_codes(
     shelter, sweep, monkeypatch
 ):
     monkeypatch.setenv("SMS_MAX_PER_HOUR", "2")
@@ -969,10 +976,8 @@ def test_wave_urgent_texts_leave_half_the_sms_budget_to_sign_in_codes(
     assert statuses == ["deferred", "deferred", "sent"] and this_call(call) < set(vols)
     verifier = notify.get_verifier()
     before = len(verifier.sent)
-    r = TestClient(app).post("/login/send", data={"phone": "(213) 555-0177"})
-    assert (
-        r.status_code == 200 and len(verifier.sent) == before + 1
-    )  # a code still goes
+    assert add_number(adder(), "(213) 555-0177") == 303
+    assert len(verifier.sent) == before + 1  # a code still goes
 
 
 def test_wave_unsubscribe_link_turns_calls_off_signed_out(shelter, sweep):

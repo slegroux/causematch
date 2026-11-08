@@ -155,8 +155,8 @@ class Identity:
 
     id: int
     user_id: int
-    provider: str  # google|apple
-    subject: str  # the ID token's sub: unique per provider, never reused
+    provider: str  # google|apple|email (data.EMAIL_SIGN_IN, the emailed link)
+    subject: str  # the ID token's sub, or the link's address: unique per provider
     email: str
     created_at: str
 
@@ -170,7 +170,8 @@ class OrgMember:
 
 class LoginToken:
     token_hash: str  # SHA-256 of the emailed token; the token itself is never stored
-    user_id: int
+    user_id: int  # a staff link's profile; NULL for a volunteer's link
+    email: str  # a volunteer's link (/login): the lowercased address it signs in or up
     expires_at: str
     used_at: str
 

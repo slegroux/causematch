@@ -386,8 +386,8 @@ def delete_save(req, sess):
 
 # --- privacy ---------------------------------------------------------------------------------
 
-EFFECTIVE = "October 31, 2026"
-UPDATED = "October 31, 2026"  # the date of the latest change to this page's text
+EFFECTIVE = "November 7, 2026"
+UPDATED = "November 7, 2026"  # the date of the latest change to this page's text
 
 
 def Section(title, *paras):
@@ -409,10 +409,11 @@ def privacy():
         ),
         Section(
             "What we collect",
-            "Volunteers: your mobile number, if you sign in with one or add one; your "
+            "Volunteers: your email address, which you sign in with (or your Google or "
+            "Apple account's, below); your mobile number, if you add one for texts; your "
             "first name and, if you give them, "
-            "your last name, pronouns, a short bio, your interests and a photo; an "
-            "email if you give one; the neighborhood you show nonprofits; the other "
+            "your last name, pronouns, a short bio, your interests and a photo; the "
+            "neighborhood you show nonprofits; the other "
             "causes you type and whether you volunteered last year; how you heard of "
             "Causematch; and your confirmation that you are 18 or over.",
             "Your match preferences: up to two places you help from (each a neighborhood "
@@ -490,21 +491,22 @@ def privacy():
         ),
         Section(
             "Who else handles your data",
-            "Twilio sends your sign-in codes and our texts. Our email provider (Resend) "
-            "sends coordinators' sign-in links and notices, and volunteers' notices when "
-            "we can't text them. If you sign in with Google or Apple, that company "
-            "confirms who you are, so it knows you use Causematch. Google Cloud hosts the "
+            "Our email provider (Resend) sends everyone's sign-in links, coordinators' "
+            "notices, and volunteers' notices when we can't text them. If you add a "
+            "mobile number, Twilio sends the code that confirms it and our texts. If "
+            "you sign in with Google or Apple, that company confirms who you are, so it knows you use Causematch. Google Cloud hosts the "
             "app and keeps its backups. Each sees only what it needs to do that job. We "
             "don't sell your data or share it for advertising.",
         ),
         Section(
             "Texts and email",
-            "We text your sign-in code, a note when a nonprofit says yes, a reminder the "
+            "If you add a number, we text a code to confirm it, a note when a nonprofit "
+            "says yes, a reminder the "
             "day before a shift, a note when a nonprofit sends a chat message and, only "
             "if you turn them on, last-minute calls (at most 3 a week, never in your "
             "quiet hours). Without a number we can text, these come by email if we have "
-            "your email. Reply STOP to end texts. We email coordinators their sign-in "
-            "link and a note when volunteers like an opening.",
+            "your email. Reply STOP to end texts. We email you your sign-in link when you "
+            "ask for one, and coordinators a note when volunteers like an opening.",
         ),
         Section(
             "How long we keep it, and what stays after you delete",
@@ -525,8 +527,9 @@ def privacy():
             "we also keep a one-way keyed hash of your phone number (not the number). If "
             "the same number signs up again, the blocks still apply, and a suspension "
             "stays in force. If you had connected Google or Apple, we keep the same kind "
-            "of hash of that account's id, in the same cases, so a block or suspension "
-            "follows that account too. We keep nothing of this kind for an account with "
+            "of hash of that account's id, and of the email address you sign in with, in "
+            "the same cases, so a block or suspension follows that account or address "
+            "too. We keep nothing of this kind for an account with "
             "no blocks or reports.",
         ),
         Section(
