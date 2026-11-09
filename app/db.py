@@ -83,7 +83,7 @@ class Opening:
     duration_minutes: (
         int  # how long a shift lasts (choices.SHIFT_LENGTHS); NULL: not said
     )
-    # the nonprofit's own screening before a first shift (migration 0021); the app
+    # the nonprofit's own screening before a first shift (migration 0022); the app
     # stores only that it is required and its kind, never a result
     screening_required: bool
     screening_kind: str  # choices.SCREENING_KINDS key; NULL when not required
