@@ -65,7 +65,8 @@ DEFINITIONS = {
     "accepted_no_shift": (
         "Accepted (or accepted then withdrawn) matches with no non-cancelled shift at all, "
         "such as an accept after the opening started. In neither first-shift count; "
-        "withdrawn ones are also in withdrew_before_first_shift."
+        "withdrawn ones are also in withdrew_before_first_shift. A match still waiting "
+        "for the nonprofit's screening (or withdrawn while it waited) is in neither."
     ),
     "withdrew_before_first_shift": (
         "Accepted matches withdrawn with no shift left: counted as not showing up in the "
@@ -218,6 +219,8 @@ def _group(swipes, matches, shifts, vols, now):
     done = no_show = unmarked_first = withdrew = no_shift = 0
     for m in accepted:
         s = first.get(m["id"])
+        if s is None and m.get("screening_status") == "pending":
+            continue  # held for screening, live or withdrawn: no shift was ever booked
         if s is None:
             no_shift += 1
             withdrew += m["status"] == "withdrawn"

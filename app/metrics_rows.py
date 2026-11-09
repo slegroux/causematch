@@ -81,7 +81,8 @@ def fetch_rows(q):
             q(
                 "SELECT m.id AS id, m.volunteer_id AS volunteer_id, m.status AS status, "
                 "m.created_at AS created_at, m.decided_at AS decided_at, "
-                f"m.withdrawn_at AS withdrawn_at, {_TAG} FROM match m "
+                "m.withdrawn_at AS withdrawn_at, m.screening_status AS screening_status, "
+                f"{_TAG} FROM match m "
                 + _JOIN.format(t="m")
                 + " WHERE coalesce(m.org_blind, 0) = 0"
             )
