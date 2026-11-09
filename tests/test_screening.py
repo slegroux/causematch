@@ -140,3 +140,47 @@ def test_the_volunteer_sees_the_wait_then_the_shift_and_the_org_confirms(user, c
     (sh,) = shifts(where="match_id = ?", where_args=[mid])
     assert "Sat Jan 5, 9:00 AM" in html and f"/shifts/{sh.id}.ics" in html
     assert "Screening pending" not in coord.get("/org/inbox").text
+
+
+def test_a_clearance_is_remembered_per_nonprofit_whatever_its_kind():
+    first, second = openings[4], openings[6]  # the shelter's two openings
+    assert first.org_id == second.org_id
+    for o, kind in ((first, "live_scan"), (second, "training")):
+        openings.update(
+            id=o.id,
+            slots=3,
+            starts_at="2030-01-05T09:00",
+            screening_required=True,
+            screening_kind=kind,
+        )
+    vol, newcomer = volunteer(), volunteer()
+    coord, _ = coordinator_for(3)
+    m1 = data.swipe(vol.uid, first.id, True)
+    data.decide(coord, m1.id, True)
+    assert matches[m1.id].screening_status == "pending"
+    data.confirm_screening(coord, m1.id)
+    m2 = data.swipe(vol.uid, second.id, True)  # same nonprofit, another kind
+    data.decide(coord, m2.id, True)
+    assert matches[m2.id].screening_status is None
+    assert shifts(where="match_id = ?", where_args=[m2.id])
+    assert system_lines(m2.id) == []
+    m3 = data.swipe(newcomer.uid, second.id, True)  # nobody cleared them: still held
+    data.decide(coord, m3.id, True)
+    assert matches[m3.id].screening_status == "pending"
+
+
+def test_me_lists_the_clearance_and_the_privacy_page_has_a_screening_paragraph(
+    user, coord
+):
+    page = unescape(user.get("/me/screenings").text)
+    assert "No screenings yet." in page
+    oid = screened_opening()
+    user.post("/swipe", data={"opening_id": oid, "liked": "1"})
+    mid = matches()[0].id
+    coord.post(f"/org/matches/{mid}/decide", data={"decision": "accept"})
+    coord.post(f"/org/matches/{mid}/screening")
+    page = unescape(user.get("/me/screenings").text)
+    assert f"{data.org_name_of(oid)}" in page and "Live Scan fingerprinting" in page
+    assert "confirmed " in page and "It never sees documents or results." in page
+    assert 'href="/me/screenings"' in user.get("/profile").text
+    assert ">Screening<" in user.get("/privacy").text
