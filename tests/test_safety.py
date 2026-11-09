@@ -25,7 +25,7 @@ from fasthtml.common import to_xml
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import config, data, notify, oauth, propublica
+from app import config, data, notify, oauth, propublica, ui
 from app.choices import SHARED_WITH_NONPROFIT
 from app.db import (
     blocks,
@@ -1091,6 +1091,45 @@ def test_privacy_page_is_complete_and_honest(anon):
     ):
         assert needed in text, needed
     assert "only if it is part of a report" not in text
+
+
+def test_privacy_in_production_smtp_renders_gmail_no_twilio_no_phone_wording(
+    anon, monkeypatch
+):
+    """Production's config: Gmail SMTP, no Twilio. Nothing a volunteer reads there speaks
+    of texts or numbers (the one "phone" left is SHARED_WITH_NONPROFIT's "never your
+    phone")."""
+    gmail = notify.make_emailer(
+        {
+            "CAUSEMATCH_ENV": "test",
+            "SMTP_USERNAME": "causematch.example@gmail.com",
+            "SMTP_PASSWORD": "abcdefghijklmnop",
+        }
+    )
+    monkeypatch.setattr(notify, "_emailer", gmail)
+    monkeypatch.setattr(notify, "_sms", None)
+    monkeypatch.setattr(notify, "_verifier", None)
+    text = anon.get("/privacy").text.replace("&#x27;", "'")
+    assert "Our email provider (Google, through Gmail)" in text
+    assert "sends everyone's sign-in links and notices" in text
+    assert "a reminder the day before a shift" in text and "one-way keyed hash" in text
+    words = lambda page: re.sub(r"<[^>]*>", " ", page.split("<body", 1)[1])
+    rest = words(text).replace(SHARED_WITH_NONPROFIT, "")
+    for word in ("twilio", "resend", "text message", "texts", "we text", "reply stop"):
+        assert word not in rest.lower(), word
+    assert not re.search(r"\b(phone|mobile|sms)\b", rest, re.IGNORECASE)
+
+    vol = volunteer()
+    for path in (
+        "/me/preferences/urgent",
+        "/profile/delete",
+        "/me/profile",
+        "/profile",
+    ):
+        page = words(vol.get(path).text)
+        assert not re.search(r"\b(texts?|phone|sms)\b", page, re.IGNORECASE), path
+    assert "we email you." in vol.get("/me/preferences/urgent").text
+    assert ui.like_sent("Garden Friends").endswith("We'll email you.")
 
 
 # ProPublica

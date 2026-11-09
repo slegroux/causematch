@@ -32,7 +32,6 @@ from app.ui import (
     CARD,
     CHAT,
     HEART,
-    LIKE_SENT,
     MATCH_STATUS,
     NEXT,
     ORG_SECTION,
@@ -52,6 +51,7 @@ from app.ui import (
     Refusal,
     Router,
     VolunteerShell,
+    like_sent,
     status_pill,
     when,
 )
@@ -122,7 +122,7 @@ def _sync_swipe(req, form):
             # volunteer's daily share of like notices the org sees the like in its inbox.
             if not m.org_blind and security.allow((security.LIKE_NOTICES, uid)):
                 notify.after(req, notify.on_new_like, m.id)
-            notice = LIKE_SENT.format(data.org_name_of(m.opening_id))
+            notice = like_sent(data.org_name_of(m.opening_id))
             if not data.get_profile(uid).heard_from:  # the one optional card, once
                 more = (
                     f"/onboarding/more?liked={m.opening_id}"  # it shows the notice too

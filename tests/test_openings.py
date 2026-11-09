@@ -364,27 +364,27 @@ def test_name_is_required_before_posting(coord):
     assert "Maria Lopez, coordinator" in coord.get("/org/organization").text
 
 
-def test_details_form_validation_and_text_needs_a_phone(coord):
+def test_details_form_asks_no_phone_and_keeps_a_stored_one_for_text(coord):
     from app.db import profiles
 
     uid = profiles(where="role = 'coordinator'")[0].id
     form = coord.get("/org/openings/new").text  # no phone: email is the only way
     assert "Reaching you" not in form and 'name="reply_channel"' in form
     assert re.search(r'<input[^>]*type="hidden"[^>]*name="reply_channel"', form)
-    bad = coord.post("/org/details", data={"name": "Maria", "phone": "12345"})
-    assert bad.status_code == 200 and "Enter a US phone number" in bad.text
-    empty = coord.post("/org/details", data={"name": " ", "phone": ""})
+    assert 'name="phone"' not in coord.get("/org/organization").text
+    empty = coord.post("/org/details", data={"name": " "})
     assert "Enter your name" in empty.text
     assert coord.post("/org/details", files={"name": ("a", b"x")}).status_code == 400
     assert profiles[uid].display_name == "Pat Doe, coordinator"
-    assert (
-        coord.post(
-            "/org/details",
-            data={"name": "Maria", "phone": "(310) 555-0123"},
-            follow_redirects=False,
-        ).status_code
-        == 303
+    ok = coord.post(
+        "/org/details",
+        data={"name": "Maria", "phone": "(310) 555-0123"},
+        follow_redirects=False,
     )
+    assert ok.status_code == 303 and not profiles[uid].contact_phone  # ignored
+    # a number stored before the field went stays, with Text beside it
+    profiles.update(id=uid, contact_phone="+13105550123")
+    coord.post("/org/details", data={"name": "Maria"}, follow_redirects=False)
     assert profiles[uid].contact_phone == "+13105550123"
     assert "Reaching you" in coord.get("/org/openings/new").text
     reply = (

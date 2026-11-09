@@ -222,7 +222,9 @@ def DetailsForm(p, f=None):
         H2("Only we see", cls=ORG_SECTION + " pt-2"),
         P("Never shown to nonprofits.", cls=TextPresets.muted_sm),
         Field(
-            "Email (optional, for last-minute calls when you have no texts)",
+            "Email (optional, for last-minute calls when you have no texts)"
+            if notify.texts_on()
+            else "Email (optional, for last-minute calls)",
             TextInput(
                 name="email",
                 type="email",
@@ -424,8 +426,9 @@ def ProfilePage(uid, error=None, notice=None, f=None, pending=None):
             cls="mt-4 overflow-hidden " + CARD,
         ),
         P(
-            "Deleting your account removes your name, phone, email and location and "
-            "withdraws your matches.",
+            "Deleting your account removes your name, "
+            + ("phone, " if notify.texts_on() else "")
+            + "email and location and withdraws your matches.",
             cls=TextPresets.muted_sm + " px-2 pt-2",
         ),
         Script(src="/static/photo.js", defer=True),

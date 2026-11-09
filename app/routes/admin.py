@@ -476,7 +476,7 @@ def ClaimCard(c, error=None):
         P(org["name"] if org else c["org_name"], cls=ORG_SECTION),
         P(f"{org['city']} · {ein}" if org and org["city"] else ein, cls="text-ink"),
         P(
-            f"{c['name']} · {c['email']}" + (f" · {c['phone']}" if c["phone"] else ""),
+            f"{c['name']} · {c['email']}",
             cls="text-ink break-words",
         ),
         P(f"They typed: {c['org_name']}", cls=TextPresets.muted_sm)

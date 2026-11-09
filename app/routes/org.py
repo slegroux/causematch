@@ -34,7 +34,6 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from app import data, notify, prefs
-from app.auth import normalize_phone
 from app.choices import (
     AVAILABILITY,
     EFFORT,
@@ -92,7 +91,6 @@ ORIENTATION = [
 ]
 REPLY = [("email", "Email"), ("text", "Text"), ("either", "Either")]
 MAX_AHEAD = timedelta(days=366)
-BAD_PHONE = "Enter a US phone number, like (310) 555-0123, or leave it blank."
 
 
 def reply_options(has_phone):
@@ -112,16 +110,6 @@ def DetailsForm(profile, error=None, back="/org"):
                 value=profile.display_name or "",
                 maxlength="80",
                 required=True,
-            ),
-        ),
-        Field(
-            "Phone (optional)",
-            TextInput(
-                name="phone",
-                type="tel",
-                inputmode="tel",
-                value=profile.contact_phone or "",
-                autocomplete="tel",
             ),
         ),
         Alert(error, cls=AlertT.error) if error else None,
@@ -786,14 +774,12 @@ def _sync_save_details(req, form):
     uid = req.scope["uid"]
     back = form.get("back")
     back = back if back in ("/org", "/org/organization") else "/org"
-    name, phone = form.get("name", "").strip(), form.get("phone", "").strip()
+    name = form.get("name", "").strip()
     error = None
     if not name or len(name) > 80:
         error = "Enter your name and role (80 characters at most)."
     elif hidden_chars(name):
         error = HIDDEN_CHARS_MESSAGE
-    elif phone and not normalize_phone(phone):
-        error = BAD_PHONE
     if error:
         if back == "/org":
             return org_home(req, error)
@@ -801,7 +787,8 @@ def _sync_save_details(req, form):
         from app.routes.org_profile import OrganizationPage
 
         return OrganizationPage(uid, details_error=error)
-    data.set_coordinator_details(uid, name, normalize_phone(phone) if phone else "")
+    # no phone for now: the form has none, and a number already stored stays
+    data.set_coordinator_details(uid, name, data.get_profile(uid).contact_phone or "")
     return Redirect(back)
 
 
@@ -931,7 +918,7 @@ def opening_error(f, profile, skip=()):
         v for v, _ in reply_options(bool(profile.contact_phone))
     }:
         return (
-            "Please choose how we should send you interested volunteers. Text needs a phone number in your details.",
+            "Please choose how we should send you interested volunteers.",
             None,
             None,
         )

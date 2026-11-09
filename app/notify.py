@@ -645,6 +645,12 @@ def get_sms():
     return _sms
 
 
+def texts_on():
+    """Whether the app can text anyone (Twilio configured, or the fake). Off, as in
+    production, every notice is an email and no page speaks of texts or numbers."""
+    return get_sms() is not None
+
+
 def channel(uid):
     """How a volunteer hears from us: "sms" to a number that may be texted (and only while
     Twilio is configured), else "email" when their live profile has an address, else None
