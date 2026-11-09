@@ -91,4 +91,4 @@ def test_the_images_start_is_entrypoint_sh():
         for line in (ROOT / "Dockerfile").read_text().splitlines()
         if line.startswith("CMD ")
     ]
-    assert json.loads(cmds[-1].removeprefix("CMD ")) == ["/app/entrypoint.sh"]
+    assert json.loads(cmds[-1].removeprefix("CMD ")) == ["/bin/sh", "/app/entrypoint.sh"]

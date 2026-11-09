@@ -45,5 +45,6 @@ RUN rm ./preview-seed/.python-version \
 USER causematch
 
 # The Procfile's uvicorn, without uv run (no syncing as this user at startup), under
-# Litestream when LITESTREAM_BUCKET is set
-CMD ["/app/entrypoint.sh"]
+# Litestream when LITESTREAM_BUCKET is set. Through sh, so the start doesn't depend on
+# entrypoint.sh's executable bit; it execs, and the server is still PID 1.
+CMD ["/bin/sh", "/app/entrypoint.sh"]
