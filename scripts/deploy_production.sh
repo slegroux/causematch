@@ -58,6 +58,18 @@ if [ "$name" != "Causematch" ]; then
 	echo "project $PROJECT is not the one named Causematch (got '$name'): refusing" >&2
 	exit 1
 fi
+# Bucket names are global: anyone could have made $LITESTREAM_BUCKET, and it would receive
+# the database. Stream only to a bucket in this project (the bucket's projectNumber, from the
+# API's own format with --raw). Missing, unreadable or another project's: refused.
+number="$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)' 2>/dev/null)" ||
+	number=""
+owner="$(gcloud storage buckets describe "gs://$LITESTREAM_BUCKET" --raw \
+	--format 'value(projectNumber)' 2>/dev/null)" || owner=""
+if [ -z "$number" ] || [ "$owner" != "$number" ]; then
+	echo "bucket gs://$LITESTREAM_BUCKET is missing or not in project $PROJECT (bucket's" \
+		"project number '$owner', the project's '$number'): refusing" >&2
+	exit 1
+fi
 case "$CPU_ALWAYS_ALLOCATED" in
 1) cpu_flag=--no-cpu-throttling ;;
 0) cpu_flag=--cpu-throttling ;;

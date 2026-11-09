@@ -148,6 +148,26 @@ def deployed(calls):
     return [c for c in calls if c.startswith("run deploy")]
 
 
+def test_production_deploys_only_to_a_litestream_bucket_in_its_own_project(tmp_path):
+    rc, err, calls = deploy(tmp_path)
+    assert rc == 0, err
+    bucket = "storage buckets describe gs://causematch-la-litestream --raw"
+    assert any(c.startswith(bucket) for c in calls)
+    assert len(deployed(calls)) == 1
+
+    # another project's bucket (a squatted name), no bucket, an empty answer, and no
+    # project number to compare with
+    for env in (
+        {"FAKE_BUCKET_NUMBER": "222"},
+        {"FAKE_BUCKET_NUMBER": "missing"},
+        {"FAKE_BUCKET_NUMBER": ""},
+        {"FAKE_PROJECT_NUMBER": "", "FAKE_BUCKET_NUMBER": ""},
+    ):
+        rc, err, calls = deploy(tmp_path, **env)
+        assert rc == 1 and "gs://causematch-la-litestream" in err
+        assert deployed(calls) == []
+
+
 @pytest.mark.parametrize(
     "env",
     [
