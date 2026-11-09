@@ -1207,9 +1207,9 @@ def test_the_apps_routes_queue_their_notices_after_the_response(world, monkeypat
     monkeypatch.setattr(
         notify,
         "after",
-        lambda req, fn, *a: (
+        lambda req, fn, *a, **kw: (
             queued.append(notify.AFTER in req.scope),
-            real(req, fn, *a),
+            real(req, fn, *a, **kw),
         ),
     )
     accept(world.coord, world.match)
