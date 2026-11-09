@@ -2,6 +2,7 @@
 LITESTREAM_BUCKET is set. Run for real with fake litestream and uvicorn on PATH that log
 their arguments, one per line, and the LITESTREAM_DB they were given."""
 
+import json
 import os
 import shlex
 import subprocess
@@ -81,3 +82,13 @@ def test_with_a_bucket_it_restores_a_missing_database_then_replicates_under_uvic
     rc, _, calls = start(tmp_path, LITESTREAM_BUCKET="b", **env)
     assert rc == 0 and calls == [replicate]
     assert os.path.getsize(db) == 0
+
+
+def test_the_images_start_is_entrypoint_sh():
+    """The Dockerfile's last CMD is what Cloud Run runs: entrypoint.sh, not uvicorn alone."""
+    cmds = [
+        line
+        for line in (ROOT / "Dockerfile").read_text().splitlines()
+        if line.startswith("CMD ")
+    ]
+    assert json.loads(cmds[-1].removeprefix("CMD ")) == ["/app/entrypoint.sh"]
