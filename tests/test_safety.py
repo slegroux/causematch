@@ -1062,6 +1062,9 @@ def test_no_async_route_calls_data_directly():
                     and isinstance(call.func, ast.Attribute)
                     and isinstance(call.func.value, ast.Name)
                     and call.func.value.id in ("data", "notify")
+                    # notify.after only queues (RunAfter); it must run on the loop for
+                    # a websocket's task group
+                    and (call.func.value.id, call.func.attr) != ("notify", "after")
                 ):
                     offenders.append(f"{f.name}:{fn.name}:{call.func.attr}")
     assert offenders == []

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import threading
 import time
@@ -10,9 +11,12 @@ from zoneinfo import ZoneInfo
 import anyio.from_thread
 import pytest
 from conftest import (
+    SlowEmailer,
     coordinator,
     png,
+    post_while_mail_is_held,
     volunteer,
+    wait_for,
 )
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -511,18 +515,60 @@ def test_the_hook_runs_off_the_loop_after_the_broadcast(chat, monkeypatch):
     with chat.vol.websocket_connect(chat.vol_ws) as wv:
         say(wv, "ping")
         assert "ping" in bubble(wv)
+        wait_for(lambda: seen)  # it runs beside the socket now, not inside the frame
         go.set()
     assert seen == {"on_loop": False}
 
 
-def test_a_failing_hook_does_not_lose_the_message(chat, monkeypatch):
+def test_a_failing_hook_does_not_lose_the_message(chat, monkeypatch, caplog):
     def boom(*a):
         raise RuntimeError("sms down")
 
     monkeypatch.setattr(notify, "on_new_message", boom)
-    with chat.vol.websocket_connect(chat.vol_ws) as wv:
+    with (
+        caplog.at_level(logging.WARNING),
+        chat.vol.websocket_connect(chat.vol_ws) as wv,
+    ):
         say(wv, "still delivered")
         assert "still delivered" in bubble(wv)
+        wait_for(
+            lambda: "a notice failed after the response: RuntimeError" in caplog.text
+        )
+        say(wv, "and the socket lives on")
+        assert "and the socket lives on" in bubble(wv)
+
+
+def reached_by_email(chat, monkeypatch):
+    """The volunteer has no number, so a coordinator's message emails them; the mail
+    server holds each send (SlowEmailer)."""
+    profiles.update(id=chat.vol.uid, phone=None, email="zelda@example.org")
+    slow = SlowEmailer()
+    monkeypatch.setattr(notify, "_emailer", slow)
+    return slow
+
+
+def test_a_slow_mail_server_never_holds_the_senders_next_frame(chat, monkeypatch):
+    slow = reached_by_email(chat, monkeypatch)
+    with chat.coord.websocket_connect(chat.coord_ws) as wc:
+        say(wc, "first")
+        assert "first" in bubble(wc)
+        assert 'id="chat-error"' in wc.receive_text()  # the frame's answer, not held
+        assert slow.started.wait(4) and not slow.sent  # the notice is being sent
+        say(wc, "second")
+        assert "second" in bubble(wc) and not slow.sent
+        slow.release.set()
+        wait_for(lambda: slow.sent)  # it still arrives, once the server lets go
+    [(to, subject, _)] = slow.sent  # one: "second" is inside the 30-minute window
+    assert to == "zelda@example.org" and subject.startswith("New message from")
+
+
+def test_a_slow_mail_server_never_holds_the_post_redirect(chat, monkeypatch):
+    slow = reached_by_email(chat, monkeypatch)
+    path = f"/org/chat/{chat.id}/send"
+    r = post_while_mail_is_held(chat.coord, path, {"msg": "via form"}, slow)
+    assert r.status_code == 303
+    [(to, subject, _)] = slow.sent  # sent once the server let go, before the POST ended
+    assert to == "zelda@example.org" and subject.startswith("New message from")
 
 
 def test_a_dead_revoked_recipient_does_not_stop_the_others(chat):

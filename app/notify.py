@@ -425,43 +425,66 @@ AFTER_LIMITER = anyio.CapacityLimiter(4)
 
 
 def after(req, fn, *args):
-    """Call fn(*args) once the response is out (RunAfter), off the request: an SMTP send
-    can take seconds. Without RunAfter around the request, at once."""
+    """Call fn(*args) off the request, under AFTER_LIMITER (RunAfter): an SMTP send can
+    take seconds. For an HTTP request, once its response is out; for a websocket, at once
+    beside its frames, which never wait on it (call it from the event loop then). Without
+    RunAfter around the request, at once and inline."""
     queued = req.scope.get(AFTER)
     if queued is None:
         fn(*args)
-    else:
+    elif isinstance(queued, list):  # an HTTP request's: after its response
         queued.append((fn, args))
+    else:  # a websocket's task group
+        queued.start_soon(_run_after, [(fn, args)])
+
+
+async def _run_after(queued):
+    """Each of `queued` in a worker thread under AFTER_LIMITER, as a BackgroundTask would.
+    Never raises for them; when the server stops first, logs how many may not have gone
+    and lets the stop through."""
+    for i, (fn, args) in enumerate(queued):
+        try:
+            await anyio.to_thread.run_sync(fn, *args, limiter=AFTER_LIMITER)
+        except Exception as e:  # noqa: BLE001  the response is out already
+            log.warning("a notice failed after the response: %s", type(e).__name__)
+        except BaseException:
+            log.warning(
+                "up to %d notices not sent: the server is stopping", len(queued) - i
+            )
+            raise
 
 
 class RunAfter:
-    """ASGI middleware: after an HTTP response, runs what after() queued, each in a worker
-    thread under AFTER_LIMITER, as a BackgroundTask would. Never raises for them; when the
-    server stops first, logs how many may not have gone and lets the stop through."""
+    """ASGI middleware for after(). An HTTP request's notices run once its response is
+    out. A websocket's each start at once in a task group of the socket's own, so a frame
+    never waits on one; the socket's end waits for them, as a response's end does, so a
+    server stopping cancels them the same way (_run_after logs it)."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            return await self._socket(scope, receive, send)
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         scope[AFTER] = queued = []
         try:
             await self.app(scope, receive, send)
         finally:
-            for i, (fn, args) in enumerate(queued):
-                try:
-                    await anyio.to_thread.run_sync(fn, *args, limiter=AFTER_LIMITER)
-                except Exception as e:  # noqa: BLE001  the response is out already
-                    log.warning(
-                        "a notice failed after the response: %s", type(e).__name__
-                    )
-                except BaseException:
-                    log.warning(
-                        "up to %d notices not sent: the server is stopping",
-                        len(queued) - i,
-                    )
-                    raise
+            await _run_after(queued)
+
+    async def _socket(self, scope, receive, send):
+        error = None
+        async with anyio.create_task_group() as tg:
+            scope[AFTER] = tg
+            try:
+                await self.app(scope, receive, send)
+            except Exception as e:  # noqa: BLE001  raised below, once the notices are out
+                # inside, it would cancel the notices and come out as an ExceptionGroup
+                error = e
+        if error is not None:
+            raise error
 
 
 def make_emailer(env=os.environ):

@@ -2,7 +2,6 @@ import logging
 
 from fasthtml.common import A, Form, HttpHeader, P, Redirect, Response
 from monsterui.all import TextPresets
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, security
@@ -85,8 +84,8 @@ def org_login_page():
 
 
 def _send_link(email):
-    """After the response, so known and unknown addresses take the same time to answer.
-    The link, or None."""
+    """After the response (notify.after), so known and unknown addresses take the same
+    time to answer. The link, or None."""
     profile, _ = data.staff_by_email(email)
     if profile is None:  # unknown, deleted or suspended
         return
@@ -114,9 +113,9 @@ def _sync_org_login_send(req, form, sess):
 
 def link_sent(req, email, sess):
     """What a request for a sign-in link to this (lowercased) address answers: the
-    "check your email" page, the link sent after the response, under the link limits. Also
-    a staff provider sign-in's answer when the provider doesn't host the mailbox
-    (app/routes/oauth.py). A page, a (page, BackgroundTask), or the 429 response."""
+    "check your email" page, the link sent after the response (notify.after), under the
+    link limits. Also a staff provider sign-in's answer when the provider doesn't host the
+    mailbox (app/routes/oauth.py). A page or the 429 response."""
     # every valid-shape address is counted, so a refusal says nothing about the account
     smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
     if not security.allow(*security.link_limits(req, email, smtp)):
@@ -132,7 +131,8 @@ def link_sent(req, email, sess):
         uid = data.coordinator_by_email(email)
         if uid and data.coordinator_org_ids(uid):
             return EmailForm(notice=SENT, link=_send_link(email))
-    return EmailForm(notice=SENT), BackgroundTask(_send_link, email)
+    notify.after(req, _send_link, email)
+    return EmailForm(notice=SENT)
 
 
 @ar("/org/login/demo", methods=["POST"])

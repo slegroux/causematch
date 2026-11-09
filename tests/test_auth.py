@@ -2,8 +2,16 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 
+import anyio
 import pytest
-from conftest import coordinator_for, link_sign_in, sign_in, volunteer
+from conftest import (
+    SlowEmailer,
+    coordinator_for,
+    link_sign_in,
+    post_while_mail_is_held,
+    sign_in,
+    volunteer,
+)
 from starlette.testclient import TestClient
 
 from app import data, notify, oauth, security
@@ -77,6 +85,53 @@ def test_every_address_gets_the_same_answer_and_only_the_right_link(anon):
     assert "/login/verify?token=" in sent["new@example.org"][1]
     assert suspended not in sent  # a suspended account costs no email
     assert "/org/login/verify?token=" in sent[staff][1]  # staff get their own link
+
+
+def test_every_kind_of_address_gets_the_same_page_before_any_link_goes(monkeypatch):
+    sign_in(TestClient(app), "3105550001")
+    known = "v13105550001@example.org"
+    sign_in(TestClient(app), "3105550002")
+    suspended = "v13105550002@example.org"
+    profiles.update(
+        id=email_volunteers(suspended)[0].user_id, suspended_at="2026-01-01"
+    )
+    _, staff = coordinator_for(0)
+    pages = set()
+    for email, sends in (
+        (known, True),  # sign-in
+        ("new@example.org", True),  # sign-up
+        (staff, True),  # the staff link
+        (suspended, False),  # none
+    ):
+        slow = SlowEmailer()
+        monkeypatch.setattr(notify, "_emailer", slow)
+        form = {"email": email}
+        r = post_while_mail_is_held(TestClient(app), "/login/send", form, slow, sends)
+        assert r.status_code == 200 and [to for to, *_ in slow.sent] == (
+            [email] if sends else []
+        )
+        pages.add(sans_address(r, email))
+    assert len(pages) == 1
+
+
+@pytest.mark.parametrize(
+    "path, email",
+    [("/login/send", "new@example.org"), ("/org/login/send", "coord0@example.org")],
+)
+def test_sign_in_links_go_out_in_the_notices_own_threads(path, email, monkeypatch):
+    coordinator_for(0)
+    monkeypatch.setattr(notify, "AFTER_LIMITER", anyio.CapacityLimiter(1))
+    held, send = [], notify.get_emailer().send
+
+    def counted(*args, **kwargs):
+        held.append(
+            anyio.from_thread.run_sync(lambda: notify.AFTER_LIMITER.borrowed_tokens)
+        )
+        send(*args, **kwargs)
+
+    monkeypatch.setattr(notify.get_emailer(), "send", counted)
+    assert TestClient(app).post(path, data={"email": email}).status_code == 200
+    assert held == [1]  # under AFTER_LIMITER, not in the routes' shared pool
 
 
 def test_a_sign_up_link_creates_the_account_only_when_used(anon):
