@@ -300,6 +300,67 @@ def coordinator_for(org_index=0, email=None, role="coordinator"):
     )
 
 
+class SlowEmailer(notify.FakeEmailer):
+    """A mail server that holds each send until `release` is set (5 s at most, so a
+    regression fails instead of hanging). `started` is set once a send is held."""
+
+    def __init__(self):
+        super().__init__()
+        self.started, self.release = threading.Event(), threading.Event()
+
+    def send(self, *args, **kwargs):
+        self.started.set()
+        self.release.wait(5)
+        super().send(*args, **kwargs)
+
+
+class _Answered:
+    """ASGI wrapper: `out` is set once a response's last body has been sent."""
+
+    def __init__(self, app):
+        self.app, self.out = app, threading.Event()
+
+    async def __call__(self, scope, receive, send):
+        async def watched(message):
+            await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                self.out.set()
+
+        await self.app(scope, receive, watched)
+
+
+def post_while_mail_is_held(client, path, form, emailer, sends=True):
+    """POST as `client` while `emailer` (a SlowEmailer) holds its sends. Asserts the whole
+    response was out before the mail server let go, and, when it `sends`, that a send was
+    held after it; then lets it go. The response."""
+    answered = _Answered(app)
+    other = TestClient(answered, cookies=client.cookies)
+    got = {}
+    t = threading.Thread(
+        target=lambda: got.update(r=other.post(path, data=form, follow_redirects=False))
+    )
+    t.start()
+    try:
+        assert answered.out.wait(4), "the response waited on the mail server"
+        if sends:
+            assert (
+                emailer.started.wait(4) and not emailer.sent
+            )  # held, after the response
+    finally:
+        emailer.release.set()
+        t.join(10)
+    return got["r"]
+
+
+def wait_for(check, seconds=5):
+    """Until check() is true; AssertionError after `seconds`."""
+    for _ in range(int(seconds * 100)):
+        if check():
+            return
+        time.sleep(0.01)
+    raise AssertionError("never happened")
+
+
 def last_link_token():
     """The token in the sign-in link of the last email sent."""
     _, _, body = notify.get_emailer().sent[-1]
