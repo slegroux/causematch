@@ -201,6 +201,14 @@ PREVIEW_PASSWORD="$(gcloud secrets versions access latest --secret PREVIEW_PASSW
 
 **CPU.** `CPU_ALWAYS_ALLOCATED` is required on every run. `1` adds `--no-cpu-throttling`: sign-in links and notices go out after the response, and only with CPU always allocated do they reliably go (Email through Gmail, step 7). With the instance kept warm it is billed all month, about $45 at list price for 1 vCPU and 1 GiB, against about $10–15 without. `0` is cheaper and some links and notices arrive late or not at all. Production signs volunteers in by email, so choose `1`.
 
+**Switching CPU allocation later.** The first deploys run with `CPU_ALWAYS_ALLOCATED=0`, for the internal demo. Switch to always allocated before real users sign up: with throttling, background sends (sign-in links, notices) and Litestream's replication only progress while a request is being served, and at night that can mean only the scheduler's 10-minute tick. To switch without a rebuild:
+
+```sh
+gcloud run services update causematch --project causematch-la --region us-west1 --no-cpu-throttling
+```
+
+`--cpu-throttling` goes back. Or redeploy with `CPU_ALWAYS_ALLOCATED=1`. Either way it makes a new revision, which overlaps the old one (Deploys overlap, above). Every later `scripts/deploy_production.sh` sets the CPU again from `CPU_ALWAYS_ALLOCATED`, so pass the value you switched to.
+
 #### One-time setup
 
 Each step is a command the operator runs, in order. Set these first, in the same shell:
