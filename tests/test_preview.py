@@ -1195,9 +1195,14 @@ def test_in_a_preview_an_ordinary_volunteers_like_waits(user, demo):
 
 
 def _demo_opening_of_a_team(slots):
+    """The first open opening of a demo team that a fresh demo copy can swipe on and that
+    holds no accepted match yet: the seed gives its own volunteer accepted matches, and
+    where they land depends on the date."""
+    deck = {c["id"] for c in data.deck(as_demo_volunteer().uid, 200)}
     o = next(
         o for o in openings(where="status = 'open'", order_by="id")
-        if data.demo_team(o.org_id)
+        if data.demo_team(o.org_id) and o.id in deck
+        and not matches.count_where("opening_id = ? AND status = 'accepted'", [o.id])
     )  # fmt: skip
     openings.update(id=o.id, slots=slots)
     return o

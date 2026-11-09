@@ -820,7 +820,7 @@ def test_production_session_cookie_is_host_prefixed_and_secure(tmp_path):
     assert out.stdout.split() == ["__Host-cm_session", "True", "lax", "/", "None"]
 
 
-@pytest.mark.parametrize("file", ["Procfile", "Dockerfile"])
+@pytest.mark.parametrize("file", ["Procfile", "entrypoint.sh"])
 def test_procfile_runs_uvicorn_with_mains_settings(file):
     line = (ROOT / file).read_text()
     assert f"--ws-max-size {UVICORN['ws_max_size']}" in line
@@ -986,6 +986,21 @@ def test_a_new_database_records_every_step_without_running_it(tmp_path):
         1,
         2,
     ]
+
+
+def test_a_database_with_only_litestreams_tables_is_new(tmp_path):
+    """Litestream may add its tables to the file the app just made, before migrate runs:
+    the database is still new, so no migration runs against tables that don't exist."""
+    conn, ran = apsw_db(tmp_path / "new.db"), []
+    conn.execute(
+        "CREATE TABLE _litestream_seq (id INTEGER PRIMARY KEY, seq INTEGER);"
+        "CREATE TABLE _litestream_lock (id INTEGER)"
+    )
+    assert migrations.migrate(conn, [(1, ran.append)]) == 0 and ran == []
+    # the pattern's _ is literal: a table like this one is the app's
+    conn.execute("CREATE TABLE xlitestreamxthing (a TEXT)")
+    conn.execute("DELETE FROM schema_migrations")
+    assert migrations.migrate(conn, [(1, ran.append)]) == 1
 
 
 def test_a_failing_step_changes_nothing_and_stops_the_run(tmp_path):

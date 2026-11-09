@@ -55,9 +55,13 @@ def _applied(conn):
 
 
 def _is_new(conn):
+    """No tables but SQLite's, ours and Litestream's: on the first production start
+    Litestream may add _litestream_seq and _litestream_lock to the file the app just made,
+    before this runs."""
     (n,) = conn.execute(
         "SELECT count(*) FROM sqlite_master WHERE type = 'table' "
-        "AND name NOT LIKE 'sqlite_%' AND name != ?",
+        "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_litestream\\_%' ESCAPE '\\' "
+        "AND name != ?",
         [TABLE],
     ).fetchone()
     return n == 0
