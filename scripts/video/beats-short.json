@@ -1,4 +1,5 @@
 [
+ {"id": "title", "layout": "card", "role": "", "caption": "", "say": "Causematch. Swipe right for good."},
  {"id": "intro", "layout": "card", "role": "", "caption": "", "say": "Post an opening once. Volunteers nearby swipe right. You say yes, and after the shift one tap confirms their hours."},
  {"id": "post", "from": "post", "layout": "laptop", "src": "jordan", "role": "Nonprofit", "caption": "Jordan confirms hours, then posts an opening in one short form.", "say": "Jordan says the nonprofit confirms hours, then posts an opening in one short form, written once."},
  {"id": "like", "from": "like", "mark": "deck", "pre": 0.5, "speed": 1.2, "layout": "phone", "role": "Volunteer", "caption": "Each card says why it's shown. Riley likes Jordan's opening.", "say": "Each card says why it's shown: close by, free Saturday morning, confirms hours. Riley taps the heart."},
