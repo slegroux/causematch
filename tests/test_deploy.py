@@ -166,6 +166,7 @@ def test_production_deploys_only_to_a_litestream_bucket_in_its_own_project(tmp_p
         rc, err, calls = deploy(tmp_path, **env)
         assert rc == 1 and "gs://causematch-la-litestream" in err
         assert deployed(calls) == []
+        assert not any(c.startswith("secrets") for c in calls)  # checked before them
 
 
 @pytest.mark.parametrize(
