@@ -90,6 +90,23 @@ def test_confirming_books_the_shift_records_the_screening_and_fills_the_spot():
         data.confirm_screening(coord, m1.id)  # already confirmed
 
 
+def test_deleting_the_account_leaves_no_screening_and_ends_a_held_match():
+    oid = screened_opening(slots=2)
+    cleared, waiting = volunteer(), volunteer()
+    coord, _ = coordinator_for(0)
+    m1 = data.swipe(cleared.uid, oid, True)
+    m2 = data.swipe(waiting.uid, oid, True)
+    data.decide(coord, m1.id, True)
+    data.decide(coord, m2.id, True)
+    data.confirm_screening(coord, m1.id)
+    assert screenings.count_where("volunteer_id = ?", [cleared.uid]) == 1
+    data.delete_account(cleared.uid)
+    data.delete_account(waiting.uid)
+    ids = [cleared.uid, waiting.uid]
+    assert screenings.count_where("volunteer_id IN (?, ?)", ids) == 0
+    assert matches[m2.id].status == "withdrawn"
+
+
 def test_the_volunteer_sees_the_wait_then_the_shift_and_the_org_confirms(user, coord):
     oid = screened_opening(slots=2)
     org = data.org_name_of(oid)

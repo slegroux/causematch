@@ -4752,8 +4752,9 @@ def delete_account(uid):
     Soft-deleted, with every personal column scrubbed (kept: the answers the metrics group
     by), and their photos deleted. Pending and accepted matches are withdrawn and future
     shifts cancelled, their
-    message bodies are replaced, texts still queued for them are cancelled, and every
-    session ends. They can sign up again later as a new profile.
+    message bodies are replaced, texts still queued for them are cancelled, their
+    screenings are deleted, and every session ends. They can sign up again later as a
+    new profile.
     """
     with _db.db.conn:
         try:
@@ -4799,6 +4800,8 @@ def delete_account(uid):
             "snapshot = NULL, signature = NULL WHERE volunteer_id = ?",
             [_now(), uid],
         )
+        # a screening names the org, its kind and the date: nothing of it stays
+        _db.db.execute("DELETE FROM screening WHERE volunteer_id = ?", [uid])
         _db.db.execute(
             "DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", [uid]
         )
