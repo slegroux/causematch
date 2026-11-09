@@ -260,7 +260,7 @@ def link_sent(req, email, sess):
         # shows the link, for the demo's data only. An admin's stays in the log.
         link, shown = _send_link(email)
         return SentPage(email, link if shown else None)
-    notify.after(req, _send_link, email)
+    notify.after(req, _send_link, email, limiter=notify.LINK_LIMITER)
     return SentPage(email)
 
 

@@ -118,20 +118,27 @@ def test_every_kind_of_address_gets_the_same_page_before_any_link_goes(monkeypat
     "path, email",
     [("/login/send", "new@example.org"), ("/org/login/send", "coord0@example.org")],
 )
-def test_sign_in_links_go_out_in_the_notices_own_threads(path, email, monkeypatch):
+def test_sign_in_links_go_out_in_their_own_threads(path, email, monkeypatch):
     coordinator_for(0)
+    monkeypatch.setattr(notify, "LINK_LIMITER", anyio.CapacityLimiter(1))
     monkeypatch.setattr(notify, "AFTER_LIMITER", anyio.CapacityLimiter(1))
     held, send = [], notify.get_emailer().send
 
     def counted(*args, **kwargs):
         held.append(
-            anyio.from_thread.run_sync(lambda: notify.AFTER_LIMITER.borrowed_tokens)
+            anyio.from_thread.run_sync(
+                lambda: (
+                    notify.LINK_LIMITER.borrowed_tokens,
+                    notify.AFTER_LIMITER.borrowed_tokens,
+                )
+            )
         )
         send(*args, **kwargs)
 
     monkeypatch.setattr(notify.get_emailer(), "send", counted)
     assert TestClient(app).post(path, data={"email": email}).status_code == 200
-    assert held == [1]  # under AFTER_LIMITER, not in the routes' shared pool
+    # under LINK_LIMITER: not behind the notices, nor in the routes' shared pool
+    assert held == [(1, 0)]
 
 
 def test_a_sign_up_link_creates_the_account_only_when_used(anon):

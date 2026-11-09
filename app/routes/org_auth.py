@@ -131,7 +131,7 @@ def link_sent(req, email, sess):
         uid = data.coordinator_by_email(email)
         if uid and data.coordinator_org_ids(uid):
             return EmailForm(notice=SENT, link=_send_link(email))
-    notify.after(req, _send_link, email)
+    notify.after(req, _send_link, email, limiter=notify.LINK_LIMITER)
     return EmailForm(notice=SENT)
 
 

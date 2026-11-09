@@ -531,9 +531,7 @@ def test_a_failing_hook_does_not_lose_the_message(chat, monkeypatch, caplog):
     ):
         say(wv, "still delivered")
         assert "still delivered" in bubble(wv)
-        wait_for(
-            lambda: "a notice failed after the response: RuntimeError" in caplog.text
-        )
+        wait_for(lambda: "a notice failed: RuntimeError" in caplog.text)
         say(wv, "and the socket lives on")
         assert "and the socket lives on" in bubble(wv)
 
