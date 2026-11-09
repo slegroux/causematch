@@ -51,6 +51,7 @@ from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.geo import zip_latlon, zip_neighborhood
 from app.match import LA
 from app.routes.prefs import Chip
+from app.routes.safety import Shell
 from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
@@ -1228,10 +1229,12 @@ def label_of(options, value):
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
+    "full_screening": "That opening is full, counting the volunteers waiting for your "
+    "screening. Raise the spots or decline this like.",
     "reported": "Thanks. A Causematch admin will review the report.",
     "blocked": "Blocked.",
     "late": "Too late to undo that one.",
-    "screened": "Screening confirmed. The volunteer has been told in the chat.",
+    "screened": "Screening confirmed. The volunteer will find a note in the chat.",
     "screening_full": "That opening is full, so there is no spot to book.",
     "screening_closed": "That opening is closed. Reopen it to book their shift.",
 }
@@ -1331,11 +1334,12 @@ def InboxRow(m):
         )
         if m["status"] == "pending"
         else None,
-        # the first shift waits for this: the nonprofit ran its own screening off the app
-        PlainForm(
-            Button("Confirm screening", cls=ButtonT.primary),
-            action=f"/org/matches/{m['id']}/screening",
-            method="post",
+        # the first shift waits for this: the nonprofit ran its own screening off the app;
+        # the page it opens asks first (screening_page)
+        A(
+            "Confirm screening",
+            href=f"/org/matches/{m['id']}/screening",
+            cls="uk-btn uk-btn-primary",
         )
         if m["screening_pending"]
         else None,
@@ -1399,7 +1403,10 @@ def inbox(req):
         "inbox",
         data.org_badges(uid),
         H1("Volunteer inbox", cls=ORG_TITLE + " pb-4"),
-        Alert(INBOX_NOTICE[notice], cls=AlertT.warning + " mb-4")
+        Alert(
+            INBOX_NOTICE[notice],
+            cls=(AlertT.success if notice == "screened" else AlertT.warning) + " mb-4",
+        )
         if notice in INBOX_NOTICE
         else None,
         Alert(
@@ -1451,13 +1458,50 @@ def _sync_decide(req, decision, match_id: int):
     except PermissionError:
         return Refusal(403)
     except ValueError as e:
-        return Redirect(
-            f"/org/inbox?notice={'full' if 'slots' in str(e) else 'decided'}"
+        notice = (
+            "full_screening"
+            if "screening" in str(e)
+            else "full"
+            if "slots" in str(e)
+            else "decided"
         )
+        return Redirect(f"/org/inbox?notice={notice}")
     if decision == "accept":
         notify.after(req, notify.on_accepted, match_id)
         return Redirect(f"/org/inbox?notice=accepted&match={match_id}")
     return Redirect(f"/org/inbox?declined={match_id}")
+
+
+@ar("/org/matches/{match_id}/screening", methods=["GET"])
+def screening_page(req, match_id: int):
+    """Asks before confirm_screening: it books a shift and is remembered for the org."""
+    try:
+        hold = data.screening_to_confirm(req.scope["uid"], match_id)
+    except PermissionError:
+        return Refusal(403)
+    except ValueError:
+        return Redirect("/org/inbox?notice=decided")
+    books = (
+        f"This books their shift on {when(hold['starts_at'])}"
+        if hold["starts_at"]
+        else "The opening has started, so no shift is booked"
+    )
+    return Shell(
+        req.scope["uid"],
+        "/org/inbox",
+        f"Confirm that {hold['name']} cleared your {hold['screening']}?",
+        P(
+            f"{books} and we'll remember the clearance for your nonprofit.",
+            cls="text-ink",
+        ),
+        PlainForm(
+            Button("Confirm", cls=ButtonT.primary),
+            A("Back", href="/org/inbox", cls=SMALL_LINK),
+            action=f"/org/matches/{match_id}/screening",
+            method="post",
+            cls="flex items-center gap-4 pt-2",
+        ),
+    )
 
 
 @ar("/org/matches/{match_id}/screening", methods=["POST"])
@@ -1476,6 +1520,8 @@ def _sync_confirm_screening(req, match_id: int):
             "opening closed": "screening_closed",
         }
         return Redirect(f"/org/inbox?notice={notice.get(str(e), 'decided')}")
+    # the chat line was written by the app: tell the volunteer as a message would
+    notify.after(req, notify.on_new_message, match_id, data.SYSTEM_SENDER)
     return Redirect("/org/inbox?notice=screened")
 
 

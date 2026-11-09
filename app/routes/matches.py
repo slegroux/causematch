@@ -36,6 +36,7 @@ from app.ui import (
     MATCH_STATUS,
     NEXT,
     ORG_SECTION,
+    PIN,
     SMALL_LINK,
     TITLE,
     AddToCalendar,
@@ -169,9 +170,13 @@ def MatchRow(m):
             cls="flex min-h-12 items-center gap-3",
         ),
         # held for the nonprofit's own screening: no shift yet, so no time to show
-        P(
-            f"Matched · waiting for {m['org']} to confirm your screening",
-            cls="text-sm font-semibold text-ink",
+        Div(
+            P(
+                f"Waiting for {m['org']} to confirm your screening",
+                cls="text-sm font-semibold text-ink",
+            ),
+            Meta(PIN, m["neighborhood"]) if m["neighborhood"] else None,
+            cls="space-y-1.5",
         )
         if m["screening_pending"]
         else Div(

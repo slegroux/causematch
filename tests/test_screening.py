@@ -4,10 +4,10 @@ coordinator confirms it (data.decide, data.confirm_screening)."""
 from html import unescape
 
 import pytest
-from conftest import PANTRY, coordinator_for, volunteer
+from conftest import PANTRY, coordinator, coordinator_for, volunteer
 from test_match import opening
 
-from app import data
+from app import data, notify
 from app.db import matches, messages, openings, screenings, shifts
 
 
@@ -31,32 +31,37 @@ def system_lines(match_id):
     ]
 
 
-def test_an_accept_holds_the_first_shift_and_takes_no_spot():
-    oid = screened_opening(slots=1)
-    v1, v2 = volunteer(), volunteer()
+def test_an_accept_holds_the_first_shift_and_keeps_a_spot_without_filling_it():
+    oid = screened_opening(slots=2)
+    v1, v2, v3 = volunteer(), volunteer(), volunteer()
     coord, _ = coordinator_for(0)
-    m1, m2 = data.swipe(v1.uid, oid, True), data.swipe(v2.uid, oid, True)
+    m1, m2, m3 = (data.swipe(v.uid, oid, True) for v in (v1, v2, v3))
     data.decide(coord, m1.id, True)
-    data.decide(coord, m2.id, True)  # the held one took no spot
+    data.decide(coord, m2.id, True)
     for m in (m1, m2):
         assert (matches[m.id].status, matches[m.id].screening_status) == (
             "accepted",
             "pending",
         )
     assert not shifts(where="match_id IN (?, ?)", where_args=[m1.id, m2.id])
-    assert openings[oid].status == "open"
+    assert openings[oid].status == "open"  # held, so nothing filled
     assert system_lines(m1.id) == [
         (
             f"{data.org_name_of(oid)} needs to confirm your screening "
-            "(live scan fingerprinting) before your first shift."
+            "(Live Scan fingerprinting) before your first shift."
         )
     ]
+    # each held volunteer keeps a spot: no third accept, no fewer spots than holds
+    with pytest.raises(ValueError, match="screening pending"):
+        data.decide(coord, m3.id, True)
+    with pytest.raises(ValueError):
+        data.update_opening(coord, oid, slots=1)
     with pytest.raises(ValueError):
         data.add_shift(coord, m1.id, "2030-01-12T09:00")
 
 
 def test_confirming_books_the_shift_records_the_screening_and_fills_the_spot():
-    oid = screened_opening(slots=1)
+    oid = screened_opening(slots=2)
     v1, v2 = volunteer(), volunteer()
     coord, _ = coordinator_for(0)
     other, _ = coordinator_for(1)
@@ -65,6 +70,7 @@ def test_confirming_books_the_shift_records_the_screening_and_fills_the_spot():
     data.decide(coord, m2.id, True)
     with pytest.raises(PermissionError):
         data.confirm_screening(other, m1.id)
+    assert data.opening_counts(coord)[oid]["accepted"] == 0
     data.confirm_screening(coord, m1.id)
     assert matches[m1.id].screening_status == "cleared"
     (sh,) = shifts(where="match_id = ?", where_args=[m1.id])
@@ -83,11 +89,13 @@ def test_confirming_books_the_shift_records_the_screening_and_fills_the_spot():
     assert system_lines(m1.id)[-1] == (
         "Screening confirmed: your shift on Sat Jan 5, 9:00 AM is booked."
     )
-    assert openings[oid].status == "filled"
-    with pytest.raises(ValueError, match="no slots left"):
-        data.confirm_screening(coord, m2.id)  # the one spot is taken now
+    assert data.opening_counts(coord)[oid]["accepted"] == 1
     with pytest.raises(ValueError):
         data.confirm_screening(coord, m1.id)  # already confirmed
+    openings.update(id=oid, status="closed")
+    with pytest.raises(ValueError, match="opening closed"):
+        data.confirm_screening(coord, m2.id)
+    assert matches[m2.id].screening_status == "pending"
 
 
 def test_deleting_the_account_leaves_no_screening_and_ends_a_held_match():
@@ -114,12 +122,19 @@ def test_the_volunteer_sees_the_wait_then_the_shift_and_the_org_confirms(user, c
     mid = matches()[0].id
     coord.post(f"/org/matches/{mid}/decide", data={"decision": "accept"})
     html = unescape(user.get("/matches").text)
-    assert f"Matched · waiting for {org} to confirm your screening" in html
+    assert f"Waiting for {org} to confirm your screening" in html
     assert "Sat Jan 5, 9:00 AM" not in html and ".ics" not in html
+    assert "(not booked yet)" in user.get(f"/chat/{mid}").text
     inbox = coord.get("/org/inbox").text
     assert "Screening pending" in inbox and f"/org/matches/{mid}/screening" in inbox
+    ask = unescape(coord.get(f"/org/matches/{mid}/screening").text)
+    assert "cleared your screening (Live Scan fingerprinting)?" in ask
+    assert "This books their shift on Sat Jan 5, 9:00 AM" in ask
+    assert coordinator(1).post(f"/org/matches/{mid}/screening").status_code == 403
+    notify.get_sms().sent.clear()
     r = coord.post(f"/org/matches/{mid}/screening", follow_redirects=False)
     assert r.headers["location"] == "/org/inbox?notice=screened"
+    assert any(f"New message from {org}" in str(t) for t in notify.get_sms().sent)
     html = unescape(user.get("/matches").text)
     assert "confirm your screening" not in html
     (sh,) = shifts(where="match_id = ?", where_args=[mid])

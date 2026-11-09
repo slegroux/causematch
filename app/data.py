@@ -789,15 +789,18 @@ def liked_org(uid, opening_id):
     return org_name_of(opening_id) if m else None
 
 
-def _filling(match="match"):
+def _filling(match="match", holds=False):
     """(SQL, args) for an `AND ...` that keeps the accepted matches that fill an opening
     (and its urgent call): all of them, except one whose screening is still pending
-    (decide): it holds no shift, so it takes no spot until confirm_screening books one,
-    and a coordinator may accept more likes than spots while screenings are under way
-    (the confirmation past the last spot is refused). In a demo a copy's don't count
-    either, so visitors keep finding the same openings open. match: the alias of the
-    match table. Every such count goes through it, so they cannot drift apart."""
-    held = f" AND coalesce({match}.screening_status, '') != 'pending'"
+    (decide): it holds no shift, so it fills nothing until confirm_screening books one.
+    holds=True counts those too, for the counts that guard a spot rather than report a
+    fill: decide refuses a like once cleared plus held matches take every spot, and
+    update_opening keeps the spots at least that many, so every held volunteer has a
+    spot waiting and the confirmation never finds the opening full. In a demo a copy's
+    don't count either, so visitors keep finding the same openings open. match: the
+    alias of the match table. Every such count goes through it, so they cannot drift
+    apart."""
+    held = "" if holds else f" AND coalesce({match}.screening_status, '') != 'pending'"
     if not demo_matches():
         return held, []
     return (
@@ -807,8 +810,8 @@ def _filling(match="match"):
     )
 
 
-def _accepted(opening_id):
-    skip, args = _filling()
+def _accepted(opening_id, holds=False):
+    skip, args = _filling(holds=holds)
     return _db.matches.count_where(
         f"opening_id = ? AND status = 'accepted'{skip}", [opening_id, *args]
     )
@@ -1005,8 +1008,10 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
 
     On an opening that needs the nonprofit's own screening, from a volunteer with no
     screening at this org yet, an accept holds: the match is accepted with screening
-    pending and no shift, takes no spot (_filling), and the chat says what is awaited;
-    confirm_screening books the shift.
+    pending and no shift, keeps a spot without filling it (_filling), and the chat says
+    what is awaited; confirm_screening books the shift. The slot check counts held
+    matches, so "no slots left" may mean spots kept for screenings ("no slots left:
+    screening pending").
     """
     m, o = _decidable(coordinator_uid, match_id)
     status = "accepted" if accept else "declined"
@@ -1022,7 +1027,7 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
         if undoable and not accept
         else None
     )
-    skip, args = _filling()
+    skip, args = _filling(holds=True)
     with _db.db.conn:
         # One statement, so two coordinators can't both take the last slot.
         _db.db.execute(
@@ -1035,21 +1040,47 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
              match_id, int(bool(accept)), o.id, *args, o.id],
         )  # fmt: skip
         if _db.db.conn.changes() != 1:
-            now_status = _db.matches[match_id].status
-            raise ValueError(
-                "already decided" if now_status != "pending" else "no slots left"
-            )
+            if _db.matches[match_id].status != "pending":
+                raise ValueError("already decided")
+            if _db.matches.count_where(
+                "opening_id = ? AND status = 'accepted' AND screening_status = 'pending'",
+                [o.id],
+            ):
+                raise ValueError("no slots left: screening pending")
+            raise ValueError("no slots left")
         if held:
-            kind = dict(SCREENING_KINDS).get(o.screening_kind or "other", "Other")
             _db.messages.insert(
                 match_id=match_id,
                 sender_id=SYSTEM_SENDER,
-                body=f"{_db.orgs[o.org_id].name} needs to confirm your screening "
-                f"({kind.lower()}) before your first shift.",
+                body=f"{_db.orgs[o.org_id].name} needs to confirm your "
+                f"{_screening_words(o.screening_kind)} before your first shift.",
                 created_at=_now(),
             )
         elif accept:
             _book_first_shift(m, o, coordinator_uid)
+
+
+def _screening_words(kind):
+    """ "screening (Live Scan fingerprinting)": the kind's label as written, or just
+    "screening" for other (or none said)."""
+    label = dict(SCREENING_KINDS).get(kind)
+    return f"screening ({label})" if label and kind != "other" else "screening"
+
+
+def screening_to_confirm(coordinator_uid, match_id):
+    """{"name", "screening", "starts_at"} for the page that asks before confirm_screening:
+    the volunteer as the inbox names them, _screening_words, and the start of the shift a
+    confirmation would book (None when the opening has started: none would be). Errors as
+    confirm_screening's, without its spot check."""
+    m, o = _decidable(coordinator_uid, match_id)
+    if m.status != "accepted" or m.screening_status != "pending":
+        raise ValueError("not waiting for screening")
+    starts_at = _like_starts_at(m, o)
+    return {
+        "name": org_match_volunteer(coordinator_uid, match_id),
+        "screening": _screening_words(o.screening_kind),
+        "starts_at": starts_at if starts_at > _local_now() else None,
+    }
 
 
 def _book_first_shift(m, o, coordinator_uid):
@@ -1105,9 +1136,8 @@ def confirm_screening(coordinator_uid, match_id):
         _db.messages.insert(
             match_id=match_id,
             sender_id=SYSTEM_SENDER,
-            body="Screening confirmed: your shift on "
-            + datetime.fromisoformat(shift.starts_at).strftime("%a %b %-d, %-I:%M %p")
-            + " is booked."
+            body=f"Screening confirmed: your shift on {_match.start_text(shift.starts_at)} "
+            "is booked."
             if shift
             else "Screening confirmed.",
             created_at=now,
@@ -1326,10 +1356,11 @@ def org_inbox(coordinator_uid):
     pronouns, bio, interests, causes, availability (as general buckets), the languages
     they speak, neighborhood, frequency. A row also says which shift the like is for
     (starts_at, duration_minutes, slots, spots_left) and whether it fits their usual times
-    (fits, as those buckets, never the days). One query
+    (fits, as those buckets, never the days). Spots left count the volunteers held for
+    screening as taken (_filling holds=True): no one may be accepted into their spot. One query
     selects only those columns, so phone, email and location never leave SQLite.
     """
-    skip, args = _filling("a")
+    skip, args = _filling("a", holds=True)
     labels = {c.slug: c.label for c in _db.causes()}
     interests = dict(INTERESTS)
     rows = _db.db.query(
@@ -2282,6 +2313,8 @@ def chat_header(uid, match_id):
         "neighborhood": o.neighborhood,
         "availability": availability,  # the volunteer's usual times, for the coordinator
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
+        # accepted, its first shift held for the nonprofit's screening (decide)
+        "screening_pending": m.status == "accepted" and m.screening_status == "pending",
         **_face(the_org, o),
     }
 
@@ -3356,13 +3389,14 @@ _OPENING_EDITS = {
 def opening_locks(opening_id):
     """What can't change on this opening now: {"accepted": volunteers accepted, counted as
     the fill does (a demo copy's don't count, or they would push the spots minimum above
-    the opening's own spots), "when" and "cause": True once anyone liked it (the deck
+    the opening's own spots) plus those held for screening, who each keep a spot
+    (_filling), "when" and "cause": True once anyone liked it (the deck
     ranked it by its cause for them, and a liker chose it for its time). For these two
     every match counts, a demo copy's too: they protect the people who planned around
     the opening."""
     liked = _db.matches.count_where("opening_id = ?", [opening_id]) > 0
     return {
-        "accepted": _accepted(opening_id),
+        "accepted": _accepted(opening_id, holds=True),
         "when": liked,
         "cause": liked,
     }
@@ -3946,7 +3980,8 @@ def sms_opted_out(uid):
 
 
 def match_notice(match_id):
-    """{"volunteer_id", "org_id", "org", "opening", "status"} of a match, or None."""
+    """{"volunteer_id", "org_id", "org", "opening", "status", "screening_pending",
+    "silent"} of a match, or None."""
     try:
         m = _db.matches[match_id]
         o = _db.openings[m.opening_id]
@@ -3959,6 +3994,8 @@ def match_notice(match_id):
         "org": org.name,
         "opening": o.title,
         "status": m.status,
+        # held for the nonprofit's screening (decide): no shift was ever booked
+        "screening_pending": m.screening_status == "pending",
         # a blocked volunteer's like never reaches the org; a deactivated org sends nothing
         "silent": bool(m.org_blind or org.deactivated_at),
     }
@@ -5077,6 +5114,7 @@ def _drop_demo_volunteer(uid):
         ("DELETE FROM swipe WHERE volunteer_id = ?", 1),
         ("DELETE FROM place WHERE user_id = ?", 1),
         ("DELETE FROM certificate WHERE volunteer_id = ?", 1),
+        ("DELETE FROM screening WHERE volunteer_id = ?", 1),
         ("DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", 1),
         ("DELETE FROM deck_empty WHERE volunteer_id = ?", 1),
         ("DELETE FROM notification WHERE recipient_id = ? AND kind != 'likes'", 1),
