@@ -585,6 +585,10 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "about": o.about,
                 "notes": o.notes,
                 "orientation": o.orientation_required,
+                # the nonprofit's own screening (its kind, for the sheet), else None
+                "screening": (o.screening_kind or "other")
+                if o.screening_required
+                else None,
                 "surprise": odd,
                 "why": why,
                 # the card's picture: the opening's photo, else the org's; its logo
@@ -3114,9 +3118,12 @@ def create_opening(
     group_size="",
     first_timer_ok=False,
     languages=(),
+    screening_required=False,
+    screening_kind=None,
 ):
     """Opening id. Only an org member may post; the status always starts open. The kind
-    of work (setting ... languages) is optional: "" is not said.
+    of work (setting ... languages) is optional: "" is not said. screening_kind
+    (choices.SCREENING_KINDS) is kept only when screening_required.
 
     ValueError without coordinates: an in-person opening needs a place to be ranked.
     """
@@ -3151,6 +3158,8 @@ def create_opening(
             group_size=group_size,
             first_timer_ok=first_timer_ok,
             languages=json.dumps(sorted(set(languages))),
+            screening_required=bool(screening_required),
+            screening_kind=screening_kind if screening_required else None,
         )
     ).id
 
@@ -3242,6 +3251,8 @@ _OPENING_EDITS = {
     "group_size": "kind of work",
     "first_timer_ok": "kind of work",
     "languages": "kind of work",
+    "screening_required": "screening",
+    "screening_kind": "screening",
     "reply_channel": None,
 }
 
@@ -3268,8 +3279,8 @@ def update_opening(coordinator_uid, opening_id, **new):
 
     PermissionError as coordinator_opening, and for a deactivated org. ValueError, its
     message plain text for the coordinator: the opening is closed, spots below the
-    volunteers accepted, or a date, time or cause changed past opening_locks. Spots
-    flip open <-> filled. Accepted volunteers get one line about it in their chat.
+    volunteers accepted, a date, time or cause changed past opening_locks, or screening
+    turned on while a last-minute call is open. Spots flip open <-> filled. Accepted volunteers get one line about it in their chat.
     """
     if "cause" in new:
         new["causes"] = json.dumps([new.pop("cause")])
@@ -3309,6 +3320,12 @@ def update_opening(coordinator_uid, opening_id, **new):
             )
         if locks["cause"] and "causes" in changed:
             raise ValueError("The cause can't change once volunteers have liked it.")
+        # a last-minute call can book on a like (_auto_accept): never one that needs
+        # the nonprofit's screening first
+        if new.get("screening_required") and opening_id in _open_calls():
+            raise ValueError(
+                "This opening has a last-minute call. Stop it before requiring screening."
+            )
         if not changed:
             return []
         _db.openings.update(id=opening_id, **{k: new[k] for k in changed})
@@ -3415,7 +3432,8 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
 
     starts_at: LA wall clock "YYYY-MM-DDTHH:MM", after now and within URGENT_HOURS.
     ValueError, its message one of: "not open" (the opening is filled or closed),
-    "already" (it has an open call), "time", "needed" (1 to its open spots), "limit"
+    "screening" (volunteers must clear the nonprofit's screening before a first shift,
+    which a call that books on a like would skip), "already" (it has an open call), "time", "needed" (1 to its open spots), "limit"
     (URGENT_PER_DAY calls in the last 24 hours by the org).
     """
     o = coordinator_opening(coordinator_uid, opening_id)
@@ -3430,6 +3448,8 @@ def _call_refused(o, starts_at, needed):
     _urgent_sweep()
     if o.status != "open":
         return "not open"
+    if o.screening_required:
+        return "screening"
     if o.id in _open_calls():
         return "already"
     now = datetime.now(LA)

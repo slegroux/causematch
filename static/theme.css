@@ -216,6 +216,34 @@ form.cm-homeless .cm-adult-box {
   border-color: hsl(var(--cm-brand));
   background-color: hsl(var(--cm-brand-soft));
 }
+/* The opening form's screening box: the kinds and the screened wording of the adults line
+   show once "Volunteers must clear our screening" is ticked. :has() needs no script; in a
+   browser without it, .cm-screening marks a form redrawn with the box ticked (only
+   there, or unticking it would not bring the plain wording back). */
+.cm-screening-kinds,
+.cm-adult-screened {
+  display: none;
+}
+.cm-adult-box:has(input[name="screening"]:checked) .cm-screening-kinds {
+  display: block;
+}
+.cm-adult-box:has(input[name="screening"]:checked) .cm-adult-screened {
+  display: inline;
+}
+.cm-adult-box:has(input[name="screening"]:checked) .cm-adult-plain {
+  display: none;
+}
+@supports not selector(:has(*)) {
+  .cm-adult-box.cm-screening .cm-screening-kinds {
+    display: block;
+  }
+  .cm-adult-box.cm-screening .cm-adult-screened {
+    display: inline;
+  }
+  .cm-adult-box.cm-screening .cm-adult-plain {
+    display: none;
+  }
+}
 /* A long form's save button (preferences, onboarding) stays in reach: at the bottom of the
    screen, or just above the volunteer's tab bar. */
 .cm-savebar {
