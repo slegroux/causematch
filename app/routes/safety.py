@@ -43,6 +43,7 @@ from app.ui import (
     SMALL_LINK,
     TITLE,
     Avatar,
+    BackLink,
     Choice,
     Field,
     Icon,
@@ -338,11 +339,54 @@ def profile_page(req):
                 "/history",
                 sub="Upcoming, past, confirmed hours",
             ),
+            HubRow(
+                SHIELD,
+                "Screenings",
+                "/me/screenings",
+                sub="Confirmed by nonprofits",
+            ),
             HubRow(SHIELD, "Privacy policy", "/privacy"),
             HubRow(SIGN_OUT, "Sign out"),
             cls="mt-4 divide-y divide-line overflow-hidden " + CARD,
         ),
         uid=req.scope["uid"],
+    )
+
+
+@ar("/me/screenings", methods=["GET"])
+def screenings_page(req):
+    uid = req.scope["uid"]
+    rows = data.my_screenings(uid)
+    return VolunteerShell(
+        "me",
+        Div(BackLink("/profile", "Back to me"), cls="pb-2"),
+        H1("Screenings", cls=TITLE),
+        Div(
+            *[
+                Div(
+                    Span(r["org"], cls="font-bold"),
+                    Span(
+                        f"{r['kind']} · confirmed {r['date']}",
+                        cls="block text-sm text-ink-muted",
+                    ),
+                    cls="px-4 py-3",
+                )
+                for r in rows
+            ],
+            cls="mt-4 divide-y divide-line overflow-hidden " + CARD,
+        )
+        if rows
+        else P(
+            "No screenings yet. Some nonprofits ask volunteers to complete their own "
+            "screening before a first shift; when one confirms yours, it's listed here.",
+            cls="mt-4 leading-relaxed",
+        ),
+        P(
+            "Causematch stores only that a nonprofit confirmed your screening and when. "
+            "It never sees documents or results.",
+            cls=TextPresets.muted_sm + " mt-3",
+        ),
+        uid=uid,
     )
 
 
@@ -511,6 +555,17 @@ def privacy():
             "shifts and the signature, and the check link then says only that it was "
             "withdrawn. What remains, without your name: your account's number, the "
             "nonprofit, the period, the total hours and the issue date.",
+        ),
+        Section(
+            "Screening",
+            "Some nonprofits ask volunteers to complete their own screening, such as a "
+            "background check, Live Scan fingerprinting or a training, before a first "
+            "shift. The nonprofit runs it itself. When a coordinator confirms yours, we "
+            "keep that the nonprofit confirmed it, the kind of screening, the date and "
+            "which coordinator confirmed. Causematch never holds documents or results.",
+            "You and that nonprofit's coordinators can see this. It is listed under Me, "
+            "then Screenings, and it is why that nonprofit does not ask you again. "
+            "Deleting your account deletes it.",
         ),
         Section(
             "Who else handles your data",

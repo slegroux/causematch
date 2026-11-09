@@ -179,6 +179,7 @@ ROUTES = {
     ("GET", "/favicon.ico"): ("public", None),
     ("*", "/static"): ("public", None),  # the static mount: manifest, icons, scripts
     ("GET", "/me/profile"): ("volunteer", "own-record"),
+    ("GET", "/me/screenings"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo"): ("volunteer", "own-record"),
     ("POST", "/me/profile/photo/remove"): ("volunteer", "own-record"),
     ("POST", "/me/profile/details"): ("volunteer", "own-record"),

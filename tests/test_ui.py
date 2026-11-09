@@ -158,6 +158,7 @@ def pages(anon, user, coord):
         (user, "/me/preferences/urgent"),
         (user, "/profile/delete"),
         (user, "/me/profile"),
+        (user, "/me/screenings"),
         (user, f"/chat/{m.id}"),
         (user, f"/matches/{m.id}/withdraw"),
         (user, f"/matches/{m.id}/report"),

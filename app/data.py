@@ -1007,9 +1007,12 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
     until then the volunteer is shown nothing of it (my_matches, match_news_count).
 
     On an opening that needs the nonprofit's own screening, from a volunteer with no
-    screening at this org yet, an accept holds: the match is accepted with screening
-    pending and no shift, keeps a spot without filling it (_filling), and the chat says
-    what is awaited; confirm_screening books the shift. The slot check counts held
+    screening at this org yet, an accept holds. A clearance is remembered per nonprofit,
+    whatever its kind: a Screening row at this org, from any opening, means the nonprofit
+    already confirmed this person, so the accept books the shift at once as usual.
+    Otherwise it holds: the match is accepted with screening pending and no shift, keeps
+    a spot without filling it (_filling), and the chat says what is awaited;
+    confirm_screening books the shift. The slot check counts held
     matches, so "no slots left" may mean spots kept for screenings ("no slots left:
     screening pending").
     """
@@ -1065,6 +1068,27 @@ def _screening_words(kind):
     "screening" for other (or none said)."""
     label = dict(SCREENING_KINDS).get(kind)
     return f"screening ({label})" if label and kind != "other" else "screening"
+
+
+def my_screenings(uid):
+    """This volunteer's clearances, newest first: [{"org", "kind" (the label), "date"
+    ("Nov 8, 2026", in Los Angeles)}]. Only what a Screening row holds (decide)."""
+    kinds = dict(SCREENING_KINDS)
+    return [
+        {
+            "org": r["org"],
+            "kind": kinds.get(r["kind"], "Screening"),
+            "date": datetime.fromisoformat(r["cleared_at"])
+            .astimezone(LA)
+            .strftime("%b %-d, %Y"),
+        }
+        for r in _db.db.query(
+            "SELECT g.name AS org, s.kind, s.cleared_at FROM screening s "
+            "JOIN org g ON g.id = s.org_id WHERE s.volunteer_id = ? "
+            "ORDER BY s.cleared_at DESC, s.id DESC",
+            [uid],
+        )
+    ]
 
 
 def screening_to_confirm(coordinator_uid, match_id):
