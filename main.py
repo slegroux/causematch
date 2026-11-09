@@ -10,6 +10,7 @@ from starlette.staticfiles import StaticFiles
 from app import data, demo_seed, notify, oauth, security, ui
 from app.auth import SESSION_MAX_AGE, beforeware, session_cookie, session_secret
 from app.config import (
+    admin_emails,
     certificate_key,
     contact_email,
     demo_banner,
@@ -57,6 +58,7 @@ oauth.enabled_providers()  # ... or Google is half set, Apple's key unreadable, 
 tasks_token()  # ... or the scheduler can't call in
 public_base_url()  # ... or links have no configured origin
 contact_email()  # ... or the privacy page has no contact
+admin_emails()  # ... or ADMIN_EMAILS is set outside production, or not addresses
 phone_hash_key()  # ... or deleted accounts' blocks can't be kept
 certificate_key()  # ... or hour certificates can't be signed
 trusted_proxy_hops()  # ... or, on Cloud Run, rate limits can't tell clients apart
@@ -173,6 +175,8 @@ for routes in (
     routes.ar.to_app(app)
 # invented orgs and openings: never in production
 data.start(not is_production())
+# after the migrations (app.db's import): the first admins, with no shell in production
+data.add_admins(admin_emails())
 if is_preview():  # the demo's orgs and people, reseeded at each cold start
     demo_seed.seed_preview(os.environ.get("PREVIEW_SEED_DIR"))
 

@@ -18,7 +18,17 @@ An admin can see the admin pages and nothing else: the volunteer pages and the n
 
 ### Becoming an admin
 
-Only the operator can add an admin. They run this against the live app (use your own address and name):
+Only the operator can add an admin. On the live site they list your address in `ADMIN_EMAILS` when they deploy, separated by commas from any other admin's:
+
+```sh
+ADMIN_EMAILS=admin@example.org CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=... scripts/deploy_production.sh
+```
+
+When the server starts it makes each listed address an admin, unless it has been one before. Then sign in (below). Starting again changes nothing, and taking an address off the list doesn't take access away. An address that is already a coordinator's, that a volunteer signs in with, or that a suspended volunteer's mailbox holds (a `+tag` or Gmail-dot variant counts) is skipped: the server log says how many were skipped, never which. Pick another address.
+
+The live site has no command yet to take an admin's access away; tell the operator if one must go.
+
+On a computer running Causematch locally, the operator uses the script instead (use your own address and name):
 
 ```sh
 uv run python scripts/add_admin.py --email admin@example.org --name "Your Name"

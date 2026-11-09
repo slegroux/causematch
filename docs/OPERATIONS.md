@@ -255,8 +255,11 @@ BUCKET=$PROJECT-litestream   # the script's default LITESTREAM_BUCKET
 5. **First deploy**, from a clean checkout of `main`:
 
    ```sh
-   CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=<the privacy page's address> scripts/deploy_production.sh
+   CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=<the privacy page's address> \
+     ADMIN_EMAILS=<the first admins' addresses, comma-separated> scripts/deploy_production.sh
    ```
+
+   `ADMIN_EMAILS` is how production gets its admins, having no shell for `scripts/add_admin.py`: at each start, after the migrations, every listed address that has never had an admin profile becomes one (docs/ADMIN_GUIDE.md, Becoming an admin). It never removes an admin, so leaving it out of a later deploy changes nothing. An address a coordinator, a volunteer or a suspended account holds is skipped, and the log gives counts only (`ADMIN_EMAILS: 1 admin(s) added`). Outside production and the preview the app refuses to start with it set.
 
    The first run deploys with a placeholder `PUBLIC_BASE_URL`, then sets it to the service URL (a second revision). It prints the URL. Add `GMAIL_PURGE=daily` to the command once the mailbox purge runs (Email through Gmail, step 6): each deploy sets the whole environment, so a variable set by hand is gone after the next one.
 

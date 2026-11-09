@@ -7,7 +7,8 @@
 # REGION [us-west1], SERVICE [causematch], SERVICE_ACCOUNT [causematch-prod@ the project],
 # LITESTREAM_BUCKET [the project id + -litestream], CONTACT_EMAIL [the privacy page's
 # address; required], GMAIL_PURGE [unset; daily once the mailbox purge runs, OPERATIONS
-# step 6], CPU_ALWAYS_ALLOCATED [required, 1 or 0].
+# step 6], ADMIN_EMAILS [unset; comma-separated addresses startup makes admins, docs/ADMIN_GUIDE.md
+# Becoming an admin], CPU_ALWAYS_ALLOCATED [required, 1 or 0].
 #
 # One instance, always: --min-instances 1 --max-instances 1. The database is SQLite on the
 # instance's disk, streamed to the bucket by Litestream (entrypoint.sh) and restored from it
@@ -36,6 +37,7 @@ SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-causematch-prod@$PROJECT.iam.gserviceaccount
 LITESTREAM_BUCKET="${LITESTREAM_BUCKET:-$PROJECT-litestream}"
 CONTACT_EMAIL="${CONTACT_EMAIL:-}"
 GMAIL_PURGE="${GMAIL_PURGE:-}"
+ADMIN_EMAILS="${ADMIN_EMAILS:-}"
 CPU_ALWAYS_ALLOCATED="${CPU_ALWAYS_ALLOCATED:-}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,9 +64,9 @@ if [ -z "$CONTACT_EMAIL" ]; then
 	exit 1
 fi
 # ; separates the env vars below (gcloud's ^;^ syntax): commas and @ appear in values.
-case "$CONTACT_EMAIL$GMAIL_PURGE$LITESTREAM_BUCKET" in
+case "$CONTACT_EMAIL$GMAIL_PURGE$LITESTREAM_BUCKET$ADMIN_EMAILS" in
 *";"*)
-	echo "CONTACT_EMAIL, GMAIL_PURGE and LITESTREAM_BUCKET may not contain ;" >&2
+	echo "CONTACT_EMAIL, GMAIL_PURGE, LITESTREAM_BUCKET and ADMIN_EMAILS may not contain ;" >&2
 	exit 1
 	;;
 esac
@@ -109,6 +111,9 @@ secrets="${secrets#,}"
 env_vars="CAUSEMATCH_ENV=production;TRUSTED_PROXY_HOPS=1;LITESTREAM_BUCKET=$LITESTREAM_BUCKET;CONTACT_EMAIL=$CONTACT_EMAIL"
 if [ -n "$GMAIL_PURGE" ]; then
 	env_vars="$env_vars;GMAIL_PURGE=$GMAIL_PURGE"
+fi
+if [ -n "$ADMIN_EMAILS" ]; then
+	env_vars="$env_vars;ADMIN_EMAILS=$ADMIN_EMAILS"
 fi
 
 describe_url() {

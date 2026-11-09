@@ -530,7 +530,7 @@ Volunteers see a bottom tab bar with **Openings** (`/deck`), **Matches** (`/matc
 
 Some admin tasks are command-line scripts in `scripts/`:
 
-- `add_admin.py`, `remove_admin.py`: grant or revoke admin access (`add_admin.py` refuses a volunteer's sign-in address without `--force`, see 10a).
+- `add_admin.py`, `remove_admin.py`: grant or revoke admin access (`add_admin.py` refuses a volunteer's sign-in address without `--force`, see 10a). Production and the preview, which have no shell, add admins at startup from `ADMIN_EMAILS` instead (`config.admin_emails`, `data.add_admins`: only addresses never an admin, refusals skipped, nothing removed).
 - `add_coordinator.py`, `remove_coordinator.py`: grant coordinator access or delete a coordinator (`add_coordinator.py` refuses a volunteer's sign-in address without `--force`, see 10a).
 - `verify_org.py`: look an EIN up on ProPublica and, with `--org-id N --approve`, verify that org.
 - `import_orgs.py`: import nonprofits from ProPublica.
