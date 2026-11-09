@@ -59,6 +59,12 @@ The demo prints how to sign in as a volunteer, a coordinator and an admin. As a 
 
 The server renders HTML with FastHTML and MonsterUI, htmx swaps the parts that change, and one SQLite database holds everything. Volunteers sign in with an emailed link, Google or Apple, and coordinators with an emailed link or a Google or Apple account on the same email. A volunteer without a phone number gets match news, messages and reminders by email. Ranking turns each volunteer's preferences into a score per opening, and a match is two likes: the volunteer's, then the nonprofit's. Reminders and urgent waves run when Cloud Scheduler calls two endpoints, since the host scales to zero (those jobs are a launch step, not set up yet). The full picture is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Safety and screening
+
+Volunteers attest they are 18 or older at onboarding, and every opening is for adults only. The homelessness-services cause is for group shifts, not one-to-one work.
+
+A nonprofit that needs more can post a screening-required opening (a background check, Live Scan or a training). The nonprofit runs and confirms its own screening; the first shift is held until a coordinator confirms it in the inbox. Causematch stores only the fact, its kind and its date, never documents or results, and remembers a confirmation per nonprofit so a volunteer isn't asked twice. Deleting a volunteer account deletes it. Details in [docs/OPERATIONS.md](docs/OPERATIONS.md#safety-and-screening).
+
 ## Project layout
 
 ```

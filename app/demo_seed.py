@@ -494,6 +494,7 @@ def seed(seed_file=None):
     _preferences(me)
     soon = _soon_shifts(me, org.id)
     urgent = _urgent_call(coord, org, first, sample=bool(seed_file))
+    _screening_opening(coord, org, sample=bool(seed_file))
     # the match with the coordinator holds a chat and shifts already
     _matches(me, org.id, ("calendar", "waiting"))
     _pending_claim()
@@ -722,6 +723,39 @@ def _urgent_call(coord, org, first, sample=False):
         data.post_urgent_call(coord, oid, tomorrow, needed, True)
         notify.send_urgent_waves()
     return oid
+
+
+def _screening_opening(coord, org, sample=False):
+    """An opening that needs the nonprofit's own screening, on the coordinator's org: the
+    presenter likes it as a volunteer, then confirms the screening in the inbox. Posted
+    after the urgent call, so it is neither the first card nor the call (a call is never
+    on a screening opening). The opening's id."""
+    from app import data
+
+    today = datetime.now(LA).date() + timedelta(days=9)
+    sunday = today + timedelta(days=(6 - today.weekday()) % 7)
+    return data.create_opening(
+        coord,
+        org.id,
+        title=("Sample: " if sample else "") + "Help with Sunday food pickups",
+        about=(
+            "Greet families at the side door and hand out pre-packed grocery bags. "
+            "We confirm each new volunteer's screening before their first shift."
+        ),
+        cause=json.loads(org.causes)[0],
+        lat=org.lat,
+        lon=org.lon,
+        neighborhood="Sawtelle",
+        starts_at=f"{sunday}T10:00",
+        recurrence="weekly",
+        duration_minutes=120,
+        slots=3,
+        orientation_required="no",
+        notes="",
+        reply_channel="email",
+        screening_required=True,
+        screening_kind="background_check",
+    )
 
 
 def sign_in_link(email):

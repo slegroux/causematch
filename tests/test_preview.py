@@ -791,8 +791,9 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
     assert pantry.name == "Invented Pantry" and pantry.logo_key and pantry.photo_key
     assert pantry.verified_at and shelter.verified_at
     titles = {o.title for o in openings()}
-    # the invented coordinator's org brings four openings of its own, samples too
+    # the invented coordinator's org brings five openings of its own, samples too
     lunch = "Sample: Play a set at the Sunday community lunch"
+    flagged = "Sample: Help with Sunday food pickups"
     assert titles == {
         "Sample: Sort cans",
         "Sample: Walk dogs",
@@ -800,9 +801,13 @@ def test_seed_preview_loads_the_seed_dir_and_the_demos_people(
         lunch,
         "Sample: Prep vegetables for the evening meal",
         "Sample: Restock the pantry shelves",
+        flagged,
     }
     (call,) = urgent_calls()
     assert openings[call.opening_id].title == lunch and call.status == "open"
+    (held,) = openings(where="title = ?", where_args=[flagged])
+    assert held.screening_required and held.screening_kind == "background_check"
+    assert held.org_id == harvest.id and held.id != call.opening_id  # not the call
     assert openings(where="title = ?", where_args=["Sample: Sort cans"])[0].photo_key
     sam = [p for p in profiles() if p.display_name == "Sam"]
     assert len(sam) == 1 and sam[0].photo_key
@@ -976,7 +981,7 @@ def test_a_demo_visitor_gets_hours_and_a_certificate_in_one_visit(
     (uid,) = [p.id for p in profiles() if data.is_demo_volunteer(p.id)]
     profiles.update(id=uid, verified_hours="only")  # "I need my hours confirmed"
     hours_deck = data.deck(uid, 50)
-    assert len(hours_deck) == 3 and hours_deck[0]["urgent"]  # more than the urgent call
+    assert len(hours_deck) == 4 and hours_deck[0]["urgent"]  # the call, 3 more openings
     profiles.update(id=uid, verified_hours=None)
     history = browser.get("/history").text
     assert demo_seed.CONFIRMING_ORG in history and "hours" in history
