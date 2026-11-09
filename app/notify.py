@@ -422,46 +422,76 @@ AFTER = "causematch.after"  # in a request's scope: what after() queued
 # worker threads for what after() queued, apart from anyio's shared pool (40), so a slow
 # mail server holds at most these and never the threads every sync route runs in
 AFTER_LIMITER = anyio.CapacityLimiter(4)
+# sign-in links' own threads, so a link (good for 15 minutes) never waits behind notices
+LINK_LIMITER = anyio.CapacityLimiter(2)
 
 
-def after(req, fn, *args):
-    """Call fn(*args) once the response is out (RunAfter), off the request: an SMTP send
-    can take seconds. Without RunAfter around the request, at once."""
+def after(req, fn, *args, limiter=None):
+    """Call fn(*args) off the request, in a worker thread under `limiter` (AFTER_LIMITER
+    by default; RunAfter): an SMTP send can take seconds. For an HTTP request, once its
+    response is out; for a websocket, at once beside its frames, which never wait on it
+    (RuntimeError off the socket's event loop thread). Without RunAfter around the
+    request, at once and inline."""
     queued = req.scope.get(AFTER)
+    item = (fn, args, limiter or AFTER_LIMITER)
     if queued is None:
         fn(*args)
-    else:
-        queued.append((fn, args))
+    elif isinstance(queued, list):  # an HTTP request's: after its response
+        queued.append(item)
+    else:  # a websocket's task group, and the thread its loop runs in
+        tg, loop_thread = queued
+        if threading.get_ident() != loop_thread:
+            raise RuntimeError("after() on a websocket runs on its event loop only")
+        tg.start_soon(_run_after, [item])
+
+
+async def _run_after(queued):
+    """Each of `queued` in a worker thread under its limiter, as a BackgroundTask would.
+    Never raises for them; when the server stops first, logs how many may not have gone
+    and lets the stop through."""
+    for i, (fn, args, limiter) in enumerate(queued):
+        try:
+            await anyio.to_thread.run_sync(fn, *args, limiter=limiter)
+        except Exception as e:  # noqa: BLE001  never the request's or the socket's error
+            log.warning("a notice failed: %s", type(e).__name__)
+        except BaseException:
+            log.warning(
+                "up to %d notices not sent: the server is stopping", len(queued) - i
+            )
+            raise
 
 
 class RunAfter:
-    """ASGI middleware: after an HTTP response, runs what after() queued, each in a worker
-    thread under AFTER_LIMITER, as a BackgroundTask would. Never raises for them; when the
-    server stops first, logs how many may not have gone and lets the stop through."""
+    """ASGI middleware for after(). An HTTP request's notices run once its response is
+    out. A websocket's each start at once in a task group of the socket's own, so a frame
+    never waits on one; the socket's end waits for them, as a response's end does, so a
+    server stopping cancels them the same way (_run_after logs it)."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            return await self._socket(scope, receive, send)
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         scope[AFTER] = queued = []
         try:
             await self.app(scope, receive, send)
         finally:
-            for i, (fn, args) in enumerate(queued):
-                try:
-                    await anyio.to_thread.run_sync(fn, *args, limiter=AFTER_LIMITER)
-                except Exception as e:  # noqa: BLE001  the response is out already
-                    log.warning(
-                        "a notice failed after the response: %s", type(e).__name__
-                    )
-                except BaseException:
-                    log.warning(
-                        "up to %d notices not sent: the server is stopping",
-                        len(queued) - i,
-                    )
-                    raise
+            await _run_after(queued)
+
+    async def _socket(self, scope, receive, send):
+        error = None
+        async with anyio.create_task_group() as tg:
+            scope[AFTER] = (tg, threading.get_ident())  # start_soon isn't thread-safe
+            try:
+                await self.app(scope, receive, send)
+            except Exception as e:  # noqa: BLE001  raised below, once the notices are out
+                # inside, it would cancel the notices and come out as an ExceptionGroup
+                error = e
+        if error is not None:
+            raise error
 
 
 def make_emailer(env=os.environ):
