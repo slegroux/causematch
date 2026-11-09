@@ -184,3 +184,58 @@ def test_me_lists_the_clearance_and_the_privacy_page_has_a_screening_paragraph(
     assert "confirmed " in page and "It never sees documents or results." in page
     assert 'href="/me/screenings"' in user.get("/profile").text
     assert ">Screening<" in user.get("/privacy").text
+
+
+def test_the_nonprofit_sees_who_waits_on_the_strip_the_card_shifts_and_chat(
+    user, coord
+):
+    oid = screened_opening(slots=2)
+    user.post("/swipe", data={"opening_id": oid, "liked": "1"})
+    mid = matches()[0].id
+    coord.post(f"/org/matches/{mid}/decide", data={"decision": "accept"})
+    home = coord.get("/org").text
+    assert home.count("1 waiting for screening") == 2  # the strip and the card
+    assert "1 waiting for screening" in coord.get("/org/shifts").text
+    assert f"/org/matches/{mid}/screening" in coord.get(f"/org/chat/{mid}").text
+    coord.post(f"/org/matches/{mid}/screening")
+    assert "waiting for screening" not in coord.get("/org").text
+    assert f"/org/matches/{mid}/screening" not in coord.get(f"/org/chat/{mid}").text
+
+
+def test_screening_cannot_be_turned_off_under_a_held_match(coord):
+    oid = screened_opening(slots=2)
+    vol = volunteer()
+    cid, _ = coordinator_for(0)
+    m = data.swipe(vol.uid, oid, True)
+    data.decide(cid, m.id, True)
+    form = unescape(coord.get(f"/org/openings/{oid}/edit").text)
+    assert "1 volunteer is waiting for you to confirm their screening" in form
+    with pytest.raises(ValueError, match="waiting for you to confirm their screening"):
+        data.update_opening(cid, oid, screening_required=False, screening_kind=None)
+    assert openings[oid].screening_required
+    data.confirm_screening(cid, m.id)
+    data.update_opening(cid, oid, screening_required=False, screening_kind=None)
+    assert not openings[oid].screening_required
+
+
+def test_closing_releases_the_held_matches_and_a_held_full_opening_leaves_the_deck():
+    oid = screened_opening(slots=3)
+    cleared, held, later = volunteer(), volunteer(), volunteer()
+    coord, _ = coordinator_for(0)
+    m1 = data.swipe(cleared.uid, oid, True)
+    m2 = data.swipe(held.uid, oid, True)
+    data.decide(coord, m1.id, True)
+    data.decide(coord, m2.id, True)
+    data.confirm_screening(coord, m1.id)
+    assert oid in [o.id for o, *_ in data._deck_openings(later.uid)]
+    other = data.swipe(volunteer().uid, oid, True)
+    data.decide(coord, other.id, True)  # the last spot, held
+    assert openings[oid].status == "open"  # not filled, only kept
+    assert oid not in [o.id for o, *_ in data._deck_openings(later.uid)]
+    data.close_opening(coord, oid)
+    assert matches[m2.id].status == "withdrawn"
+    assert matches[other.id].status == "withdrawn"
+    assert system_lines(m2.id)[-1] == (
+        f"The opening closed before {data.org_name_of(oid)} confirmed your screening."
+    )
+    assert matches[m1.id].status == "accepted"  # cleared: closing leaves their shift

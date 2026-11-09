@@ -1,7 +1,7 @@
 import re
 from datetime import UTC, datetime
 
-from fasthtml.common import H1, H2, A, Div, P, Redirect, Response, Textarea
+from fasthtml.common import H1, H2, A, Div, P, Redirect, Response, Span, Textarea
 from fasthtml.common import Form as PlainForm
 from monsterui.all import (
     Alert,
@@ -153,10 +153,20 @@ def org_shifts_page(req):
     notice = query(req, "notice")
     uid = req.scope["uid"]
     box = data.org_shifts(uid)
+    held = sum(data.screening_waiting(uid).values())
     return OrgShell(
         "shifts",
         data.org_badges(uid),
         H1("Shifts", cls=ORG_TITLE + " pb-4"),
+        A(
+            f"{held} waiting for screening",
+            Span("→", aria_hidden="true"),
+            Span(" Inbox", cls="sr-only"),
+            href="/org/inbox",
+            cls=SMALL_LINK + " mb-4 inline-flex min-h-11 items-center gap-2 text-sm",
+        )
+        if held
+        else None,
         Alert(NOTICE[notice], cls=AlertT.warning + " mb-4")
         if notice in NOTICE
         else None,
