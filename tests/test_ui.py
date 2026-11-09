@@ -24,7 +24,16 @@ from starlette.testclient import TestClient
 
 from app import data, demo_seed
 from app.config import demo_banner
-from app.db import blocks, now, openings, org_members, orgs, profiles, shifts
+from app.db import (
+    blocks,
+    matches,
+    now,
+    openings,
+    org_members,
+    orgs,
+    profiles,
+    shifts,
+)
 from app.ui import DEMO_NOTICE
 from main import app
 
@@ -116,6 +125,13 @@ def pages(anon, user, coord):
     )
     profiles.update(id=uid, last_name="Lee")
     certificate = data.issue_certificate(uid, opening.org_id, "all")["id"]
+    held = matches.insert(  # accepted, its first shift held for screening
+        opening_id=opening.id,
+        volunteer_id=volunteer().uid,
+        status="accepted",
+        screening_status="pending",
+        created_at=now(),
+    )
     return [
         (anon, "/login"),
         (anon, "/org/login"),
@@ -160,6 +176,7 @@ def pages(anon, user, coord):
         (coord, f"/org/matches/{m.id}/shifts/new"),
         (coord, f"/org/matches/{m.id}/report"),
         (coord, f"/org/matches/{m.id}/block"),
+        (coord, f"/org/matches/{held.id}/screening"),
         (admin, "/admin"),
         (admin, "/admin/metrics"),
         (admin, "/admin/reports"),

@@ -8,6 +8,14 @@ from app.choices import DAYS, PARTS
 
 LA = ZoneInfo("America/Los_Angeles")
 EARTH_KM = 6371.0088
+
+
+def start_text(starts_at):
+    """ "Sat Oct 18, 9:00 AM" for an LA wall-clock "YYYY-MM-DDTHH:MM": a shift's start in
+    a chat line, a text or an email (data.py and notify.py share it)."""
+    return datetime.fromisoformat(starts_at).strftime("%a %b %-d, %-I:%M %p")
+
+
 WEIGHTS = {
     "causes": 0.30,
     "distance": 0.18,

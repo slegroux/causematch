@@ -24,7 +24,7 @@ from app.config import (
     smtp,
     smtp_max_per_day,
 )
-from app.match import LA
+from app.match import LA, start_text
 
 log = logging.getLogger("causematch")
 
@@ -849,9 +849,7 @@ def on_auto_accepted(match_id):
     _deliver("auto", f"auto:{match_id}", info["org_id"], send)
 
 
-def _when(starts_at):
-    """ "Sat Oct 18, 9:00 AM" for an LA wall-clock "YYYY-MM-DDTHH:MM"."""
-    return datetime.strptime(starts_at, _LOCAL_FORMAT).strftime("%a %b %-d, %-I:%M %p")
+_when = start_text  # "Sat Oct 18, 9:00 AM"
 
 
 def _email_org(kind, key, info, subject, body):
@@ -932,7 +930,9 @@ def on_withdrawn(match_id, was):
     if was != "accepted" or not info or info["status"] != "withdrawn":
         return
     text = (
-        f"A volunteer withdrew from {info['opening']}. Their upcoming shifts are "
+        f"A volunteer withdrew from {info['opening']} before you confirmed their screening."
+        if info["screening_pending"]
+        else f"A volunteer withdrew from {info['opening']}. Their upcoming shifts are "
         "cancelled and their spot is open again."
     )
     _email_org(

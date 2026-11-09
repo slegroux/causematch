@@ -125,6 +125,8 @@ ROUTES = {
     ("GET", "/org/inbox"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/decide"): ("coordinator", "own-org"),
     ("POST", "/org/matches/{match_id}/undo"): ("coordinator", "own-org"),
+    ("GET", "/org/matches/{match_id}/screening"): ("coordinator", "own-org"),
+    ("POST", "/org/matches/{match_id}/screening"): ("coordinator", "own-org"),
     ("GET", "/org/shifts"): ("coordinator", "own-org"),
     ("POST", "/org/shifts/{shift_id}/mark"): ("coordinator", "own-org"),
     ("POST", "/org/shifts/{shift_id}/cancel"): ("coordinator", "own-org"),
@@ -457,6 +459,14 @@ def decide_other(w, mid):
         data={"decision": "accept"},
         follow_redirects=False,
     )
+
+
+def screening_page_other(w, mid):
+    return w.org1.get(f"/org/matches/{mid}/screening", follow_redirects=False)
+
+
+def confirm_screening_other(w, mid):
+    return w.org1.post(f"/org/matches/{mid}/screening", follow_redirects=False)
 
 
 def undo_other(w, mid):
@@ -1065,6 +1075,16 @@ OWNERSHIP = {
         lambda w: matches[w.match.id].status == "pending",
     ),
     ("POST", "/org/matches/{match_id}/undo"): undo_checked,
+    ("GET", "/org/matches/{match_id}/screening"): path_id_check(
+        screening_page_other,
+        lambda w: w.match.id,
+        lambda w: matches[w.match.id].screening_status is None,
+    ),
+    ("POST", "/org/matches/{match_id}/screening"): path_id_check(
+        confirm_screening_other,
+        lambda w: w.match.id,
+        lambda w: matches[w.match.id].screening_status is None,
+    ),
     ("POST", "/org/openings/{opening_id}/close"): path_id_check(
         close_other,
         lambda w: w.opening.id,
