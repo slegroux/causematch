@@ -48,6 +48,10 @@ Nothing is installed into the repo's virtualenv except what `uv sync` already in
 | `compose` | `compose.py` builds one segment per beat (layout, caption, voice), joins them, normalises the loudness to -16 LUFS (two-pass `loudnorm`), encodes H.264 (crf 23, faststart) and takes the poster and writes `demo.vtt`: one caption cue per sentence of the narration, timed from the beat's start. Fails if a voice line doesn't fit its beat. It runs twice, on the same recording: `beats.json` makes `demo.mp4`, `beats-short.json` makes `demo-short.mp4` (see "The short cut"). |
 | `install` | Copies `demo.mp4`, `demo-poster.jpg`, `demo.vtt` and the three `demo-short` files into `site/assets/`. |
 
+The title card (both videos) and the "why" card (the full video only) open the videos. They
+are composed, never recorded: a card with no recorded beat in `record.py` lasts as long as
+its voice line plus a tail, so changing their lines needs only `voice compose install`.
+
 Files that matter: `beats.json` (each beat: `id`, `layout` of card, laptop, phone or
 both, `src` and `role` for the caption chip, `caption`, and the spoken `say`), `beats-short.json`
 (the short cut, below), `serve.py`,
@@ -141,7 +145,7 @@ The repo is public. The video uses the demo seed (`app/demo_seed.py`) and made-u
 
 ## The short cut
 
-`beats-short.json` makes `demo-short.mp4` (about 1 minute 7 seconds, for the website's hero)
+`beats-short.json` makes `demo-short.mp4` (about 1 minute 11 seconds, for the website's hero)
 from the same recording as the full video: no second take and no second story in
 `record.py`. Each beat has its own, shorter voice line (voiced into `voice-short/`) and lasts
 as long as that line plus a tail, and takes its footage from a beat of the recording:
@@ -160,9 +164,9 @@ take, and the narration is lined up with them (the heart is tapped as the line s
 
 ## Timing
 
-The result of one run (2026-11-07): the full video 2:31 (151.3 s), 1920x1080, 6.6 MB; the
-short cut 1:07 (67.6 s), 2.7 MB; both -16.1 LUFS. Recording the story takes about 2 minutes
+The result of one run (2026-11-07): the full video 2:45 (164.7 s), 1920x1080, 7.2 MB; the
+short cut 1:11 (71.1 s), 2.8 MB; both -16.1 LUFS. Recording the story takes about 2 minutes
 20 seconds (paced by the voice lines), composing both videos about 40 seconds, and voicing a
-changed line or two about 20 seconds. The first volunteer appears at about 0:34, and no
+changed line or two about 20 seconds. The first volunteer appears at about 0:47, and no
 stretch of the full video is silent for more than 3 seconds (the longest gap between caption
 cues in `demo.vtt` is 2.3 seconds).

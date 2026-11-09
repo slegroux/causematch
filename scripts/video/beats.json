@@ -1,4 +1,6 @@
 [
+ {"id": "title", "layout": "card", "role": "", "caption": "", "say": "Causematch. Swipe right for good."},
+ {"id": "why", "layout": "card", "role": "", "caption": "", "say": "Across LA County, nonprofits need volunteers, and plenty of people want to help. They rarely find each other. Causematch fixes that."},
  {"id": "intro", "layout": "card", "role": "", "caption": "", "say": "Post an opening once. Volunteers nearby who care about your cause swipe right. You say yes, and after the shift one tap confirms their hours."},
  {"id": "claim", "layout": "laptop", "src": "jordan", "role": "Nonprofit", "caption": "Jordan asks for access for Silver Lake Garden Friends.", "say": "A nonprofit joins first. Jordan asks for access with the organization's name and tax ID."},
  {"id": "approve", "layout": "laptop", "src": "admin", "then": "jordan", "switch": "signin", "role": "Admin", "caption": "An admin checks the request. Jordan signs in from an emailed link: no password.", "say": "A Causematch admin checks every request. Then Jordan signs in from an emailed link, no password."},
