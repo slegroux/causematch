@@ -471,6 +471,7 @@ def ClaimCard(c, error=None):
         note = P("This organization is deactivated: it can't be approved.")
     else:
         note = None
+    blocked = (org and org["deactivated"]) or c["suspended"]
     return Div(
         P(org["name"] if org else c["org_name"], cls=ORG_SECTION),
         P(f"{org['city']} · {ein}" if org and org["city"] else ein, cls="text-ink"),
@@ -483,10 +484,24 @@ def ClaimCard(c, error=None):
         else None,
         note,
         P(f"Already claimed by {members}.", cls="font-semibold") if members else None,
+        Alert(
+            data.volunteer_address_warning("coordinator")
+            + " Ask the nonprofit for a different address if you can.",
+            cls=AlertT.warning,
+        )
+        if c["volunteer"] and not c["suspended"]
+        else None,
+        Alert(
+            "This address belongs to a suspended volunteer: it can't be approved. "
+            "Decline it.",
+            cls=AlertT.error,
+        )
+        if c["suspended"]
+        else None,
         Alert(error, cls=AlertT.error) if error else None,
         Div(
             None
-            if org and org["deactivated"]
+            if blocked
             else Form(
                 LabelCheckboxX(
                     "Yes, add them too (the people above can already sign in)",
@@ -499,6 +514,13 @@ def ClaimCard(c, error=None):
                     f"Yes, approve for {org['name']}", name="name_checked", value="1"
                 )
                 if mismatch
+                else None,
+                LabelCheckboxX(
+                    "Yes, make it a coordinator sign-in",
+                    name="volunteer_ok",
+                    value="1",
+                )
+                if c["volunteer"]
                 else None,
                 PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
                 action=f"/admin/claims/{c['id']}/approve",
@@ -618,7 +640,10 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
         )
     try:
         _, email, org_name = data.approve_claim(
-            uid, claim_id, form.get("confirm") == "1"
+            uid,
+            claim_id,
+            form.get("confirm") == "1",
+            form.get("volunteer_ok") == "1",
         )
     except LookupError:
         return Redirect("/admin/claims")

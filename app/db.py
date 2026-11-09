@@ -71,7 +71,9 @@ class Opening:
     status: str  # open|filled|closed
     notes: str
     reply_channel: str  # email|text|either
-    adult_confirmed: bool  # 18+ and no one-to-one contact with vulnerable people
+    adult_confirmed: (
+        bool  # 18+, and no one-to-one contact or the nonprofit's own screening
+    )
     created_at: str
     # Kind of work, all optional ("" or NULL: not said)
     setting: str  # indoor|outdoor
@@ -84,6 +86,10 @@ class Opening:
     duration_minutes: (
         int  # how long a shift lasts (choices.SHIFT_LENGTHS); NULL: not said
     )
+    # the nonprofit's own screening before a first shift (migration 0022); the app
+    # stores only that it is required and its kind, never a result
+    screening_required: bool
+    screening_kind: str  # choices.SCREENING_KINDS key; NULL when not required
 
 
 class Profile:
@@ -163,6 +169,11 @@ class Identity:
     subject: str  # the ID token's sub, or the link's address: unique per provider
     email: str
     created_at: str
+    # data.HOLDER (1): the email may hold this account for a sign-in by another way to
+    # join (an emailed link's; Gmail on Google, iCloud on Apple). data.JOINER (2): a
+    # Workspace's (hd), which proved the mailbox but holds nothing. 0 or NULL: neither.
+    # Refreshed with the email at every sign-in (data.volunteer_for_identity).
+    authoritative: int
 
 
 class OrgMember:

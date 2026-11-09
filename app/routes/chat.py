@@ -283,9 +283,11 @@ def volunteer_online(match_id, vol_uid):
     )
 
 
-async def _deliver(uid, match_id, text):
-    """Save, then broadcast, then tell notify.on_new_message. ValueError for a bad message,
-    PermissionError for a bad caller. Every data call runs off the event loop."""
+async def _deliver(conn, uid, match_id, text):
+    """Save, then broadcast, then queue notify.on_new_message (notify.after, on `conn`: the
+    request or the socket), so neither the redirect nor the socket's next frame waits on
+    the mail server. ValueError for a bad message, PermissionError for a bad caller. Every
+    data call runs off the event loop."""
     m = await run_in_threadpool(data.send_message, uid, match_id, text)
     await _broadcast(match_id, m)
     try:
@@ -294,10 +296,8 @@ async def _deliver(uid, match_id, text):
             await _broadcast(match_id, reply)
     except Exception as e:  # noqa: BLE001  demo only; the real message is delivered
         log.warning("demo reply failed: %s", type(e).__name__)
-    try:
-        await run_in_threadpool(notify.on_new_message, match_id, uid)
-    except Exception as e:  # noqa: BLE001  the message is saved and delivered either way
-        log.warning("new-message hook failed: %s", type(e).__name__)
+    # its failure is logged there: the message is saved and delivered either way
+    notify.after(conn, notify.on_new_message, match_id, uid)
 
 
 def _notice_for(text):
@@ -330,7 +330,7 @@ def _live(role, base):
             if not security.take_token("chat", uid):
                 # 1013, try again later: the ws extension reconnects after a pause
                 return await _refuse(ws, code=1013)
-            await _deliver(uid, match_id, msg)
+            await _deliver(ws, uid, match_id, msg)
         except PermissionError:
             return await _refuse(ws)
         except ValueError:
@@ -360,7 +360,7 @@ async def _post(req, match_id, role, base):
     try:
         if await run_in_threadpool(data.chat_access, uid, match_id) != role:
             raise PermissionError("wrong side")
-        await _deliver(uid, match_id, msg)
+        await _deliver(req, uid, match_id, msg)
     except PermissionError:
         return Refusal(403)
     except ValueError:

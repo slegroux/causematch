@@ -35,7 +35,8 @@ from app import data, oauth, security
 from app.auth import sign_in, sign_in_staff
 from app.config import demo_address, is_preview, is_production, public_base_url
 from app.forms import EMAIL, bad_request, query, str_form
-from app.routes.auth import SUSPENDED, LoginPage
+from app.routes.auth import SUSPENDED, LoginPage, SentPage
+from app.routes.auth import link_sent as volunteer_link_sent
 from app.routes.org_auth import EmailForm, link_sent
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
 
@@ -249,10 +250,13 @@ def _sync_callback(req, sess, provider, params):
         return _staff_sign_in(req, sess, claims)
     if intent == "link":
         return _link(sess, name, flow, claims)
+    trusted = _trusted(provider)
+    if _refuses_staff(claims, trusted):
+        return _staff_address(req, sess, claims)
     if params.get("user"):  # Apple's names, sent on first consent only
         given, family = oauth.apple_names(params["user"])
         claims = dataclasses.replace(claims, given_name=given, family_name=family)
-    profile = data.get_profile(data.volunteer_for_identity(claims))
+    profile = data.get_profile(data.volunteer_for_identity(claims, trusted))
     if profile is None or profile.role != "volunteer":  # suspended by an admin
         sess.clear()
         return _login(SUSPENDED, 200)
@@ -264,6 +268,39 @@ def _sync_callback(req, sess, provider, params):
     ):
         sess["oauth_picture"] = claims.picture_url  # onboarding offers it, unticked
     return RedirectResponse(loc, status_code=303)
+
+
+def _trusted(provider):
+    """Whether a provider's verified email may join accounts (data.volunteer_for_identity):
+    not the fake's on a preview, which takes any typed email as verified."""
+    return not (is_preview() and isinstance(provider, oauth.Fake))
+
+
+def _refuses_staff(claims, trusted):
+    """One address, one role: a volunteer sign-up, or a join, whose verified email is a
+    coordinator's or admin's mailbox (data.staff_mailbox) is refused. A volunteer who
+    signed in with this identity before keeps signing in: a claim's unverified address,
+    approved as a coordinator's, mustn't lock them out. The fake on a preview proves no
+    address, and its answer mustn't tell a staff address from another, so there only a
+    demo address is checked; any other signs this browser's own account in or up."""
+    email = claims.email.strip()
+    if not (trusted or demo_address(email)):
+        return False
+    known = data.identity_owner(claims.provider, claims.subject)
+    return data.staff_mailbox(email) and not known
+
+
+def _staff_address(req, sess, claims):
+    """A volunteer sign-in refused for a staff mailbox (_refuses_staff): no volunteer is
+    signed in or created.
+    The answer is the emailed link's for that address (/login/send): "check your email",
+    and the staff link goes to an exact live staff address, nothing to a +tag of one."""
+    sess.clear()
+    raw = claims.email.strip()
+    if not (raw.isascii() and len(raw) <= 254 and EMAIL.fullmatch(raw)):
+        return FtResponse(SentPage(raw[:254].lower()))  # nothing sent: no valid address
+    sent = volunteer_link_sent(req, raw.lower(), sess)
+    return sent if isinstance(sent, Response) else FtResponse(sent)
 
 
 def _staff_sign_in(req, sess, claims):
@@ -311,7 +348,8 @@ def _link(sess, name, flow, claims):
     if not (current and profile.role == "volunteer" and (same or cross_site)):
         log.warning("%s connect refused: not the session that started it", name)
         return Refusal(400)
-    if why := data.link_identity(flow.uid, claims):
+    trusted = _trusted(oauth.get_provider(name))
+    if why := data.link_identity(flow.uid, claims, trusted):
         return Redirect(f"/me/profile?error={why}-{name}")
     return Redirect("/me/profile?notice=connected")
 

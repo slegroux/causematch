@@ -1,9 +1,11 @@
 import copy
+import dataclasses
 import functools
 import hashlib
 import hmac
 import inspect
 import json
+import logging
 import secrets
 import threading
 from datetime import UTC, date, datetime, timedelta
@@ -29,6 +31,8 @@ from app.config import demo_matches, phone_hash_key
 from app.forms import BIDI, abuse_key, hidden_chars
 from app.match import LA
 from app.metrics_rows import fetch_rows
+
+log = logging.getLogger("causematch")
 
 
 def start(demo):
@@ -581,6 +585,10 @@ def deck_and_count(uid, limit=20, today=False, view=None, first=None):
                 "about": o.about,
                 "notes": o.notes,
                 "orientation": o.orientation_required,
+                # the nonprofit's own screening (its kind, for the sheet), else None
+                "screening": (o.screening_kind or "other")
+                if o.screening_required
+                else None,
                 "surprise": odd,
                 "why": why,
                 # the card's picture: the opening's photo, else the org's; its logo
@@ -2220,20 +2228,33 @@ def get_or_create_volunteer(phone):
         return _db.profiles(**where)[0].id
 
 
-def volunteer_for_identity(claims):
+def volunteer_for_identity(claims, trusted=True):
     """Profile id for this provider sign-in (app/oauth.py Claims), creating a volunteer on
     the first one: no phone, the provider's verified email, the given name as first name.
     An identity whose profile was deleted reads as absent. A suspended profile's id is
     returned too: get_profile is None for it, and the caller refuses the sign-in. As with
     a phone, a deleted account's suspension and org blocks on this identity come back, and
     so do those on its verified address: a mailbox a suspended account holds, live or
-    deleted (mailbox_suspended), gives a suspended profile, whichever way in it used."""
+    deleted (mailbox_suspended), gives a suspended profile, whichever way in it used.
+
+    One address, one account: a first sign-in by one way joins the volunteer who already
+    holds its exact address by another (address_holder), and the identity is attached to
+    them, so the emailed link and Google or Apple open the same profile. Only proven
+    addresses join (the emailed link's, a provider's that it hosts: _authority), never the
+    profile's typed email. Nothing joins when the address's mailbox is suspended: that is
+    refused as before. Each sign-in by an existing identity refreshes its stored address
+    from the claims. trusted: False when the provider's "verified" means nothing (the fake
+    on a preview takes any typed email); such an identity neither joins nor is joined."""
     where = {
         "where": "provider = ? AND subject = ?",
         "where_args": [claims.provider, claims.subject],
     }
     kept = _retained_identity(claims)
     mailbox = _mailbox_of(claims)
+    suspended = (kept and kept.suspended) or (
+        claims.email and mailbox_suspended(claims.email)
+    )
+    address = _proven_address(claims) if trusted else None
     # onboarding's check on the first name: a name that fails it is dropped, not kept
     name = " ".join(claims.given_name.split())[:80]
     try:
@@ -2241,8 +2262,31 @@ def volunteer_for_identity(claims):
             for found in _db.identities(**where):
                 live = "id = ? AND deleted_at IS NULL"
                 if _db.profiles.count_where(live, [found.user_id]):
+                    # the address as the provider vouches for it now: a renamed account's
+                    # old address, which its mailbox's next holder may prove, holds nothing
+                    _db.identities.update(
+                        id=found.id,
+                        email=claims.email,
+                        authoritative=_authority(claims, trusted),
+                    )
+                    if address and any(
+                        h != found.user_id for h in _address_holders(address)
+                    ):
+                        _warn_duplicates(claims.provider, found.user_id, address)
                     return found.user_id
                 _db.identities.delete(found.id)  # a deleted account's: never signs in
+            joined = (
+                address_holder(address, claims.provider)
+                if address and not suspended
+                else None
+            )
+            if joined:
+                if _db.profiles[joined].suspended_at:  # mailbox_suspended above sees
+                    return joined  # it too; refused by the caller, nothing attached
+                _insert_identity(joined, claims, trusted)
+                _reapply_blocks(joined, kept)
+                _reapply_blocks(joined, mailbox)
+                return joined
             uid = _db.profiles.insert(
                 _db.Profile(
                     role="volunteer",
@@ -2251,18 +2295,129 @@ def volunteer_for_identity(claims):
                     display_name=name if name and not hidden_chars(name) else None,
                     session_version=1,
                     created_at=_now(),
-                    suspended_at=_now()
-                    if (kept and kept.suspended)
-                    or (claims.email and mailbox_suspended(claims.email))
-                    else None,
+                    suspended_at=_now() if suspended else None,
                 )
             ).id
-            _insert_identity(uid, claims)
+            _insert_identity(uid, claims, trusted)
             _reapply_blocks(uid, kept)
             _reapply_blocks(uid, mailbox)
     except apsw.ConstraintError:  # a concurrent first sign-in won the race
         return _db.identities(**where)[0].user_id
     return uid
+
+
+# identity.authoritative: HOLDER, the address may hold an account that another way in
+# joins; JOINER, it proves the mailbox now (it may join into one) but holds none
+HOLDER, JOINER = 1, 2
+
+
+def _authority(claims, trusted=True):
+    """identity.authoritative for this sign-in. HOLDER: the emailed link reached the
+    mailbox, or Google or Apple runs it (Gmail, iCloud: oauth.authoritative by the address
+    alone). JOINER: Google vouches only as a Workspace's (hd is the address's domain),
+    which proves the mailbox is the signer's now, but the Workspace may hand the address
+    to someone else later, while Google keeps it on the old account. 0 for any other
+    address (a provider keeps it "verified" after the mailbox moves on), an unverified
+    one, and an untrusted provider's."""
+    from app import oauth  # app.oauth imports app.auth, which imports this module
+
+    if not (trusted and claims.email_verified):
+        return 0
+    if claims.provider == EMAIL_SIGN_IN:
+        return HOLDER
+    if oauth.authoritative(dataclasses.replace(claims, hosted_domain="")):
+        return HOLDER
+    return JOINER if oauth.authoritative(claims) else 0
+
+
+def _proven_address(claims):
+    """The exact lowercased address this sign-in proves, which it may join on, else None:
+    verified, ASCII before lowercasing (SQLite's lower() and Python's agree only there,
+    and Python turns the Kelvin sign into a "k") and a HOLDER's or a JOINER's."""
+    raw = claims.email.strip()
+    if not (raw and raw.isascii() and _authority(claims)):
+        return None
+    return raw.lower()
+
+
+def _address_holders(email):
+    """Ids of the live volunteers (suspended ones too) holding this exact lowercased
+    address as a proven way in: an emailed link's identity, or a Google or Apple one whose
+    provider runs the mailbox (identity.authoritative HOLDER; never a Workspace's JOINER).
+    Exact, not forms.abuse_key: a +tag is another account. Never profile.email, which
+    anyone can type in Me."""
+    rows = _db.db.q(
+        "SELECT DISTINCT i.user_id FROM identity i JOIN profile p ON p.id = i.user_id "
+        "WHERE p.deleted_at IS NULL AND p.role = 'volunteer' AND ("
+        "(i.provider = ? AND i.subject = ?) OR "
+        "(i.provider != ? AND i.authoritative = ? AND lower(i.email) = ?)"
+        ") ORDER BY i.user_id",
+        [EMAIL_SIGN_IN, email, EMAIL_SIGN_IN, HOLDER, email],
+    )
+    return [r["user_id"] for r in rows]
+
+
+def address_holder(email, provider):
+    """The volunteer a first sign-in by `provider` with this proven address joins: the one
+    live profile holding it (_address_holders), when it has no account of this provider
+    yet (never two of one provider, as Me's Connect keeps it). None otherwise; two holders
+    (accounts made before joining existed) are logged and neither is joined."""
+    holders = _address_holders(email)
+    if len(holders) > 1:
+        _warn_duplicates(provider, None, email)
+        return None
+    if not holders:
+        return None
+    (uid,) = holders
+    has_one = _db.identities.count_where(
+        "user_id = ? AND provider = ?", [uid, provider]
+    )
+    return None if has_one else uid
+
+
+def volunteer_holds_address(email):
+    """True when a live volunteer (suspended ones too) signs in with this exact address
+    (_address_holders: an emailed link's identity, or a Google or Apple one whose provider
+    runs the mailbox). Made a coordinator's or an admin's, it would get staff links from
+    then on (volunteer_link_kind), so add_coordinator, add_admin and approve_claim ask
+    first (_gives_volunteer_staff_links). A +tag is another address, and an emailed link
+    to it stays the volunteer's."""
+    email = email.strip().lower()
+    return email.isascii() and bool(_address_holders(email))
+
+
+def _gives_volunteer_staff_links(email):
+    """Making this address a coordinator's or an admin's would send a volunteer who signs
+    in with it staff links: they hold it, and it doesn't already get the staff link."""
+    return (
+        volunteer_holds_address(email) and not staff_by_email(email.strip().lower())[0]
+    )
+
+
+class VolunteerAddress(ValueError):
+    """add_coordinator or add_admin without allow_volunteer, for an address a volunteer
+    signs in with (_gives_volunteer_staff_links): the text is volunteer_address_warning."""
+
+
+def volunteer_address_warning(role):
+    """What an admin reads before a volunteer's sign-in address becomes a `role`'s."""
+    return (
+        "This person already volunteers on Causematch with this address. Making it a "
+        f"{role} sign-in sends every emailed sign-in link for it to the {role} side, so "
+        "they'd reach their volunteer account only by signing in with Google or Apple, "
+        "if they've connected one."
+    )
+
+
+def _warn_duplicates(provider, uid, email):
+    """Several live volunteers hold one address: an operator merges or suspends them by
+    hand (docs/ADMIN_GUIDE.md). Logs profile ids, never the address."""
+    log.warning(
+        "volunteers %s share a sign-in address; a %s sign-in %s",
+        ",".join(map(str, _address_holders(email))),
+        provider,
+        f"signed in to {uid} by its own identity" if uid else "joined neither",
+    )
 
 
 def _mailbox_of(claims):
@@ -2273,7 +2428,7 @@ def _mailbox_of(claims):
     return _retained_mailbox(claims.email)
 
 
-def _insert_identity(uid, claims):
+def _insert_identity(uid, claims, trusted=True):
     _db.identities.insert(
         _db.Identity(
             user_id=uid,
@@ -2281,6 +2436,7 @@ def _insert_identity(uid, claims):
             subject=claims.subject,
             email=claims.email,
             created_at=_now(),
+            authoritative=_authority(claims, trusted),
         )
     )
 
@@ -2298,16 +2454,22 @@ def identities_of(uid):
     }
 
 
-def link_identity(uid, claims):
+def link_identity(uid, claims, trusted=True):
     """Connect a provider sign-in to this signed-in volunteer (Me, Connect). None when
     connected (or it already was), else why not: "taken" when the identity is on another
     live profile (the unique index decides a race), "other" when this profile already has
     another account of this provider, "refused" when the profile isn't a live volunteer or
     a deleted account suspended with this identity left its hash, or a suspended account
-    holds its verified address (mailbox_suspended). A deleted account's org blocks on it
-    or on that address apply to this profile, as at a sign-up."""
+    holds its verified address (mailbox_suspended), or a coordinator or admin does
+    (staff_mailbox: one address, one role). "taken" too when another live volunteer holds
+    its proven address (address_holder): one address, one account. A deleted account's org
+    blocks on it or on that address apply to this profile, as at a sign-up. trusted: as at
+    volunteer_for_identity."""
     kept = _retained_identity(claims)
-    if (kept and kept.suspended) or (claims.email and mailbox_suspended(claims.email)):
+    if (kept and kept.suspended) or (
+        claims.email
+        and (mailbox_suspended(claims.email) or staff_mailbox(claims.email))
+    ):
         return "refused"
     mailbox = _mailbox_of(claims)
     where = "provider = ? AND subject = ?"
@@ -2324,10 +2486,13 @@ def link_identity(uid, claims):
             mine = "user_id = ? AND provider = ?"
             if _db.identities.count_where(mine, [uid, claims.provider]):
                 return "other"
+            address = _proven_address(claims) if trusted else None
+            if address and any(h != uid for h in _address_holders(address)):
+                return "taken"
             p = get_profile(uid)
             if p is None or p.role != "volunteer":
                 return "refused"
-            _insert_identity(uid, claims)
+            _insert_identity(uid, claims, trusted)
             _reapply_blocks(uid, kept)
             _reapply_blocks(uid, mailbox)
     except apsw.ConstraintError:
@@ -2621,10 +2786,15 @@ def org_exists(org_id):
     return bool(_db.orgs(where="id = ?", where_args=[org_id]))
 
 
-def add_coordinator(email, org_id, role="coordinator", name="", phone=""):
+def add_coordinator(
+    email, org_id, role="coordinator", name="", phone="", allow_volunteer=False
+):
     """Admin-only entry point (scripts/add_coordinator.py): profile id of the coordinator.
 
-    name is the contact name shown to volunteers; phone (E.164) is optional.
+    name is the contact name shown to volunteers; phone (E.164) is optional. ValueError
+    for an admin's address and for a mailbox a suspended account holds (mailbox_suspended,
+    so a +tag or Gmail's dots count), whatever allow_volunteer says; VolunteerAddress
+    when a volunteer signs in with the exact address, unless allow_volunteer.
     """
     if role not in ("owner", "coordinator"):
         raise ValueError(role)
@@ -2633,6 +2803,7 @@ def add_coordinator(email, org_id, role="coordinator", name="", phone=""):
     email = email.strip().lower()
     if admin_by_email(email):
         raise ValueError("that address is an admin")
+    _check_volunteer_address(email, "coordinator", allow_volunteer)
     found = coordinator_by_email(email)
     if found:
         uid = found
@@ -2686,17 +2857,20 @@ def coordinator_orgs(uid):
     ]
 
 
-def add_admin(email, name):
+def add_admin(email, name, allow_volunteer=False):
     """Admin-only entry point (scripts/add_admin.py): profile id of the admin.
 
     Signs in through the same emailed link as a coordinator. ValueError when the address
-    already belongs to a coordinator: one address, one role.
+    already belongs to a coordinator (one address, one role) or is a mailbox a suspended
+    account holds; VolunteerAddress when a volunteer signs in with it, unless
+    allow_volunteer (as add_coordinator).
     """
     email = email.strip().lower()
     if not name:
         raise ValueError("name")
     if coordinator_by_email(email):
         raise ValueError("that address is a coordinator")
+    _check_volunteer_address(email, "admin", allow_volunteer)
     found = _staff(email, "admin")
     if found:
         _db.profiles.update(id=found, display_name=name)
@@ -2710,6 +2884,28 @@ def add_admin(email, name):
             created_at=_now(),
         )
     ).id
+
+
+def _check_volunteer_address(email, role, allow_volunteer):
+    """add_coordinator's and add_admin's refusals for a volunteer's address: always a
+    suspended account's mailbox, and the exact address a volunteer signs in with unless
+    allow_volunteer."""
+    if mailbox_suspended(email):
+        raise ValueError("that address belongs to a suspended volunteer")
+    if not allow_volunteer and _gives_volunteer_staff_links(email):
+        raise VolunteerAddress(volunteer_address_warning(role))
+
+
+def staff_mailbox(email):
+    """True when a coordinator's or admin's address that isn't deleted is this mailbox
+    (forms.abuse_key, so a +tag or Gmail's dots don't make a staff address a volunteer's).
+    One address, one role: such an address never signs a volunteer in or up, by any way."""
+    key = abuse_key(email.strip())
+    rows = _db.db.q(  # few: staff only, compared by mailbox below
+        "SELECT email FROM profile WHERE role IN ('coordinator', 'admin') "
+        "AND deleted_at IS NULL AND coalesce(email, '') != ''"
+    )
+    return any(abuse_key(r["email"]) == key for r in rows)
 
 
 def _staff(email, role):
@@ -2831,20 +3027,25 @@ EMAIL_SIGN_IN = "email"
 def volunteer_link_kind(email):
     """What /login's emailed link does for this lowercased ASCII address. "staff": a live
     coordinator's or admin's, who gets their own link (/org/login/verify). "sign-in": a live
-    volunteer signed up with it. "sign-up": no account holds it. None, and nothing is sent:
-    a mailbox (forms.abuse_key, so a +tag or Gmail's dots don't dodge it) that a suspended
-    account holds as a verified address, by any way in, live or deleted with its hash kept;
-    and a staff address that can't sign in (suspended, or a coordinator without an org):
-    one address, one role, as add_admin and claim approval keep it."""
+    volunteer holds it (email_sign_in_owner). "sign-up": no account holds it. None, and
+    nothing is sent: a mailbox (forms.abuse_key, so a +tag or Gmail's dots don't dodge it)
+    that a suspended account holds as a verified address, by any way in, live or deleted
+    with its hash kept; and, for a sign-up or a join, a staff mailbox (staff_mailbox) that
+    isn't this exact live staff address: a +tag of it, or one that can't sign in
+    (suspended, or a coordinator without an org). One address, one role, as add_admin and
+    claim approval keep it. A volunteer who signed up with an address keeps signing in when
+    a +tag or dotted form of it becomes staff's, so such a variant can't lock them out. The
+    exact address made staff's does: its staff link comes first, so add_coordinator,
+    add_admin and approve_claim refuse it without the admin's confirm
+    (_gives_volunteer_staff_links)."""
     if staff_by_email(email)[0]:
         return "staff"
-    staff = (
-        "role IN ('coordinator', 'admin') AND lower(email) = ? AND deleted_at IS NULL"
-    )
-    if _db.profiles.count_where(staff, [email]):
-        return None
     if mailbox_suspended(email):
         return None
+    if identity_owner(EMAIL_SIGN_IN, email):
+        return "sign-in"  # signed up before: an address made staff's later doesn't lock out
+    if staff_mailbox(email):
+        return None  # no sign-up and no join
     return "sign-in" if email_sign_in_owner(email) else "sign-up"
 
 
@@ -2875,10 +3076,20 @@ def _retained_mailbox(email):
 
 
 def email_sign_in_owner(email):
-    """The live profile that signed up with this emailed-link address, else None (a
-    deleted account's identity signs nobody in)."""
+    """The live profile an emailed link to this lowercased address signs in to: the one
+    that signed up with it, else the one it joins (address_holder: a volunteer whose
+    Google or Apple account has it). None for a new account (a deleted account's identity
+    signs nobody in)."""
+    if uid := identity_owner(EMAIL_SIGN_IN, email):
+        return uid
+    return address_holder(email, EMAIL_SIGN_IN) if email.isascii() else None
+
+
+def identity_owner(provider, subject):
+    """The live profile this exact identity signs in to, else None (a deleted account's
+    identity signs nobody in)."""
     where = "provider = ? AND subject = ?"
-    for found in _db.identities(where=where, where_args=[EMAIL_SIGN_IN, email]):
+    for found in _db.identities(where=where, where_args=[provider, subject]):
         if not _db.profiles[found.user_id].deleted_at:
             return found.user_id
     return None
@@ -2907,9 +3118,12 @@ def create_opening(
     group_size="",
     first_timer_ok=False,
     languages=(),
+    screening_required=False,
+    screening_kind=None,
 ):
     """Opening id. Only an org member may post; the status always starts open. The kind
-    of work (setting ... languages) is optional: "" is not said.
+    of work (setting ... languages) is optional: "" is not said. screening_kind
+    (choices.SCREENING_KINDS) is kept only when screening_required.
 
     ValueError without coordinates: an in-person opening needs a place to be ranked.
     """
@@ -2944,6 +3158,8 @@ def create_opening(
             group_size=group_size,
             first_timer_ok=first_timer_ok,
             languages=json.dumps(sorted(set(languages))),
+            screening_required=bool(screening_required),
+            screening_kind=screening_kind if screening_required else None,
         )
     ).id
 
@@ -3035,6 +3251,8 @@ _OPENING_EDITS = {
     "group_size": "kind of work",
     "first_timer_ok": "kind of work",
     "languages": "kind of work",
+    "screening_required": "screening",
+    "screening_kind": "screening",
     "reply_channel": None,
 }
 
@@ -3061,8 +3279,8 @@ def update_opening(coordinator_uid, opening_id, **new):
 
     PermissionError as coordinator_opening, and for a deactivated org. ValueError, its
     message plain text for the coordinator: the opening is closed, spots below the
-    volunteers accepted, or a date, time or cause changed past opening_locks. Spots
-    flip open <-> filled. Accepted volunteers get one line about it in their chat.
+    volunteers accepted, a date, time or cause changed past opening_locks, or screening
+    turned on while a last-minute call is open. Spots flip open <-> filled. Accepted volunteers get one line about it in their chat.
     """
     if "cause" in new:
         new["causes"] = json.dumps([new.pop("cause")])
@@ -3102,6 +3320,12 @@ def update_opening(coordinator_uid, opening_id, **new):
             )
         if locks["cause"] and "causes" in changed:
             raise ValueError("The cause can't change once volunteers have liked it.")
+        # a last-minute call can book on a like (_auto_accept): never one that needs
+        # the nonprofit's screening first
+        if new.get("screening_required") and opening_id in _open_calls():
+            raise ValueError(
+                "This opening has a last-minute call. Stop it before requiring screening."
+            )
         if not changed:
             return []
         _db.openings.update(id=opening_id, **{k: new[k] for k in changed})
@@ -3208,7 +3432,8 @@ def post_urgent_call(coordinator_uid, opening_id, starts_at, needed, auto_accept
 
     starts_at: LA wall clock "YYYY-MM-DDTHH:MM", after now and within URGENT_HOURS.
     ValueError, its message one of: "not open" (the opening is filled or closed),
-    "already" (it has an open call), "time", "needed" (1 to its open spots), "limit"
+    "screening" (volunteers must clear the nonprofit's screening before a first shift,
+    which a call that books on a like would skip), "already" (it has an open call), "time", "needed" (1 to its open spots), "limit"
     (URGENT_PER_DAY calls in the last 24 hours by the org).
     """
     o = coordinator_opening(coordinator_uid, opening_id)
@@ -3223,6 +3448,8 @@ def _call_refused(o, starts_at, needed):
     _urgent_sweep()
     if o.status != "open":
         return "not open"
+    if o.screening_required:
+        return "screening"
     if o.id in _open_calls():
         return "already"
     now = datetime.now(LA)
@@ -4202,6 +4429,8 @@ def admin_claims(admin_uid):
                 if org
                 else None,
                 "members": _live_members(org.id) if org else [],
+                "suspended": mailbox_suspended(c.email),
+                "volunteer": _gives_volunteer_staff_links(c.email),
             }
         )
     return out
@@ -4218,16 +4447,18 @@ def _pending_claim(claim_id):
     return found[0]
 
 
-def approve_claim(admin_uid, claim_id, confirm_claimed=False):
+def approve_claim(admin_uid, claim_id, confirm_claimed=False, confirm_volunteer=False):
     """Admin approval: the only way a claimant gets membership. Creates or links the
     coordinator, adds them to the org (owner when it has no live owner, else coordinator),
     verifies the org if it is not yet, and returns (profile id, email, org name) for the
     approval email.
 
     LookupError for a claim that is not pending; ValueError when no org has the EIN, the org
-    is deactivated, the address is an admin's or a suspended coordinator's, or the org
+    is deactivated, the address is an admin's or a suspended coordinator's, the org
     already has someone who can sign in (an owner or a coordinator) and confirm_claimed is
-    false."""
+    false, a volunteer signs in with the address (_gives_volunteer_staff_links) and
+    confirm_volunteer is false, or a suspended account holds its mailbox
+    (mailbox_suspended), confirmed or not."""
     _admin(admin_uid)
     c = _pending_claim(claim_id)
     org = _claim_org(c.ein)
@@ -4246,6 +4477,13 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
         where_args=[c.email],
     ):
         raise ValueError("that address belongs to a suspended coordinator")
+    if mailbox_suspended(c.email):
+        raise ValueError("that address belongs to a suspended volunteer: decline it")
+    if not confirm_volunteer and _gives_volunteer_staff_links(c.email):
+        raise ValueError(
+            "this person already volunteers with this address: read the warning, tick "
+            '"Yes, make it a coordinator sign-in", then tap Approve again'
+        )
     has_owner = any(m["role"] == "owner" for m in members)
     with _db.db.conn:
         existing = coordinator_by_email(c.email)
@@ -4258,6 +4496,7 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
             if existing or len(c.name) > CLAIM_LIMITS["name"] or hidden_chars(c.name)
             else c.name,
             phone="" if existing else (c.phone or ""),
+            allow_volunteer=confirm_volunteer,
         )
         if not org.verified_at:
             _db.orgs.update(id=org.id, verified_at=_now())

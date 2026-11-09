@@ -137,7 +137,12 @@ def OpeningCard(c):
             P(c["booked"], cls="text-sm font-bold text-red-800")
             if c.get("booked")
             else None,
-            Div(*[WhyChip(w) for w in c["why"]], cls="flex flex-wrap gap-1.5"),
+            # the screening chip is never cut with the why-chips: volunteers need to know
+            Div(
+                *[WhyChip(w) for w in c["why"]],
+                WhyChip(SCREENING_CHIP) if c.get("screening") else None,
+                cls="flex flex-wrap gap-1.5",
+            ),
             H2(
                 c["title"],
                 cls="font-display text-xl font-extrabold leading-tight text-ink",
@@ -189,6 +194,14 @@ def OpeningCard(c):
     )
 
 
+SCREENING_CHIP = {"text": "Screening required", "slug": None}
+# the sheet's line: the nonprofit asks and confirms; the app checks nothing
+SCREENING_WORDS = {
+    "background_check": "The nonprofit asks volunteers to complete a background check first.",
+    "live_scan": "The nonprofit asks volunteers to complete Live Scan fingerprinting first.",
+    "training": "The nonprofit asks volunteers to complete its training first.",
+    "other": "The nonprofit asks volunteers to complete its own screening first.",
+}
 ORIENTATION_WORDS = {
     "same_day": "Orientation: done the same day, before the first shift.",
     "separate": "Orientation: a separate session beforehand.",
@@ -231,6 +244,9 @@ def DetailsSheet(c):
         else None,
         P(ORIENTATION_WORDS[c["orientation"]], cls="text-sm font-semibold text-ink")
         if c.get("orientation") in ORIENTATION_WORDS
+        else None,
+        P(SCREENING_WORDS[c["screening"]], cls="text-sm font-semibold text-ink")
+        if c.get("screening") in SCREENING_WORDS
         else None,
         Div(
             vote("Pass", "0", Icon(CROSS, size=20), "uk-btn-default"),

@@ -5,7 +5,6 @@ import time
 
 from fasthtml.common import H2, A, Button, Div, Form, Hidden, HttpHeader, P, Redirect
 from monsterui.all import Alert, AlertT, TextPresets
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, oauth, security
@@ -205,7 +204,7 @@ def login_page():
 
 
 def _send_link(email):
-    """After the response, so every address takes the same time to answer
+    """After the response (notify.after), so every address takes the same time to answer
     (data.volunteer_link_kind decides what is sent). (link, whether a preview may show
     it: not an admin's), or (None, False) when nothing was sent."""
     kind = data.volunteer_link_kind(email)
@@ -237,7 +236,14 @@ def _sync_send(req, form, sess):
     # not ASCII is refused before lowercasing, which would turn the Kelvin sign into a "k"
     if len(raw) > 254 or not raw.isascii() or not EMAIL.fullmatch(raw):
         return LoginPage(raw[:254], BAD_EMAIL)
-    email = raw.lower()
+    return link_sent(req, raw.lower(), sess)
+
+
+def link_sent(req, email, sess):
+    """What a request for a volunteer's link to this (lowercased, valid) address answers:
+    the "check your email" page, the link sent after the response (notify.after), under the
+    link limits. Also a volunteer's Google or Apple sign-in's answer when its address is
+    staff's (app/routes/oauth.py). A page or the 429 response."""
     # every valid-shape address is counted, in the nonprofit link's own buckets, so a
     # refusal says nothing about the account and the two pages share one budget
     smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
@@ -254,7 +260,8 @@ def _sync_send(req, form, sess):
         # shows the link, for the demo's data only. An admin's stays in the log.
         link, shown = _send_link(email)
         return SentPage(email, link if shown else None)
-    return SentPage(email), BackgroundTask(_send_link, email)
+    notify.after(req, _send_link, email, limiter=notify.LINK_LIMITER)
+    return SentPage(email)
 
 
 @ar("/login/verify", methods=["GET"])

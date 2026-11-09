@@ -1149,6 +1149,59 @@ def test_notices_after_the_response_have_their_own_threads(monkeypatch, caplog):
     assert "up to 2 notices not sent: the server is stopping" in caplog.text
 
 
+def test_a_sockets_notices_run_beside_its_frames_and_its_end_waits(caplog):
+    events, started, go = [], threading.Event(), threading.Event()
+
+    def notice():
+        started.set()
+        go.wait(5)
+        events.append("notice")
+
+    async def app(scope, receive, send):
+        notify.after(SimpleNamespace(scope=scope), notice)
+        assert await anyio.to_thread.run_sync(started.wait, 5)  # it starts at once
+        events.append("next frame")  # not held by the notice
+        go.set()
+
+    run_alone(notify.RunAfter(app)({"type": "websocket"}, None, None))
+    assert events == ["next frame", "notice"]  # and the socket's end waited for it
+
+    async def stops(scope, receive, send):  # the server stopping, a notice still queued
+        notify.after(SimpleNamespace(scope=scope), notice)
+        raise asyncio.CancelledError
+
+    with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
+        run_alone(notify.RunAfter(stops)({"type": "websocket"}, None, None))
+    assert "up to 1 notices not sent: the server is stopping" in caplog.text
+
+
+def test_a_sockets_own_error_comes_out_as_itself_once_its_notices_ran():
+    events, go = [], threading.Event()
+
+    def notice():
+        go.wait(5)  # still held when the socket's handler fails
+        events.append("notice")
+
+    async def fails(scope, receive, send):
+        notify.after(SimpleNamespace(scope=scope), notice)
+        threading.Timer(0.1, go.set).start()
+        raise ValueError("handler bug")
+
+    with pytest.raises(ValueError, match="handler bug"):  # not an ExceptionGroup
+        run_alone(notify.RunAfter(fails)({"type": "websocket"}, None, None))
+    assert events == ["notice"]  # not cancelled by the error
+
+
+def test_after_on_a_socket_refuses_another_thread():
+    async def off_loop(scope, receive, send):
+        await anyio.to_thread.run_sync(
+            notify.after, SimpleNamespace(scope=scope), print
+        )
+
+    with pytest.raises(RuntimeError, match="event loop only"):
+        run_alone(notify.RunAfter(off_loop)({"type": "websocket"}, None, None))
+
+
 def test_the_apps_routes_queue_their_notices_after_the_response(world, monkeypatch):
     queued, real = [], notify.after
     monkeypatch.setattr(

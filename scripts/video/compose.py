@@ -7,7 +7,9 @@ normalised to -16 LUFS (two-pass loudnorm). Also writes OUT-poster.jpg and OUT.v
 captions of the narration, one cue per sentence, timed from each beat's start in the video)
 next to OUT.mp4. Fails if a voice line doesn't fit inside its beat.
 
-The full video has one beat per beat of the recording, each as long as it was recorded. A
+The full video has one beat per beat of the recording, each as long as it was recorded
+(a card with no recorded beat, like the opening title and "why" cards, lasts as long as its
+voice line plus a "tail", default 1 second). A
 shorter cut (any beat with a "from") is composed from the same recording, with its own
 voice lines: a beat takes the footage of the recorded beat "from" (default: its own id), and
 lasts as long as its voice line. Optional per beat: "mark" (start at that named moment of
@@ -198,8 +200,11 @@ def card_art(name, lines):
     y = 470
     for text, size, color in lines:
         f = font(size)
-        d.text(((W - d.textlength(text, font=f)) / 2, y), text, font=f, fill=color)
-        y += size * 1.7
+        rows = wrap(d, text, f, W - 2 * 200)  # a line too wide for the margins wraps
+        for row in rows:
+            d.text(((W - d.textlength(row, font=f)) / 2, y), row, font=f, fill=color)
+            y += size * 1.25
+        y += size * 0.45
     path = ART / f"{name}.png"
     im.save(path)
     return path
@@ -212,6 +217,14 @@ order = [b["id"] for b in tl["beats"] if b["id"] != "end"]
 offsets = tl["offsets"]
 voice_len = json.loads((VOICE / "durations.json").read_text())
 CARDS = {
+    "title": [
+        ("Swipe Right for Good", 56, INK),
+        ("Volunteers and LA County nonprofits, matched.", 28, MUTED),
+    ],
+    "why": [
+        ("Plenty of people want to help. Nonprofits need them.", 56, INK),
+        ("They rarely find each other. Causematch fixes that.", 28, MUTED),
+    ],
     "intro": [
         ("Post once. Volunteers swipe. You say yes.", 56, INK),
         (
@@ -239,13 +252,14 @@ for i, b in enumerate(BEATS):
     bid = b["id"]
     src_id = b.get("from", bid)
     speed = b.get("speed", 1.0)
-    start = starts[src_id]
+    standalone = src_id not in starts  # a card of its own: nothing was recorded for it
+    start = 0.0 if standalone else starts[src_id]
     if "mark" in b:
         start = marks[b["mark"]] - b.get("pre", 0.0)
     took[bid] = (start, speed)
     if i == len(BEATS) - 1:  # the closing card
         dur = voice_len[bid] + 2.0
-    elif short:
+    elif short or standalone:
         dur = voice_len[bid] + b.get("tail", 1.0)
     else:
         dur = starts[order[order.index(bid) + 1]] - start

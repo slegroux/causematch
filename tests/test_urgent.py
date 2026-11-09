@@ -242,6 +242,26 @@ def test_post_refuses_a_closed_opening(shelter):
     assert not urgent_calls()
 
 
+def test_a_screening_opening_takes_no_last_minute_call(shelter):
+    """A call can book on a like, so it would skip the nonprofit's own screening."""
+    oid = shelter.opening.id
+    openings.update(id=oid, starts_at=tomorrow("10:00"))
+    assert f"/org/openings/{oid}/urgent" in shelter.get("/org").text  # control
+    openings.update(id=oid, screening_required=True, screening_kind="training")
+    assert f"/org/openings/{oid}/urgent" not in shelter.get("/org").text
+    r = post_call(shelter, auto=True)
+    assert r.status_code == 200 and "must clear your screening" in r.text
+    assert not urgent_calls()
+    # and an open call keeps screening from being turned on
+    openings.update(id=oid, screening_required=False, screening_kind=None)
+    assert post_call(shelter).status_code == 303
+    with pytest.raises(ValueError, match="Stop it before requiring screening"):
+        data.update_opening(
+            shelter.uid, oid, screening_required=True, screening_kind="training"
+        )
+    assert not openings[oid].screening_required
+
+
 def test_post_page_prefills_a_soon_opening_start(shelter):
     page = shelter.get(f"/org/openings/{shelter.opening.id}/urgent")
     assert page.status_code == 200 and "Last-minute call" in page.text

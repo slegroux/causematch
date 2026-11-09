@@ -9,7 +9,9 @@ from fasthtml.common import (
     A,
     Details,
     Div,
+    Fieldset,
     Input,
+    Legend,
     P,
     Progress,
     Redirect,
@@ -40,6 +42,7 @@ from app.choices import (
     GROUP,
     LANGUAGES,
     MAX_OPENING_SKILLS,
+    SCREENING_KINDS,
     SETTING,
     SHIFT_LENGTHS,
     SKILLS,
@@ -47,6 +50,7 @@ from app.choices import (
 from app.forms import HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.geo import zip_latlon, zip_neighborhood
 from app.match import LA
+from app.routes.prefs import Chip
 from app.routes.shifts import RepeatForm
 from app.ui import (
     CALENDAR,
@@ -133,6 +137,12 @@ ADULT_ONLY = (
     "I confirm this opening is for adults (18+) and involves no one-to-one contact "
     "with vulnerable people"
 )
+# the same box, when the opening needs the nonprofit's own screening
+ADULT_SCREENED = (
+    "I confirm this opening is for adults (18+); we run our own screening and confirm "
+    "each volunteer before their first shift"
+)
+SCREENING_REQUIRED = "Volunteers must clear our screening before their first shift"
 
 
 OPENING_STATUS = {
@@ -181,6 +191,7 @@ def UrgentLink(o, urgent, accepted):
     if (
         not urgent
         and o.status == "open"
+        and not o.screening_required  # data._call_refused
         and accepted < o.slots
         and urgent_possible(o.starts_at)
     ):
@@ -479,6 +490,8 @@ def opening_fields(o):
         "first_timer_ok": o.first_timer_ok,
         "languages": json.loads(o.languages or "[]"),
         "skills": json.loads(o.skills or "[]"),
+        "screening": "1" if o.screening_required else "",
+        "screening_kind": o.screening_kind or "",
     }
 
 
@@ -654,6 +667,8 @@ def OpeningForm(uid, f=None, error=None, editing=None):
             # cm-adult-box (static/theme.css): the note is always there, read with the
             # checkbox (aria-describedby), and stands out once the cause is homelessness
             # services (:has(), or .cm-homeless on a form drawn with that cause)
+            # cm-screening (static/theme.css): ticking screening shows its kinds and
+            # the screened wording of the adults box, with :has() or once redrawn
             Div(
                 P(
                     "Homelessness services: group shifts only, like meal service, "
@@ -663,13 +678,40 @@ def OpeningForm(uid, f=None, error=None, editing=None):
                     cls="cm-homeless-note text-sm",
                 ),
                 LabelCheckboxX(
-                    ADULT_ONLY,
+                    SCREENING_REQUIRED,
+                    name="screening",
+                    value="1",
+                    checked=f.get("screening") == "1",
+                ),
+                Fieldset(
+                    Legend("Which screening?", cls="uk-form-label mb-1.5"),
+                    Div(
+                        *[
+                            Chip(
+                                "radio",
+                                "screening_kind",
+                                v,
+                                label,
+                                f.get("screening_kind") == v,
+                            )
+                            for v, label in SCREENING_KINDS
+                        ],
+                        cls="flex flex-wrap gap-2",
+                    ),
+                    cls="cm-screening-kinds",
+                ),
+                LabelCheckboxX(
+                    Span(
+                        Span(ADULT_ONLY, cls="cm-adult-plain"),
+                        Span(ADULT_SCREENED, cls="cm-adult-screened"),
+                    ),
                     name="adult_only_ok",
                     value="1",
                     checked=bool(f.get("adult_only_ok")),
                     aria_describedby="homeless-note",
                 ),
-                cls="cm-adult-box space-y-3 rounded-2xl border border-line p-4",
+                cls="cm-adult-box space-y-3 rounded-2xl border border-line p-4"
+                + (" cm-screening" if f.get("screening") == "1" else ""),
             ),
         ),
         reply_field,
@@ -807,6 +849,8 @@ def opening_input(form):
         "group_size": text("group_size"),
         "first_timer_ok": form.get("first_timer_ok"),
         "languages": form.getlist("languages"),
+        "screening": form.get("screening"),
+        "screening_kind": text("screening_kind"),
     }
 
 
@@ -875,8 +919,13 @@ def opening_error(f, profile, skip=()):
         or f["group_size"] not in {v for v, _ in GROUP} | {""}
         or f["first_timer_ok"] not in (None, "1")
         or not set(f["languages"]) <= {v for v, _ in LANGUAGES}
+        or f["screening"] not in (None, "", "1")
+        or f["screening_kind"] not in {v for v, _ in SCREENING_KINDS} | {""}
     ):
         return prefs.UNRECOGNIZED, None, None
+    screened = f["screening"] == "1"
+    if screened and not f["screening_kind"]:
+        return "Please say which screening volunteers go through.", None, None
     if "reply" not in skip and f["reply_channel"] not in {
         v for v, _ in reply_options(bool(profile.contact_phone))
     }:
@@ -887,7 +936,9 @@ def opening_error(f, profile, skip=()):
         )
     if f["adult_only_ok"] != "1":
         return (
-            "Please confirm the opening is for adults with no one-to-one contact.",
+            "Please confirm the opening is for adults and that you run your own screening."
+            if screened
+            else "Please confirm the opening is for adults with no one-to-one contact.",
             None,
             None,
         )
@@ -926,6 +977,8 @@ def _sync_new_opening_save(req, form):
             group_size=f["group_size"],
             first_timer_ok=f["first_timer_ok"] == "1",
             languages=f["languages"],
+            screening_required=f["screening"] == "1",
+            screening_kind=f["screening_kind"] or None,
         )
     except PermissionError:
         return Refusal(403)
@@ -994,6 +1047,10 @@ def _sync_edit_opening_save(req, opening_id, form):
             "group_size": f["group_size"],
             "first_timer_ok": f["first_timer_ok"] == "1",
             "languages": f["languages"],
+            "screening_required": f["screening"] == "1",
+            "screening_kind": (f["screening_kind"] or None)
+            if f["screening"] == "1"
+            else None,
         }
         if "cause" not in skip:
             changes["cause"] = f["cause"]
@@ -1031,6 +1088,8 @@ def close(req, opening_id: int):
 
 URGENT_ERRORS = {
     "not open": "This opening is filled or closed, so it can't take a last-minute call.",
+    "screening": "Volunteers must clear your screening before their first shift, so "
+    "this opening can't take a last-minute call.",
     "already": "This opening already has a last-minute call. Stop it first to post another.",
     "time": "Pick a time in the next 48 hours.",
     "limit": f"You can post {data.URGENT_PER_DAY} last-minute calls a day. Try again tomorrow.",
