@@ -41,11 +41,33 @@ CPU_ALWAYS_ALLOCATED="${CPU_ALWAYS_ALLOCATED:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# A preview's SERVICE or SERVICE_ACCOUNT left in the shell would redeploy the preview with
+# production's settings.
+case "$SERVICE $SERVICE_ACCOUNT" in
+*preview*)
+	echo "SERVICE ($SERVICE) or SERVICE_ACCOUNT ($SERVICE_ACCOUNT) names the preview:" \
+		"refusing" >&2
+	exit 1
+	;;
+esac
+
 # PROJECT is an id anyone could have taken (causematch was): deploy only to the project
 # named Causematch. Unreachable or unknown: refused.
 name="$(gcloud projects describe "$PROJECT" --format 'value(name)' 2>/dev/null)" || name=""
 if [ "$name" != "Causematch" ]; then
 	echo "project $PROJECT is not the one named Causematch (got '$name'): refusing" >&2
+	exit 1
+fi
+# Bucket names are global: anyone could have made $LITESTREAM_BUCKET, and it would receive
+# the database. Stream only to a bucket in this project (the bucket's projectNumber, from the
+# API's own format with --raw). Missing, unreadable or another project's: refused.
+number="$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)' 2>/dev/null)" ||
+	number=""
+owner="$(gcloud storage buckets describe "gs://$LITESTREAM_BUCKET" --raw \
+	--format 'value(projectNumber)' 2>/dev/null)" || owner=""
+if [ -z "$number" ] || [ "$owner" != "$number" ]; then
+	echo "bucket gs://$LITESTREAM_BUCKET is missing or not in project $PROJECT (bucket's" \
+		"project number '$owner', the project's '$number'): refusing" >&2
 	exit 1
 fi
 case "$CPU_ALWAYS_ALLOCATED" in
