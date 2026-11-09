@@ -14,7 +14,7 @@ Contents: [1. Signing in](#1-who-is-an-admin-and-how-to-sign-in) · [2. Claims](
 
 ## 1. Who is an admin, and how to sign in
 
-An admin can see the admin pages and nothing else: the volunteer pages and the nonprofit pages (`/org`) are closed to you, so an admin can't swipe, post openings or chat. A person has one role per email address. An address that is already a coordinator can't also be an admin, and a coordinator's or admin's address (or a `+tag` of it) can't sign up as a volunteer or join a volunteer's account, by emailed link, Google or Apple. A volunteer who already signed in with that address keeps their account.
+An admin can see the admin pages and nothing else: the volunteer pages and the nonprofit pages (`/org`) are closed to you, so an admin can't swipe, post openings or chat. A person has one role per email address. An address that is already a coordinator can't also be an admin, and a coordinator's or admin's address (or a `+tag` of it) can't sign up as a volunteer or join a volunteer's account, by emailed link, Google or Apple. A volunteer who already signed in with that address keeps their account, but every emailed link to it is a staff link from then on, so they reach their volunteer account only through Google or Apple. Approving a claim, `add_coordinator.py` and `add_admin.py` warn you before that happens.
 
 ### Becoming an admin
 
@@ -24,7 +24,7 @@ Only the operator can add an admin. They run this against the live app (use your
 uv run python scripts/add_admin.py --email admin@example.org --name "Your Name"
 ```
 
-It prints `admin@example.org is an admin (profile 2)`; the number is just an internal id. To take access away (you are signed out at once):
+It prints `admin@example.org is an admin (profile 2)`; the number is just an internal id. If a volunteer already signs in with that exact address, it refuses and says why: pick another address, or add `--force` to make it an admin's anyway. A suspended volunteer's address (or a `+tag` or Gmail-dot variant of it) is refused even with `--force`. To take access away (you are signed out at once):
 
 ```sh
 uv run python scripts/remove_admin.py --email admin@example.org
@@ -88,6 +88,8 @@ Each card shows:
 - the person's name, email and phone (the phone appears in international form, `+1310...`);
 - **They typed: ...** when the name they entered is not the name IRS records have for that EIN;
 - **Already claimed by ...** when someone can already sign in for this organization;
+- a warning, **This person already volunteers on Causematch with this address**, when a volunteer signs in with exactly that email address (a `+tag` or dotted variant of it doesn't count). Approving makes it a coordinator sign-in: every emailed sign-in link for it then opens the nonprofit side, and they reach their volunteer account only by signing in with Google or Apple, if they've connected one. Ask the nonprofit for a different address if you can. If the address is already a coordinator's, nothing changes for them, and there is no warning;
+- **This address belongs to a suspended volunteer: it can't be approved** when a suspended volunteer account holds that mailbox (a `+tag` or Gmail-dot variant counts here). The card has no Approve button: decline it;
 - **New to Causematch: approving adds it from IRS records** when no organization has that EIN yet.
 
 ### Check before you approve
@@ -104,6 +106,7 @@ Approving gives a stranger the right to post openings, accept volunteers and cha
 - **Approve.** Tap it. If the card has a checkbox, tick it first:
   - *Yes, approve for (name)* appears when the typed name differs from the IRS name. If you tap Approve without it, nothing is approved and the card explains: "IRS records name this EIN '...', not what they typed. Check it's right, tick ..., then tap Approve again."
   - *Yes, add them too (the people above can already sign in)* appears when the organization already has someone who can sign in. This is how you add a second coordinator ([see below](#a-nonprofit-needs-a-second-coordinator)).
+  - *Yes, make it a coordinator sign-in* appears with that warning. Tick it only once you've read the warning and the nonprofit can't use another address. Without it, nothing is approved and the card asks you to tick it.
 - **Decline.** Tap it. It happens **at once**: there is no "are you sure?" and no way to undo it. The person gets a short, neutral email ("not approved"), with no reason and none of what they typed. If they should have been approved, they have to file a new claim (up to 3 a day per email address).
 
 If the organization is **new to Causematch**, the first tap on Approve fetches it from IRS records. If the IRS name differs from what the person typed, you may then get the "tick ... then tap Approve again" message: tick the box and tap Approve a second time. The fetch can also fail, and then nothing changes:
@@ -112,7 +115,7 @@ If the organization is **new to Causematch**, the first tap on Approve fetches i
 - "Too many IRS lookups this hour": try later. Lookups are limited to 30 an hour for all admins together.
 - "Can't add this organization: ...": Causematch only takes organizations in Los Angeles County whose type of work fits one of its causes. Decline it, or ask the operator for help.
 
-Approve can also be refused with a message on the card: the organization is **deactivated** (the card has no Approve button, only Decline), the address belongs to a **suspended coordinator**, or the address is an **admin's** (one address, one role). Decline those.
+Approve can also be refused with a message on the card: the organization is **deactivated** or the address is a **suspended volunteer's** (the card has no Approve button, only Decline), the address belongs to a **suspended coordinator**, or the address is an **admin's** (one address, one role). Decline those.
 
 A green banner confirms the decision: "Approved. We emailed them a link to sign in." or "Declined. We let them know by email." If the email didn't go out, the banner says so ("Approved, but the email didn't send..." or "Declined, but the email to them didn't send."). The decision still stands. Tell the person yourself; after an approval they can sign in at `/org/login` with the email they used.
 
@@ -261,7 +264,7 @@ Two ways:
    uv run python scripts/add_coordinator.py --email second@example.org --org-id 1 --name "Maria Lopez, volunteer coordinator"
    ```
 
-   (`--org-id` is the organization's number, which admins can't see in the app: give the operator the organization's **name and EIN** and they will find it. Add `--role owner` to make them an owner.)
+   (`--org-id` is the organization's number, which admins can't see in the app: give the operator the organization's **name and EIN** and they will find it. Add `--role owner` to make them an owner. If a volunteer already signs in with that exact address, the script refuses with the same warning as the Claims page; add `--force` to go ahead anyway. A suspended volunteer's address is refused even with `--force`.)
 
 To remove a coordinator, the operator runs `scripts/remove_coordinator.py` as above. That removes the whole account from every organization; there is no script to take someone off just one.
 

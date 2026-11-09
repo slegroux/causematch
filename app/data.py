@@ -2371,6 +2371,40 @@ def address_holder(email, provider):
     return None if has_one else uid
 
 
+def volunteer_holds_address(email):
+    """True when a live volunteer (suspended ones too) signs in with this exact address
+    (_address_holders: an emailed link's identity, or a Google or Apple one whose provider
+    runs the mailbox). Made a coordinator's or an admin's, it would get staff links from
+    then on (volunteer_link_kind), so add_coordinator, add_admin and approve_claim ask
+    first (_gives_volunteer_staff_links). A +tag is another address, and an emailed link
+    to it stays the volunteer's."""
+    email = email.strip().lower()
+    return email.isascii() and bool(_address_holders(email))
+
+
+def _gives_volunteer_staff_links(email):
+    """Making this address a coordinator's or an admin's would send a volunteer who signs
+    in with it staff links: they hold it, and it doesn't already get the staff link."""
+    return (
+        volunteer_holds_address(email) and not staff_by_email(email.strip().lower())[0]
+    )
+
+
+class VolunteerAddress(ValueError):
+    """add_coordinator or add_admin without allow_volunteer, for an address a volunteer
+    signs in with (_gives_volunteer_staff_links): the text is volunteer_address_warning."""
+
+
+def volunteer_address_warning(role):
+    """What an admin reads before a volunteer's sign-in address becomes a `role`'s."""
+    return (
+        "This person already volunteers on Causematch with this address. Making it a "
+        f"{role} sign-in sends every emailed sign-in link for it to the {role} side, so "
+        "they'd reach their volunteer account only by signing in with Google or Apple, "
+        "if they've connected one."
+    )
+
+
 def _warn_duplicates(provider, uid, email):
     """Several live volunteers hold one address: an operator merges or suspends them by
     hand (docs/ADMIN_GUIDE.md). Logs profile ids, never the address."""
@@ -2748,10 +2782,15 @@ def org_exists(org_id):
     return bool(_db.orgs(where="id = ?", where_args=[org_id]))
 
 
-def add_coordinator(email, org_id, role="coordinator", name="", phone=""):
+def add_coordinator(
+    email, org_id, role="coordinator", name="", phone="", allow_volunteer=False
+):
     """Admin-only entry point (scripts/add_coordinator.py): profile id of the coordinator.
 
-    name is the contact name shown to volunteers; phone (E.164) is optional.
+    name is the contact name shown to volunteers; phone (E.164) is optional. ValueError
+    for an admin's address and for a mailbox a suspended account holds (mailbox_suspended,
+    so a +tag or Gmail's dots count), whatever allow_volunteer says; VolunteerAddress
+    when a volunteer signs in with the exact address, unless allow_volunteer.
     """
     if role not in ("owner", "coordinator"):
         raise ValueError(role)
@@ -2760,6 +2799,7 @@ def add_coordinator(email, org_id, role="coordinator", name="", phone=""):
     email = email.strip().lower()
     if admin_by_email(email):
         raise ValueError("that address is an admin")
+    _check_volunteer_address(email, "coordinator", allow_volunteer)
     found = coordinator_by_email(email)
     if found:
         uid = found
@@ -2813,17 +2853,20 @@ def coordinator_orgs(uid):
     ]
 
 
-def add_admin(email, name):
+def add_admin(email, name, allow_volunteer=False):
     """Admin-only entry point (scripts/add_admin.py): profile id of the admin.
 
     Signs in through the same emailed link as a coordinator. ValueError when the address
-    already belongs to a coordinator: one address, one role.
+    already belongs to a coordinator (one address, one role) or is a mailbox a suspended
+    account holds; VolunteerAddress when a volunteer signs in with it, unless
+    allow_volunteer (as add_coordinator).
     """
     email = email.strip().lower()
     if not name:
         raise ValueError("name")
     if coordinator_by_email(email):
         raise ValueError("that address is a coordinator")
+    _check_volunteer_address(email, "admin", allow_volunteer)
     found = _staff(email, "admin")
     if found:
         _db.profiles.update(id=found, display_name=name)
@@ -2837,6 +2880,16 @@ def add_admin(email, name):
             created_at=_now(),
         )
     ).id
+
+
+def _check_volunteer_address(email, role, allow_volunteer):
+    """add_coordinator's and add_admin's refusals for a volunteer's address: always a
+    suspended account's mailbox, and the exact address a volunteer signs in with unless
+    allow_volunteer."""
+    if mailbox_suspended(email):
+        raise ValueError("that address belongs to a suspended volunteer")
+    if not allow_volunteer and _gives_volunteer_staff_links(email):
+        raise VolunteerAddress(volunteer_address_warning(role))
 
 
 def staff_mailbox(email):
@@ -2976,8 +3029,11 @@ def volunteer_link_kind(email):
     with its hash kept; and, for a sign-up or a join, a staff mailbox (staff_mailbox) that
     isn't this exact live staff address: a +tag of it, or one that can't sign in
     (suspended, or a coordinator without an org). One address, one role, as add_admin and
-    claim approval keep it. A volunteer who signed up with the address keeps signing in:
-    a claim's unverified address, approved as a coordinator's, can't lock them out."""
+    claim approval keep it. A volunteer who signed up with an address keeps signing in when
+    a +tag or dotted form of it becomes staff's, so such a variant can't lock them out. The
+    exact address made staff's does: its staff link comes first, so add_coordinator,
+    add_admin and approve_claim refuse it without the admin's confirm
+    (_gives_volunteer_staff_links)."""
     if staff_by_email(email)[0]:
         return "staff"
     if mailbox_suspended(email):
@@ -4353,6 +4409,8 @@ def admin_claims(admin_uid):
                 if org
                 else None,
                 "members": _live_members(org.id) if org else [],
+                "suspended": mailbox_suspended(c.email),
+                "volunteer": _gives_volunteer_staff_links(c.email),
             }
         )
     return out
@@ -4369,16 +4427,18 @@ def _pending_claim(claim_id):
     return found[0]
 
 
-def approve_claim(admin_uid, claim_id, confirm_claimed=False):
+def approve_claim(admin_uid, claim_id, confirm_claimed=False, confirm_volunteer=False):
     """Admin approval: the only way a claimant gets membership. Creates or links the
     coordinator, adds them to the org (owner when it has no live owner, else coordinator),
     verifies the org if it is not yet, and returns (profile id, email, org name) for the
     approval email.
 
     LookupError for a claim that is not pending; ValueError when no org has the EIN, the org
-    is deactivated, the address is an admin's or a suspended coordinator's, or the org
+    is deactivated, the address is an admin's or a suspended coordinator's, the org
     already has someone who can sign in (an owner or a coordinator) and confirm_claimed is
-    false."""
+    false, a volunteer signs in with the address (_gives_volunteer_staff_links) and
+    confirm_volunteer is false, or a suspended account holds its mailbox
+    (mailbox_suspended), confirmed or not."""
     _admin(admin_uid)
     c = _pending_claim(claim_id)
     org = _claim_org(c.ein)
@@ -4397,6 +4457,13 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
         where_args=[c.email],
     ):
         raise ValueError("that address belongs to a suspended coordinator")
+    if mailbox_suspended(c.email):
+        raise ValueError("that address belongs to a suspended volunteer: decline it")
+    if not confirm_volunteer and _gives_volunteer_staff_links(c.email):
+        raise ValueError(
+            "this person already volunteers with this address: read the warning, tick "
+            '"Yes, make it a coordinator sign-in", then tap Approve again'
+        )
     has_owner = any(m["role"] == "owner" for m in members)
     with _db.db.conn:
         existing = coordinator_by_email(c.email)
@@ -4409,6 +4476,7 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False):
             if existing or len(c.name) > CLAIM_LIMITS["name"] or hidden_chars(c.name)
             else c.name,
             phone="" if existing else (c.phone or ""),
+            allow_volunteer=confirm_volunteer,
         )
         if not org.verified_at:
             _db.orgs.update(id=org.id, verified_at=_now())

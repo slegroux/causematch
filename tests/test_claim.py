@@ -1,23 +1,30 @@
 """A coordinator claims their org: request, admin approval, magic link; coordinator claims org."""
 
+import importlib.util
+import io
 import json
 import re
+import sys
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from conftest import (
     FIXTURES,
+    ROOT,
     admin_client,
     coordinator_for,
+    link_sign_in,
     org_sign_in,
     sign_in,
     uid_of,
+    volunteer,
 )
 from starlette.testclient import TestClient
 
 from app import data, notify, propublica, security
 from app.db import claim_requests, org_members, orgs, profiles
+from app.oauth import Claims
 from main import app
 
 EIN = "861620575"
@@ -789,3 +796,207 @@ def test_an_older_claims_unfit_name_is_not_given_to_the_coordinator(admin, name,
     assert approve(admin, c.id).status_code == 303
     p = data.get_profile(data.coordinator_by_email(c.email))
     assert (p.display_name or "") == (name if kept else "")
+
+
+# --- an address a volunteer already signs in with ----------------------------------------
+
+WARNING = "This person already volunteers on Causematch with this address."
+
+
+def held(email="vol@example.org"):
+    """A volunteer who signed up by emailed link with this address; their profile id."""
+    return link_sign_in(TestClient(app), email)
+
+
+def test_approving_a_volunteers_address_warns_and_needs_the_box(admin):
+    imported()
+    vol = held()
+    claim(email="Vol@Example.org")
+    cid = the_claim().id
+    page = admin.get("/admin/claims").text
+    assert WARNING in page and "only by signing in with Google or Apple" in page
+    assert "Ask the nonprofit for a different address" in page
+    assert 'name="volunteer_ok"' in page
+
+    r = approve(admin, cid)  # no box: nothing changes, the warning is shown again
+    assert r.status_code == 200 and WARNING in r.text
+    assert "already volunteers with this address: read the warning" in r.text
+    assert the_claim().status == "pending"
+    assert not data.coordinator_by_email("vol@example.org")
+    assert data.volunteer_link_kind("vol@example.org") == "sign-in"
+
+    r = approve(admin, cid, volunteer_ok="1")
+    assert r.status_code == 303 and the_claim().status == "approved"
+    assert (
+        data.coordinator_by_email("vol@example.org")
+        and data.identity_owner(data.EMAIL_SIGN_IN, "vol@example.org") == vol
+    )  # the volunteer account is still there, behind the staff link now
+    assert data.volunteer_link_kind("vol@example.org") == "staff"
+
+
+@pytest.mark.parametrize("email", ["fresh@example.org", "vol+org@example.org"])
+def test_an_address_no_volunteer_signs_in_with_approves_without_a_warning(admin, email):
+    """A +tag of a volunteer's address is another address: their own link stays theirs."""
+    imported()
+    held()
+    claim(email=email)
+    page = admin.get("/admin/claims").text
+    assert WARNING not in page and 'name="volunteer_ok"' not in page
+    assert approve(admin, the_claim().id).status_code == 303
+    assert the_claim().status == "approved" and data.coordinator_by_email(email)
+    assert data.volunteer_link_kind("vol@example.org") == "sign-in"
+
+
+def test_the_claimant_never_learns_that_a_volunteer_holds_the_address():
+    imported()
+    held()
+    sent = len(notify.get_emailer().sent)
+    anon = TestClient(app)
+    form = anon.get("/org/claim").text
+    received = [
+        claim(anon, ein=ein, email=email).text
+        for ein, email in (
+            ("86-1620575", "vol@example.org"),
+            ("95-1234567", "x@example.org"),
+        )
+    ]
+    assert received[0] == received[1] and RECEIVED in received[0]
+    for text in (form, *received):
+        assert WARNING not in text and "Google or Apple" not in text
+    assert len(notify.get_emailer().sent) == sent  # submitting tells nobody anything
+
+
+def run_script(name, monkeypatch, *args):
+    """scripts/<name>.py's main() in this process (the test database): (exit code, output)."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(sys, "argv", [f"{name}.py", *args])
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    try:
+        module.main()
+    except SystemExit as e:
+        return (e.code if isinstance(e.code, int) else 1), str(e.code or "")
+    return 0, out.getvalue()
+
+
+@pytest.mark.parametrize(
+    "name,extra,is_staff",
+    [
+        ("add_coordinator", ["--name", "Val Unteer"], data.coordinator_by_email),
+        ("add_admin", ["--name", "Val Unteer"], data.admin_by_email),
+    ],
+)
+def test_the_add_scripts_refuse_a_volunteers_address_without_force(
+    monkeypatch, name, extra, is_staff
+):
+    held()
+    args = ["--email", "vol@example.org", *extra]
+    if name == "add_coordinator":
+        args += ["--org-id", str(orgs()[0].id)]
+    code, said = run_script(name, monkeypatch, *args)
+    assert code == 1 and WARNING in said and "--force" in said
+    assert not is_staff("vol@example.org")
+    assert data.volunteer_link_kind("vol@example.org") == "sign-in"
+
+    code, said = run_script(name, monkeypatch, *args, "--force")
+    assert code == 0 and "vol@example.org is" in said
+    assert is_staff("vol@example.org")
+    assert data.volunteer_link_kind("vol@example.org") == "staff"
+
+
+def google(email, hd=""):
+    """A volunteer who signed up with Google, verified email `email`; returns `email`."""
+    data.volunteer_for_identity(
+        Claims("google", f"g-{email}", email, True, "Pat", "", "", hosted_domain=hd)
+    )
+    return email
+
+
+def typed_in_me():
+    """A volunteer who only typed the address in Me (profile.email, unverified)."""
+    profiles.update(id=volunteer().uid, email="typed@example.org")
+    return "typed@example.org"
+
+
+def deleted():
+    data.delete_account(held("gone@example.org"))
+    return "gone@example.org"
+
+
+@pytest.mark.parametrize(
+    "make,warns",
+    [
+        (lambda: google("pat@gmail.com"), True),  # Google runs Gmail: a holder
+        (lambda: google("pat@acme.example", hd="acme.example"), False),  # Workspace
+        (lambda: google("pat@example.org"), False),  # Google doesn't run the mailbox
+        (typed_in_me, False),
+        (deleted, False),
+    ],
+)
+def test_only_a_live_volunteers_proven_address_warns(admin, make, warns):
+    imported()
+    email = make()
+    claim(email=email)
+    cid = the_claim().id
+    assert (WARNING in admin.get("/admin/claims").text) is warns
+    assert approve(admin, cid).status_code == (200 if warns else 303)
+    assert (the_claim().status == "pending") is warns
+
+
+@pytest.mark.parametrize(
+    "theirs,email",
+    [
+        ("vol@example.org", "vol@example.org"),
+        ("vol@example.org", "vol+org@example.org"),
+        ("vol@gmail.com", "v.o.l@gmail.com"),
+    ],
+)
+def test_a_suspended_volunteers_mailbox_is_refused_even_when_confirmed(
+    admin, monkeypatch, theirs, email
+):
+    """A +tag or dotted form counts (forms.abuse_key): suspension is by mailbox."""
+    imported()
+    profiles.update(id=held(theirs), suspended_at=datetime.now(UTC).isoformat())
+    assert data.volunteer_holds_address(theirs)  # a suspended volunteer still holds it
+    claim(email=email)
+    cid = the_claim().id
+    page = admin.get("/admin/claims").text
+    assert "belongs to a suspended volunteer" in page
+    assert f"/admin/claims/{cid}/approve" not in page  # only Decline
+    r = approve(admin, cid, volunteer_ok="1", confirm="1", name_checked="1")
+    assert r.status_code == 200 and "suspended volunteer" in r.text
+    assert the_claim().status == "pending" and not data.coordinator_by_email(email)
+    for name, extra in (
+        ("add_coordinator", ["--org-id", str(orgs()[0].id)]),
+        ("add_admin", []),
+    ):
+        code, said = run_script(
+            name, monkeypatch, "--email", email, "--name", "Val", *extra, "--force"
+        )
+        assert code == 1 and "suspended volunteer" in said, name
+    assert not data.staff_by_email(email)[0]
+
+
+def test_an_address_that_already_gets_staff_links_needs_no_box(admin):
+    """Nothing changes for that volunteer: their address is a coordinator's already."""
+    imported()
+    held()
+    data.add_coordinator("vol@example.org", orgs()[0].id, allow_volunteer=True)
+    claim(email="vol@example.org")
+    assert WARNING not in admin.get("/admin/claims").text
+    assert approve(admin, the_claim().id).status_code == 303
+
+
+def test_a_coordinator_on_a_tag_of_the_address_still_leaves_the_warning(admin):
+    """Only the exact address getting staff links skips it: a coordinator on a +tag of
+    the volunteer's address doesn't make the volunteer's own links staff ones."""
+    imported()
+    held()
+    data.add_coordinator("vol+org@example.org", orgs()[0].id)
+    claim(email="vol@example.org")
+    assert WARNING in admin.get("/admin/claims").text
+    r = approve(admin, the_claim().id)
+    assert r.status_code == 200 and WARNING in r.text
+    assert the_claim().status == "pending"
