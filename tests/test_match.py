@@ -416,7 +416,7 @@ def test_inbox_never_shows_contact_or_location(user, coord):
         "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
         "interests", "causes", "availability", "languages", "neighborhood",
         "frequency", "full", "weekly", "starts_at", "duration_minutes", "slots",
-        "spots_left", "fits", "undoable",
+        "spots_left", "fits", "undoable", "screening_pending",
     }  # fmt: skip
 
 
@@ -639,7 +639,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
         "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
         "interests", "causes", "availability", "languages", "neighborhood",
         "frequency", "full", "weekly", "starts_at", "duration_minutes", "slots",
-        "spots_left", "fits", "undoable",
+        "spots_left", "fits", "undoable", "screening_pending",
     }  # fmt: skip
 
 

@@ -77,6 +77,7 @@ from app.db import (
     reports,
     retained_identities,
     retained_phones,
+    screenings,
     seed_demo,
     shifts,
     swipes,
@@ -114,6 +115,7 @@ def fresh_db():
         photos,
         urgent_calls,
         certificates,
+        screenings,
     ):
         table.delete_where()
     security.reset_buckets()

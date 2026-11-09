@@ -168,7 +168,13 @@ def MatchRow(m):
             ),
             cls="flex min-h-12 items-center gap-3",
         ),
-        Div(
+        # held for the nonprofit's own screening: no shift yet, so no time to show
+        P(
+            f"Matched · waiting for {m['org']} to confirm your screening",
+            cls="text-sm font-semibold text-ink",
+        )
+        if m["screening_pending"]
+        else Div(
             Meta(
                 CALENDAR,
                 f"{when(m['starts_at'], m['duration_minutes'])} · {m['neighborhood']}",

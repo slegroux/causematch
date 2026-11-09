@@ -1231,6 +1231,9 @@ INBOX_NOTICE = {
     "reported": "Thanks. A Causematch admin will review the report.",
     "blocked": "Blocked.",
     "late": "Too late to undo that one.",
+    "screened": "Screening confirmed. The volunteer has been told in the chat.",
+    "screening_full": "That opening is full, so there is no spot to book.",
+    "screening_closed": "That opening is closed. Reopen it to book their shift.",
 }
 
 
@@ -1291,7 +1294,11 @@ def InboxRow(m):
                 ShiftFacts(m) if m["status"] == "pending" else None,
                 cls="min-w-0 flex-1",
             ),
-            status_pill(MATCH_STATUS, m["status"], "org"),
+            Div(
+                status_pill(MATCH_STATUS, m["status"], "org"),
+                Pill("Screening pending", "wait") if m["screening_pending"] else None,
+                cls="flex flex-col items-end gap-1.5",
+            ),
             cls="flex items-start gap-3",
         ),
         P(m["bio"], cls="whitespace-pre-line text-sm text-ink") if m["bio"] else None,
@@ -1324,7 +1331,17 @@ def InboxRow(m):
         )
         if m["status"] == "pending"
         else None,
-        RepeatForm(m["id"]) if m["status"] == "accepted" and m["weekly"] else None,
+        # the first shift waits for this: the nonprofit ran its own screening off the app
+        PlainForm(
+            Button("Confirm screening", cls=ButtonT.primary),
+            action=f"/org/matches/{m['id']}/screening",
+            method="post",
+        )
+        if m["screening_pending"]
+        else None,
+        RepeatForm(m["id"])
+        if m["status"] == "accepted" and m["weekly"] and not m["screening_pending"]
+        else None,
         # links in a flex row with a gap: never run together ("shiftReport")
         Div(
             A("Chat", href=f"/org/chat/{m['id']}", cls=SMALL_LINK)
@@ -1335,7 +1352,7 @@ def InboxRow(m):
                 href=f"/org/matches/{m['id']}/shifts/new",
                 cls=SMALL_LINK,
             )
-            if m["status"] == "accepted"
+            if m["status"] == "accepted" and not m["screening_pending"]
             else None,
             A("Report", href=f"/org/matches/{m['id']}/report", cls=SMALL_LINK),
             A("Block", href=f"/org/matches/{m['id']}/block", cls=SMALL_LINK),
@@ -1441,6 +1458,25 @@ def _sync_decide(req, decision, match_id: int):
         notify.after(req, notify.on_accepted, match_id)
         return Redirect(f"/org/inbox?notice=accepted&match={match_id}")
     return Redirect(f"/org/inbox?declined={match_id}")
+
+
+@ar("/org/matches/{match_id}/screening", methods=["POST"])
+async def confirm_screening(req, match_id: int):
+    return await run_in_threadpool(_sync_confirm_screening, req, match_id)
+
+
+def _sync_confirm_screening(req, match_id: int):
+    try:
+        data.confirm_screening(req.scope["uid"], match_id)
+    except PermissionError:
+        return Refusal(403)
+    except ValueError as e:
+        notice = {
+            "no slots left": "screening_full",
+            "opening closed": "screening_closed",
+        }
+        return Redirect(f"/org/inbox?notice={notice.get(str(e), 'decided')}")
+    return Redirect("/org/inbox?notice=screened")
 
 
 @ar("/org/matches/{match_id}/undo", methods=["POST"])

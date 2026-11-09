@@ -225,6 +225,10 @@ class Match:
     urgent_call_id: (
         int  # a like on an open UrgentCall's card: it counts toward that call
     )
+    # pending: accepted on an opening that needs the nonprofit's own screening, its first
+    # shift held until a coordinator confirms (data.confirm_screening); cleared after;
+    # NULL when none was asked (migration 0023)
+    screening_status: str
 
 
 class Message:
@@ -257,6 +261,20 @@ class Shift:
     # The hours a coordinator confirmed when marking it attended (choices.SHIFT_HOURS);
     # NULL: not attended, or attended with the hours unknown
     confirmed_minutes: int
+
+
+class Screening:
+    """A coordinator's confirmation that a volunteer cleared their nonprofit's own screening
+    (data.confirm_screening). Only the fact, its kind and when: never a document or a
+    result, which the app never sees."""
+
+    id: int
+    volunteer_id: int
+    org_id: int
+    kind: str  # choices.SCREENING_KINDS key, the opening's at the time
+    cleared_at: str  # UTC
+    cleared_by: int  # the coordinator who confirmed
+    created_at: str  # UTC
 
 
 class Certificate:
@@ -336,6 +354,8 @@ messages.create_index(["match_id", "created_at"], if_not_exists=True)
 shifts = db.create(Shift, pk="id")
 certificates = db.create(Certificate, pk="id")
 certificates.create_index(["volunteer_id", "issued_at"], if_not_exists=True)
+screenings = db.create(Screening, pk="id")
+screenings.create_index(["volunteer_id", "org_id"], if_not_exists=True)
 notifications = db.create(Notification, pk="id")
 notifications.create_index(["key"], unique=True, if_not_exists=True)
 
