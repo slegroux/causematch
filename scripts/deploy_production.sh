@@ -41,6 +41,16 @@ CPU_ALWAYS_ALLOCATED="${CPU_ALWAYS_ALLOCATED:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# A preview's SERVICE or SERVICE_ACCOUNT left in the shell would redeploy the preview with
+# production's settings.
+case "$SERVICE $SERVICE_ACCOUNT" in
+*preview*)
+	echo "SERVICE ($SERVICE) or SERVICE_ACCOUNT ($SERVICE_ACCOUNT) names the preview:" \
+		"refusing" >&2
+	exit 1
+	;;
+esac
+
 # PROJECT is an id anyone could have taken (causematch was): deploy only to the project
 # named Causematch. Unreachable or unknown: refused.
 name="$(gcloud projects describe "$PROJECT" --format 'value(name)' 2>/dev/null)" || name=""
