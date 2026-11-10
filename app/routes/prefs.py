@@ -28,7 +28,7 @@ from fasthtml.common import (
 from monsterui.all import Alert, AlertT
 from starlette.concurrency import run_in_threadpool
 
-from app import data, prefs
+from app import data, notify, prefs
 from app.choices import (
     COMMITMENT,
     DAYS,
@@ -347,8 +347,13 @@ def LastMinute(u):
     """The opt-in to urgent calls: off unless turned on, and private."""
     return Section(
         "Last-minute calls",
-        "Short of people in the next 48 hours and you're free then: we text you (or "
-        "email you, without a number). Off unless you turn it on.",
+        "Short of people in the next 48 hours and you're free then: "
+        + (
+            "we text you (or email you, without a number)."
+            if notify.texts_on()
+            else "we email you."
+        )
+        + " Off unless you turn it on.",
         Hidden(name="sections", value="urgent"),
         Chip(
             "checkbox",
@@ -367,7 +372,10 @@ def LastMinute(u):
         Fold(
             "Quiet hours",
             Div(
-                Field("No texts from", Hour("urgent_quiet_from", u["quiet_from"])),
+                Field(
+                    "No texts from" if notify.texts_on() else "Quiet from",
+                    Hour("urgent_quiet_from", u["quiet_from"]),
+                ),
                 Field("Until", Hour("urgent_quiet_to", u["quiet_to"])),
                 cls="grid grid-cols-2 gap-2",
             ),
@@ -1011,8 +1019,8 @@ def urgent_off_page(key: str):
     return SimplePage(
         UNSUBSCRIBE,
         P(
-            "Stop texts and emails about nonprofits near you that are short of people "
-            "at the last minute?",
+            ("Stop texts and emails" if notify.texts_on() else "Stop emails")
+            + " about nonprofits near you that are short of people at the last minute?",
             cls="mt-2 text-ink",
         ),
         Form(

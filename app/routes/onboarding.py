@@ -29,7 +29,6 @@ from app.forms import (
 from app.geo import neighborhoods, shown_point, zip_latlon
 from app.routes.prefs import CauseRow, PlaceFields, Section
 from app.ui import (
-    LIKE_SENT,
     TITLE,
     BigButton,
     Choice,
@@ -37,6 +36,7 @@ from app.ui import (
     Router,
     TextInput,
     VolunteerShell,
+    like_sent,
 )
 
 ar = Router()
@@ -243,7 +243,7 @@ def MoreCard(uid, org=None, error=None):
     """org: the nonprofit the first like went to, confirmed at the top."""
     return VolunteerShell(
         "openings",
-        Alert(LIKE_SENT.format(org), cls=AlertT.success + " mb-4") if org else None,
+        Alert(like_sent(org), cls=AlertT.success + " mb-4") if org else None,
         H1("Liked! Two quick questions", cls=TITLE),
         P(
             "Both optional. They help us see who Causematch reaches.",

@@ -18,7 +18,17 @@ An admin can see the admin pages and nothing else: the volunteer pages and the n
 
 ### Becoming an admin
 
-Only the operator can add an admin. They run this against the live app (use your own address and name):
+Only the operator can add an admin. On the live site they list your address in `ADMIN_EMAILS` when they deploy, separated by commas from any other admin's:
+
+```sh
+ADMIN_EMAILS=admin@example.org CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=... scripts/deploy_production.sh
+```
+
+When the server starts it makes each listed address an admin, unless it has been one before. Then sign in (below). Starting again changes nothing, and taking an address off the list doesn't take access away. An address that is already a coordinator's, that a volunteer signs in with, or that a suspended volunteer's mailbox holds (a `+tag` or Gmail-dot variant counts) is skipped: the server log says how many were skipped, never which. Pick another address.
+
+The live site has no command yet to take an admin's access away; tell the operator if one must go.
+
+On a computer running Causematch locally, the operator uses the script instead (use your own address and name):
 
 ```sh
 uv run python scripts/add_admin.py --email admin@example.org --name "Your Name"
@@ -249,7 +259,7 @@ Remember: **only a volunteer's first shift is scheduled automatically.** The rep
 
 ### Someone wants their account deleted
 
-- **A volunteer** can do it themselves: **Me**, then **Your profile**, then **Delete my account** at the bottom (they confirm once). It erases their name, phone, email and location, withdraws their matches and cancels future shifts, and replaces their chat messages with "[message removed]". The answers behind the pilot's statistics stay, without a name. Reports they filed or that name them stay too. If they were blocked, reported or suspended, Causematch keeps one-way hashes (not the values) of their email address, their phone number and any Google or Apple account, so a suspension or block can't be dodged by signing up again.
+- **A volunteer** can do it themselves: **Me**, then **Your profile**, then **Delete my account** at the bottom (they confirm once). It erases their name, email (and phone, where one was added) and location, withdraws their matches and cancels future shifts, and replaces their chat messages with "[message removed]". The answers behind the pilot's statistics stay, without a name. Reports they filed or that name them stay too. If they were blocked, reported or suspended, Causematch keeps one-way hashes (not the values) of their email address, their phone number and any Google or Apple account, so a suspension or block can't be dodged by signing up again.
 - **A coordinator or an admin** can't do it themselves: ask the operator. For a coordinator: `uv run python scripts/remove_coordinator.py --email coordinator@example.org` (this deletes the **whole account**: they are removed from **every** organization they belonged to, signed out at once, and their name and email erased; their chat messages stay as the nonprofit's record). For an admin: `scripts/remove_admin.py`, as in section 1.
 - Anything else they ask to see or fix: the privacy page tells them to write to the contact address.
 

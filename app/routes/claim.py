@@ -4,7 +4,6 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from app import data, propublica, security
-from app.auth import BAD_PHONE, normalize_phone
 from app.forms import EMAIL, HIDDEN_CHARS_MESSAGE, hidden_chars, query, str_form
 from app.org_import import PLACE_NAMES
 from app.ui import BigButton, Field, Refusal, Router, SignInPage, TextInput
@@ -85,16 +84,6 @@ def ClaimForm(values=None, error=None):
                     autocomplete="email",
                     maxlength=str(data.CLAIM_LIMITS["email"]),
                     required=True,
-                ),
-            ),
-            Field(
-                "Phone (optional)",
-                TextInput(
-                    name="phone",
-                    value=v.get("phone", ""),
-                    type="tel",
-                    inputmode="tel",
-                    autocomplete="tel",
                 ),
             ),
             LabelCheckboxX(AUTHORIZED, name="authorized", value="1"),
@@ -185,11 +174,11 @@ async def claim_submit(req):
 
 def _sync_claim_submit(req, form):
     text = lambda k: form.get(k, "").strip()
-    v = {k: text(k) for k in ("ein", "org_name", "name", "email", "phone")}
+    # no phone for now (docs/OPERATIONS.md): claim_request.phone stays, written empty
+    v = {k: text(k) for k in ("ein", "org_name", "name", "email")}
     # Only these keys are read: a posted status or org_id goes nowhere.
     ein = propublica.normalize_ein(v["ein"])
     email = v["email"].lower()
-    phone = normalize_phone(v["phone"]) if v["phone"] else ""
     limits = data.CLAIM_LIMITS
     if not ein:
         error = "An EIN is nine digits, like 53-0196605."
@@ -201,8 +190,6 @@ def _sync_claim_submit(req, form):
         error = HIDDEN_CHARS_MESSAGE
     elif len(email) > limits["email"] or not EMAIL.fullmatch(email):
         error = "Enter your email address."
-    elif v["phone"] and not phone:
-        error = BAD_PHONE
     elif form.get("authorized") != "1":
         error = "Please confirm that you're authorized to represent this organization."
     elif not security.allow(
@@ -211,6 +198,6 @@ def _sync_claim_submit(req, form):
     ):
         return security.too_many()
     else:
-        data.submit_claim(ein, v["org_name"], v["name"], email, phone)
+        data.submit_claim(ein, v["org_name"], v["name"], email, "")
         return SignInPage("Request received", P(RECEIVED, cls="text-ink"))
     return ClaimForm(v, error)

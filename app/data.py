@@ -3059,6 +3059,34 @@ def add_admin(email, name, allow_volunteer=False):
     ).id
 
 
+def add_admins(emails):
+    """Startup's ADMIN_EMAILS (config.admin_emails, lowercased and valid): add_admin for each
+    address that never had an admin profile, so a restart changes nothing and an admin
+    removed with scripts/remove_admin.py stays removed. Never removes one. An address
+    add_admin refuses (a coordinator's, a volunteer's, a suspended account's mailbox) is
+    skipped. Logs counts, never an address."""
+    added = skipped = 0
+    for email in emails:
+        if _db.profiles(
+            where="role = 'admin' AND lower(email) = ?", where_args=[email]
+        ):
+            continue
+        try:
+            add_admin(email, "Admin")
+            added += 1
+        except ValueError:  # VolunteerAddress is one
+            skipped += 1
+    if added:
+        log.info("ADMIN_EMAILS: %d admin(s) added", added)
+    if skipped:
+        log.warning(
+            "ADMIN_EMAILS: %d address(es) not made admins: a coordinator's, a volunteer's "
+            "or a suspended account's (docs/ADMIN_GUIDE.md, Becoming an admin)",
+            skipped,
+        )
+    return added, skipped
+
+
 def _check_volunteer_address(email, role, allow_volunteer):
     """add_coordinator's and add_admin's refusals for a volunteer's address: always a
     suspended account's mailbox, and the exact address a volunteer signs in with unless

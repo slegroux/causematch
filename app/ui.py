@@ -433,7 +433,12 @@ TABS = (
 
 
 # a like's confirmation, on the deck and on the card after the first like
-LIKE_SENT = "Liked! When {} says yes, it's a match. We'll text you."
+def like_sent(org):
+    """The notice after a like: how the match news will come."""
+    from app import notify  # here: notify imports what imports this module
+
+    how = "text" if notify.texts_on() else "email"
+    return f"Liked! When {org} says yes, it's a match. We'll {how} you."
 
 
 def MatchesDot(n, oob=False):

@@ -69,8 +69,9 @@ def the_claim():
 def test_the_claim_page_is_public_and_asks_for_the_right_things():
     r = TestClient(app).get("/org/claim")
     assert r.status_code == 200
-    for name in ("ein", "org_name", "name", "email", "phone", "authorized"):
+    for name in ("ein", "org_name", "name", "email", "authorized"):
         assert f'name="{name}"' in r.text
+    assert 'name="phone"' not in r.text  # no phone for now
     assert "authorized to represent this organization" in r.text
 
 
@@ -79,11 +80,11 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     r = claim()
     assert r.status_code == 200 and RECEIVED in r.text
     c = the_claim()
-    assert (c.status, c.email, c.ein, c.phone) == (
+    assert (c.status, c.email, c.ein, c.phone) == (  # FORM's phone is ignored
         "pending",
         "claimant@foodbank.example",
         EIN,
-        "+13105550123",
+        "",
     )
     assert not org_members(
         where="org_id = ?", where_args=[org.id]
@@ -132,7 +133,7 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     home = claimant.get("/org")
     assert home.status_code == 200 and "Los Angeles Food Bank" in home.text
     assert profiles[member.user_id].display_name == "Test Claimant"
-    assert profiles[member.user_id].contact_phone == "+13105550123"
+    assert not profiles[member.user_id].contact_phone
     assert (
         the_claim().status == "approved"
         and "No pending" in admin.get("/admin/claims").text
@@ -375,7 +376,6 @@ def test_mass_assignment_of_status_or_ids_is_ignored():
         ({"name": "n" * 101}, "Enter your name"),
         ({"email": "not-an-email"}, "email address"),
         ({"email": "a@b.co" + "x" * 260}, "email address"),
-        ({"phone": "123"}, "US mobile number"),
     ],
 )
 def test_a_bad_form_asks_again_and_stores_nothing(over, message):

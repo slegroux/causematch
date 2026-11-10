@@ -201,6 +201,14 @@ PREVIEW_PASSWORD="$(gcloud secrets versions access latest --secret PREVIEW_PASSW
 
 **CPU.** `CPU_ALWAYS_ALLOCATED` is required on every run. `1` adds `--no-cpu-throttling`: sign-in links and notices go out after the response, and only with CPU always allocated do they reliably go (Email through Gmail, step 7). With the instance kept warm it is billed all month, about $45 at list price for 1 vCPU and 1 GiB, against about $10–15 without. `0` is cheaper and some links and notices arrive late or not at all. Production signs volunteers in by email, so choose `1`.
 
+**Switching CPU allocation later.** The first deploys run with `CPU_ALWAYS_ALLOCATED=0`, for the internal demo. Switch to always allocated before real users sign up: with throttling, background sends (sign-in links, notices) and Litestream's replication only progress while a request is being served, and at night that can mean only the scheduler's 10-minute tick. To switch without a rebuild:
+
+```sh
+gcloud run services update causematch --project causematch-la --region us-west1 --no-cpu-throttling
+```
+
+`--cpu-throttling` goes back. Or redeploy with `CPU_ALWAYS_ALLOCATED=1`. Either way it makes a new revision, which overlaps the old one (Deploys overlap, above). Every later `scripts/deploy_production.sh` sets the CPU again from `CPU_ALWAYS_ALLOCATED`, so pass the value you switched to.
+
 #### One-time setup
 
 Each step is a command the operator runs, in order. Set these first, in the same shell:
@@ -255,8 +263,11 @@ BUCKET=$PROJECT-litestream   # the script's default LITESTREAM_BUCKET
 5. **First deploy**, from a clean checkout of `main`:
 
    ```sh
-   CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=<the privacy page's address> scripts/deploy_production.sh
+   CPU_ALWAYS_ALLOCATED=1 CONTACT_EMAIL=<the privacy page's address> \
+     ADMIN_EMAILS=<the first admins' addresses, comma-separated> scripts/deploy_production.sh
    ```
+
+   `ADMIN_EMAILS` is how production gets its admins, having no shell for `scripts/add_admin.py`: at each start, after the migrations, every listed address that has never had an admin profile becomes one (docs/ADMIN_GUIDE.md, Becoming an admin). It never removes an admin, so leaving it out of a later deploy changes nothing. An address a coordinator, a volunteer or a suspended account holds is skipped, and the log gives counts only (`ADMIN_EMAILS: 1 admin(s) added`). Outside production and the preview the app refuses to start with it set.
 
    The first run deploys with a placeholder `PUBLIC_BASE_URL`, then sets it to the service URL (a second revision). It prints the URL. Add `GMAIL_PURGE=daily` to the command once the mailbox purge runs (Email through Gmail, step 6): each deploy sets the whole environment, so a variable set by hand is gone after the next one.
 

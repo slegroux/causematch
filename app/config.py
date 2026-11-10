@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from app.forms import EMAIL
+
 ROOT = Path(__file__).resolve().parent.parent
 MIN_SECRET = 32  # characters, for every secret a production start requires
 MIN_PREVIEW_PASSWORD = 16  # characters
@@ -164,6 +166,24 @@ def contact_email(env=os.environ):
             return "hello@causematch.test"
         raise RuntimeError("CONTACT_EMAIL must be set (the address on /privacy)")
     return addr
+
+
+def admin_emails(env=os.environ):
+    """ADMIN_EMAILS, comma-separated: the addresses startup makes admins (data.add_admins),
+    lowercased, each a bare address as /login takes it. [] when unset or empty. Production
+    and preview only, which have no shell for scripts/add_admin.py; anywhere else it refuses
+    to start, so an address exported from a deploy shell never adds admins to a local or
+    test database unnoticed."""
+    addrs = [a.strip() for a in (env.get("ADMIN_EMAILS") or "").split(",") if a.strip()]
+    if not addrs:
+        return []
+    if not is_production(env):
+        raise RuntimeError(
+            "ADMIN_EMAILS is for production and preview: locally use scripts/add_admin.py"
+        )
+    if not all(len(a) <= 254 and a.isascii() and EMAIL.fullmatch(a) for a in addrs):
+        raise RuntimeError("ADMIN_EMAILS must be bare addresses separated by commas")
+    return list(dict.fromkeys(a.lower() for a in addrs))
 
 
 def phone_hash_key(env=os.environ):

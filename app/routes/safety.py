@@ -397,7 +397,11 @@ def delete_confirm(req):
         H1("Delete your account?", cls=TITLE),
         Div(
             Ul(
-                Li("Your name, phone, email and location are erased."),
+                Li(
+                    "Your name, phone, email and location are erased."
+                    if notify.texts_on()
+                    else "Your name, email and location are erased."
+                ),
                 Li(
                     "Your pending and accepted matches are withdrawn and shifts cancelled."
                 ),
@@ -431,7 +435,7 @@ def delete_save(req, sess):
 # --- privacy ---------------------------------------------------------------------------------
 
 EFFECTIVE = "November 7, 2026"
-UPDATED = "November 8, 2026"  # the date of the latest change to this page's text
+UPDATED = "November 9, 2026"  # the date of the latest change to this page's text
 
 
 def Section(title, *paras):
@@ -455,6 +459,7 @@ def privacy():
     contact = contact_email()
     # the beta sends through a Gmail account (docs/OPERATIONS.md), later through Resend
     gmail = isinstance(notify.get_emailer(), notify.SMTPEmailer)
+    texts = notify.texts_on()  # off in production: no Twilio, no phone wording
     return SimplePage(
         "Privacy",
         Div(
@@ -465,8 +470,13 @@ def privacy():
         Section(
             "What we collect",
             "Volunteers: your email address, which you sign in with (or your Google or "
-            "Apple account's, below); your mobile number, only where we offer to text you and you add one; your "
-            "first name and, if you give them, "
+            "Apple account's, below); "
+            + (
+                "your mobile number, only where we offer to text you and you add one; "
+                if texts
+                else ""
+            )
+            + "your first name and, if you give them, "
             "your last name, pronouns, a short bio, your interests and a photo; the "
             "neighborhood you show nonprofits; the other "
             "causes you type and whether you volunteered last year; how you heard of "
@@ -491,11 +501,11 @@ def privacy():
             "Activity: the openings you like or pass, your matches, your chat messages, "
             "and your shifts, including whether a nonprofit marked you as attended or as "
             "a no-show.",
-            "Nonprofits: a coordinator's email, name and optional phone, the openings "
+            "Nonprofits: a coordinator's email and name, the openings "
             "they post, and the organization's logo, photos, about text, website and "
             "event links, which anyone signed in can see. Someone who asks to manage a "
             "nonprofit gives the same, plus the "
-            "organization's EIN and name; we blank their name, email and phone 90 days "
+            "organization's EIN and name; we blank their name and email 90 days "
             "after we approve or reject the request.",
             "Reports and blocks: if you report someone or block them, we keep what you "
             "wrote and who it was about.",
@@ -535,7 +545,9 @@ def privacy():
             "Anyone with the certificate's check link or QR code, signed in or not, sees "
             "your full name, the nonprofit and its EIN, the period, the total hours, the "
             "issue date and the signature code, and whether the nonprofit has corrected "
-            "the hours since. They don't see your shifts, phone or email. The link doesn't "
+            "the hours since. They don't see your shifts, "
+            + ("phone or email" if texts else "or email")
+            + ". The link doesn't "
             "expire: it works until you withdraw the certificate, or get a new one for the "
             "same nonprofit and period, which withdraws the old one. Coordinators' names appear on "
             "certificates and stay there after a coordinator's account is deleted.",
@@ -558,12 +570,21 @@ def privacy():
         Section(
             "Who else handles your data",
             f"Our email provider ({'Google, through Gmail' if gmail else 'Resend'}) "
-            "sends everyone's sign-in links, coordinators' notices, and volunteers' "
-            "notices when we can't text them. "
+            + (
+                "sends everyone's sign-in links, coordinators' notices, and volunteers' "
+                "notices when we can't text them. "
+                if texts
+                else "sends everyone's sign-in links and notices. "
+            )
             + (_GMAIL_COPIES[gmail_purge()] if gmail else "")
-            + "If you add a "
-            "mobile number (where that is offered), Twilio sends the code that confirms it and our texts. If "
-            "you sign in with Google or Apple, that company confirms who you are, so it knows you use Causematch. Google Cloud hosts the "
+            + (
+                "If you add a mobile number (where that is offered), Twilio sends the "
+                "code that confirms it and our texts. "
+                if texts
+                else ""
+            )
+            + "If you sign in with Google or Apple, that company confirms who you are, "
+            "so it knows you use Causematch. Google Cloud hosts the "
             "app and keeps its backups. Each sees only what it needs to do that job. We "
             "don't sell your data or share it for advertising.",
         ),
@@ -576,12 +597,22 @@ def privacy():
             "quiet hours). Without a number we can text, these come by email if we have "
             "your email. Reply STOP to end texts. We email you your sign-in link when you "
             "ask for one, and coordinators a note when volunteers like an opening.",
+        )
+        if texts
+        else Section(
+            "Email",
+            "We email you your sign-in link when you ask for one, a note when a "
+            "nonprofit says yes, a reminder the day before a shift, a note when a "
+            "nonprofit sends a chat message and, only if you turn them on, last-minute "
+            "calls (at most 3 a week, never in your quiet hours). Coordinators get a "
+            "note when volunteers like an opening.",
         ),
         Section(
             "How long we keep it, and what stays after you delete",
             "We keep your account until you delete it. Volunteers can delete theirs any "
             "time from Me; coordinators ask us to delete theirs. Deleting erases your "
-            "name, phone, email, connected Google or Apple accounts, places, specific "
+            + ("name, phone, email, " if texts else "name, email, ")
+            + "connected Google or Apple accounts, places, specific "
             "free dates, neighborhood, photo and the free text you typed. Your "
             "matches are withdrawn and your future shifts cancelled, and your chat messages "
             'are replaced with "[message removed]".',
@@ -592,14 +623,22 @@ def privacy():
             "including attendance, kept for the pilot's statistics. The nonprofit keeps its "
             "own messages to you. Reports you filed stay with the details you wrote, and "
             "reports about you stay.",
-            "If you were blocked or reported, or suspended, when you delete your account, "
-            "we also keep a one-way keyed hash of your phone number (not the number). If "
-            "the same number signs up again, the blocks still apply, and a suspension "
-            "stays in force. If you had connected Google or Apple, we keep the same kind "
-            "of hash of that account's id, and of the email address you sign in with, in "
-            "the same cases, so a block or suspension follows that account or address "
-            "too. We keep nothing of this kind for an account with "
-            "no blocks or reports.",
+            (
+                "If you were blocked or reported, or suspended, when you delete your "
+                "account, we also keep a one-way keyed hash of your phone number (not the "
+                "number). If the same number signs up again, the blocks still apply, and "
+                "a suspension stays in force. If you had connected Google or Apple, we "
+                "keep the same kind of hash of that account's id, and of the email "
+                "address you sign in with, in the same cases, so a block or suspension "
+                "follows that account or address too. "
+                if texts
+                else "If you were blocked or reported, or suspended, when you delete "
+                "your account, we also keep a one-way keyed hash (not the address or id "
+                "itself) of the email address you sign in with and of any connected "
+                "Google or Apple account's id and email. If the same address or account "
+                "signs up again, the blocks still apply, and a suspension stays in force. "
+            )
+            + "We keep nothing of this kind for an account with no blocks or reports.",
         ),
         Section(
             "Seeing or correcting your data",
