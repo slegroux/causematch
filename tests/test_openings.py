@@ -518,7 +518,7 @@ def test_a_homelessness_opening_still_needs_the_adults_only_confirmation(coord):
     assert r.status_code == 200 and ("uk-alert" in r.text or 'role="alert"' in r.text)
     # the redrawn form shows what qualifies, with or without :has()
     assert re.search(r'<form[^>]*class="[^"]*\bcm-homeless\b', r.text)
-    assert NOTE in r.text and "background check" in r.text
+    assert NOTE in r.text and "unless the opening requires your screening" in r.text
     assert openings(where="title = ?", where_args=["Saturday fridge restock"]) == []
 
 

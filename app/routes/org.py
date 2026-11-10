@@ -691,7 +691,8 @@ def OpeningForm(uid, f=None, error=None, editing=None):
                 P(
                     "Homelessness services: group shifts only, like meal service, "
                     "hygiene kits, donation sorting or events. Not case management, "
-                    "mentoring, or anything that needs a background check.",
+                    "mentoring or other one-to-one work, unless the opening requires "
+                    "your screening.",
                     id="homeless-note",
                     cls="cm-homeless-note text-sm",
                 ),
