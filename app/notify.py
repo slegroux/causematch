@@ -764,13 +764,16 @@ def on_accepted(match_id):
         info and info["status"] == "accepted" and not info["silent"]
     ):  # a block withdraws it
         chat = f"{public_base_url()}/chat/{match_id}"
+        yes = f"{info['org']} said yes to {info['opening']}!"
+        if info["screening_pending"]:
+            yes += " Your first shift waits for their screening."
         return _tell(
             "accepted",
             f"accepted:{match_id}",
             info["volunteer_id"],
-            f"{info['org']} said yes to {info['opening']}! Say hi: {chat}",
+            f"{yes} Say hi: {chat}",
             f"You're matched with {info['org']}",
-            f"{info['org']} said yes to {info['opening']}!\n\nSay hi: {chat}",
+            f"{yes}\n\nSay hi: {chat}",
         )
 
 

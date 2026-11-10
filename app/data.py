@@ -1084,15 +1084,19 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
 
 
 def _screening_words(kind):
-    """ "screening (Live Scan fingerprinting)": the kind's label as written, or just
-    "screening" for other (or none said)."""
+    """ "screening (Live Scan fingerprinting)", "screening (background check)": the
+    kind's label in lower case mid-sentence (Live Scan is a name), or just "screening"
+    for other (or none said)."""
     label = dict(SCREENING_KINDS).get(kind)
-    return f"screening ({label})" if label and kind != "other" else "screening"
+    if not label or kind == "other":
+        return "screening"
+    return f"screening ({label if kind == 'live_scan' else label.lower()})"
 
 
 def my_screenings(uid):
     """This volunteer's clearances, newest first: [{"org", "kind" (the label), "date"
-    ("Nov 8, 2026", in Los Angeles)}]. Only what a Screening row holds (decide)."""
+    ("Nov 8, 2026", in Los Angeles)}]. Only what a Screening row holds
+    (confirm_screening)."""
     kinds = dict(SCREENING_KINDS)
     return [
         {
@@ -1139,53 +1143,74 @@ def _book_first_shift(m, o, coordinator_uid):
     return None
 
 
+def _clear_hold(m, o, coordinator_uid):
+    """Book match m on opening o, held for screening: the shift decide would have booked,
+    the match's screening cleared, and the chat says so. False, and nothing written,
+    when m is no longer held, its opening closed, or no spot is left."""
+    skip, args = _filling()
+    # One statement, so two coordinators can't both take the last spot.
+    _db.db.execute(
+        "UPDATE match SET screening_status = 'cleared' "
+        "WHERE id = ? AND status = 'accepted' AND screening_status = 'pending' "
+        "AND (SELECT status FROM opening WHERE id = ?) != 'closed' "
+        f"AND (SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
+        "< (SELECT slots FROM opening WHERE id = ?)",
+        [m.id, o.id, o.id, *args, o.id],
+    )  # fmt: skip
+    if _db.db.conn.changes() != 1:
+        return False
+    shift = _book_first_shift(m, o, coordinator_uid)
+    _db.messages.insert(
+        match_id=m.id,
+        sender_id=SYSTEM_SENDER,
+        body=f"Screening confirmed: your shift on {_match.start_text(shift.starts_at)} "
+        "is booked."
+        if shift
+        else "Screening confirmed.",
+        created_at=_now(),
+    )
+    return True
+
+
 def confirm_screening(coordinator_uid, match_id):
     """A coordinator confirms that the volunteer of a match held for screening (decide)
-    cleared their nonprofit's own process: the shift decide would have booked is booked,
-    the match's screening is cleared, a Screening row records the fact (kind, when, by
-    whom: never a document or a result), and the chat says so. PermissionError as decide.
-    ValueError when the match is not held for screening, its opening is closed, or no
-    spot is left (the confirmations before took them)."""
+    cleared their nonprofit's own process (_clear_hold books it). A clearance is per
+    nonprofit, so the volunteer's other held matches there are booked too, and one
+    Screening row records the fact (kind, when, by whom: never a document or a result),
+    written only if the nonprofit has none for them yet. PermissionError as decide.
+    ValueError when the match is not held for screening (closing an opening releases
+    its holds), or no spot is left (the confirmations before took them)."""
     m, o = _decidable(coordinator_uid, match_id)
-    skip, args = _filling()
     with _db.db.conn:
-        # One statement, so two coordinators can't both take the last spot.
-        _db.db.execute(
-            "UPDATE match SET screening_status = 'cleared' "
-            "WHERE id = ? AND status = 'accepted' AND screening_status = 'pending' "
-            "AND (SELECT status FROM opening WHERE id = ?) != 'closed' "
-            f"AND (SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
-            "< (SELECT slots FROM opening WHERE id = ?)",
-            [match_id, o.id, o.id, *args, o.id],
-        )  # fmt: skip
-        if _db.db.conn.changes() != 1:
+        if not _clear_hold(m, o, coordinator_uid):
             cur = _db.matches[match_id]
-            if cur.status != "accepted" or cur.screening_status != "pending":
+            if (
+                cur.status != "accepted"
+                or cur.screening_status != "pending"
+                or _db.openings[o.id].status == "closed"
+            ):
                 raise ValueError("not waiting for screening")
-            raise ValueError(
-                "opening closed"
-                if _db.openings[o.id].status == "closed"
-                else "no slots left"
+            raise ValueError("no slots left")
+        if not _db.screenings.count_where(
+            "volunteer_id = ? AND org_id = ?", [m.volunteer_id, o.org_id]
+        ):
+            now = _now()
+            _db.screenings.insert(
+                volunteer_id=m.volunteer_id,
+                org_id=o.org_id,
+                kind=o.screening_kind or "other",
+                cleared_at=now,
+                cleared_by=coordinator_uid,
+                created_at=now,
             )
-        now = _now()
-        _db.screenings.insert(
-            volunteer_id=m.volunteer_id,
-            org_id=o.org_id,
-            kind=o.screening_kind or "other",
-            cleared_at=now,
-            cleared_by=coordinator_uid,
-            created_at=now,
-        )
-        shift = _book_first_shift(m, o, coordinator_uid)
-        _db.messages.insert(
-            match_id=match_id,
-            sender_id=SYSTEM_SENDER,
-            body=f"Screening confirmed: your shift on {_match.start_text(shift.starts_at)} "
-            "is booked."
-            if shift
-            else "Screening confirmed.",
-            created_at=now,
-        )
+        for other in _db.matches(
+            where="volunteer_id = ? AND id != ? AND status = 'accepted' "
+            "AND screening_status = 'pending' "
+            "AND opening_id IN (SELECT id FROM opening WHERE org_id = ?)",
+            where_args=[m.volunteer_id, match_id, o.org_id],
+        ):
+            # a spot is kept for each hold (_filling), so this books; if not, it waits
+            _clear_hold(other, _db.openings[other.opening_id], coordinator_uid)
 
 
 def undo_decline(coordinator_uid, match_id):
@@ -1400,7 +1425,8 @@ def org_inbox(coordinator_uid):
     pronouns, bio, interests, causes, availability (as general buckets), the languages
     they speak, neighborhood, frequency. A row also says which shift the like is for
     (starts_at, duration_minutes, slots, spots_left) and whether it fits their usual times
-    (fits, as those buckets, never the days). Spots left count the volunteers held for
+    (fits, as those buckets, never the days). Newest first, except that decided starts
+    with the matches held for screening, the newest accepted first. Spots left count the volunteers held for
     screening as taken (_filling holds=True): no one may be accepted into their spot. One query
     selects only those columns, so phone, email and location never leave SQLite.
     """
@@ -1427,7 +1453,11 @@ def org_inbox(coordinator_uid):
         "AND (m.status IN ('pending', 'accepted', 'declined') "
         "OR (m.status = 'withdrawn' AND m.decided_at IS NOT NULL)) "
         "AND (m.status = 'withdrawn' OR NOT " + _BLOCKED + ") "
-        "ORDER BY m.id DESC",
+        # held rows head the decided list, the newest accept first: they wait for a
+        # confirmation, and in a demo the presenter's own copy is the newest
+        "ORDER BY (m.status = 'accepted' AND m.screening_status = 'pending') DESC, "
+        "CASE WHEN m.screening_status = 'pending' THEN m.decided_at END DESC, "
+        "m.id DESC",
         [*args, coordinator_uid],
     )
     out = {"pending": [], "decided": [], "past": []}
@@ -3401,10 +3431,12 @@ def opening_counts(coordinator_uid):
 
 def org_waiting(coordinator_uid):
     """What waits for the coordinator's answer (the nav's Inbox badge): the likes, the
-    same counts as the dashboard's cards so the two never disagree, plus the chats owed
-    a reply."""
+    same counts as the dashboard's cards so the two never disagree, the volunteers held
+    for screening (screening_waiting: the strip's count; they are confirmed from the
+    Inbox), plus the chats owed a reply."""
     pending = sum(c["pending"] for c in opening_counts(coordinator_uid).values())
-    return pending + len(org_unanswered(coordinator_uid))
+    held = sum(screening_waiting(coordinator_uid).values())
+    return pending + held + len(org_unanswered(coordinator_uid))
 
 
 def org_to_mark(coordinator_uid):
@@ -3451,7 +3483,9 @@ def close_opening(coordinator_uid, opening_id):
 
 # What a coordinator may change on a posted opening, by the words the accepted volunteers
 # read in their chat. The org, the place and the repeat never change; reply_channel does,
-# unannounced (it is the coordinator's own business).
+# unannounced (it is the coordinator's own business). Screening is unannounced too: it
+# holds only accepts still to come, and can't change under a held match (update_opening),
+# so nothing changes for anyone already accepted.
 _OPENING_EDITS = {
     "title": "title",
     "about": "what you'll do",
@@ -3467,8 +3501,8 @@ _OPENING_EDITS = {
     "group_size": "kind of work",
     "first_timer_ok": "kind of work",
     "languages": "kind of work",
-    "screening_required": "screening",
-    "screening_kind": "screening",
+    "screening_required": None,
+    "screening_kind": None,
     "reply_channel": None,
 }
 
@@ -3522,7 +3556,8 @@ def update_opening(coordinator_uid, opening_id, **new):
     PermissionError as coordinator_opening, and for a deactivated org. ValueError, its
     message plain text for the coordinator: the opening is closed, spots below the
     volunteers accepted, a date, time or cause changed past opening_locks, or screening
-    turned on while a last-minute call is open, or off while volunteers wait for it. Spots
+    turned on while a last-minute call is open, or off or to another kind while
+    volunteers wait for it. Spots
     flip open <-> filled. Accepted volunteers get one line about it in their chat.
     """
     if "cause" in new:
@@ -3570,11 +3605,12 @@ def update_opening(coordinator_uid, opening_id, **new):
                 "This opening has a last-minute call. Stop it before requiring screening."
             )
         n = locks["screening"]
-        if n and "screening_required" in changed and not new["screening_required"]:
+        # a held volunteer was told which screening: it stays until they are confirmed
+        if n and changed & {"screening_required", "screening_kind"}:
             raise ValueError(
                 f"{n} volunteer{' is' if n == 1 else 's are'} waiting for you to "
                 "confirm their screening. Confirm them first, then screening can "
-                "be turned off."
+                "be turned off or changed."
             )
         if not changed:
             return []
@@ -4910,7 +4946,8 @@ def delete_account(uid):
     by), and their photos deleted. Pending and accepted matches are withdrawn and future
     shifts cancelled, their
     message bodies are replaced, texts still queued for them are cancelled, their
-    screenings are deleted, and every session ends. They can sign up again later as a
+    screenings are deleted (the rows, each match's screening status, and the chat's
+    system lines about it), and every session ends. They can sign up again later as a
     new profile.
     """
     with _db.db.conn:
@@ -4957,8 +4994,20 @@ def delete_account(uid):
             "snapshot = NULL, signature = NULL WHERE volunteer_id = ?",
             [_now(), uid],
         )
-        # a screening names the org, its kind and the date: nothing of it stays
+        # a screening names the org, its kind and the date: nothing of it stays, on
+        # the match or in the lines decide, confirm_screening and close_opening wrote
         _db.db.execute("DELETE FROM screening WHERE volunteer_id = ?", [uid])
+        _db.db.execute(
+            "UPDATE match SET screening_status = NULL WHERE volunteer_id = ?", [uid]
+        )
+        _db.db.execute(
+            "UPDATE message SET body = ? WHERE sender_id = ? "
+            "AND match_id IN (SELECT id FROM match WHERE volunteer_id = ?) "
+            "AND (body LIKE 'Screening confirmed%' "
+            "OR body LIKE '% needs to confirm your screening%' "
+            "OR body LIKE '% confirmed your screening.')",
+            [PLACEHOLDER, SYSTEM_SENDER, uid],
+        )
         _db.db.execute(
             "DELETE FROM photo WHERE owner_kind = 'volunteer' AND owner_id = ?", [uid]
         )

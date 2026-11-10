@@ -1094,6 +1094,19 @@ def columns(db):
     return out
 
 
+def indexes(db):
+    """The names of the indexes the app declared, not SQLite's own."""
+    c = apsw.Connection(str(db))
+    out = sorted(
+        n
+        for (n,) in c.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+        )
+    )
+    c.close()
+    return out
+
+
 def test_the_oldest_schema_migrates_to_the_columns_of_a_new_database(tmp_path):
     """Every table as first created since the baseline: a class field with no migration
     stops this start, as it would stop one on a real database that old."""
@@ -1106,6 +1119,7 @@ def test_the_oldest_schema_migrates_to_the_columns_of_a_new_database(tmp_path):
     assert "keeps column" not in r.stderr
     assert start(new).returncode == 0
     assert columns(old) == columns(new)
+    assert indexes(old) == indexes(new)  # a migration's index is the one db.py names
 
 
 def test_no_table_is_declared_with_transform():

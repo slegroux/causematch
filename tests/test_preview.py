@@ -963,6 +963,10 @@ def test_a_new_demo_sam_has_one_match_and_a_full_deck(demo):
     with pytest.raises(PermissionError):  # a demo copy's history only
         data.arrive_with_history(seed_sam.id, pat)
     deck = data.deck(uid, 200)
+    # the invented path seeds the demo opening that needs the nonprofit's screening
+    assert openings.count_where(
+        "title = ? AND screening_required = 1", ["Help with Sunday food pickups"]
+    )
     # the invented seed holds 7 openings, one of them now Sam's match (the real seed
     # dir holds more than 40)
     assert len(deck) >= 6 and deck[0]["urgent"]
