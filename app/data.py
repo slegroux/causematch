@@ -190,6 +190,7 @@ def _deck_openings(uid, today=False, p=None, calls=None):
     }
     calls = _open_calls() if calls is None else calls
     confirming = _confirming_orgs()
+    held_full = _held_full_openings()
     out = []
     for o in _db.openings(
         where="status = ? AND starts_at >= ?", where_args=["open", _local_now()]
@@ -201,7 +202,7 @@ def _deck_openings(uid, today=False, p=None, calls=None):
             continue
         slugs = json.loads(o.causes or "[]")
         cause_labels = [labels[s] for s in slugs if s in labels]
-        if not cause_labels or o.id in seen:
+        if not cause_labels or o.id in seen or o.id in held_full:
             continue
         # a "not for me" of a cause that is inactive now waits for it to come back
         if not _match.causes_allowed(p["causes"], [s for s in slugs if s in labels]):
@@ -230,6 +231,23 @@ def _deck_openings(uid, today=False, p=None, calls=None):
                     continue  # out of reach of every place
         out.append((o, cause_labels, near and near[1], near))
     return out
+
+
+def _held_full_openings():
+    """The ids of the open screening-required openings whose spots are all taken by
+    cleared plus held matches (_filling holds=True): a like could not be accepted, so the
+    deck leaves them out, as a filled opening. Their reported fill status is unchanged."""
+    skip, args = _filling(holds=True)
+    return {
+        r["id"]
+        for r in _db.db.query(
+            "SELECT o.id AS id FROM opening o WHERE o.status = 'open' "
+            "AND o.screening_required = 1 AND "
+            "(SELECT count(*) FROM match WHERE opening_id = o.id "
+            f"AND status = 'accepted'{skip}) >= o.slots",
+            args,
+        )
+    }
 
 
 def _confirming_orgs():
@@ -799,7 +817,9 @@ def _filling(match="match", holds=False):
     spot waiting and the confirmation never finds the opening full. In a demo a copy's
     don't count either, so visitors keep finding the same openings open. match: the
     alias of the match table. Every such count goes through it, so they cannot drift
-    apart."""
+    apart. _deck_openings also hides an opening whose spots are all taken by cleared and
+    held matches together (_held_full_openings), as if it were filled; its status here
+    stays open."""
     held = "" if holds else f" AND coalesce({match}.screening_status, '') != 'pending'"
     if not demo_matches():
         return held, []
@@ -3384,6 +3404,21 @@ def close_opening(coordinator_uid, opening_id):
             "(SELECT id FROM match WHERE opening_id = ?)",
             [_now(), coordinator_uid, _local_now(), opening_id],
         )
+        o = _db.openings[opening_id]
+        org = _db.orgs[o.org_id]
+        # a volunteer held for screening has no shift to cancel: release them
+        for m in _db.matches(
+            where="opening_id = ? AND status = 'accepted' AND screening_status = 'pending'",
+            where_args=[opening_id],
+        ):
+            _end_match(m, coordinator_uid, "withdrawn")
+            if not _blocked_either(m.volunteer_id, o.org_id):
+                _db.messages.insert(
+                    match_id=m.id,
+                    sender_id=SYSTEM_SENDER,
+                    body=f"The opening closed before {org.name} confirmed your screening.",
+                    created_at=_now(),
+                )
 
 
 # What a coordinator may change on a posted opening, by the words the accepted volunteers
@@ -3410,6 +3445,30 @@ _OPENING_EDITS = {
 }
 
 
+def _held_count(opening_id):
+    """Accepted matches on the opening still held for screening (decide)."""
+    return _db.matches.count_where(
+        "opening_id = ? AND status = 'accepted' AND screening_status = 'pending'",
+        [opening_id],
+    )
+
+
+def screening_waiting(coordinator_uid):
+    """{opening id: n} of the volunteers held for the nonprofit's screening, on the
+    coordinator's own orgs' openings; openings with none are left out."""
+    return {
+        r["id"]: r["n"]
+        for r in _db.db.query(
+            "SELECT m.opening_id AS id, count(*) AS n FROM match m "
+            "WHERE m.status = 'accepted' AND m.screening_status = 'pending' "
+            "AND m.opening_id IN (SELECT o.id FROM opening o WHERE o.org_id IN "
+            "(SELECT org_id FROM org_member WHERE user_id = ?)) "
+            "GROUP BY m.opening_id",
+            [coordinator_uid],
+        )
+    }
+
+
 def opening_locks(opening_id):
     """What can't change on this opening now: {"accepted": volunteers accepted, counted as
     the fill does (a demo copy's don't count, or they would push the spots minimum above
@@ -3423,6 +3482,7 @@ def opening_locks(opening_id):
         "accepted": _accepted(opening_id, holds=True),
         "when": liked,
         "cause": liked,
+        "screening": _held_count(opening_id),
     }
 
 
@@ -3434,7 +3494,8 @@ def update_opening(coordinator_uid, opening_id, **new):
     PermissionError as coordinator_opening, and for a deactivated org. ValueError, its
     message plain text for the coordinator: the opening is closed, spots below the
     volunteers accepted, a date, time or cause changed past opening_locks, or screening
-    turned on while a last-minute call is open. Spots flip open <-> filled. Accepted volunteers get one line about it in their chat.
+    turned on while a last-minute call is open, or off while volunteers wait for it. Spots
+    flip open <-> filled. Accepted volunteers get one line about it in their chat.
     """
     if "cause" in new:
         new["causes"] = json.dumps([new.pop("cause")])
@@ -3479,6 +3540,13 @@ def update_opening(coordinator_uid, opening_id, **new):
         if new.get("screening_required") and opening_id in _open_calls():
             raise ValueError(
                 "This opening has a last-minute call. Stop it before requiring screening."
+            )
+        n = locks["screening"]
+        if n and "screening_required" in changed and not new["screening_required"]:
+            raise ValueError(
+                f"{n} volunteer{' is' if n == 1 else 's are'} waiting for you to "
+                "confirm their screening. Confirm them first, then screening can "
+                "be turned off."
             )
         if not changed:
             return []

@@ -217,7 +217,7 @@ def reopenable(o):
     )
 
 
-def OpeningRow(o, counts, urgent=None):
+def OpeningRow(o, counts, urgent=None, screening=0):
     status, tone = OPENING_STATUS.get(o.status, (o.status.title(), "off"))
     pending, accepted = counts.get("pending", 0), counts.get("accepted", 0)
     return Div(
@@ -234,6 +234,13 @@ def OpeningRow(o, counts, urgent=None):
                 cls="group -my-2 inline-flex min-h-11 items-center",
             )
             if pending
+            else None,
+            A(
+                Pill(f"{screening} waiting for screening", "wait"),
+                href="/org/inbox",
+                cls="-my-2 inline-flex min-h-11 items-center",
+            )
+            if screening
             else None,
             cls="flex flex-wrap items-center gap-1.5",
         ),
@@ -303,10 +310,10 @@ def OpeningRow(o, counts, urgent=None):
     )
 
 
-def NeedsYou(waiting, to_mark):
+def NeedsYou(waiting, to_mark, screening=0):
     """The strip atop the dashboard: what waits for the coordinator, each part a link to
-    where it is dealt with; each part hidden at 0, the strip when both are."""
-    if not (waiting or to_mark):
+    where it is dealt with; each part hidden at 0, the strip when all are."""
+    if not (waiting or to_mark or screening):
         return None
     link = (
         "inline-flex min-h-11 items-center gap-2 font-bold text-brand-ink underline "
@@ -323,6 +330,15 @@ def NeedsYou(waiting, to_mark):
                 cls=link,
             )
             if waiting
+            else None,
+            A(
+                f"{screening} waiting for screening",
+                Span("→", aria_hidden="true"),
+                Span(" Inbox", cls="sr-only"),
+                href="/org/inbox",
+                cls=link,
+            )
+            if screening
             else None,
             A(
                 f"{to_mark} shift{'' if to_mark == 1 else 's'} to mark",
@@ -358,11 +374,12 @@ def org_home(req, error=""):
     profile = data.get_profile(uid)
     by_org = data.org_openings(uid)
     counts = data.opening_counts(uid)
+    held = data.screening_waiting(uid)
     urgent = data.org_urgent_calls(uid)
     sections = []
     for org, role in data.coordinator_orgs(uid):
         rows = [
-            OpeningRow(o, counts.get(o.id, {}), urgent.get(o.id))
+            OpeningRow(o, counts.get(o.id, {}), urgent.get(o.id), held.get(o.id, 0))
             for o in waiting_first(by_org.get(org.id, []), counts)
         ]
         sections.append(
@@ -384,7 +401,7 @@ def org_home(req, error=""):
         "openings",
         # data.org_badges, without re-reading the counts
         {"inbox": pending + unanswered, "shifts": to_mark},
-        NeedsYou(pending, to_mark) if named else None,
+        NeedsYou(pending, to_mark, sum(held.values())) if named else None,
         Div(
             H1("Your openings", cls=ORG_TITLE),
             A(
@@ -684,6 +701,14 @@ def OpeningForm(uid, f=None, error=None, editing=None):
                     value="1",
                     checked=f.get("screening") == "1",
                 ),
+                P(
+                    f"{locks['screening']} volunteer"
+                    f"{' is' if locks['screening'] == 1 else 's are'} waiting for you to "
+                    "confirm their screening, so this can't be turned off yet.",
+                    cls=TextPresets.muted_sm,
+                )
+                if locks.get("screening")
+                else None,
                 Fieldset(
                     Legend("Which screening?", cls="uk-form-label mb-1.5"),
                     Div(

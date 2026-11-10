@@ -197,6 +197,13 @@ def ChatPage(uid, match_id, role, notice=""):
             )
             if role == "volunteer" and head["shift"]
             else None,
+            A(
+                "Confirm screening",
+                href=f"/org/matches/{match_id}/screening",
+                cls=SMALL_LINK,
+            )
+            if role == "coordinator" and head.get("screening_pending")
+            else None,
             A("Report", href=f"{rbase}/{match_id}/report", cls=SMALL_LINK),
             A("Block", href=f"{rbase}/{match_id}/block", cls=SMALL_LINK),
             cls="flex flex-wrap gap-x-5 pt-2 text-sm",
