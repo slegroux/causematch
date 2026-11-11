@@ -693,7 +693,7 @@ def OpeningForm(uid, f=None, error=None, editing=None):
                 P(
                     f"{locks['screening']} volunteer"
                     f"{' is' if locks['screening'] == 1 else 's are'} waiting for you to "
-                    "confirm their screening, so this can't be turned off yet.",
+                    "confirm their screening, so this can't be turned off or changed yet.",
                     cls=TextPresets.muted_sm,
                 )
                 if locks.get("screening")
@@ -1249,7 +1249,6 @@ INBOX_NOTICE = {
     "late": "Too late to undo that one.",
     "screened": "Screening confirmed. The volunteer will find a note in the chat.",
     "screening_full": "That opening is full, so there is no spot to book.",
-    "screening_closed": "That opening is closed. Reopen it to book their shift.",
 }
 
 
@@ -1528,11 +1527,8 @@ def _sync_confirm_screening(req, match_id: int):
     except PermissionError:
         return Refusal(403)
     except ValueError as e:
-        notice = {
-            "no slots left": "screening_full",
-            "opening closed": "screening_closed",
-        }
-        return Redirect(f"/org/inbox?notice={notice.get(str(e), 'decided')}")
+        notice = "screening_full" if str(e) == "no slots left" else "decided"
+        return Redirect(f"/org/inbox?notice={notice}")
     # the chat line was written by the app: tell the volunteer as a message would
     notify.after(req, notify.on_new_message, match_id, data.SYSTEM_SENDER)
     return Redirect("/org/inbox?notice=screened")

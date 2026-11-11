@@ -92,10 +92,38 @@ def test_confirming_books_the_shift_records_the_screening_and_fills_the_spot():
     assert data.opening_counts(coord)[oid]["accepted"] == 1
     with pytest.raises(ValueError):
         data.confirm_screening(coord, m1.id)  # already confirmed
-    openings.update(id=oid, status="closed")
-    with pytest.raises(ValueError, match="opening closed"):
+    data.close_opening(coord, oid)  # releases the hold: nothing left to confirm
+    with pytest.raises(ValueError, match="not waiting for screening"):
         data.confirm_screening(coord, m2.id)
-    assert matches[m2.id].screening_status == "pending"
+    assert matches[m2.id].status == "withdrawn"
+
+
+def test_one_confirmation_clears_every_hold_at_the_nonprofit_and_writes_one_row():
+    first, second = openings[4], openings[6]  # the shelter's two openings
+    for o in (first, second):
+        openings.update(
+            id=o.id,
+            slots=2,
+            starts_at="2030-01-05T09:00",
+            screening_required=True,
+            screening_kind="background_check",
+        )
+    vol = volunteer()
+    coord, _ = coordinator_for(3)
+    m1 = data.swipe(vol.uid, first.id, True)
+    m2 = data.swipe(vol.uid, second.id, True)
+    data.decide(coord, m1.id, True)
+    data.decide(coord, m2.id, True)  # no clearance yet: both hold
+    assert (
+        "needs to confirm your screening (background check)" in system_lines(m2.id)[0]
+    )
+    data.confirm_screening(coord, m1.id)
+    for m in (m1, m2):
+        assert matches[m.id].screening_status == "cleared"
+        assert shifts(where="match_id = ?", where_args=[m.id])
+        assert system_lines(m.id)[-1].startswith("Screening confirmed: your shift on")
+    assert screenings.count_where("volunteer_id = ?", [vol.uid]) == 1
+    assert len(data.my_screenings(vol.uid)) == 1
 
 
 def test_deleting_the_account_leaves_no_screening_and_ends_a_held_match():
@@ -113,6 +141,10 @@ def test_deleting_the_account_leaves_no_screening_and_ends_a_held_match():
     ids = [cleared.uid, waiting.uid]
     assert screenings.count_where("volunteer_id IN (?, ?)", ids) == 0
     assert matches[m2.id].status == "withdrawn"
+    # neither the match nor the chat keeps the hold or the clearance
+    assert matches[m1.id].screening_status is matches[m2.id].screening_status is None
+    assert system_lines(m1.id) == [data.PLACEHOLDER] * 2  # the hold, then the clearance
+    assert system_lines(m2.id) == [data.PLACEHOLDER]
 
 
 def test_the_volunteer_sees_the_wait_then_the_shift_and_the_org_confirms(user, coord):
@@ -121,6 +153,10 @@ def test_the_volunteer_sees_the_wait_then_the_shift_and_the_org_confirms(user, c
     user.post("/swipe", data={"opening_id": oid, "liked": "1"})
     mid = matches()[0].id
     coord.post(f"/org/matches/{mid}/decide", data={"decision": "accept"})
+    assert any(
+        "Your first shift waits for their screening." in str(t)
+        for t in notify.get_sms().sent
+    )
     html = unescape(user.get("/matches").text)
     assert f"Waiting for {org} to confirm your screening" in html
     assert "Sat Jan 5, 9:00 AM" not in html and ".ics" not in html
@@ -212,10 +248,37 @@ def test_screening_cannot_be_turned_off_under_a_held_match(coord):
     assert "1 volunteer is waiting for you to confirm their screening" in form
     with pytest.raises(ValueError, match="waiting for you to confirm their screening"):
         data.update_opening(cid, oid, screening_required=False, screening_kind=None)
-    assert openings[oid].screening_required
+    with pytest.raises(ValueError, match="turned off or changed"):  # nor the kind
+        data.update_opening(
+            cid, oid, screening_required=True, screening_kind="training"
+        )
+    assert (openings[oid].screening_required, openings[oid].screening_kind) == (
+        True,
+        "live_scan",
+    )
     data.confirm_screening(cid, m.id)
+    lines = len(system_lines(m.id))
     data.update_opening(cid, oid, screening_required=False, screening_kind=None)
     assert not openings[oid].screening_required
+    assert len(system_lines(m.id)) == lines  # booked already: nothing changes for them
+
+
+def test_held_rows_head_the_decided_column_newest_first_and_count_on_the_badge(coord):
+    oid = screened_opening(slots=3)
+    cid, _ = coordinator_for(0)
+    booked, old, new = volunteer(), volunteer(), volunteer()
+    m0, m1, m2 = (data.swipe(v.uid, oid, True) for v in (booked, old, new))
+    for m in (m0, m1, m2):
+        data.decide(cid, m.id, True)
+    data.confirm_screening(cid, m0.id)
+    # m1 was accepted last: it is the newest hold, though m2 was liked after it
+    matches.update(id=m2.id, decided_at="2030-01-01T10:00:00+00:00")
+    matches.update(id=m1.id, decided_at="2030-01-01T11:00:00+00:00")
+    decided = [r["id"] for r in data.org_inbox(cid)["decided"]]
+    assert decided[:3] == [m1.id, m2.id, m0.id]
+    before = data.org_waiting(cid)
+    data.confirm_screening(cid, m1.id)
+    assert data.org_waiting(cid) == before - 1
 
 
 def test_closing_releases_the_held_matches_and_a_held_full_opening_leaves_the_deck():
