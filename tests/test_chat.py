@@ -331,6 +331,22 @@ def test_a_revoked_listener_gets_nothing_and_is_closed(chat):
         assert e.value.code == 1008
 
 
+def test_a_coordinator_socket_is_closed_once_the_session_is_7_days_old(
+    chat, monkeypatch
+):
+    from test_auth import Later
+
+    import app.auth as auth_module
+
+    with chat.coord.websocket_connect(chat.coord_ws) as wc:
+        monkeypatch.setattr(auth_module, "time", Later(7 * 24 * 3600 + 1))
+        say(wc, "hello")
+        with pytest.raises(WebSocketDisconnect) as e:
+            wc.receive_text()
+        assert e.value.code == 1008
+    assert messages.count == 0
+
+
 def test_removed_coordinator_is_closed(chat):
     from app.db import org_members
 

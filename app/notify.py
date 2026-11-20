@@ -543,16 +543,19 @@ def send_sign_in_notice(email, at):
     by someone else who reads that inbox doesn't go unnoticed. Under the staff links'
     share: one per link, which the link limits already bound."""
     when = at.astimezone(LA).strftime("%a %b %-d, %-I:%M %p")
-    get_emailer().send(
-        email,
-        "New sign-in to your Causematch account",
-        f"Your Causematch account was signed in to on {when} (Pacific time), with a "
-        "sign-in link emailed to this address.\n\nIf that was you, there is nothing to "
-        f"do. If it wasn't, sign in at {public_base_url()}/org/login and tap Sign out: "
-        "it signs you out everywhere, ending every session on every device. Then write "
-        f"to {contact_email()}.",
-        kind="staff",
-    )
+    try:
+        get_emailer().send(
+            email,
+            "New sign-in to your Causematch account",
+            f"Your Causematch account was signed in to on {when} (Pacific time), with a "
+            "sign-in link emailed to this address.\n\nIf that was you, there is nothing "
+            f"to do. If it wasn't, sign in at {public_base_url()}/org/login and tap Sign "
+            "out: it signs you out everywhere, ending every session on every device. "
+            f"Then write to {contact_email()}.",
+            kind="staff",
+        )
+    except Exception as e:  # noqa: BLE001  a failed notice never fails the sign-in
+        log.warning("sign-in notice not sent: %s", type(e).__name__)
 
 
 def send_volunteer_link(email, token, new):

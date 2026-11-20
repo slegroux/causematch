@@ -366,7 +366,7 @@ def last_link_token():
     for _, _, body in reversed(notify.get_emailer().sent):
         if m := re.search(r"token=([\w-]+)", body):
             return m.group(1)
-    return None
+    raise AssertionError("no sign-in link was sent")
 
 
 def org_sign_in(client, email, lands="/org"):
