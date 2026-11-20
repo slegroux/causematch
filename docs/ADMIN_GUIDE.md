@@ -67,7 +67,7 @@ A **Continue with Google** (or Apple) button shows only when that sign-in is swi
 
 ![The Admin page, with the tabs along the top](assets/admin/admin-home.png)
 
-The tabs along the top are **Admin**, **Metrics**, **Reports**, **Orgs**, **Claims** and **Blocks**. Sessions last 30 days.
+The tabs along the top are **Admin**, **Metrics**, **Reports**, **Orgs**, **Claims** and **Blocks**. An admin's session ends 12 hours after signing in, a coordinator's after 7 days; then sign in again with a new link.
 
 ---
 
