@@ -13,6 +13,9 @@ log = logging.getLogger("causematch")
 # Used only when CAUSEMATCH_ENV is explicitly development or test and SESSION_SECRET is unset.
 DEV_SECRET = "dev-only-secret-do-not-use-in-production"
 SESSION_MAX_AGE = 30 * 24 * 3600
+# Seconds from sign-in (the session's "at") a staff session lasts, checked on every request.
+# A volunteer's has the cookie's SESSION_MAX_AGE alone.
+STAFF_MAX_AGE = {"admin": 12 * 3600, "coordinator": 7 * 24 * 3600}
 PENDING_TTL = 15 * 60  # seconds Me's add-a-number keeps the number a code went to
 
 PUBLIC = [
@@ -105,6 +108,15 @@ def _fresh_session(sess, profile):
     sess.clear()
     sess["uid"] = profile.id
     sess["sv"] = profile.session_version or 1
+    sess["at"] = int(time.time())
+
+
+def _too_old(sess, profile):
+    """A coordinator's or admin's session past its STAFF_MAX_AGE. One from before sign-in
+    times were kept has none and counts as too old: its age is unknown."""
+    limit = STAFF_MAX_AGE.get(profile.role)
+    at = sess.get("at")
+    return limit is not None and (not isinstance(at, int) or time.time() - at > limit)
 
 
 def sign_in(sess, profile):
@@ -133,6 +145,9 @@ def check_session(req, sess):
         sess.pop("uid", None)
         staff = is_org_path(path) or is_admin_path(path)
         return Redirect("/org/login" if staff else "/login")
+    if _too_old(sess, profile):
+        sess.clear()
+        return Redirect("/org/login")
     req.scope["uid"] = profile.id
     if path == "/logout":
         return
@@ -164,14 +179,14 @@ def ws_session_user(ws, role):
     message) must call this itself and, on None, close the socket:
         if (user := ws_session_user(ws, "volunteer")) is None:
             return await ws.close(code=1008)
-    Same rules as check_session: live profile, matching session version, and for
-    coordinators a current org membership.
+    Same rules as check_session: live profile, matching session version, a staff
+    session within STAFF_MAX_AGE, and for coordinators a current org membership.
     """
     sess = ws.scope.get("session") or {}
     profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
     if not profile or sess.get("sv") != (profile.session_version or 1):
         return None
-    if profile.role != role:
+    if _too_old(sess, profile) or profile.role != role:
         return None
     if role == "coordinator" and not data.coordinator_org_ids(profile.id):
         return None

@@ -6,6 +6,8 @@ import anyio
 import pytest
 from conftest import (
     SlowEmailer,
+    admin_client,
+    coordinator,
     coordinator_for,
     link_sign_in,
     post_while_mail_is_held,
@@ -564,6 +566,58 @@ def test_the_pending_number_expires_after_15_minutes(user, monkeypatch):
     r = user.post("/me/phone/verify", data={"code": "000000"})
     assert r.status_code == 400 and "Enter your number to get a code." in r.text
     assert "me_pending_phone" not in session_of(user)
+
+
+# --- staff sessions end sooner: admins after 12 hours, coordinators after 7 days ----------
+
+
+def without_sign_in_time(client):
+    """The client's session re-signed without "at", as one from before it was kept."""
+    import base64
+    import os
+
+    from itsdangerous import TimestampSigner
+
+    from app.auth import session_cookie
+
+    sess = {k: v for k, v in session_of(client).items() if k != "at"}
+    raw = base64.b64encode(json.dumps(sess).encode())
+    signed = TimestampSigner(session_secret(os.environ)).sign(raw).decode()
+    client.cookies.set(session_cookie(), signed)
+
+
+def test_session_age_an_admin_session_past_12_h_is_sent_to_org_login(monkeypatch):
+    import app.auth as auth_module
+
+    boss = admin_client()
+    monkeypatch.setattr(auth_module, "time", Later(12 * 3600 - 60))
+    assert boss.get("/admin", follow_redirects=False).status_code == 200
+    monkeypatch.setattr(auth_module, "time", Later(12 * 3600 + 1))
+    r = boss.get("/admin", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org/login"
+    assert "uid" not in session_of(boss)
+
+
+def test_session_age_coordinators_last_7_days_and_volunteers_30(monkeypatch):
+    import app.auth as auth_module
+
+    pat, sam = coordinator(), volunteer()
+    monkeypatch.setattr(auth_module, "time", Later(7 * 24 * 3600 - 60))
+    assert pat.get("/org", follow_redirects=False).status_code == 200
+    monkeypatch.setattr(auth_module, "time", Later(7 * 24 * 3600 + 1))
+    r = pat.get("/deck", follow_redirects=False)  # a volunteer page too: staff sign-in
+    assert r.status_code == 303 and r.headers["location"] == "/org/login"
+    assert sam.get("/deck", follow_redirects=False).status_code == 200
+
+
+def test_session_age_a_staff_session_without_a_sign_in_time_ends():
+    """Sessions from before the limits have no "at": a coordinator's ends at once (its age
+    is unknown), a volunteer's goes on."""
+    pat, sam = coordinator(), volunteer()
+    without_sign_in_time(pat)
+    without_sign_in_time(sam)
+    assert pat.get("/org", follow_redirects=False).headers["location"] == "/org/login"
+    assert sam.get("/deck", follow_redirects=False).status_code == 200
 
 
 @pytest.mark.parametrize("env", [{}, {"CAUSEMATCH_ENV": "production"}])
