@@ -81,7 +81,7 @@ The variables: `SMTP_USERNAME` (the Gmail address), `SMTP_PASSWORD` (the app pas
 | notices (matches, messages, reminders, likes, cancellations, claim decisions), within that | 50% |
 | last-minute calls' emails, among the notices | 25% |
 | sign-up links (an address no account holds), within the 90% | 25% |
-| staff's sign-in links (`send_login_link`, from `/org/login` or `/login`) | the whole: the last 10% is theirs alone |
+| staff's sign-in links (`send_login_link`, from `/org/login` or `/login`), and the "New sign-in" notice after each one is used (`send_sign_in_notice`) | the whole: the last 10% is theirs alone |
 
 The existing ceilings don't keep under Gmail's limit on their own: sign-up links alone may reach 500 a day. While email goes through Gmail, `/login` and `/org/login` also allow each mailbox only 5 links a day (`security.LINK_PER_EMAIL_SMTP`, beside the 20 a day they share), so a handful of accounts can't spend the volunteers' share, nor a few known staff addresses the staff's, and whatever volunteers do, staff keep their 10%. One volunteer's likes email the orgs for 20 likes a day (`security.LIKE_NOTICES`); later likes show in the org's inbox only. Past a ceiling nothing is sent (a sign-in link is lost, a notice is recorded `failed`) and each refusal logs a warning naming it: `rate limit reached: email-smtp-day` (everything), or `email-smtp-public-day`, `email-smtp-notices-day`, `email-smtp-urgent-day`, `email-smtp-signups-day` in its place.
 

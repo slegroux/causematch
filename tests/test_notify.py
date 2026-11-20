@@ -16,10 +16,13 @@ import httpx
 import pytest
 from conftest import (
     PANTRY,
+    TestClient,
     add_number,
     adder,
     coordinator,
     coordinator_for,
+    link_sign_in,
+    org_sign_in,
     pantry_opening,
     volunteer,
 )
@@ -35,6 +38,7 @@ from app.db import (
     rate_events,
     shifts,
 )
+from main import app
 
 BASE = "https://causematch.test"
 T0 = datetime(2027, 3, 1, 18, 0, tzinfo=UTC)  # 10:00 in Los Angeles
@@ -1267,3 +1271,38 @@ def test_a_refused_password_stops_connects_for_ten_minutes(smtp_server, monkeypa
     with pytest.raises(notify.SMTPUnavailable):
         e.send("b@example.org", "s", "b")
     assert len(smtp_server) == 1  # no second sign-in attempt
+
+
+# --- a coordinator's or admin's link sign-in is told to them ------------------------------
+
+NEW_SIGN_IN = "New sign-in to your Causematch account"
+
+
+def sign_in_notices():
+    return [(to, body) for to, subject, body in notify.get_emailer().sent
+            if subject == NEW_SIGN_IN]  # fmt: skip
+
+
+def test_new_sign_in_one_notice_per_link_sign_in_with_when_and_sign_out(clock):
+    _, pat = coordinator_for(0)
+    data.add_admin("boss@example.org", "Boss Person")
+    org_sign_in(TestClient(app), pat)
+    org_sign_in(TestClient(app), pat)
+    org_sign_in(TestClient(app), "boss@example.org", lands="/admin")
+    notices = sign_in_notices()
+    assert [to for to, _ in notices] == [pat, pat, "boss@example.org"]
+    body = notices[0][1]
+    assert "Mon Mar 1, 10:00 AM (Pacific time)" in body
+    assert "tap Sign out: it signs you out everywhere" in body
+    assert "hello@causematch.test" in body and "token=" not in body
+
+
+def test_new_sign_in_none_for_the_demo_one_tap_or_volunteers(monkeypatch):
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    coordinator_for(0, email=config.DEMO_COORDINATOR)
+    data.add_admin(config.DEMO_ADMIN, "Ada Demo")
+    for path in ("/org/login/demo", "/org/login/demo-admin"):
+        r = TestClient(app).post(path, follow_redirects=False)
+        assert r.status_code == 303, path
+    link_sign_in(TestClient(app), "sam@example.org")
+    assert sign_in_notices() == []

@@ -49,6 +49,8 @@ There is no password. You get a link by email.
 3. Open the email "Your Causematch sign-in link" and tap the link. It works **once** and expires after **15 minutes**. Only the **newest** link works: asking again cancels the one before.
 4. A confirm page opens. Check that it says **Sign in as** and your own address, then tap **Sign in**. You land on the Admin page.
 
+Each sign-in with a link also sends you an email, "New sign-in to your Causematch account", saying when. If it wasn't you, sign in and tap **Sign out**: that ends every session, on every device.
+
 ![The nonprofit sign-in page](assets/admin/org-login.png)
 
 #### The confirm page and its warnings
