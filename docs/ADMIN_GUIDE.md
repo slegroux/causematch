@@ -49,6 +49,8 @@ There is no password. You get a link by email.
 3. Open the email "Your Causematch sign-in link" and tap the link. It works **once** and expires after **15 minutes**. Only the **newest** link works: asking again cancels the one before.
 4. A confirm page opens. Check that it says **Sign in as** and your own address, then tap **Sign in**. You land on the Admin page.
 
+Each sign-in with a link also sends you an email, "New sign-in to your Causematch account", saying when. If it wasn't you, sign in and tap **Sign out**: that ends every session, on every device.
+
 ![The nonprofit sign-in page](assets/admin/org-login.png)
 
 #### The confirm page and its warnings
@@ -67,7 +69,7 @@ A **Continue with Google** (or Apple) button shows only when that sign-in is swi
 
 ![The Admin page, with the tabs along the top](assets/admin/admin-home.png)
 
-The tabs along the top are **Admin**, **Metrics**, **Reports**, **Orgs**, **Claims** and **Blocks**. Sessions last 30 days.
+The tabs along the top are **Admin**, **Metrics**, **Reports**, **Orgs**, **Claims** and **Blocks**. An admin's session ends 12 hours after signing in, a coordinator's after 7 days; then sign in again with a new link.
 
 ---
 

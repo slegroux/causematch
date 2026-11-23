@@ -570,7 +570,7 @@ flowchart TD
 ### Auth, sessions and roles (`app/auth.py`)
 
 - **Public paths** skip the sign-in check: `/login`, `/login/send` (the emailed link, rate-limited), `/login/verify` (GET shows the confirm page, POST uses the link), `/login/demo`, `/auth/*` (Google and Apple sign-in, 404 when not configured), `/org/login`, `/org/login/send`, `/org/login/verify`, `/org/login/demo`, `/org/login/demo-admin`, `/org/claim`, `/org/claim/search`, `/privacy`, `/tasks/reminders`, `/tasks/urgent`, `/urgent/off/{key}`, `/check/{code}` (a certificate's check link), `/favicon.ico` and `/static/*`.
-- **Session contents:** `uid` and `sv`, the session version. A request is signed in only if the profile still exists and isn't deleted or suspended, and `sv` equals the profile's `session_version`. Bumping that version signs out every device; sign-out, suspension and account deletion bump it. A Google or Apple connect from Me is sealed with it, so one started before a sign-out is refused. A deleted or suspended profile fails the check anyway, so removing an admin or coordinator also takes effect at once.
+- **Session contents:** `uid`, `sv`, the session version, and `at`, the sign-in time. An admin's session ends 12 hours after it, a coordinator's after 7 days (`auth.STAFF_MAX_AGE`, checked on every request and websocket frame), then `/org/login`; a staff session with no `at` (from before it was kept) ends at once. A volunteer's lasts the cookie's 30 days. A request is signed in only if the profile still exists and isn't deleted or suspended, and `sv` equals the profile's `session_version`. Bumping that version signs out every device; sign-out, suspension and account deletion bump it. A Google or Apple connect from Me is sealed with it, so one started before a sign-out is refused. A deleted or suspended profile fails the check anyway, so removing an admin or coordinator also takes effect at once.
 - **Role gating:**
   - `/admin/*`: admins only. A coordinator who tries is redirected to `/org`, anyone else gets 403.
   - `/org/*`: coordinators with at least one current org membership, checked on every request. Others get 403.
@@ -1036,6 +1036,8 @@ sequenceDiagram
     C->>A: POST /org/login/verify
     A->>DB: mark token used, only if unused and unexpired, in one statement
     A-->>C: session set, redirect to /org or /admin
+    Note over A: after the response (notify.after)
+    A->>R: email "New sign-in to your Causematch account": when, and that Sign out ends every session
 ```
 
 In a preview with the fake emailer, submitting a demo coordinator's address on `/org/login` shows that coordinator's link on the result page (never an admin's); any other address gets the unknown-address answer and nothing is sent. The demo coordinator's and admin's links are also in the startup log, each valid once for 15 minutes.
@@ -1433,7 +1435,7 @@ A free Gmail account may send to about 500 recipients a day, and Google may lock
 | notices, within that | 50% |
 | last-minute calls' emails, among the notices | 25% |
 | sign-up links, within the 90% | 25% |
-| staff's sign-in links | the whole: the last 10% is theirs alone |
+| staff's sign-in links, and the "New sign-in" notice after each one is used | the whole: the last 10% is theirs alone |
 
 An email the ceiling refuses raises `EmailCeiling`: a notice is recorded `failed`, a sign-in link is simply not sent. `RunAfter` runs notices, the chat's new-message notice among them, in worker threads of their own (at most 4 at once, `AFTER_LIMITER`), and sign-in links in 2 more (`LINK_LIMITER`), so a link never queues behind notices; all apart from the shared pool, so a slow Gmail holds at most those 6 threads and never a page or a chat socket's frames. A websocket's notices run in a task group of the socket's own, so the socket's end waits for them as a response's end does; when the server stops first, those still waiting are cancelled and logged (`up to N notices not sent: the server is stopping`), as an HTTP request's are, and one already in its thread finishes. Claim approval and rejection emails are the one exception: they go out inline in the admin's request, whose page says whether they went. Also, `notify.batch()` lets the sends of one thread share one signed-in connection. The ceilings are counted in this instance's SQLite file, and the pause after a failed connect (`SMTP_BREAK`) is kept in the process's memory, which is why Gmail needs one instance. The privacy page names the provider, and says Gmail's copies go after a day only when `GMAIL_PURGE=daily` says the purge is installed. `docs/OPERATIONS.md`, Email through Gmail, has the setup, the alerts and the move back to Resend.
 

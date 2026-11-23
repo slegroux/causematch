@@ -191,10 +191,10 @@ async def org_login_verify(req, sess):
     form = await str_form(req)
     if form is None:
         return Response("Bad request", status_code=400)
-    return await run_in_threadpool(_sync_org_login_verify, form, sess)
+    return await run_in_threadpool(_sync_org_login_verify, req, form, sess)
 
 
-def _sync_org_login_verify(form, sess):
+def _sync_org_login_verify(req, form, sess):
     token = sess.pop("login_token", "") or form.get("token", "")
     uid = data.consume_login_token(token) if 0 < len(token) <= 200 else None
     profile = data.get_profile(uid) if uid else None
@@ -203,4 +203,6 @@ def _sync_org_login_verify(form, sess):
     )
     if not (is_coordinator or (profile and profile.role == "admin")):
         return EmailForm(error=BAD_LINK)
+    # the link's sign-in only: not the demo buttons', nor Google's or Apple's
+    notify.after(req, notify.send_sign_in_notice, profile.email, notify.now())
     return sign_in_staff(sess, profile, is_coordinator)
