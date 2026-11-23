@@ -321,15 +321,20 @@ def test_the_confirm_page_names_the_account_and_warns_about_a_link_from_elsewher
     token = link_token("attacker@example.org")
     mine = page(attacker, f"/login/verify?token={token}")
     assert "Sign in as attacker@example.org" in mine
-    assert "didn't ask for this link" not in mine and "another account" not in mine
+    assert (
+        "ask for this link on another device" not in mine
+        and "another account" not in mine
+    )
     victim = volunteer()  # signed in, and never asked for this link
     theirs = page(victim, f"/login/verify?token={token}")
     assert "Sign in as attacker@example.org" in theirs
-    assert "didn't ask for this link" in theirs and "another account" in theirs
+    assert (
+        "ask for this link on another device" in theirs and "another account" in theirs
+    )
     _, staff = coordinator_for(0)  # the same on the nonprofit sign-in
     TestClient(app).post("/org/login/send", data={"email": staff})
     org = page(victim, f"/org/login/verify?token={link_token(staff)}")
-    assert f"Sign in as {staff}" in org and "didn't ask for this link" in org
+    assert f"Sign in as {staff}" in org and "ask for this link on another device" in org
     peeked = [
         t for t in login_tokens() if t.user_id or t.email == "attacker@example.org"
     ]
@@ -347,7 +352,7 @@ def test_the_asked_for_mark_lasts_a_links_lifetime(monkeypatch):
     later = Later(data.TOKEN_MINUTES * 60 + 1)
     monkeypatch.setattr(auth_routes, "time", later)
     page = c.get(f"/login/verify?token={token}").text.replace("&#x27;", "'")
-    assert "didn't ask for this link" in page
+    assert "ask for this link on another device" in page
 
 
 def test_a_plus_led_address_keeps_its_own_mailbox():

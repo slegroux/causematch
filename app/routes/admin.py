@@ -536,7 +536,7 @@ def ClaimCard(c, error=None):
 
 # ?done= after a decision: the one-line confirmation (no name or address in the URL)
 DONE = {
-    "approved": "Approved. We emailed them a link to sign in.",
+    "approved": "Approved. We emailed them where to sign in.",
     "approved-unsent": "Approved, but the email didn't send: they can sign in at "
     "/org/login with their email address.",
     "declined": "Declined. We let them know by email.",

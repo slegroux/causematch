@@ -106,7 +106,7 @@ def test_claimed_org_reaches_the_dashboard_through_admin_approval(admin):
     assert r.status_code == 303
     assert r.headers["location"] == "/admin/claims?done=approved"
     assert (
-        "Approved. We emailed them a link to sign in."
+        "Approved. We emailed them where to sign in."
         in admin.get(r.headers["location"]).text
     )
     c = the_claim()

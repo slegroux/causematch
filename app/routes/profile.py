@@ -222,9 +222,7 @@ def DetailsForm(p, f=None):
         H2("Only we see", cls=ORG_SECTION + " pt-2"),
         P("Never shown to nonprofits.", cls=TextPresets.muted_sm),
         Field(
-            "Email (optional, for last-minute calls when you have no texts)"
-            if notify.texts_on()
-            else "Email (optional, for last-minute calls)",
+            "Email (optional)",
             TextInput(
                 name="email",
                 type="email",
@@ -232,6 +230,12 @@ def DetailsForm(p, f=None):
                 maxlength=str(MAX_EMAIL),
                 autocomplete="email",
             ),
+        ),
+        P(
+            "Match news, reminders and last-minute calls go to it"
+            + (" when you have no texts" if notify.texts_on() else "")
+            + ". Leave it empty and we can't reach you outside the app.",
+            cls=TextPresets.muted_sm,
         ),
         Field(
             "Any other cause you'd like to see here? (optional)",

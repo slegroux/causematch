@@ -65,7 +65,7 @@ def test_an_admin_approves_a_new_org_in_one_tap_and_the_coordinator_is_emailed(
     card = page.locator("div", has_text="Test Claimant").last
     assert "EIN 86-1620575" in card.inner_text()
     card.get_by_role("button", name="Approve").click()
-    page.get_by_text("Approved. We emailed them a link to sign in.").wait_for()
+    page.get_by_text("Approved. We emailed them where to sign in.").wait_for()
     assert "No pending requests" in page.content()
     to, subject, body = notify.get_emailer().sent[-1]
     assert (to, subject) == ("claimant@example.org", "You're approved on Causematch")
