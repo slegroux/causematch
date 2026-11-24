@@ -411,7 +411,8 @@ def FilterSheet(uid, today, count, view):
             Icon(SLIDERS, size=20),
             Span("Filters", cls="text-sm font-semibold"),
             # the count is under Pass and Like (DeckArea); its words here for a screen reader
-            Span(f", {count} opening{'' if count == 1 else 's'}", cls="sr-only"),
+            Span(", ", cls="sr-only"),
+            Span(f"{count} opening{'' if count == 1 else 's'}", cls="sr-only"),
             Span(" (Filtered)", cls="sr-only") if view else None,
             cls="flex h-12 cursor-pointer list-none items-center gap-2 px-4 "
             "rounded-full border bg-white text-ink shadow-warm "
