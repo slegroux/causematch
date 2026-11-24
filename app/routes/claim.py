@@ -12,8 +12,8 @@ ar = Router()
 
 # The same words for every EIN: known, unknown or already claimed.
 RECEIVED = (
-    "We'll review your request. If it is approved, a sign-in link will be emailed to "
-    "the address you gave."
+    "We'll review your request. If it is approved, we'll email the address you gave "
+    "with where to sign in."
 )
 AUTHORIZED = "I'm authorized to represent this organization"
 

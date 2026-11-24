@@ -48,8 +48,8 @@ TOKEN_KEY = "volunteer_token"  # the link's token, between its GET and the butto
 # time]: the session is signed, not encrypted, so the address itself is never kept in it
 LINK_FOR = "link_for"
 NOT_ASKED = (
-    "This browser didn't ask for this link. If someone sent it to you, stop here: "
-    "continuing would sign you in to their account."
+    "Did you ask for this link on another device? Then carry on. If someone sent it "
+    "to you, don't."
 )
 SIGNED_IN = "This browser is signed in to another account. Continuing signs it out."
 

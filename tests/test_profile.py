@@ -301,6 +301,7 @@ def test_email_and_other_causes_are_edited_in_the_profile(user):
     page = user.get("/me/profile").text
     assert "Only we see" in page
     assert page.index("Only we see") < page.index('name="email"')
+    assert "Match news, reminders and last-minute calls go to it" in page
     assert page.index('name="interests"') < page.index("Only we see")
 
 

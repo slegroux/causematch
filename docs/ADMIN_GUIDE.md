@@ -59,7 +59,7 @@ The link only shows you this page; nothing happens until you tap **Sign in**. Th
 
 ![The confirm page, with the "didn't ask for this link" warning](assets/admin/sign-in-confirm.png)
 
-- **"This browser didn't ask for this link. If someone sent it to you, stop here: continuing would sign you in to their account."** This is expected when you asked for the link in one browser or on one device and opened it in another (you requested it on your laptop and tapped it on your phone, say). If you asked for it, carry on. If you didn't ask for it, don't tap Sign in.
+- **"Did you ask for this link on another device? Then carry on. If someone sent it to you, don't."** This is expected when you asked for the link in one browser or on one device and opened it in another (you requested it on your laptop and tapped it on your phone, say). If you asked for it, carry on. If you didn't ask for it, don't tap Sign in.
 - **"This browser is signed in to another account. Continuing signs it out."** Tapping Sign in swaps that account for the one named on the page.
 - **"That sign-in link has expired or was already used. Ask for a new one."** The link is older than 15 minutes, has been used, or a newer link replaced it. Go back to `/org/login` and ask again.
 
@@ -84,7 +84,7 @@ Nobody gets a nonprofit account by signing up. They ask, and an admin says yes. 
 3. They tick **I'm authorized to represent this organization** and tap **Request access**.
 4. They see "Request received". They get no email at this point, and the page says the same thing whatever the EIN, so it never reveals which organizations exist.
 
-Heads-up: that page tells them "If it is approved, a sign-in link will be emailed to the address you gave", but the approval email does **not** contain a sign-in link. It tells them to go to `/org/login` and ask for one. If a coordinator writes to say they got no link, this is why.
+Heads-up: that page tells them "If it is approved, we'll email the address you gave with where to sign in". The approval email does **not** contain a sign-in link. It tells them to go to `/org/login` and ask for one. If a coordinator writes to say they got no link, this is why.
 
 ![The claim form a coordinator fills in](assets/admin/claim-form.png)
 
@@ -129,7 +129,7 @@ If the organization is **new to Causematch**, the first tap on Approve fetches i
 
 Approve can also be refused with a message on the card: the organization is **deactivated** or the address is a **suspended volunteer's** (the card has no Approve button, only Decline), the address belongs to a **suspended coordinator**, or the address is an **admin's** (one address, one role). Decline those.
 
-A green banner confirms the decision: "Approved. We emailed them a link to sign in." or "Declined. We let them know by email." If the email didn't go out, the banner says so ("Approved, but the email didn't send..." or "Declined, but the email to them didn't send."). The decision still stands. Tell the person yourself; after an approval they can sign in at `/org/login` with the email they used.
+A green banner confirms the decision: "Approved. We emailed them where to sign in." or "Declined. We let them know by email." If the email didn't go out, the banner says so ("Approved, but the email didn't send..." or "Declined, but the email to them didn't send."). The decision still stands. Tell the person yourself; after an approval they can sign in at `/org/login` with the email they used.
 
 ### What the coordinator gets
 
