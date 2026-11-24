@@ -115,6 +115,7 @@ ROUTES = {
     ("GET", "/org/openings/new"): ("coordinator", "own-org"),
     ("GET", "/org/zip"): ("coordinator", None),  # a public table lookup
     ("POST", "/org/openings/new"): ("coordinator", "own-org"),
+    ("GET", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/close"): ("coordinator", "own-org"),
     ("GET", "/org/openings/{opening_id}/edit"): ("coordinator", "own-org"),
     ("POST", "/org/openings/{opening_id}/edit"): ("coordinator", "own-org"),
@@ -482,6 +483,10 @@ def undo_checked(w):
         lambda w: w.match.id,
         lambda w: matches[w.match.id].status == "declined",
     )(w)
+
+
+def close_page_other(w, oid):
+    return w.org1.get(f"/org/openings/{oid}/close", follow_redirects=False)
 
 
 def close_other(w, oid):
@@ -1085,6 +1090,11 @@ OWNERSHIP = {
         confirm_screening_other,
         lambda w: w.match.id,
         lambda w: matches[w.match.id].screening_status is None,
+    ),
+    ("GET", "/org/openings/{opening_id}/close"): path_id_check(
+        close_page_other,
+        lambda w: w.opening.id,
+        lambda w: openings[w.opening.id].status == w.opening.status,
     ),
     ("POST", "/org/openings/{opening_id}/close"): path_id_check(
         close_other,

@@ -56,6 +56,28 @@ def _local_now():
     return datetime.now(LA).strftime(_LOCAL_FORMAT)
 
 
+def next_start(starts_at, recurrence, status="open"):
+    """When an opening next starts, LA wall clock: its stored starts_at, except that a
+    weekly opening, not closed, whose start has passed rolls forward whole weeks to its
+    first start from now on, on the same weekday at the same wall-clock time (naive local
+    arithmetic, so 9:00 AM stays 9:00 AM across a DST change). Nothing is written:
+    starts_at keeps the first date, and every reader of an opening's start goes through
+    this (the deck, the like's shift, the dashboard, the inbox, the chat)."""
+    now = _local_now()
+    if recurrence != "weekly" or status == "closed" or starts_at >= now:
+        return starts_at
+    start = datetime.fromisoformat(starts_at)
+    week = timedelta(weeks=1)
+    weeks = -((start - datetime.fromisoformat(now)) // week)  # whole weeks, rounded up
+    rolled = start + weeks * week
+    # a wall time the clocks skip (Sunday 02:30 on the spring-forward night) moves on to the
+    # next valid one (03:30), as the post form would refuse it
+    rolled = (
+        rolled.replace(tzinfo=LA).astimezone(UTC).astimezone(LA).replace(tzinfo=None)
+    )
+    return rolled.strftime(_LOCAL_FORMAT)
+
+
 def local_today():
     """Today's date in Los Angeles, "YYYY-MM-DD"."""
     return datetime.now(LA).date().isoformat()
@@ -160,7 +182,8 @@ def _deck_openings(uid, today=False, p=None, calls=None):
     volunteer's horizon, a dealbreaker: out of reach of every place, ...) also stops a like
     sent by id. today: only shifts starting in the next TODAY_HOURS, whatever the
     volunteer's times. An opening with an open urgent call comes as a copy starting at
-    the call's time, so every check and the card use that time. calls: _open_calls(),
+    the call's time, and a weekly one whose start passed as a copy at its next_start, so
+    every check and the card use that time. calls: _open_calls(),
     read here when not given. The place is the one quickest to reach the opening from; it and km
     are None for a remote opening or when the volunteer has no place. p: _deck_prefs(),
     read here when not given.
@@ -192,12 +215,23 @@ def _deck_openings(uid, today=False, p=None, calls=None):
     confirming = _confirming_orgs()
     held_full = _held_full_openings()
     out = []
+    now = _local_now()
+    # a weekly opening whose start passed comes too: as a copy at its next start
     for o in _db.openings(
-        where="status = ? AND starts_at >= ?", where_args=["open", _local_now()]
-    ) + [_db.openings[i] for i in calls if _db.openings[i].starts_at < _local_now()]:
-        if o.id in calls:
+        where="status = ? AND (starts_at >= ? OR recurrence = 'weekly')",
+        where_args=["open", now],
+    ) + [
+        _db.openings[i]
+        for i in calls
+        if _db.openings[i].starts_at < now and _db.openings[i].recurrence != "weekly"
+    ]:
+        if o.id in calls or o.starts_at < now:
             o = copy.copy(o)
-            o.starts_at = calls[o.id].starts_at
+            o.starts_at = (
+                calls[o.id].starts_at
+                if o.id in calls
+                else next_start(o.starts_at, o.recurrence)
+            )
         if o.org_id not in shown or (until and o.starts_at > until):
             continue
         slugs = json.loads(o.causes or "[]")
@@ -1013,11 +1047,12 @@ def swipe_created(uid, opening_id, liked, today=False, view=None, call_id=None):
 
 
 def _like_starts_at(m, o):
-    """When match m on opening o is for: a like on an urgent call is for the call's shift."""
+    """When match m on opening o is for: a like on an urgent call is for the call's shift,
+    else the opening's next start (next_start: a weekly one's next week)."""
     return (
         _db.urgent_calls[m.urgent_call_id].starts_at
         if m.urgent_call_id
-        else o.starts_at
+        else next_start(o.starts_at, o.recurrence, o.status)
     )
 
 
@@ -1454,8 +1489,8 @@ def org_inbox(coordinator_uid):
     labels = {c.slug: c.label for c in _db.causes()}
     interests = dict(INTERESTS)
     rows = _db.db.query(
-        "SELECT m.id, m.status, m.undo_until, m.screening_status, o.title, "
-        "o.recurrence, o.slots, "
+        "SELECT m.id, m.status, m.undo_until, m.screening_status, m.urgent_call_id, "
+        "o.title, o.recurrence, o.slots, o.status AS opening_status, "
         "o.duration_minutes, "
         "coalesce((SELECT c.starts_at FROM urgent_call c WHERE c.id = m.urgent_call_id), "
         "o.starts_at) AS starts_at, "
@@ -1486,6 +1521,11 @@ def org_inbox(coordinator_uid):
         # After a block either way the row shows BLOCKED_NAME and nothing else of the
         # volunteer: every field is read live, and the volunteer may still edit it.
         blocked = bool(r["blocked"])
+        starts_at = (  # the call's time, else the opening's next start
+            r["starts_at"]
+            if r["urgent_call_id"]
+            else next_start(r["starts_at"], r["recurrence"], r["opening_status"])
+        )
         out[
             {"pending": "pending", "withdrawn": "past"}.get(r["status"], "decided")
         ].append(
@@ -1527,7 +1567,7 @@ def org_inbox(coordinator_uid):
                 "frequency": None if blocked else r["frequency"],
                 "full": r["taken"] >= r["slots"],
                 "weekly": r["recurrence"] == "weekly",
-                "starts_at": r["starts_at"],
+                "starts_at": starts_at,
                 "duration_minutes": r["duration_minutes"],
                 "spots_left": max(r["slots"] - r["taken"], 0),
                 "slots": r["slots"],
@@ -1535,7 +1575,7 @@ def org_inbox(coordinator_uid):
                 "fits": None
                 if blocked
                 else _match.fits_usual_times(
-                    json.loads(r["availability"] or "[]"), r["starts_at"]
+                    json.loads(r["availability"] or "[]"), starts_at
                 ),
                 # a decline the coordinator may still take back
                 "undoable": r["status"] == "declined" and (r["undo_until"] or "") > now,
@@ -2403,10 +2443,12 @@ def chat_header(uid, match_id):
         "photo_key": photo,  # the volunteer's, for the coordinator when they may see it
         "writable": m.status == "accepted",
         "duration_minutes": o.duration_minutes,  # the opening's shift length, if said
-        "starts_at": o.starts_at,  # the opening's time: the line when no shift is upcoming
+        # the opening's next time: the line when no shift is upcoming
+        "starts_at": next_start(o.starts_at, o.recurrence, o.status),
         "neighborhood": o.neighborhood,
         "availability": availability,  # the volunteer's usual times, for the coordinator
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
+        "recurrence": o.recurrence,
         # accepted, its first shift held for the nonprofit's screening (decide)
         "screening_pending": m.status == "accepted" and m.screening_status == "pending",
         **_face(the_org, o),
@@ -3428,14 +3470,16 @@ def create_opening(
 
 
 def org_openings(coordinator_uid):
-    """{org id: [openings, newest start first]} for the coordinator's own orgs only."""
-    mine = coordinator_org_ids(coordinator_uid)
-    return {
-        org_id: _db.openings(
+    """{org id: [openings, newest start first]} for the coordinator's own orgs only, each
+    read with its next_start as starts_at (a weekly one's next date; nothing is saved)."""
+    out = {}
+    for org_id in coordinator_org_ids(coordinator_uid):
+        out[org_id] = _db.openings(
             where="org_id = ?", where_args=[org_id], order_by="starts_at DESC"
         )
-        for org_id in mine
-    }
+        for o in out[org_id]:
+            o.starts_at = next_start(o.starts_at, o.recurrence, o.status)
+    return out
 
 
 def opening_counts(coordinator_uid):
@@ -3485,19 +3529,73 @@ def org_badges(coordinator_uid):
     }
 
 
+def _upcoming_booked(opening_id, now):
+    """{match id: [start of each upcoming scheduled shift after now, soonest first]} on the
+    opening: what close_opening cancels."""
+    booked = {}
+    for r in _db.db.query(
+        "SELECT match_id, starts_at FROM shift WHERE status = 'scheduled' "
+        "AND starts_at > ? AND match_id IN (SELECT id FROM match WHERE opening_id = ?) "
+        "ORDER BY starts_at, id",
+        [now, opening_id],
+    ):
+        booked.setdefault(r["match_id"], []).append(r["starts_at"])
+    return booked
+
+
+def opening_to_close(coordinator_uid, opening_id):
+    """{"title", "booked": [names]} for the page that asks before close_opening: the
+    volunteers with an upcoming booked shift on it, named as the inbox names them
+    (org_match_volunteer). PermissionError as coordinator_opening; ValueError when it is
+    closed already."""
+    o = coordinator_opening(coordinator_uid, opening_id)
+    if o.status == "closed":
+        raise ValueError("already closed")
+    return {
+        "title": o.title,
+        "booked": [
+            org_match_volunteer(coordinator_uid, match_id)
+            for match_id in _upcoming_booked(opening_id, _local_now())
+        ],
+    }
+
+
 def close_opening(coordinator_uid, opening_id):
+    """Close an open or filled opening: its urgent call ends, every upcoming booked shift
+    is cancelled (past and completed ones stay), and each volunteer whose shift was
+    cancelled gets one line in their chat; volunteers held for screening are released.
+    PermissionError as coordinator_opening. The ids of the matches told of a cancelled
+    shift, for the caller's notices once this has committed."""
     coordinator_opening(coordinator_uid, opening_id)
+    told = []
+    now = _local_now()
     with _db.db.conn:
         _db.openings.update(id=opening_id, status="closed")
         _end_urgent(opening_id, "closed")
+        booked = _upcoming_booked(opening_id, now)
         _db.db.execute(
             "UPDATE shift SET status = 'cancelled', cancelled_at = ?, cancelled_by = ? "
             "WHERE status = 'scheduled' AND starts_at > ? AND match_id IN "
             "(SELECT id FROM match WHERE opening_id = ?)",
-            [_now(), coordinator_uid, _local_now(), opening_id],
+            [_now(), coordinator_uid, now, opening_id],
         )
         o = _db.openings[opening_id]
         org = _db.orgs[o.org_id]
+        for match_id, starts in booked.items():
+            if _blocked_either(_db.matches[match_id].volunteer_id, o.org_id):
+                continue
+            first = _match.start_text(starts[0])
+            _db.messages.insert(
+                match_id=match_id,
+                sender_id=SYSTEM_SENDER,
+                body=f"{org.name} closed this opening, so your shift on {first} is "
+                "cancelled."
+                if len(starts) == 1
+                else f"{org.name} closed this opening, so your {len(starts)} upcoming "
+                f"shifts, from {first}, are cancelled.",
+                created_at=_now(),
+            )
+            told.append(match_id)
         # a volunteer held for screening has no shift to cancel: release them
         for m in _db.matches(
             where="opening_id = ? AND status = 'accepted' AND screening_status = 'pending'",
@@ -3511,6 +3609,7 @@ def close_opening(coordinator_uid, opening_id):
                     body=f"The opening closed before {org.name} confirmed your screening.",
                     created_at=_now(),
                 )
+    return told
 
 
 # What a coordinator may change on a posted opening, by the words the accepted volunteers
@@ -3674,7 +3773,7 @@ def reopen_opening(coordinator_uid, opening_id):
             raise PermissionError("this org is deactivated")
         if o.status != "closed":
             raise ValueError("This opening is not closed.")
-        if o.starts_at <= _local_now():
+        if next_start(o.starts_at, o.recurrence) <= _local_now():
             raise ValueError("This opening has started, so it can't be reopened.")
         _db.openings.update(id=opening_id, status="open")
         _sync_fill(opening_id)

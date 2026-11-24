@@ -13,8 +13,18 @@ from conftest import (
 )
 from starlette.testclient import TestClient
 
-from app import data, geo
-from app.db import causes, matches, messages, openings, orgs, profiles
+from app import data, geo, notify
+from app.db import (
+    Shift,
+    blocks,
+    causes,
+    matches,
+    messages,
+    openings,
+    orgs,
+    profiles,
+    shifts,
+)
 from app.routes.org import ADULT_SCREENED, SCREENING_REQUIRED, opening_fields
 from main import app
 
@@ -191,6 +201,7 @@ def test_org_b_cannot_close_org_a_opening(coord):
     _, email_b = coordinator_for(1)
     b = TestClient(app)
     org_sign_in(b, email_b)
+    assert b.get(f"/org/openings/{o.id}/close").status_code == 403
     assert (
         b.post(f"/org/openings/{o.id}/close", follow_redirects=False).status_code == 403
     )
@@ -781,10 +792,101 @@ def test_reopening_a_closed_opening_restores_it_and_its_fill(coord):
         openings[o.id].status == "filled"
     )  # its one accepted volunteer fills it again
     coord.post(f"/org/openings/{o.id}/close")
-    openings.update(id=o.id, starts_at="2020-01-01T09:00")  # started: no way back
+    openings.update(
+        id=o.id, starts_at="2020-01-01T09:00", recurrence="one_time"
+    )  # started: no way back
     coord.post(f"/org/openings/{o.id}/reopen")
     assert openings[o.id].status == "closed"
     assert f"/org/openings/{o.id}/reopen" not in coord.get("/org").text
+
+
+def test_a_weekly_opening_closed_after_its_first_date_can_be_reopened(coord):
+    o = pantry()
+    openings.update(id=o.id, starts_at="2020-01-01T09:00", recurrence="weekly")
+    coord.post(f"/org/openings/{o.id}/close")
+    assert openings[o.id].status == "closed"
+    assert f"/org/openings/{o.id}/reopen" in coord.get("/org").text
+    coord.post(f"/org/openings/{o.id}/reopen")
+    assert openings[o.id].status == "open"
+    rolled = data.next_start("2020-01-01T09:00", "weekly")
+    assert rolled > data._local_now() and rolled.endswith("T09:00")
+    (shown,) = [
+        x for x in data.org_openings(coordinator_for(0)[0])[o.org_id] if x.id == o.id
+    ]
+    assert shown.starts_at == rolled  # the dashboard shows next week's date, not 2020's
+
+
+def test_closing_a_filled_opening_cancels_the_booked_shift_and_tells_them(
+    coord, monkeypatch
+):
+    told = []
+    monkeypatch.setattr(notify, "on_new_message", lambda *a: told.append(a))
+    o = pantry()
+    data.update_opening(coordinator_for(0)[0], o.id, slots=1)
+    m = data.swipe(volunteer("Ana").uid, o.id, True)
+    data.decide(coordinator_for(0)[0], m.id, True)
+    assert openings[o.id].status == "filled"
+    past = shifts.insert(  # a shift already held: the close leaves it be
+        Shift(
+            match_id=m.id,
+            starts_at="2020-01-01T09:00",
+            duration_minutes=180,
+            status="scheduled",
+            kind="added",
+            created_by=coordinator_for(0)[0],
+            created_at="2020-01-01T00:00:00",
+        )
+    )
+    close = f"/org/openings/{o.id}/close"
+    assert f'href="{close}"' in coord.get("/org").text  # under More, filled too
+    page = coord.get(close).text
+    assert "Ana has an upcoming shift" in page and "cancels their upcoming" in page
+    before = messages.count_where("match_id = ?", [m.id])
+    assert coord.post(close, follow_redirects=False).status_code == 303
+    (s,) = shifts(where="match_id = ? AND id != ?", where_args=[m.id, past.id])
+    assert s.status == "cancelled"
+    assert shifts[past.id].status == "scheduled"  # past shifts and their hours stay
+    (line,) = messages(where="match_id = ?", where_args=[m.id])[before:]
+    assert "Jan 1" not in line.body and "1 upcoming" not in line.body
+    assert line.sender_id == data.SYSTEM_SENDER
+    assert line.body.startswith(f"{orgs[o.org_id].name} closed this opening, so your")
+    assert told == [(m.id, data.SYSTEM_SENDER)]  # the new-message notice
+    post(coord)  # nobody booked on it: one line says so
+    (empty,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    page = coord.get(f"/org/openings/{empty.id}/close").text
+    assert "Nobody has an upcoming shift on it." in page
+
+
+def test_closing_tells_nobody_blocked_either_way(coord):
+    o = pantry()
+    data.update_opening(coordinator_for(0)[0], o.id, slots=2)
+    org_blocked, vol_blocked = volunteer("Ana"), volunteer("Bo")
+    ms = []
+    for v in (org_blocked, vol_blocked):
+        m = data.swipe(v.uid, o.id, True)
+        data.decide(coordinator_for(0)[0], m.id, True)
+        ms.append(m)
+    # a block made after they were booked, in each direction (the close still cancels)
+    blocks.insert(
+        blocker_id=coordinator_for(0)[0],
+        blocked_user_id=org_blocked.uid,
+        blocked_org_id=o.org_id,
+        created_at="2026-01-01T00:00:00",
+    )
+    blocks.insert(
+        blocker_id=vol_blocked.uid, blocked_org_id=o.org_id, created_at="2026-01-01"
+    )
+    before = [messages.count_where("match_id = ?", [m.id]) for m in ms]
+    assert (
+        coord.post(f"/org/openings/{o.id}/close", follow_redirects=False).status_code
+        == 303
+    )
+    assert [messages.count_where("match_id = ?", [m.id]) for m in ms] == before
+    assert all(
+        s.status == "cancelled"
+        for m in ms
+        for s in shifts(where="match_id = ?", where_args=[m.id])
+    )
 
 
 def test_the_time_is_locked_once_anyone_has_liked_it(coord):
@@ -800,3 +902,24 @@ def test_the_time_is_locked_once_anyone_has_liked_it(coord):
         data.update_opening(coordinator_for(0)[0], o.id, starts_at=future(40))
     with pytest.raises(TypeError, match="org_id"):
         data.update_opening(coordinator_for(0)[0], o.id, org_id=2)
+
+
+def test_a_weekly_start_rolls_on_the_same_weekday_and_wall_clock_time(monkeypatch):
+    monkeypatch.setattr(
+        data, "_local_now", lambda: "2026-11-05T10:00"
+    )  # after DST ends
+    assert data.next_start("2026-10-27T09:00", "weekly") == "2026-11-10T09:00"
+    assert data.next_start("2026-10-29T10:00", "weekly") == "2026-11-05T10:00"  # now
+    assert data.next_start("2026-10-27T09:00", "one_time") == "2026-10-27T09:00"
+    assert data.next_start("2026-10-27T09:00", "weekly", "closed") == "2026-10-27T09:00"
+    assert data.next_start("2026-12-01T09:00", "weekly") == "2026-12-01T09:00"
+
+
+def test_a_weekly_roll_onto_a_skipped_wall_time_moves_on_to_the_next_valid_one(
+    monkeypatch,
+):
+    # Sunday 2027-03-14 02:30 does not exist in Los Angeles: the clocks go 02:00 to 03:00
+    monkeypatch.setattr(data, "_local_now", lambda: "2027-03-10T10:00")
+    assert data.next_start("2027-03-07T02:30", "weekly") == "2027-03-14T03:30"
+    assert data.next_start("2027-02-28T02:30", "weekly") == "2027-03-14T03:30"
+    assert data.next_start("2027-03-07T09:00", "weekly") == "2027-03-14T09:00"
