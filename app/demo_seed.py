@@ -15,6 +15,7 @@ source_url, else the org's volunteer_url.
 
 import json
 import logging
+import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
@@ -785,3 +786,61 @@ def seed_preview(seed_dir=None):
     for role, (email, _) in (("coordinator", COORDINATOR), ("admin", ADMIN)):
         link = sign_in_link(email)
         log.info("preview %s %s (once, 15 minutes): %s", role, email, link)
+
+
+# Kept by reset_preview: the causes, the rate limits' counts (keyed by hashed addresses,
+# so a reset never refills them) and, with app.migrations.TABLE, the schema's record
+RESET_KEEPS = ("cause", "rate_event")
+
+
+def reset_preview(seed_dir=None):
+    """The preview admin's "Reset demo data" (app/routes/admin.py; main.py binds it on a
+    preview only): every row of every table but RESET_KEEPS and the migrations' is
+    deleted, then the preview is seeded as at startup (main.py): ADMIN_EMAILS' admins,
+    then seed_preview(seed_dir). The schema stays. One transaction under the data
+    layer's lock, so a failure leaves the old rows and no request sees half of it.
+
+    New profile ids continue past every old one: a session cookie still held (the
+    admin's own, a volunteer's) names no profile, and is signed out, rather than whoever
+    took its id. RuntimeError, before touching a row, outside a preview or on a database
+    Litestream replicates (LITESTREAM_BUCKET set, or its _litestream_ tables there): a
+    production service switched to CAUSEMATCH_ENV=preview would replicate the wipe."""
+    from app import data
+    from app.config import admin_emails, is_preview
+    from app.db import db, now
+    from app.migrations import TABLE
+
+    if not is_preview():
+        raise RuntimeError(
+            "reset_preview runs in a preview only (CAUSEMATCH_ENV=preview)"
+        )
+    if (
+        os.environ.get("LITESTREAM_BUCKET")
+        or db.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name LIKE '\\_litestream\\_%' ESCAPE '\\'"
+        ).fetchone()
+    ):
+        raise RuntimeError(
+            "reset_preview runs on an unreplicated database only: Litestream is here"
+        )
+    with data._lock, db.conn:  # the lock every data function takes (re-entrant)
+        tables = [
+            name
+            for (name,) in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' "
+                "AND name NOT LIKE '\\_litestream\\_%' ESCAPE '\\'"
+            )
+            if name not in (*RESET_KEEPS, TABLE)
+        ]
+        (top,) = db.conn.execute("SELECT coalesce(max(id), 0) FROM profile").fetchone()
+        for name in tables:
+            db.conn.execute(f'DELETE FROM "{name}"')
+        # a deleted profile at the old highest id while seeding: SQLite numbers the new
+        # rows after it, and they keep their ids once it goes
+        db.conn.execute(
+            "INSERT INTO profile (id, deleted_at) VALUES (?, ?)", [top, now()]
+        )
+        data.add_admins(admin_emails())
+        seed_preview(seed_dir)
+        db.conn.execute("DELETE FROM profile WHERE id = ?", [top])

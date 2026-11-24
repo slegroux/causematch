@@ -87,6 +87,16 @@ def test_with_a_bucket_it_restores_a_missing_database_then_replicates_under_uvic
     assert os.path.getsize(db) == 0
 
 
+def test_a_preview_with_a_bucket_never_starts(tmp_path):
+    """Production switched to CAUSEMATCH_ENV=preview keeps its bucket: its admin's "Reset
+    demo data" would wipe the database and Litestream replicate the wipe."""
+    for env in ({"K_SERVICE": "causematch"}, {}):
+        rc, err, calls = start(
+            tmp_path, CAUSEMATCH_ENV="preview", LITESTREAM_BUCKET="b", **env
+        )
+        assert rc == 1 and "a preview never replicates" in err and calls == []
+
+
 def test_the_images_start_is_entrypoint_sh():
     """The Dockerfile's last CMD is what Cloud Run runs: entrypoint.sh, not uvicorn alone."""
     cmds = [
