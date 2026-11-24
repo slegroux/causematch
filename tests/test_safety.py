@@ -1121,14 +1121,14 @@ def test_privacy_in_production_smtp_renders_gmail_no_twilio_no_phone_wording(
 
     vol = volunteer()
     for path in (
-        "/me/preferences/urgent",
+        "/me/preferences",
         "/profile/delete",
         "/me/profile",
         "/profile",
     ):
         page = words(vol.get(path).text)
         assert not re.search(r"\b(texts?|phone|sms)\b", page, re.IGNORECASE), path
-    assert "we email you." in vol.get("/me/preferences/urgent").text
+    assert "we email you." in vol.get("/me/preferences").text
     assert ui.like_sent("Garden Friends").endswith("We'll email you.")
 
 

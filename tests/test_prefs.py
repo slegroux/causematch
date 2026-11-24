@@ -77,16 +77,15 @@ def test_page_shows_the_onboarding_answers(homelessness_off, user):
     index = user.get("/me/preferences").text
     assert "Preferences" in index and "Only you see them" in index
     # FORM in conftest: food loved, free weekend mornings, has a car, weekly
-    for page, name, value in (
-        ("causes", f"cause_{FOOD}", "love"),
-        ("when", "availability", "sat_morning"),  # weekend mornings, as day slots
-        ("when", "availability", "sun_morning"),
-        ("work", "skills", "car"),
-        ("work", "frequency", "weekly"),
+    html = index
+    for name, value in (
+        (f"cause_{FOOD}", "love"),
+        ("availability", "sat_morning"),  # weekend mornings, as day slots
+        ("availability", "sun_morning"),
+        ("skills", "car"),
+        ("frequency", "weekly"),
     ):
-        html = user.get(f"/me/preferences/{page}").text
         assert f'name="{name}" value="{value}" checked' in html, name
-    html = user.get("/me/preferences/causes").text
     assert f'name="cause_{PARKS}" value="love" checked' not in html
     assert "Homelessness services" not in html  # inactive causes are not offered
 
@@ -107,14 +106,14 @@ def test_a_saved_second_place_stays_folded_and_says_what_it_is(user):
             "place2_minutes": "15",
         },
     )
-    html = user.get("/me/preferences/causes").text
+    html = user.get("/me/preferences").text
     assert "Your second place" in html and "Venice · Walk, up to 15 min" in html
     assert "Add a second place" not in html
     assert "open" not in details_of(html, "Your second place").split(">")[0].split()
 
 
 def test_without_a_second_place_the_fold_invites_one(user):
-    html = user.get("/me/preferences/causes").text
+    html = user.get("/me/preferences").text
     assert "Add a second place" in html and "Your second place" not in html
 
 
@@ -124,7 +123,6 @@ def test_a_bad_second_zip_reopens_the_fold(user):
         data={
             **SAVE,
             "sections": "causes",
-            "back": "causes",
             "place2_where": "1234",
             "place2_mode": "car",
             "place2_minutes": "30",
@@ -134,16 +132,20 @@ def test_a_bad_second_zip_reopens_the_fold(user):
     assert "open" in details_of(r.text, "Your second place").split(">")[0].split()
 
 
-@pytest.mark.parametrize(
-    "key, marker",
-    [("causes", "causes"), ("when", "when"), ("work", "work"), ("urgent", "urgent")],
-)
-def test_every_section_page_has_its_own_save_and_marker(user, key, marker):
-    assert f'href="/me/preferences/{key}"' in user.get("/me/preferences").text
-    r = user.get(f"/me/preferences/{key}")
-    assert r.status_code == 200 and "Save</button>" in r.text
-    assert f'value="{marker}" name="sections"' in r.text
-    assert f'value="{key}" name="back"' in r.text
+def test_preferences_is_one_page_with_one_save(user):
+    html = user.get("/me/preferences").text
+    assert html.count("Save</button>") == 1 and html.count("<form") == 1
+    for field in (f'name="cause_{FOOD}"', 'name="availability"', 'name="setting"'):
+        assert field in html, field
+    assert 'name="urgent_on"' in html
+    for key in ("causes", "when", "work", "urgent"):
+        assert f'id="{key}"' in html and f'value="{key}" name="sections"' in html
+
+
+@pytest.mark.parametrize("key", ["causes", "when", "work", "urgent"])
+def test_the_old_section_pages_land_on_their_heading(user, key):
+    r = user.get(f"/me/preferences/{key}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/me/preferences#{key}"
     assert user.get("/me/preferences/nowhere").status_code == 404
 
 
@@ -166,22 +168,20 @@ def test_saving_one_section_leaves_the_others_unchanged(user):
     before = data.preferences(uid_of(user))
     r = user.post(
         "/me/preferences",
-        data={"sections": "when", "back": "when", "availability": ["mon_morning"]},
+        data={"sections": "when", "availability": ["mon_morning"]},
         follow_redirects=False,
     )
-    assert (
-        r.status_code == 303 and r.headers["location"] == "/me/preferences/when?saved=1"
-    )
+    assert r.status_code == 303 and r.headers["location"] == "/me/preferences?saved=1"
     after = data.preferences(uid_of(user))
     assert after["availability"] == ["mon_morning"]
     for k in ("causes", "places", "skills", "languages", "urgent", "frequency"):
         assert after[k] == before[k], k
     r = user.post(
         "/me/preferences",
-        data={"sections": "work", "back": "work"},
+        data={"sections": "work"},
         follow_redirects=False,
     )
-    assert r.headers["location"] == "/me/preferences/work?saved=1"
+    assert r.headers["location"] == "/me/preferences?saved=1"
     again = data.preferences(uid_of(user))
     assert again["availability"] == ["mon_morning"]
     assert (
@@ -191,18 +191,16 @@ def test_saving_one_section_leaves_the_others_unchanged(user):
 
 
 def test_saving_stores_every_answer(user):
-    r = user.post(
-        "/me/preferences", data={**SAVE, "back": "causes"}, follow_redirects=False
-    )
+    r = user.post("/me/preferences", data=SAVE, follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"] == "/me/preferences/causes?saved=1"
+    assert r.headers["location"] == "/me/preferences?saved=1"
     p = profile_of(user)
     assert json.loads(p.cause_prefs) == {FOOD: "love", PARKS: "open", ANIMALS: "no"}
     assert json.loads(p.causes) == [FOOD, PARKS]  # love + open, for the metrics
     assert json.loads(p.availability) == ["tue_evening", "sat_morning"]
     assert json.loads(p.skills) == ["admin", "media"]
     assert p.frequency == "monthly"
-    html = user.get("/me/preferences/causes?saved=1").text
+    html = user.get("/me/preferences?saved=1").text
     assert "Saved." in html
     assert f'name="cause_{ANIMALS}" value="no" checked' in html
 
@@ -210,7 +208,7 @@ def test_saving_stores_every_answer(user):
 def test_creative_skills_are_saved_and_shown_checked_on_the_work_page(user):
     user.post("/me/preferences", data={**SAVE, "skills": ["music", "arts"]})
     assert json.loads(profile_of(user).skills) == ["music", "arts"]
-    html = user.get("/me/preferences/work").text
+    html = user.get("/me/preferences").text
     for skill in ("music", "arts"):
         assert f'name="skills" value="{skill}" checked' in html
     assert 'name="skills" value="performing" checked' not in html
@@ -252,10 +250,10 @@ def test_a_volunteer_with_only_inactive_causes_can_still_save_the_other_pages(
     profiles.update(id=uid_of(user), cause_prefs=json.dumps({dead.slug: "love"}))
     r = user.post(
         "/me/preferences",
-        data={"sections": "when", "back": "when", "availability": ["mon_morning"]},
+        data={"sections": "when", "availability": ["mon_morning"]},
         follow_redirects=False,
     )
-    assert r.status_code == 303 and r.headers["location"].endswith("/when?saved=1")
+    assert r.status_code == 303 and r.headers["location"] == "/me/preferences?saved=1"
     assert json.loads(profile_of(user).availability) == ["mon_morning"]
     r = user.post("/me/preferences", data={"cause_" + dead.slug: "love"})
     assert "at least one cause" in r.text  # the Causes page itself is still held to it
@@ -463,28 +461,37 @@ def test_the_migration_adds_the_column_to_an_old_table(tmp_path):
 
 
 def test_homelessness_services_is_offered_now_that_it_is_active(user):
-    html = user.get("/me/preferences/causes").text
+    html = user.get("/me/preferences").text
     assert 'name="cause_homelessness-services" value="love"' in html
 
 
 def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
     """Causes, general availability, languages and how often are shared after a like
     (choices.SHARED_WITH_NONPROFIT); places, ratings, dates, kind of work, skills and the
-    Only-show choices are not. Each section page says so once, under its title, and the
-    last-minute page says nothing: it must not promise everything is private."""
+    Only-show choices are not. Each section says so once, under its heading, and the
+    last-minute section says nothing: it must not promise everything is private."""
     from html import unescape
 
     from app.choices import SHARED_WITH_NONPROFIT
     from app.routes.prefs import SHARED
 
-    assert 'href="/privacy"' in user.get("/me/preferences").text
-    counts = {
-        k: unescape(user.get(f"/me/preferences/{k}").text).count(SHARED)
-        for k in ("causes", "when", "work", "urgent")
+    page = unescape(user.get("/me/preferences").text)
+    assert 'href="/privacy"' in page
+    keys = ("causes", "when", "work", "urgent")
+    starts = [page.index(f'id="{k}"') for k in keys] + [len(page)]
+    parts = {k: page[a:b] for k, a, b in zip(keys, starts, starts[1:])}
+    assert {k: v.count(SHARED) for k, v in parts.items()} == {
+        "causes": 1,
+        "when": 1,
+        "work": 1,
+        "urgent": 0,
     }
-    assert counts == {"causes": 1, "when": 1, "work": 1, "urgent": 0}
-    work = unescape(user.get("/me/preferences/work").text)
-    assert work.index(SHARED) < work.index("<h2")  # a legend, not a card's own note
+    for k in (
+        "causes",
+        "when",
+        "work",
+    ):  # a legend under the heading, not a card's note
+        assert parts[k].index(SHARED) < parts[k].index("<h2", 1)
     for item in ("causes", "availability", "languages", "how often"):
         assert item in SHARED_WITH_NONPROFIT
 
@@ -492,21 +499,14 @@ def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
 def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
     """Only show sits under its own controls; surprise and verified hours save
     from the causes page, and a page that doesn't carry them leaves them alone."""
-    pages = {
-        "causes": ("only_causes", "only_distance"),
-        "when": ("only_when",),
-        "work": ("only_work",),
-    }
-    for key, names in pages.items():
-        html = user.get(f"/me/preferences/{key}").text
-        assert all(f'name="{n}" value="only"' in html for n in names), key
-    assert 'name="only_work"' not in user.get("/me/preferences/when").text
+    html = user.get("/me/preferences").text
+    for name in ("only_causes", "only_distance", "only_when", "only_work"):
+        assert f'name="{name}" value="only"' in html, name
     r = user.post(
         "/me/preferences",
         data={
             **SAVE,
             "sections": "causes",
-            "back": "causes",
             "only_causes": "only",
             "only_distance": "prefer",
             "surprise": "1",
@@ -521,7 +521,7 @@ def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
     for key, field in (("when", "only_when"), ("work", "only_work")):
         user.post(
             "/me/preferences",
-            data={"sections": key, "back": key, field: "only"},
+            data={"sections": key, field: "only"},
         )
     saved = data.preferences(uid_of(user))
     assert saved["dealbreakers"] == ["causes", "when", "work"]
