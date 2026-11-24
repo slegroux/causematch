@@ -10,6 +10,7 @@ chromium (uv run playwright install chromium).
 """
 
 import argparse
+import os
 import re
 import sys
 import threading
@@ -91,6 +92,10 @@ def main():
         )
     a.out.mkdir(parents=True, exist_ok=True)
     demo.configure(a.port, seed_file=a.seed_file)
+    # production has no Twilio, so its pages say "email", never "text" or a number; the
+    # demo's fake SMS would make the pages speak of texts (notify.texts_on)
+    os.environ.pop("CAUSEMATCH_FAKE_SMS", None)
+    os.environ.pop("CAUSEMATCH_COLLECT_PHONE", None)
     info = demo_seed.seed(a.seed_file)
     server = start_server(a.port)
     url = f"http://127.0.0.1:{a.port}"
