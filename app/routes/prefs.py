@@ -41,6 +41,7 @@ from app.choices import (
     LANGUAGES,
     MAX_FREE_DATES,
     MAX_MINUTES,
+    MAX_NAME,
     MAX_PLACES,
     MODES,
     PARTS,
@@ -49,7 +50,7 @@ from app.choices import (
     URGENT_PER_WEEK,
     URGENT_WINDOWS,
 )
-from app.forms import bad_request, query, str_form
+from app.forms import HIDDEN_CHARS_MESSAGE, bad_request, hidden_chars, query, str_form
 from app.geo import neighborhoods, shown_point
 from app.ui import (
     BACK,
@@ -88,6 +89,7 @@ GRID = "grid grid-cols-[2.75rem_repeat(3,minmax(0,1fr))] items-center gap-2"
 NO_CAUSE = "Pick at least one cause you love or are open to."
 QUIET_SAME = "Quiet hours need a start and an end that differ."
 NO_PLACE = "Tell us your main place: a neighborhood, a ZIP code or your location."
+NO_LAST_NAME = "Add your last name to ask for proof of hours: a certificate carries your full name."
 
 # A toggle chip: a visually hidden radio or checkbox, then the pill that shows its state.
 CHIP = (
@@ -470,6 +472,47 @@ def PlaceFields(slot, pf, named=True):
     )
 
 
+def last_name_error(last_name, needed):
+    """Why this last name can't be saved (needed: proof of hours is on), or None."""
+    if hidden_chars(last_name):
+        return HIDDEN_CHARS_MESSAGE
+    if len(last_name) > MAX_NAME:
+        return f"Keep your last name to {MAX_NAME} characters."
+    return NO_LAST_NAME if needed and not last_name else None
+
+
+def ProofOfHours(f):
+    """The "I need proof of my volunteer hours" box and the last name it needs (f:
+    verified_hours, last_name). Onboarding and Preferences both show it."""
+    return (
+        Chip(
+            "checkbox",
+            "verified_hours",
+            "only",
+            "I need proof of my volunteer hours",
+            f["verified_hours"] == "only",
+        ),
+        P(
+            "For school, court or a work program: only nonprofits that confirm hours "
+            "are shown, and you can get a signed certificate.",
+            cls="-mt-2 text-sm text-ink-muted",
+        ),
+        Field(
+            "Last name (needed for proof of hours)",
+            TextInput(
+                name="last_name",
+                value=f["last_name"],
+                maxlength=str(MAX_NAME),
+                autocomplete="family-name",
+            ),
+        ),
+        P(
+            "A certificate carries your full name. Nonprofits you match with see it.",
+            cls="-mt-2 text-sm text-ink-muted",
+        ),
+    )
+
+
 def CausesCards(f, error=None):
     first, second = f["place_forms"]
     return (
@@ -479,18 +522,6 @@ def CausesCards(f, error=None):
             Hidden(name="sections", value="causes"),
             *[CauseRow(c, f["causes"].get(c.slug)) for c in data.active_causes()],
             OnlyShow(f, "causes", hint=True),
-            Chip(
-                "checkbox",
-                "verified_hours",
-                "only",
-                "I need my hours confirmed",
-                f["verified_hours"] == "only",
-            ),
-            P(
-                "For school, court or a work program: only nonprofits that confirm "
-                "hours are shown.",
-                cls="-mt-2 text-sm text-ink-muted",
-            ),
             Chip(
                 "checkbox",
                 "surprise",
@@ -684,6 +715,7 @@ def PrefsPage(uid, f, error=None, saved=False):
         ),
         *Notices(error, saved),
         Form(
+            Section("Proof of hours", None, *ProofOfHours(f)),
             *[
                 Div(
                     H2(name, id=key, cls="scroll-mt-4 text-xl font-bold text-ink"),
@@ -827,6 +859,10 @@ def _sync_save(req, form):
         "verified_hours": ("only" if form.get("verified_hours") == "only" else "")
         if "causes" in marks
         else saved["verified_hours"],
+        # an empty one never erases the saved name (data.save_preferences)
+        "last_name": form.get("last_name", saved["last_name"]).strip()
+        if "causes" in marks
+        else saved["last_name"],
         "surprise": form.get("surprise") == "1"
         if "causes" in marks
         else saved["surprise"],
@@ -894,6 +930,8 @@ def _sync_save(req, form):
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
         return PrefsPage(uid, f, prefs.UNRECOGNIZED)
+    if error := last_name_error(f["last_name"], f["verified_hours"] == "only"):
+        return PrefsPage(uid, f, error)
     if on_causes_page and not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
         return PrefsPage(uid, f, NO_CAUSE)
     if date_error:

@@ -716,7 +716,7 @@ OPENINGS = [
 
 
 # More invented openings, added only beside a seed file (seed_demo_org): there the
-# invented org is the only one that confirms hours, so "I need my hours confirmed" shows
+# invented org is the only one that confirms hours, so "I need proof of my volunteer hours" shows
 # its openings alone, and its first two hold the demo's match and its urgent call.
 MORE_OPENINGS = [
     (

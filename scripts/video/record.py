@@ -424,6 +424,8 @@ def story(vol, org, adm, gst):
     tap(vol, need)
     if not need.locator("input").is_checked():
         raise RuntimeError("the hours checkbox didn't tick")
+    # a certificate carries a full name, so ticking asks for the last name
+    type_in(vol, vol.locator("input[name=last_name]"), "Rivera", 80)
     hold(1.2)
     tap(vol, vol.get_by_role("button", name="Save", exact=True))
     vol.wait_for_url("**saved=1**")

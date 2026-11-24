@@ -549,7 +549,7 @@ def test_when_free_dates_go_with_the_account(bare):
 
 
 def test_verified_hours_preference_goes_with_the_account(bare):
-    save(bare, work_form(verified_hours="only"))
+    save(bare, work_form(verified_hours="only", last_name="Rivera"))
     uid = uid_of(bare)
     assert profiles[uid].verified_hours
     data.delete_account(uid)
@@ -1264,7 +1264,7 @@ def test_verified_hours_only_hides_nonprofits_that_do_not_confirm(bare):
     orgs.update(id=orgs()[0].id, confirms_hours=True)
     add("does not", DOWNTOWN, org_id=orgs()[1].id)  # first on a tie
     add("confirms", DOWNTOWN)
-    save(bare, work_form(verified_hours="only"))
+    save(bare, work_form(verified_hours="only", last_name="Rivera"))
     assert set(cards(bare)) == {"confirms"}
     assert "Confirms your hours" in str(cards(bare)["confirms"]["why"])
     save(bare, work_form())  # unticked: nothing is posted
@@ -1290,7 +1290,7 @@ def test_verified_hours_a_stored_prefer_reads_as_off_and_the_box_is_unticked(bar
 
 
 def test_verified_hours_only_cannot_be_liked_by_id_and_offers_a_way_out(bare):
-    save(bare, work_form(verified_hours="only"))
+    save(bare, work_form(verified_hours="only", last_name="Rivera"))
     oid = add("does not", DOWNTOWN)
     with pytest.raises(LookupError):
         data.swipe(uid_of(bare), oid, True)

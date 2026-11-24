@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from conftest import FORM, close_all_openings, make_opening
@@ -368,7 +369,7 @@ def two_cards(client):
 
 def test_the_short_form_has_only_what_the_first_card_needs(new_user):
     page = new_user.get("/onboarding").text
-    for gone in ("last_name", "email", "neighborhood", "availability", "heard_from",
+    for gone in ("email", "neighborhood", "availability", "heard_from",
                  "volunteered_last_year", "other_causes"):  # fmt: skip
         assert f'name="{gone}"' not in page
     assert 'name="adult"' not in page and 'name="consent"' in page
@@ -430,3 +431,23 @@ def test_the_after_first_like_card_saves_its_answers(new_user):
     assert (
         new_user.post("/onboarding/more", data={"heard_from": "x"}).status_code == 200
     )
+
+
+def test_onboarding_asks_for_proof_of_hours_and_needs_a_last_name_with_it(new_user):
+    page = new_user.get("/onboarding").text
+    box = re.search(r'<input[^>]*name="verified_hours"[^>]*>', page).group(0)
+    assert "checked" not in box and "I need proof of my volunteer hours" in page
+    ticked = {**FORM, "verified_hours": "only"}
+    r = new_user.post(
+        "/onboarding", data={**ticked, "last_name": "  "}, follow_redirects=False
+    )
+    assert r.status_code == 200 and "Add your last name" in r.text
+    assert not profile_of(new_user).onboarded_at
+    assert 'name="first_name" value="Sam"' in r.text  # what was typed stays
+    assert re.search(r'<input[^>]*name="verified_hours"[^>]*checked', r.text)
+    r = new_user.post(
+        "/onboarding", data={**ticked, "last_name": " Rivera "}, follow_redirects=False
+    )
+    assert r.headers["location"] == "/deck"
+    p = profile_of(new_user)
+    assert (p.verified_hours, p.last_name) == ("only", "Rivera")
