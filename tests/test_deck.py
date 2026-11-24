@@ -11,7 +11,7 @@ from conftest import (
 
 from app import data
 from app.data import LA
-from app.db import matches, openings, profiles
+from app.db import matches, openings, profiles, shifts
 from app.routes.deck import MatchSheet
 
 HOME_PLACES = (
@@ -318,6 +318,31 @@ def test_two_requests_cannot_both_show_the_same_takeover(user):
     profiles.update(id=uid_of(user), match_moment_seen_at=None)
     assert "<dialog" in str(MatchSheet(uid_of(user)))
     assert MatchSheet(uid_of(user)) is None
+
+
+def test_a_weekly_opening_past_its_start_rolls_to_next_week(user):
+    started = soon(-1)  # yesterday at this time
+    nxt = (datetime.fromisoformat(started) + timedelta(days=7)).strftime(
+        "%Y-%m-%dT%H:%M"
+    )
+    weekly = add_opening(
+        "Weekly shelf restock", ["food-insecurity"], started, recurrence="weekly"
+    )
+    add_opening("One-off shelf restock", ["food-insecurity"], started)
+    uid = uid_of(user)
+    cards = {c["title"]: c for c in data.deck(uid, 50)}
+    assert "One-off shelf restock" not in cards
+    assert cards["Weekly shelf restock"]["starts_at"] == nxt
+    coordinator = coordinator_for(0)[0]
+    (card,) = [
+        o for o in data.org_openings(coordinator)[weekly.org_id] if o.id == weekly.id
+    ]
+    assert card.starts_at == nxt  # the coordinator's card shows the next date
+    m = data.swipe(uid, weekly.id, True)
+    data.decide(coordinator, m.id, True)
+    (shift,) = shifts(where="match_id = ?", where_args=[m.id])
+    assert shift.starts_at == nxt
+    assert openings[weekly.id].starts_at == started  # read-time only: nothing saved
 
 
 def test_empty_deck_from_the_hours_need_says_so_and_offers_the_way_out(user):

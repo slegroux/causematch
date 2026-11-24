@@ -22,7 +22,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app import data, notify, security
-from app.db import blocks, matches, messages, openings, orgs, profiles, shifts
+from app.db import Shift, blocks, matches, messages, openings, orgs, profiles, shifts
 from main import app
 
 XSS = ["<script>alert(1)</script>", '"><img src=x onerror=alert(1)>']
@@ -185,6 +185,34 @@ def test_chat_line_falls_back_to_the_opening_time_without_an_upcoming_shift(chat
     html = chat.vol.get(f"/chat/{chat.id}").text
     assert f"{start:%a %b} {start.day}, {start:%-I:%M %p}" in html
     assert "Jan 1" not in html
+
+
+def test_a_weekly_opening_with_no_booked_shift_says_its_date_is_not_booked(chat):
+    for s in shifts(where="match_id = ?", where_args=[chat.id]):
+        shifts.update(id=s.id, starts_at="2020-01-01T09:00")
+    openings.update(
+        id=chat.opening.id, starts_at="2020-01-01T09:00", recurrence="weekly"
+    )
+    start = datetime.fromisoformat(data.next_start("2020-01-01T09:00", "weekly"))
+    line = f"{start:%a %b} {start.day}, {start:%-I:%M %p}"
+    for client, page in (
+        (chat.vol, f"/chat/{chat.id}"),
+        (chat.coord, f"/org/chat/{chat.id}"),
+    ):
+        html = client.get(page).text
+        assert line in html and "(not booked)" in html
+    shifts.insert(  # booked for that date: the shift's own line, nothing to qualify
+        Shift(
+            match_id=chat.id,
+            starts_at=start.strftime("%Y-%m-%dT%H:%M"),
+            duration_minutes=180,
+            status="scheduled",
+            kind="added",
+            created_by=chat.coord.uid,
+            created_at="2026-01-01T00:00:00",
+        )
+    )
+    assert "(not booked)" not in chat.vol.get(f"/chat/{chat.id}").text
 
 
 def test_third_parties_are_refused_on_http_and_ws(chat):
