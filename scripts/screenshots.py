@@ -3,9 +3,9 @@
 uv run python scripts/screenshots.py --out DIR [--seed-file PATH] [--port 5078]
 
 Volunteer pages at iPhone 13 size (v*.png), nonprofit and admin pages at 1280x860 (o*.png,
-a*.png). The preferences index and its four section pages (causes, when, work, urgent) each
-get a shot. The demo auto-accepts a like soon after sign-in, so the "It's a match!" sheet can
-open over any volunteer page; the script closes it before each click. Runs the demo in this process, on a throwaway database, and needs Playwright's
+a*.png). The preferences page (causes, when, work and last-minute calls in one form) gets
+one full-page shot. The demo auto-accepts a like soon after sign-in, so the "It's a match!"
+sheet can open over any volunteer page; the script closes it before each click. Runs the demo in this process, on a throwaway database, and needs Playwright's
 chromium (uv run playwright install chromium).
 """
 
@@ -141,10 +141,6 @@ def main():
             ("v07-history", "/history"),
             ("v08-profile", "/profile"),
             ("v09-preferences", "/me/preferences"),
-            ("v09a-prefs-causes", "/me/preferences/causes"),
-            ("v09b-prefs-when", "/me/preferences/when"),
-            ("v09c-prefs-work", "/me/preferences/work"),
-            ("v09d-prefs-urgent", "/me/preferences/urgent"),
             ("v10-deck-free-today", "/deck?today=1"),
             ("v12-my-profile", "/me/profile"),
             ("v13-report", f"/matches/{info['match_id']}/report"),
