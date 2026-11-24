@@ -15,7 +15,16 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import ROOT, add_number, adder, coordinator_for, jpeg, sign_in, uid_of
+from conftest import (
+    ROOT,
+    add_number,
+    adder,
+    admin_client,
+    coordinator_for,
+    jpeg,
+    sign_in,
+    uid_of,
+)
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
@@ -43,6 +52,7 @@ from app.db import (
     Match,
     Profile,
     certificates,
+    claim_requests,
     identities,
     matches,
     messages,
@@ -1402,3 +1412,91 @@ def test_a_failing_stand_in_reply_leaves_the_message_delivered(demo, monkeypatch
     monkeypatch.setattr(data, "demo_reply", boom)
     r = sam.post(f"/chat/{m.id}/send", data={"msg": "Hi"}, follow_redirects=False)
     assert r.status_code == 303 and _chat_bodies(m.id)[-1] == "Hi"
+
+
+# --- "Reset demo data" ------------------------------------------------------------------
+
+
+@pytest.fixture
+def reset_routes(monkeypatch):
+    """What main.py does on a preview: the reset's routes and its data function."""
+    import app.routes.admin as admin_routes
+
+    saved = list(app.routes)
+    monkeypatch.setattr(admin_routes, "reset_demo", demo_seed.reset_preview)
+    admin_routes.preview_ar.to_app(app)
+    yield
+    app.routes[:] = saved
+
+
+def _demo_admin():
+    browser = TestClient(app, headers={"Authorization": basic()})
+    r = browser.post("/org/login/demo-admin", follow_redirects=False)
+    assert r.headers["location"] == "/admin"
+    return browser
+
+
+def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
+    seeded = sorted(o.name for o in orgs())
+    sam = as_demo_volunteer()
+    card = data.deck(sam.uid, 1)[0]
+    sam.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+    assert swipes(where="volunteer_id = ?", where_args=[sam.uid])
+    (call,) = urgent_calls()
+    urgent_calls.update(id=call.id, starts_at="2026-01-02T09:00")  # gone stale
+    old = max(p.id for p in profiles())
+    admin = _demo_admin()
+    assert 'href="/admin/reset"' in admin.get("/admin").text
+    assert "be undone." in admin.get("/admin/reset").text
+    r = admin.post("/admin/reset", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org/login"
+    assert not swipes(where="volunteer_id = ?", where_args=[sam.uid])  # the like
+    assert sorted(o.name for o in orgs()) == seeded
+    (claim,) = claim_requests(where="status = 'pending'")
+    assert claim.org_name == demo_seed.CLAIM_ORG[0]
+    (call,) = urgent_calls()
+    assert call.starts_at > datetime.now(demo_seed.LA).strftime("%Y-%m-%dT%H:%M")
+    # new profiles never take an old id, so every old session is signed out
+    assert min(p.id for p in profiles()) > old
+    assert admin.get("/admin", follow_redirects=False).headers["location"] == (
+        "/org/login"
+    )
+    assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_outside_a_preview_reset_demo_data_is_not_found(request, monkeypatch):
+    admin = admin_client()
+    for env in ("test", "production"):
+        monkeypatch.setenv("CAUSEMATCH_ENV", env)
+        # main.py added no reset route: this app started outside a preview
+        assert admin.get("/admin/reset").status_code == 404
+        assert admin.post("/admin/reset").status_code == 404
+    request.getfixturevalue("reset_routes")  # as if a deploy added them by mistake
+    before = {o.id for o in orgs()}
+    assert admin.get("/admin/reset").status_code == 404
+    assert admin.post("/admin/reset").status_code == 404
+    assert "/admin/reset" not in admin.get("/admin").text
+    with pytest.raises(RuntimeError, match="preview only"):
+        demo_seed.reset_preview()
+    assert {o.id for o in orgs()} == before
+    assert admin.get("/admin", follow_redirects=False).status_code == 200
+
+
+def test_only_an_admin_resets_demo_data(demo, reset_routes):
+    sam = as_demo_volunteer()
+    pat = TestClient(app, headers={"Authorization": basic()})
+    pat.post("/org/login/demo")
+    admin = _demo_admin()
+    before = {p.id for p in profiles()}
+    assert sam.get("/admin/reset").status_code == 403
+    assert sam.post("/admin/reset").status_code == 403
+    assert pat.post("/admin/reset", follow_redirects=False).headers["location"] == (
+        "/org"
+    )
+    nobody = TestClient(app, headers={"Authorization": basic()})
+    r = nobody.post("/admin/reset", follow_redirects=False)
+    assert r.headers["location"] == "/org/login"
+    # the admin's own button, pressed from another site
+    evil = admin.post("/admin/reset", headers={"Origin": "https://evil.example"})
+    assert evil.status_code == 403
+    assert {p.id for p in profiles()} == before

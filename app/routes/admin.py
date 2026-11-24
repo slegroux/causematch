@@ -16,6 +16,7 @@ from fasthtml.common import (
     HttpHeader,
     Img,
     Input,
+    Li,
     P,
     Redirect,
     Response,
@@ -25,12 +26,21 @@ from fasthtml.common import (
     Th,
     Thead,
     Tr,
+    Ul,
 )
 from fasthtml.common import Button as PlainButton
-from monsterui.all import Alert, AlertT, Container, LabelCheckboxX, TextPresets
+from monsterui.all import (
+    Alert,
+    AlertT,
+    ButtonT,
+    Container,
+    LabelCheckboxX,
+    TextPresets,
+)
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, propublica, security
+from app.config import is_preview
 from app.forms import query, str_form
 from app.metrics import (
     BREAKDOWNS,
@@ -48,9 +58,23 @@ from app.metrics import (
     pilot_metrics,
 )
 from app.org_import import import_ein
-from app.ui import CARD, ORG_SECTION, ORG_TITLE, Refusal, Router, TextInput, TopNav
+from app.ui import (
+    CARD,
+    ORG_SECTION,
+    ORG_TITLE,
+    SMALL_LINK,
+    Refusal,
+    Router,
+    TextInput,
+    TopNav,
+)
 
 ar = Router()
+# "Reset demo data": main.py adds these routes, and sets reset_demo to the demo seed's
+# reset_preview, on a preview only (no route imports the demo seed)
+preview_ar = Router()
+reset_demo = None
+RESET_CARD = ("Reset demo data", "Back to the sample data", "/admin/reset")
 log = logging.getLogger("causematch")
 NO_STORE = {"Cache-Control": "no-store"}
 NO_STORE_HEADER = HttpHeader("Cache-Control", "no-store")
@@ -157,11 +181,64 @@ def admin_home():
                     ("Reports", "What people reported", "/admin/reports"),
                     ("Organizations", "Verify nonprofits", "/admin/orgs"),
                     ("Claims", "Requests to manage a nonprofit", "/admin/claims"),
+                    *([] if _no_reset() else [RESET_CARD]),
                 )
             ],
             cls="grid gap-4 sm:grid-cols-2",
         ),
     )
+
+
+def _no_reset():
+    """Off a preview the reset doesn't exist, even where its routes were added."""
+    return reset_demo is None or not is_preview()
+
+
+@preview_ar("/admin/reset", methods=["GET"])
+def admin_reset_confirm():
+    if _no_reset():
+        return Response("Not found", status_code=404)
+    return (
+        AdminPage(
+            "admin",
+            "Reset demo data?",
+            Div(
+                Ul(
+                    Li(
+                        "Everything on this preview goes back to the sample data it "
+                        "started with: likes, matches, chats, shifts, hours, claims and "
+                        "every account made here."
+                    ),
+                    Li("You are signed out. This can't be undone."),
+                    cls="uk-list uk-list-disc",
+                ),
+                Form(
+                    PlainButton(
+                        "Reset demo data",
+                        type="submit",
+                        cls="uk-btn " + ButtonT.destructive,
+                    ),
+                    A("Keep it", href="/admin", cls=SMALL_LINK + " ml-4"),
+                    action="/admin/reset",
+                    method="post",
+                    cls="flex items-center pt-2",
+                ),
+                cls="max-w-2xl space-y-3 p-5 " + CARD,
+            ),
+        ),
+        NO_STORE_HEADER,
+    )
+
+
+@preview_ar("/admin/reset", methods=["POST"])
+def admin_reset(sess):
+    """The admin's own profile is among the rows deleted: they sign in again, on the page
+    that offers the seeded admin in one tap."""
+    if _no_reset():
+        return Response("Not found", status_code=404)
+    reset_demo()
+    sess.clear()
+    return Redirect("/org/login")
 
 
 @ar("/admin/metrics", methods=["GET"])
