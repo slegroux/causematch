@@ -5607,6 +5607,32 @@ def demo_reply(uid, match_id):
     )
 
 
+_epoch = None  # this database's session epoch, once read (session_epoch)
+
+
+def session_epoch():
+    """This database's epoch (app/db.py DatabaseEpoch), made on first use. Every sign-in
+    writes it into the session and every request compares it (app/auth.py), so a session
+    made on a database since replaced signs nobody in. Kept in the process after the first
+    read: no query per request. demo_seed.reset_preview forgets it (forget_session_epoch)."""
+    global _epoch
+    if _epoch is None:
+        _db.db.execute(
+            "INSERT OR IGNORE INTO database_epoch (id, value, created_at) VALUES (1, ?, ?)",
+            [secrets.token_urlsafe(16), _db.now()],
+        )
+        (_epoch,) = _db.db.execute(
+            "SELECT value FROM database_epoch WHERE id = 1"
+        ).fetchone()
+    return _epoch
+
+
+def forget_session_epoch():
+    """The next session_epoch reads the database again (or makes a new epoch there)."""
+    global _epoch
+    _epoch = None
+
+
 # One apsw connection is shared by every request and websocket thread; apsw
 # raises ThreadingViolationError when two threads use it at once. SQLite allows a single
 # writer anyway, so every public function here runs under one re-entrant lock.

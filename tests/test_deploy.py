@@ -1,7 +1,7 @@
 """entrypoint.sh, the image's start: plain uvicorn, or uvicorn under Litestream when
 LITESTREAM_BUCKET is set. Run for real with fake litestream and uvicorn on PATH that log
 their arguments, one per line, and the LITESTREAM_DB they were given. And
-scripts/deploy_production.sh's refusals, with a fake gcloud: no real one ever runs."""
+scripts/deploy_production.sh's and deploy_preview.sh's refusals, with a fake gcloud: no real one ever runs."""
 
 import json
 import os
@@ -126,8 +126,8 @@ esac
 """
 
 
-def deploy(tmp_path, **env):
-    """Run deploy_production.sh against the fake gcloud; (returncode, stderr, calls)."""
+def deploy(tmp_path, script="deploy_production.sh", **env):
+    """Run a deploy script against the fake gcloud; (returncode, stderr, calls)."""
     bin_dir, log = tmp_path / "bin", tmp_path / "gcloud.log"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "gcloud").write_text(GCLOUD)
@@ -144,7 +144,7 @@ def deploy(tmp_path, **env):
         "FAKE_BUCKET_NUMBER": "111",
     }
     r = subprocess.run(
-        ["bash", str(ROOT / "scripts" / "deploy_production.sh")],
+        ["bash", str(ROOT / "scripts" / script)],
         check=False,
         env=base | env,
         capture_output=True,
@@ -190,6 +190,55 @@ def test_production_refuses_the_previews_service_or_account(tmp_path, env):
     rc, err, calls = deploy(tmp_path, **env)
     assert rc == 1 and "names the preview" in err
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "env, why",
+    [
+        ({"SERVICE": "causematch"}, "is not causematch-preview"),
+        (
+            {
+                "SERVICE": "projects/causematch-la/locations/us-west1/services/causematch"
+            },
+            "is not causematch-preview",
+        ),
+        ({"SERVICE": "causematch-preview/../causematch"}, "is not causematch-preview"),
+        (
+            {
+                "SERVICE_ACCOUNT": "causematch-prod@causematch-la.iam.gserviceaccount.com"
+            },
+            "names production",
+        ),
+    ],
+)
+def test_the_preview_refuses_productions_service_or_account(tmp_path, env, why):
+    rc, err, calls = deploy(tmp_path, "deploy_preview.sh", HOME=str(tmp_path), **env)
+    assert rc == 1 and why in err
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "service", ["causematch-preview", "causematch-preview-katie-2"]
+)
+def test_the_preview_deploys_to_a_preview_service_name(tmp_path, service):
+    """Past the name check: the first gcloud call (the project's name) is made. The seed
+    is missing here, so it stops after that, before copying or deploying anything."""
+    rc, err, calls = deploy(
+        tmp_path, "deploy_preview.sh", HOME=str(tmp_path), SERVICE=service
+    )
+    assert rc == 1 and "is missing" in err and "refusing" not in err
+    assert calls and calls[0].startswith("projects describe")
+    assert deployed(calls) == []
+
+
+def test_the_preview_fakes_email_and_has_no_texts():
+    """Fake email: the demo's addresses never get real email (the rest only with the mail
+    secrets, test_the_preview_reuses_only_productions_mail_secrets). No SMS, fake or real: its pages say
+    "email" where production's do (notify.texts_on), and the beta collects no numbers."""
+    script = (ROOT / "scripts" / "deploy_preview.sh").read_text()
+    (env,) = [line for line in script.splitlines() if "--set-env-vars" in line]
+    assert "CAUSEMATCH_FAKE_EMAIL=1;" in env
+    assert "SMS" not in env and "TWILIO" not in script
 
 
 # Answers what deploy_preview.sh asks: the SMTP_*_PROD secrets named in FAKE_SECRETS exist.

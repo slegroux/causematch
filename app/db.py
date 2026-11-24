@@ -481,6 +481,20 @@ class UrgentCall:
 
 urgent_calls = db.create(UrgentCall, pk="id")
 urgent_calls.create_index(["org_id", "created_at"], if_not_exists=True)
+
+
+class DatabaseEpoch:
+    """One row (id 1): a random value made when this database first needs it and written
+    into every session at sign-in (app/data.py session_epoch). A database built afresh (a
+    preview's cold start, redeploy or reset) gets a new one, so a cookie from before
+    signs nobody in, though the profile ids it names are taken again."""
+
+    id: int
+    value: str  # secrets.token_urlsafe(16)
+    created_at: str
+
+
+database_epochs = db.create(DatabaseEpoch, pk="id")
 # One volunteer-side block per volunteer and org; one coordinator-side block per volunteer and
 # org however many coordinators of it pressed the button.
 db.execute("DROP INDEX IF EXISTS block_once")
