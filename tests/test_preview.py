@@ -1005,7 +1005,8 @@ def test_a_demo_visitor_gets_hours_and_a_certificate_in_one_visit(
     assert r.status_code == 303 and r.headers["location"] == "/deck"
     assert "s a match!" not in browser.get("/deck").text.replace("&#x27;", "'")
     (uid,) = [p.id for p in profiles() if data.is_demo_volunteer(p.id)]
-    profiles.update(id=uid, verified_hours="only")  # "I need my hours confirmed"
+    # "I need proof of my volunteer hours"
+    profiles.update(id=uid, verified_hours="only")
     hours_deck = data.deck(uid, 50)
     assert len(hours_deck) == 4 and hours_deck[0]["urgent"]  # the call, 3 more openings
     profiles.update(id=uid, verified_hours=None)

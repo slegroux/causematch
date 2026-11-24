@@ -318,3 +318,13 @@ def test_two_requests_cannot_both_show_the_same_takeover(user):
     profiles.update(id=uid_of(user), match_moment_seen_at=None)
     assert "<dialog" in str(MatchSheet(uid_of(user)))
     assert MatchSheet(uid_of(user)) is None
+
+
+def test_empty_deck_from_the_hours_need_says_so_and_offers_the_way_out(user):
+    profiles.update(id=uid_of(user), verified_hours="only")  # no org confirms hours
+    n = data.relaxations(uid_of(user))["more"]
+    page = user.get("/deck").text
+    assert "No nonprofit near you confirms hours yet" in page
+    assert "You're all caught up" not in page
+    assert f"Also show nonprofits that can't confirm hours ({n})" in page
+    assert "turns off" in page and "won't go on a certificate" in page

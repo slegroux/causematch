@@ -527,6 +527,7 @@ def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
             "only_distance": "prefer",
             "surprise": "1",
             "verified_hours": "only",
+            "last_name": "Rivera",
         },
         follow_redirects=False,
     )
@@ -542,3 +543,18 @@ def test_each_only_show_toggle_saves_from_the_section_it_governs(user):
     saved = data.preferences(uid_of(user))
     assert saved["dealbreakers"] == ["causes", "when", "work"]
     assert saved["surprise"] and saved["verified_hours"] == "only"  # kept
+
+
+def test_ticking_proof_of_hours_needs_a_last_name_and_an_empty_one_never_erases(user):
+    uid = uid_of(user)
+    ticked = {**SAVE, "sections": "causes", "verified_hours": "only"}
+    r = user.post("/me/preferences", data={**ticked, "last_name": " "})
+    assert "Add your last name to ask for proof of hours" in r.text
+    assert data.preferences(uid)["verified_hours"] == ""  # nothing saved
+    user.post("/me/preferences", data={**ticked, "last_name": "Rivera"})
+    assert data.preferences(uid)["verified_hours"] == "only"
+    assert 'name="last_name" value="Rivera"' in user.get("/me/preferences").text
+    unticked = {**SAVE, "sections": "causes", "last_name": ""}
+    assert user.post("/me/preferences", data=unticked).status_code == 200
+    saved = data.preferences(uid)
+    assert saved["verified_hours"] == "" and saved["last_name"] == "Rivera"
