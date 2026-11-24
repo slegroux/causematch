@@ -283,6 +283,22 @@ def _confirming_orgs():
     return {g.id for g in _db.orgs(where="confirms_hours = 1")}
 
 
+def hours_need_empties_deck(uid):
+    """True when "I need proof of my volunteer hours" is on, and the volunteer has not swiped
+    one opening of a nonprofit that confirms hours: with the need on and the deck empty,
+    no such nonprofit has an opening in reach, which is not "all caught up"."""
+    if _prefs.verified_hours(_db.profiles[uid]) != "only":
+        return False
+    return not list(
+        _db.db.query(
+            "SELECT 1 FROM swipe s JOIN opening o ON o.id = s.opening_id "
+            "JOIN org g ON g.id = o.org_id "
+            "WHERE s.volunteer_id = ? AND g.confirms_hours = 1 LIMIT 1",
+            [uid],
+        )
+    )
+
+
 def _when_ok(p, o):
     """The "when" dealbreaker: free then (or a flexible opening), and the commitment fits."""
     free = _match.availability_overlap(
@@ -342,7 +358,7 @@ def _relaxation_labels(p):
     if p["horizon_days"]:
         out["horizon"] = "Look further ahead"
     if p["verified_hours"] == "only":
-        out["only_verified"] = "Show nonprofits that don't confirm hours too"
+        out["only_verified"] = "Also show nonprofits that can't confirm hours"
     names = {
         "causes": "Show every cause you haven't ruled out",
         "when": "Show any time",
@@ -2837,6 +2853,7 @@ def save_onboarding(
     cause_prefs=None,
     place=None,
     last_name="",
+    verified_hours="",
 ):
     """cause_prefs: {slug: love|open|no} (default: causes, all loved). place: the Home
     place (label, lat, lon, area, mode, max_minutes), saved as the volunteer's first place;
@@ -2858,6 +2875,7 @@ def save_onboarding(
             neighborhood=neighborhood,
             volunteered_last_year=volunteered_last_year,
             adult_attested=True,
+            verified_hours=verified_hours or None,
             lat=lat,
             lon=lon,
             radius_km=radius_km,
@@ -2895,6 +2913,7 @@ def preferences(uid):
         "languages": _prefs.languages(p),
         "dealbreakers": _prefs.dealbreakers(p),
         "verified_hours": _prefs.verified_hours(p),
+        "last_name": p.last_name or "",
         "surprise": bool(p.surprise),
         "skills": json.loads(p.skills or "[]"),
         "frequency": p.frequency or "",
@@ -2923,11 +2942,12 @@ def save_preferences(
     languages=(),
     dealbreakers=DEFAULT_DEALBREAKERS,
     verified_hours="",
+    last_name="",
     surprise=False,
     urgent=None,
     weekly_limit=None,
 ):
-    """causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
+    """last_name: set when given, and never erased by an empty one. causes: {slug: love|open|no}; a cause left out is unrated. places: 1 or 2 dicts
     (label, lat, lon, area, mode, max_minutes), the first one Home; they replace the saved
     ones. The profile's own point follows the first place. urgent: last-minute calls as
     prefs.urgent() reads them; None keeps the saved ones. weekly_limit: 0 (off) to 5; None
@@ -2936,6 +2956,14 @@ def save_preferences(
         _db.db.execute("DELETE FROM place WHERE user_id = ?", [uid])
         for p in places:
             _db.places.insert(_db.Place(user_id=uid, **p))
+        if last_name:
+            old = _db.profiles[uid]
+            renamed = _renamed(old, old.display_name, last_name)
+            _db.profiles.update(
+                id=uid,
+                last_name=last_name,
+                **({"name_changed_at": _now()} if renamed else {}),
+            )
         _db.profiles.update(
             id=uid,
             cause_prefs=json.dumps(causes),

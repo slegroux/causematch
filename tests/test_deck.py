@@ -343,3 +343,13 @@ def test_a_weekly_opening_past_its_start_rolls_to_next_week(user):
     (shift,) = shifts(where="match_id = ?", where_args=[m.id])
     assert shift.starts_at == nxt
     assert openings[weekly.id].starts_at == started  # read-time only: nothing saved
+
+
+def test_empty_deck_from_the_hours_need_says_so_and_offers_the_way_out(user):
+    profiles.update(id=uid_of(user), verified_hours="only")  # no org confirms hours
+    n = data.relaxations(uid_of(user))["more"]
+    page = user.get("/deck").text
+    assert "No nonprofit near you confirms hours yet" in page
+    assert "You're all caught up" not in page
+    assert f"Also show nonprofits that can't confirm hours ({n})" in page
+    assert "turns off" in page and "won't go on a certificate" in page

@@ -168,4 +168,5 @@ INTERESTS = [
 MAX_INTERESTS = 6
 MAX_BIO = 280
 MAX_PRONOUNS = 30
+MAX_NAME = 80  # a first or last name
 PRONOUNS = ["she/her", "he/him", "they/them", "she/they", "he/they"]  # suggestions only

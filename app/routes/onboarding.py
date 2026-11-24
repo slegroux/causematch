@@ -27,7 +27,13 @@ from app.forms import (
     str_form,
 )
 from app.geo import neighborhoods, shown_point, zip_latlon
-from app.routes.prefs import CauseRow, PlaceFields, Section
+from app.routes.prefs import (
+    CauseRow,
+    PlaceFields,
+    ProofOfHours,
+    Section,
+    last_name_error,
+)
 from app.ui import (
     TITLE,
     BigButton,
@@ -118,6 +124,12 @@ def OnboardingForm(f=None, error=None, google_photo=False):
                     CauseRow(c, f.get("causes", {}).get(c.slug, prefs.OPEN))
                     for c in data.active_causes()
                 ],
+                *ProofOfHours(
+                    {
+                        "verified_hours": f.get("verified_hours", ""),
+                        "last_name": f.get("last_name", ""),
+                    }
+                ),
             ),
             # the consent and the button share the sticky bar: both are always in reach
             Div(
@@ -185,6 +197,8 @@ def _sync_onboarding_save(req, form, sess):
         **{k: text(k) for k in LIMITS},
         "place": {**HOME, **posted, "lat": shown_lat, "lon": shown_lon},
         "causes": {s: form.get(f"cause_{s}") for s in active if form.get(f"cause_{s}")},
+        "last_name": text("last_name"),
+        "verified_hours": "only" if form.get("verified_hours") == "only" else "",
         "consent": form.get("consent"),
         "google_photo": form.get("google_photo"),
     }
@@ -200,6 +214,8 @@ def _sync_onboarding_save(req, form, sess):
         return fail(HIDDEN_CHARS_MESSAGE)
     if not f["first_name"]:
         return fail("Please enter your first name.")
+    if error := last_name_error(f["last_name"], f["verified_hours"] == "only"):
+        return fail(error)
     where = " ".join(posted["where"].split())
     if not where:
         return fail(NO_PLACE)
@@ -227,6 +243,8 @@ def _sync_onboarding_save(req, form, sess):
         causes=prefs.picked(f["causes"]),
         cause_prefs=f["causes"],
         place=place,
+        last_name=f["last_name"],
+        verified_hours=f["verified_hours"],
     )
     if picture and f["google_photo"] == "1":
         _import_google_photo(req.scope["uid"], picture)
