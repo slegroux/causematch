@@ -178,7 +178,11 @@ data.start(not is_production())
 # after the migrations (app.db's import): the first admins, with no shell in production
 data.add_admins(admin_emails())
 if is_preview():  # the demo's orgs and people, reseeded at each cold start
-    demo_seed.seed_preview(os.environ.get("PREVIEW_SEED_DIR"))
+    seed_dir = os.environ.get("PREVIEW_SEED_DIR")
+    demo_seed.seed_preview(seed_dir)
+    # ... and by the admin's "Reset demo data", whose routes exist on a preview only
+    admin.reset_demo = lambda: demo_seed.reset_preview(seed_dir)
+    admin.preview_ar.to_app(app)
 
 if __name__ == "__main__":
     serve(**UVICORN)

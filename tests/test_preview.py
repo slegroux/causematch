@@ -15,7 +15,16 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import ROOT, add_number, adder, coordinator_for, jpeg, sign_in, uid_of
+from conftest import (
+    ROOT,
+    add_number,
+    adder,
+    admin_client,
+    coordinator_for,
+    jpeg,
+    sign_in,
+    uid_of,
+)
 from PIL import Image
 from starlette.testclient import TestClient
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
@@ -43,6 +52,8 @@ from app.db import (
     Match,
     Profile,
     certificates,
+    claim_requests,
+    db,
     identities,
     matches,
     messages,
@@ -157,6 +168,16 @@ def test_a_preview_may_fake_sign_in_and_show_the_banner(on_cloud_run):
     assert isinstance(notify.make_emailer(fake), notify.FakeEmailer)
 
 
+@pytest.mark.parametrize("on_cloud_run", [{}, CLOUD_RUN])
+def test_a_preview_never_replicates(on_cloud_run):
+    """Its admin can wipe it (Reset demo data): production switched to a preview keeps its
+    LITESTREAM_BUCKET, and refuses to start (entrypoint.sh too)."""
+    env = {**PREVIEW, **on_cloud_run}
+    with pytest.raises(RuntimeError, match="a preview never replicates"):
+        require_env({**env, "LITESTREAM_BUCKET": "b"})
+    require_env({**env, "LITESTREAM_BUCKET": ""})
+
+
 def test_a_preview_keeps_productions_secrets_cookie_and_https():
     with pytest.raises(RuntimeError):
         session_secret(PREVIEW)
@@ -181,8 +202,9 @@ def test_a_preview_keeps_productions_secrets_cookie_and_https():
     assert session_cookie(PREVIEW) == "__Host-cm_session"
 
 
-def _start(tmp_path, **env):
-    """python -c 'import main' in a fresh process: the app's startup, nothing served."""
+def _start(tmp_path, code="import main", **env):
+    """python -c 'import main' (or code) in a fresh process: the app's startup, nothing
+    served. A variable given as None is left out."""
     base = {
         "PATH": os.environ["PATH"],
         "CAUSEMATCH_DB": str(tmp_path / "preview.db"),
@@ -198,9 +220,9 @@ def _start(tmp_path, **env):
         **CLOUD_RUN,
     }
     return subprocess.run(
-        [sys.executable, "-c", "import main"],
+        [sys.executable, "-c", code],
         cwd=ROOT,
-        env={**base, **env},
+        env={k: v for k, v in {**base, **env}.items() if v is not None},
         check=False,
         capture_output=True,
         text=True,
@@ -1403,3 +1425,173 @@ def test_a_failing_stand_in_reply_leaves_the_message_delivered(demo, monkeypatch
     monkeypatch.setattr(data, "demo_reply", boom)
     r = sam.post(f"/chat/{m.id}/send", data={"msg": "Hi"}, follow_redirects=False)
     assert r.status_code == 303 and _chat_bodies(m.id)[-1] == "Hi"
+
+
+# --- "Reset demo data" ------------------------------------------------------------------
+
+
+@pytest.fixture
+def reset_routes(monkeypatch):
+    """What main.py does on a preview: the reset's routes and its data function."""
+    import app.routes.admin as admin_routes
+
+    saved = list(app.routes)
+    monkeypatch.setattr(admin_routes, "reset_demo", demo_seed.reset_preview)
+    admin_routes.preview_ar.to_app(app)
+    yield
+    app.routes[:] = saved
+
+
+def _demo_admin():
+    browser = TestClient(app, headers={"Authorization": basic()})
+    r = browser.post("/org/login/demo-admin", follow_redirects=False)
+    assert r.headers["location"] == "/admin"
+    return browser
+
+
+def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
+    seeded = sorted(o.name for o in orgs())
+    sam = as_demo_volunteer()
+    card = data.deck(sam.uid, 1)[0]
+    sam.post("/swipe", data={"opening_id": card["id"], "liked": "1"})
+    assert swipes(where="volunteer_id = ?", where_args=[sam.uid])
+    (call,) = urgent_calls()
+    urgent_calls.update(id=call.id, starts_at="2026-01-02T09:00")  # gone stale
+    old = max(p.id for p in profiles())
+    admin = _demo_admin()
+    assert 'href="/admin/reset"' in admin.get("/admin").text
+    assert "be undone." in admin.get("/admin/reset").text
+    r = admin.post("/admin/reset", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/org/login"
+    assert not swipes(where="volunteer_id = ?", where_args=[sam.uid])  # the like
+    assert sorted(o.name for o in orgs()) == seeded
+    (claim,) = claim_requests(where="status = 'pending'")
+    assert claim.org_name == demo_seed.CLAIM_ORG[0]
+    (call,) = urgent_calls()
+    assert call.starts_at > datetime.now(demo_seed.LA).strftime("%Y-%m-%dT%H:%M")
+    # new profiles never take an old id, so every old session is signed out
+    assert min(p.id for p in profiles()) > old
+    assert admin.get("/admin", follow_redirects=False).headers["location"] == (
+        "/org/login"
+    )
+    assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_outside_a_preview_reset_demo_data_is_not_found(request, monkeypatch):
+    admin = admin_client()
+    for env in ("test", "production"):
+        monkeypatch.setenv("CAUSEMATCH_ENV", env)
+        # main.py added no reset route: this app started outside a preview
+        assert admin.get("/admin/reset").status_code == 404
+        assert admin.post("/admin/reset").status_code == 404
+    request.getfixturevalue("reset_routes")  # as if a deploy added them by mistake
+    before = {o.id for o in orgs()}
+    assert admin.get("/admin/reset").status_code == 404
+    assert admin.post("/admin/reset").status_code == 404
+    assert "/admin/reset" not in admin.get("/admin").text
+    with pytest.raises(RuntimeError, match="preview only"):
+        demo_seed.reset_preview()
+    assert {o.id for o in orgs()} == before
+    assert admin.get("/admin", follow_redirects=False).status_code == 200
+
+
+def test_only_an_admin_resets_demo_data(demo, reset_routes):
+    sam = as_demo_volunteer()
+    pat = TestClient(app, headers={"Authorization": basic()})
+    pat.post("/org/login/demo")
+    admin = _demo_admin()
+    before = {p.id for p in profiles()}
+    assert sam.get("/admin/reset").status_code == 403
+    assert sam.post("/admin/reset").status_code == 403
+    assert pat.post("/admin/reset", follow_redirects=False).headers["location"] == (
+        "/org"
+    )
+    nobody = TestClient(app, headers={"Authorization": basic()})
+    r = nobody.post("/admin/reset", follow_redirects=False)
+    assert r.headers["location"] == "/org/login"
+    # the admin's own button, pressed from another site
+    evil = admin.post("/admin/reset", headers={"Origin": "https://evil.example"})
+    assert evil.status_code == 403
+    assert {p.id for p in profiles()} == before
+
+
+def _rows():
+    return {o.id for o in orgs()}, {p.id for p in profiles()}
+
+
+def _refuses_reset(monkeypatch, **env):
+    """With env set, reset_preview raises before deleting a row. seed_preview is a no-op
+    here, so a reset that got past its guards would leave the orgs and profiles empty."""
+    monkeypatch.setattr(demo_seed, "seed_preview", lambda seed_dir=None: None)
+    data.add_admin("boss@example.org", "Boss Person")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    before = _rows()
+    assert all(before)
+    with pytest.raises(RuntimeError, match="^reset_preview runs"):
+        demo_seed.reset_preview()
+    assert _rows() == before
+
+
+def test_reset_preview_in_production_deletes_nothing(monkeypatch):
+    _refuses_reset(monkeypatch, CAUSEMATCH_ENV="production")
+
+
+def test_reset_preview_on_a_replicated_database_deletes_nothing(preview, monkeypatch):
+    """Production switched to CAUSEMATCH_ENV=preview keeps its LITESTREAM_BUCKET, and its
+    database Litestream's tables."""
+    _refuses_reset(monkeypatch, LITESTREAM_BUCKET="b")
+    monkeypatch.delenv("LITESTREAM_BUCKET")
+    db.conn.execute(
+        "CREATE TABLE _litestream_seq (id INTEGER PRIMARY KEY, seq INTEGER)"
+    )
+    try:
+        _refuses_reset(monkeypatch)
+    finally:
+        db.conn.execute("DROP TABLE _litestream_seq")
+
+
+# whether main.py added the reset's route and bound reset_demo
+REGISTERED = (
+    "import main; from app.routes import admin; "
+    "print(any(getattr(r, 'path', '') == '/admin/reset' for r in main.app.routes), "
+    "admin.reset_demo is not None)"
+)
+
+
+def test_only_a_preview_starts_with_reset_demo_data(tmp_path):
+    production = {
+        "CAUSEMATCH_ENV": "production",
+        "CAUSEMATCH_FAKE_SMS": None,
+        "CAUSEMATCH_FAKE_EMAIL": None,
+        "EMAIL_API_KEY": "x",
+        "EMAIL_FROM": "hello@causematch.test",
+    }
+    development = {"CAUSEMATCH_ENV": "development", "K_SERVICE": None}
+    preview = {"CAUSEMATCH_ENV": "preview", "PREVIEW_PASSWORD": PASSWORD}
+    for name, env, registered in (
+        ("production", production, ["False", "False"]),
+        ("development", development, ["False", "False"]),
+        ("preview", preview, ["True", "True"]),  # the check sees a route that is there
+    ):
+        db_file = str(tmp_path / f"{name}.db")
+        r = _start(tmp_path, REGISTERED, **env, CAUSEMATCH_DB=db_file)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.split() == registered, name
+
+
+def test_a_second_reset_within_15_minutes_resets_nothing(demo, reset_routes, caplog):
+    caplog.set_level("INFO", logger="causematch")
+    admin = _demo_admin()
+    assert "once every 15 minutes." in admin.get("/admin/reset").text
+    assert admin.post("/admin/reset", follow_redirects=False).status_code == 303
+    resets = [m for m in caplog.messages if "preview reset" in m]
+    assert len(resets) == 1 and "testclient" not in resets[0]
+    admin = _demo_admin()
+    as_demo_volunteer()  # an account made since: a reset would remove it
+    before = _rows()
+    r = admin.post("/admin/reset", follow_redirects=False)
+    assert r.status_code == 429 and "Too many tries" in r.text
+    assert _rows() == before
+    assert admin.get("/admin", follow_redirects=False).status_code == 200
+    assert sum("preview reset" in m for m in caplog.messages) == 1

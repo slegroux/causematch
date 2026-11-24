@@ -13,7 +13,16 @@
 # with the container. Cloud Run without it is refused unless CAUSEMATCH_ENV=preview: the app
 # counts any other Cloud Run service as production (config.is_production), and its data
 # would go with the instance.
+#
+# CAUSEMATCH_ENV=preview with LITESTREAM_BUCKET is refused before anything starts (as
+# config.require_env does): a preview's admin can wipe its database ("Reset demo data"),
+# and Litestream would replicate the wipe.
 set -eu
+
+if [ "${CAUSEMATCH_ENV:-}" = "preview" ] && [ -n "${LITESTREAM_BUCKET:-}" ]; then
+	echo "a preview never replicates: unset LITESTREAM_BUCKET" >&2
+	exit 1
+fi
 
 DB="${CAUSEMATCH_DB:-/app/data/causematch.db}"
 CONFIG="$(dirname "$0")/litestream.yml"
