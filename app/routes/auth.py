@@ -163,6 +163,20 @@ def LoginPage(email="", error=None):
     )
 
 
+STAGING_LINK = "Staging only: no email is sent here. Your sign-in link:"
+
+
+def StagingLink(link):
+    """The sign-in link on the page, on a preview with the fake emailer only
+    (notify.staging_links); /org/login shows it too."""
+    if not link:
+        return None
+    return P(
+        STAGING_LINK + " ",
+        A("Open your sign-in link", href=link, cls="text-brand font-bold"),
+    )
+
+
 def SentPage(email, link=None):
     """ "Check your email", after the form (the same page for every address, so it never
     says whether an account holds it): the address it went to, a button that sends the link
@@ -170,12 +184,7 @@ def SentPage(email, link=None):
     return SignInPage(
         "Check your email",
         P(email, cls="break-all text-center text-lg font-bold text-ink"),
-        P(
-            A("Open your sign-in link", href=link, cls="text-brand font-bold"),
-            " (a preview sends no email)",
-        )
-        if link
-        else None,
+        StagingLink(link),
         Form(
             Hidden(name="email", value=email),
             Button(
@@ -206,15 +215,16 @@ def login_page():
 def _send_link(email):
     """After the response (notify.after), so every address takes the same time to answer
     (data.volunteer_link_kind decides what is sent). (link, whether a preview may show
-    it: not an admin's), or (None, False) when nothing was sent."""
+    it: not a staff address's, which /org/login shows), or (None, False) when nothing was
+    sent."""
     kind = data.volunteer_link_kind(email)
     if kind == "sign-up" and not security.allow((security.SIGNUP_ALL, "all")):
         return None, False  # past the app-wide ceiling (logged by name): nothing sent
     try:
         if kind == "staff":  # the nonprofit sign-in's own link, as /org/login sends
-            profile, is_coordinator = data.staff_by_email(email)
+            profile, _ = data.staff_by_email(email)
             token = data.create_login_token(profile.id)
-            return notify.send_login_link(email, token), is_coordinator
+            return notify.send_login_link(email, token), False
         if kind:
             token = data.create_email_token(email)
             return notify.send_volunteer_link(email, token, kind == "sign-up"), True
@@ -246,18 +256,19 @@ def link_sent(req, email, sess):
     staff's (app/routes/oauth.py). A page or the 429 response."""
     # every valid-shape address is counted, in the nonprofit link's own buckets, so a
     # refusal says nothing about the account and the two pages share one budget
-    smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
-    if not security.allow(*security.link_limits(req, email, smtp)):
+    if not security.allow(*security.link_limits(req, email, notify.smtp_for(email))):
         return security.too_many()
-    if is_preview() and not demo_address(email):
-        # A preview is demo-only, as /org/login there (org_auth.link_sent): any other
-        # address gets the same answer and nothing is sent, shown or logged, so a real
-        # address neither signs up there nor gets a link
+    # with SMTP, a preview emails a real address's link (notify.StagingEmailer)
+    staging = notify.staging_links() and not notify.real_mail_to(email)
+    if is_preview() and not notify.staging_links() and not demo_address(email):
+        # A preview with a real emailer for everyone stays demo-only, as /org/login
+        # there: any other address gets the same answer and nothing is sent or shown
         return SentPage(email)
     asked_for(sess, email)
-    if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
-        # As /org/login on a preview (org_auth.link_sent): nothing is emailed, so the page
-        # shows the link, for the demo's data only. An admin's stays in the log.
+    if staging:
+        # Staging: nothing is emailed to this address, so the page shows the link, as
+        # /org/login does (org_auth.link_sent). A staff address's goes to the fake
+        # emailer only: one address, one role, so /login shows it no staff link.
         link, shown = _send_link(email)
         return SentPage(email, link if shown else None)
     notify.after(req, _send_link, email, limiter=notify.LINK_LIMITER)

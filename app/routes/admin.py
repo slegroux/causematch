@@ -42,6 +42,7 @@ from starlette.concurrency import run_in_threadpool
 from app import data, notify, propublica, security
 from app.config import is_preview
 from app.forms import query, str_form
+from app.match import LA
 from app.metrics import (
     BREAKDOWNS,
     DEFINITIONS,
@@ -75,6 +76,8 @@ ar = Router()
 preview_ar = Router()
 reset_demo = None
 RESET_CARD = ("Reset demo data", "Back to the sample data", "/admin/reset")
+OUTBOX_CARD = ("Emails", "What this preview emailed, or would have", "/admin/outbox")
+OUTBOX_SHOWN = 100  # the most recent fake emails /admin/outbox lists
 log = logging.getLogger("causematch")
 NO_STORE = {"Cache-Control": "no-store"}
 NO_STORE_HEADER = HttpHeader("Cache-Control", "no-store")
@@ -182,6 +185,7 @@ def admin_home():
                     ("Organizations", "Verify nonprofits", "/admin/orgs"),
                     ("Claims", "Requests to manage a nonprofit", "/admin/claims"),
                     *([] if _no_reset() else [RESET_CARD]),
+                    *([OUTBOX_CARD] if _outbox() is not None else []),
                 )
             ],
             cls="grid gap-4 sm:grid-cols-2",
@@ -192,6 +196,55 @@ def admin_home():
 def _no_reset():
     """Off a preview the reset doesn't exist, even where its routes were added."""
     return reset_demo is None or not is_preview()
+
+
+def _outbox():
+    """The fake emailer's record, on a preview with it only (notify.staging_links), else
+    None: production can't start with the fake, so it never records or shows mail."""
+    return notify.get_emailer().outbox if notify.staging_links() else None
+
+
+@preview_ar("/admin/outbox", methods=["GET"])
+def admin_outbox():
+    """Staging: the emails a real deploy would have sent, newest first, each marked sent
+    (really, with SMTP, to an address off the demo's: notify.StagingEmailer) or not sent
+    (fake). A fake's body as plain text (escaped), sign-in links included: the same
+    disclosure as the link the sign-in pages show here. A sent one's address is masked
+    and its body left out: anyone here can be an admin, and it may hold a tester's
+    sign-in link."""
+    kept = _outbox()
+    if kept is None:
+        return Response("Not found", status_code=404)
+    return (
+        AdminPage(
+            "admin",
+            "Emails",
+            P(
+                "Staging: demo accounts' email is never sent. Every email, newest first "
+                f"(the last {OUTBOX_SHOWN}), until a reset or a restart.",
+                cls=TextPresets.muted_sm,
+            ),
+            *[
+                Div(
+                    P(subject, cls="font-bold text-ink break-words"),
+                    P(
+                        f"To {notify.mask_email(to) if sent else to} · "
+                        + at.astimezone(LA).strftime("%a %b %-d, %-I:%M %p")
+                        + (" · sent" if sent else " · not sent"),
+                        cls=TextPresets.muted_sm + " break-all",
+                    ),
+                    P(
+                        "Sent to its inbox, so not shown here." if sent else body,
+                        cls="whitespace-pre-wrap break-words text-ink",
+                    ),
+                    cls="space-y-2 p-5 " + CARD,
+                )
+                for at, to, subject, body, sent in reversed(kept[-OUTBOX_SHOWN:])
+            ]
+            or [P("Nothing yet.", cls="text-ink-muted")],
+        ),
+        NO_STORE_HEADER,
+    )
 
 
 @preview_ar("/admin/reset", methods=["GET"])
@@ -242,6 +295,8 @@ def admin_reset(req, sess):
     if not security.allow((security.RESET_ALL, "all"), (security.RESET_PER_IP, ip)):
         return security.too_many(retry_after=security.RESET_ALL[0][2])
     reset_demo()
+    if (kept := _outbox()) is not None:
+        kept.clear()
     # hashed as ip_subject's own log line, never the address
     log.info("preview reset (client key %s)", security._key("client", ip)[-12:])
     sess.clear()

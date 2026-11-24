@@ -26,7 +26,8 @@
 # Secrets come from Secret Manager under their own _PROD names, so production never shares a
 # key with the preview: SESSION_SECRET_PROD, PHONE_HASH_KEY_PROD, CERTIFICATE_KEY_PROD,
 # TASKS_TOKEN_PROD, SMTP_USERNAME_PROD and SMTP_PASSWORD_PROD, each readable by the service
-# account. GOOGLE_CLIENT_ID_PROD and GOOGLE_CLIENT_SECRET_PROD are optional: passed when both
+# account. The one exception, by the owner's choice: the preview reuses the two SMTP_*_PROD
+# (scripts/deploy_preview.sh). GOOGLE_CLIENT_ID_PROD and GOOGLE_CLIENT_SECRET_PROD are optional: passed when both
 # exist (checked with gcloud secrets describe), refused when only one does. Nothing is seeded.
 set -euo pipefail
 

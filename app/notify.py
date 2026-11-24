@@ -19,7 +19,9 @@ from app.config import (
     SMTP_TLS_PORT,
     collect_phone,
     contact_email,
+    demo_address,
     fakes_allowed,
+    is_preview,
     public_base_url,
     smtp,
     smtp_max_per_day,
@@ -164,17 +166,49 @@ def check_code(phone, code):
 
 class FakeEmailer:
     """Test, local-dev and preview emailer: sends nothing, records messages, logs them
-    (the address masked)."""
+    (the address masked). outbox: (when, to, subject, body, sent), for the preview's
+    /admin/outbox (sent: really sent, by StagingEmailer)."""
 
     def __init__(self):
         self.sent = []
         self.with_headers = []  # (to, subject, headers) of messages that had any
+        self.outbox = []
 
     def send(self, to, subject, body, headers=None, kind="notice"):
         _record(self.sent, (to, subject, body))
+        _record(self.outbox, (datetime.now(UTC), to, subject, body, False))
         if headers:
             _record(self.with_headers, (to, subject, headers))
         log.warning("FAKE EMAIL to %s: %s\n%s", mask_email(to), subject, body)
+
+
+STAGING_MARK = (
+    "This is the Causematch staging site: test data only, wiped at each update."
+)
+
+
+class StagingEmailer(FakeEmailer):
+    """A preview's emailer when SMTP is configured (make_emailer builds it on a preview
+    only): mail to any address goes out for real through `real` (SMTPEmailer, under its
+    daily ceilings), marked as staging, except to the demo's addresses
+    (config.demo_address), which stay fake: recorded, never sent."""
+
+    def __init__(self, real):
+        super().__init__()
+        self.real = real
+
+    def is_real(self, to):
+        return not demo_address(to.strip())
+
+    def batch(self):
+        return self.real.batch()
+
+    def send(self, to, subject, body, headers=None, kind="notice"):
+        if not self.is_real(to):
+            return super().send(to, subject, body, headers, kind)
+        subject, body = "[Staging] " + subject, f"{STAGING_MARK}\n\n{body}"
+        self.real.send(to, subject, body, headers, kind)
+        _record(self.outbox, (datetime.now(UTC), to, subject, body, True))
 
 
 class ResendEmailer:
@@ -499,6 +533,10 @@ def make_emailer(env=os.environ):
     SMTP when it is configured (config.smtp). SMTP set halfway refuses to start even
     beside Resend, and so does no emailer at all."""
     if _fake(env, "CAUSEMATCH_FAKE_EMAIL"):
+        # a preview with SMTP mails everyone but the demo's addresses for real (_fake
+        # refuses production, and is_preview is checked again here)
+        if is_preview(env) and (settings := smtp(env)):
+            return StagingEmailer(SMTPEmailer(*settings, smtp_max_per_day(env)))
         return FakeEmailer()
     settings = smtp(env)
     if env.get("EMAIL_API_KEY"):
@@ -522,6 +560,28 @@ def get_emailer():
     if _emailer is None:
         _emailer = make_emailer()
     return _emailer
+
+
+def staging_links():
+    """Staging only: whether sign-in links are shown on the page, and the emails on
+    /admin/outbox, instead of being emailed. True only on a preview (config.is_preview,
+    read from the environment at each call) whose emailer is the fake (or StagingEmailer),
+    which production refuses to start with (_fake). Nothing a request sends can turn it
+    on."""
+    return is_preview() and isinstance(get_emailer(), FakeEmailer)
+
+
+def real_mail_to(email):
+    """Whether mail to this address really goes out from a preview (StagingEmailer: any
+    address but the demo's). Its sign-in link is emailed, never shown on the page."""
+    emailer = get_emailer()
+    return isinstance(emailer, StagingEmailer) and emailer.is_real(email)
+
+
+def smtp_for(email):
+    """Whether mail to this address goes through SMTP (Gmail), whose small daily quota
+    puts a sign-in link under security.LINK_PER_EMAIL_SMTP too."""
+    return isinstance(get_emailer(), SMTPEmailer) or real_mail_to(email)
 
 
 def send_login_link(email, token):

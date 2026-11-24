@@ -190,3 +190,72 @@ def test_production_refuses_the_previews_service_or_account(tmp_path, env):
     rc, err, calls = deploy(tmp_path, **env)
     assert rc == 1 and "names the preview" in err
     assert calls == []
+
+
+# Answers what deploy_preview.sh asks: the SMTP_*_PROD secrets named in FAKE_SECRETS exist.
+PREVIEW_GCLOUD = """#!/bin/sh
+printf '%s\\n' "$*" >> "$LOG"
+case "$*" in
+"projects describe"*"value(name)"*) echo Causematch ;;
+"secrets describe "*)
+	set -- $*
+	case " $FAKE_SECRETS " in *" $3 "*) echo "$3" ;; *) exit 1 ;; esac
+	;;
+"run services describe"*) echo https://causematch-preview-x.a.run.app ;;
+esac
+"""
+
+
+def deploy_preview(tmp_path, **env):
+    """Run deploy_preview.sh against the fake gcloud and a stand-in seed folder."""
+    bin_dir, log, seed = tmp_path / "bin", tmp_path / "gcloud.log", tmp_path / "seed"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "gcloud").write_text(PREVIEW_GCLOUD)
+    (bin_dir / "gcloud").chmod(0o755)
+    for d in ("logos-raw", "photos-raw"):
+        (seed / d).mkdir(parents=True, exist_ok=True)
+    (seed / "orgs.json").write_text("[]")
+    log.write_text("")
+    base = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "LOG": str(log),
+        "SEED_SRC": str(seed),
+        "FAKE_SECRETS": "SMTP_USERNAME_PROD SMTP_PASSWORD_PROD",
+    }
+    r = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "deploy_preview.sh")],
+        check=False,
+        env=base | env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert not (ROOT / "preview-seed").exists()
+    return r.returncode, r.stderr, deployed(log.read_text().splitlines())
+
+
+def _secrets(call):
+    return shlex.split(call)[shlex.split(call).index("--set-secrets") + 1].split(",")
+
+
+def test_the_preview_reuses_only_productions_mail_secrets(tmp_path):
+    """Real email with both SMTP_*_PROD, the only _PROD names it ever gets; none with
+    STAGING_REAL_EMAIL=0 or without them; one alone is refused."""
+    rc, err, (call,) = deploy_preview(tmp_path)
+    assert rc == 0, err
+    prod = sorted(s for s in _secrets(call) if "_PROD" in s)
+    assert prod == [
+        "SMTP_PASSWORD=SMTP_PASSWORD_PROD:latest",
+        "SMTP_USERNAME=SMTP_USERNAME_PROD:latest",
+    ]
+    assert "--no-cpu-throttling" in shlex.split(call)
+    assert "CAUSEMATCH_FAKE_EMAIL=1" in call  # the demo's addresses stay fake
+    assert ";SMTP_MAX_PER_DAY=50;" in call  # a share of the account production uses
+    for env in ({"STAGING_REAL_EMAIL": "0"}, {"FAKE_SECRETS": ""}):
+        rc, err, (call,) = deploy_preview(tmp_path, **env)
+        assert rc == 0 and not any("_PROD" in s for s in _secrets(call)), env
+        assert "--cpu-throttling" in shlex.split(call) and "SMTP_MAX" not in call
+    for env in ({"FAKE_SECRETS": "SMTP_USERNAME_PROD"}, {"STAGING_REAL_EMAIL": "yes"}):
+        rc, err, calls = deploy_preview(tmp_path, **env)
+        assert rc == 1 and calls == [], env

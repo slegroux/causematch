@@ -458,7 +458,10 @@ _GMAIL_COPIES = {
 def privacy():
     contact = contact_email()
     # the beta sends through a Gmail account (docs/OPERATIONS.md), later through Resend
-    gmail = isinstance(notify.get_emailer(), notify.SMTPEmailer)
+    # a preview's StagingEmailer sends through Gmail too
+    gmail = isinstance(
+        notify.get_emailer(), (notify.SMTPEmailer, notify.StagingEmailer)
+    )
     texts = notify.texts_on()  # off in production: no Twilio, no phone wording
     return SimplePage(
         "Privacy",
