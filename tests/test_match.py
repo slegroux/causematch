@@ -416,7 +416,7 @@ def test_inbox_never_shows_contact_or_location(user, coord):
         "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
         "interests", "causes", "availability", "languages", "neighborhood",
         "frequency", "full", "weekly", "starts_at", "duration_minutes", "slots",
-        "spots_left", "fits", "undoable", "screening_pending",
+        "spots_left", "fits", "undoable", "screening_pending", "closed", "reopenable",
     }  # fmt: skip
 
 
@@ -441,14 +441,22 @@ def test_withdraw_from_a_closed_opening_keeps_it_closed():
     assert oid not in [c["id"] for c in data.deck(volunteer().uid, limit=50)]
 
 
-def test_accepting_into_a_closed_opening_keeps_it_closed_even_when_full():
+def test_a_closed_opening_takes_no_accept_but_its_like_can_still_be_declined(
+    user, coord
+):
     oid = one_slot_opening()
-    v = volunteer()
-    coord, _ = coordinator_for(0)
-    m = data.swipe(v.uid, oid, True)
-    data.close_opening(coord, oid)
-    data.decide(coord, m.id, True)
+    user.post("/swipe", data={"opening_id": oid, "liked": "1"})
+    mid = matches()[0].id
+    data.close_opening(coordinator_for(0)[0], oid)
+    inbox = coord.get("/org/inbox").text
+    assert "This opening is closed. Reopen it to accept." in inbox
+    assert 'value="accept"' not in inbox and 'value="decline"' in inbox
+    r = coord.post(f"/org/matches/{mid}/decide", data={"decision": "accept"})
+    assert "That opening is closed. Reopen it to accept, or decline instead." in r.text
+    assert matches[mid].status == "pending" and not shifts()
     assert openings[oid].status == "closed"
+    coord.post(f"/org/matches/{mid}/decide", data={"decision": "decline"})
+    assert matches[mid].status == "declined"
 
 
 def test_withdraw_keeps_the_decision_time_and_sets_withdrawn_at():
@@ -639,7 +647,7 @@ def test_consent_text_is_what_the_inbox_shows(new_user, coord):
         "id", "status", "opening", "name", "photo_key", "pronouns", "bio",
         "interests", "causes", "availability", "languages", "neighborhood",
         "frequency", "full", "weekly", "starts_at", "duration_minutes", "slots",
-        "spots_left", "fits", "undoable", "screening_pending",
+        "spots_left", "fits", "undoable", "screening_pending", "closed", "reopenable",
     }  # fmt: skip
 
 

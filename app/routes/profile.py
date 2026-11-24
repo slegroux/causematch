@@ -178,7 +178,7 @@ def DetailsForm(p, f=None):
             ),
         ),
         Field(
-            "Last name (optional)",
+            "Last name" if p.verified_hours == "only" else "Last name (optional)",
             TextInput(
                 name="last_name",
                 value=f["last_name"],
@@ -496,8 +496,16 @@ def remove_photo(req):
     return Redirect("/me/profile?notice=removed")
 
 
-def details_error(f):
-    """Why these profile answers can't be saved, or None."""
+KEEP_LAST_NAME = (
+    "A certificate carries your full name, so keep a last name while "
+    "\u201cI need proof of my volunteer hours\u201d is on. You can turn that off in "
+    "Preferences."
+)
+
+
+def details_error(f, needs_last_name=False):
+    """Why these profile answers can't be saved, or None. needs_last_name: proof of hours
+    is on (verified_hours), which a certificate can't do without a last name."""
     if any(
         hidden_chars(v, multiline=k == "bio") for k, v in f.items() if k != "interests"
     ):
@@ -506,6 +514,8 @@ def details_error(f):
         return f"Enter your first name ({MAX_NAME} characters at most)."
     if len(f["last_name"]) > MAX_NAME:
         return f"Keep your last name to {MAX_NAME} characters."
+    if needs_last_name and not f["last_name"]:
+        return KEEP_LAST_NAME
     if len(f["pronouns"]) > MAX_PRONOUNS:
         return f"Keep your pronouns to {MAX_PRONOUNS} characters."
     if len(f["bio"]) > MAX_BIO:
@@ -544,7 +554,7 @@ async def save_details(req):
 
 
 def _sync_save_details(uid, f):
-    if error := details_error(f):
+    if error := details_error(f, data.get_profile(uid).verified_hours == "only"):
         return FtResponse(ProfilePage(uid, error, f=f), status_code=400)
     data.save_profile_details(uid, **f)
     return Redirect("/me/profile?notice=details")
