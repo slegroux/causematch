@@ -172,6 +172,31 @@ def test_onboarding_takes_a_neighborhood_or_a_rounded_device_location(new_user):
     assert home.area == "Mar Vista"
 
 
+def test_onboarding_fills_the_neighborhood_nonprofits_see(new_user):
+    """A listed neighborhood as listed, a ZIP's listed area, a device location none."""
+    new_user.post("/onboarding", data={**FORM, "place1_where": "silverlake"})
+    assert profile_of(new_user).neighborhood == "Silverlake"
+
+
+def test_onboarding_with_a_zip_fills_its_listed_neighborhood(new_user):
+    new_user.post("/onboarding", data=FORM)  # 90012
+    assert profile_of(new_user).neighborhood == "Chinatown"
+
+
+def test_onboarding_with_a_device_location_leaves_the_neighborhood_empty(new_user):
+    form = {**FORM, "place1_where": "My location"}
+    new_user.post(
+        "/onboarding", data={**form, "place1_lat": "34.05", "place1_lon": "-118.23"}
+    )
+    assert not profile_of(new_user).neighborhood
+
+
+def test_onboarding_keeps_a_neighborhood_the_profile_already_has(new_user):
+    profiles.update(id=profile_of(new_user).id, neighborhood="Koreatown")
+    new_user.post("/onboarding", data=FORM)
+    assert profile_of(new_user).neighborhood == "Koreatown"
+
+
 def test_onboarding_rounds_a_device_location(new_user):
     r = new_user.post(
         "/onboarding",
@@ -233,6 +258,7 @@ def test_privacy_page_lists_places_and_preferences_as_private(anon):
     page = anon.get("/privacy").text
     assert "places" in page and "never an address" in page
     assert "Only you see these:" in page
+    assert "nonprofits you like see only the neighborhood" in page
 
 
 def test_onboarding_once_done_cannot_be_posted_again(user):

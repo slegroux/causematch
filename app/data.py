@@ -289,12 +289,16 @@ def _confirming_orgs():
     return {g.id for g in _db.orgs(where="confirms_hours = 1")}
 
 
-def hours_need_empties_deck(uid):
-    """True when "I need proof of my volunteer hours" is on, and the volunteer has not swiped
-    one opening of a nonprofit that confirms hours: with the need on and the deck empty,
-    no such nonprofit has an opening in reach, which is not "all caught up"."""
+def hours_need_empties_deck(uid, relax):
+    """True when "I need proof of my volunteer hours" is what leaves the deck empty: it is on
+    and the relaxation that brings cards back is the hours one (relax: relaxations(), so a
+    horizon or other filter that is the cause shows its own copy). With no relaxation that
+    helps, it is the hours need unless the volunteer has already swiped a nonprofit that
+    confirms hours, when they have simply seen everything."""
     if _prefs.verified_hours(_db.profiles[uid]) != "only":
         return False
+    if relax:
+        return relax["key"] == "only_verified"
     return not list(
         _db.db.query(
             "SELECT 1 FROM swipe s JOIN opening o ON o.id = s.opening_id "

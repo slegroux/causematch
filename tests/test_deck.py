@@ -11,7 +11,7 @@ from conftest import (
 
 from app import data
 from app.data import LA
-from app.db import matches, openings, profiles, shifts
+from app.db import matches, openings, orgs, profiles, shifts
 from app.routes.deck import MatchSheet
 
 HOME_PLACES = (
@@ -353,3 +353,28 @@ def test_empty_deck_from_the_hours_need_says_so_and_offers_the_way_out(user):
     assert "You're all caught up" not in page
     assert f"Also show nonprofits that can't confirm hours ({n})" in page
     assert "turns off" in page and "won't go on a certificate" in page
+
+
+def test_empty_deck_from_the_horizon_does_not_blame_the_hours_need(user):
+    close_all_openings()
+    orgs.update(id=orgs()[0].id, confirms_hours=True)
+    add_opening(
+        "Far off", ["food-insecurity"], soon(30)
+    )  # a confirming org, past the horizon
+    profiles.update(id=uid_of(user), verified_hours="only", horizon_days=7)
+    assert data.relaxations(uid_of(user))["key"] == "horizon"
+    page = user.get("/deck").text
+    assert "No nonprofit near you confirms hours yet" not in page
+    assert "Look further ahead" in page
+
+
+def test_empty_deck_after_swiping_a_confirming_org_still_names_the_hours_need(user):
+    close_all_openings()
+    orgs.update(id=orgs()[0].id, confirms_hours=True)
+    seen = add_opening("Seen", ["food-insecurity"])
+    add_opening("Other org", ["food-insecurity"], org_id=orgs()[1].id)
+    data.swipe(uid_of(user), seen.id, False)
+    profiles.update(id=uid_of(user), verified_hours="only")
+    page = user.get("/deck").text
+    assert "No nonprofit near you confirms hours yet" in page
+    assert "You're all caught up" not in page

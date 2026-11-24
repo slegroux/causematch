@@ -659,7 +659,9 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
         return Div(
             note,
             sheet,
-            EmptyDeck(today, relax, not view and data.hours_need_empties_deck(uid)),
+            EmptyDeck(
+                today, relax, not view and data.hours_need_empties_deck(uid, relax)
+            ),
             Div(FilterSheet(uid, today, count, view), cls="mt-3 flex justify-center"),
             id="deck-area",
             cls="relative",

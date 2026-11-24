@@ -26,7 +26,7 @@ from app.forms import (
     query,
     str_form,
 )
-from app.geo import neighborhoods, shown_point, zip_latlon
+from app.geo import neighborhoods, shown_point, zip_latlon, zip_neighborhood
 from app.routes.prefs import (
     CauseRow,
     PlaceFields,
@@ -113,7 +113,7 @@ def OnboardingForm(f=None, error=None, google_photo=False):
             ),
             Section(
                 "Where",
-                "Where you'll help from, and how far you'd go. Only you see it.",
+                "Where you'll help from, and how far you'd go. Nonprofits you like see only the neighborhood.",
                 PlaceFields(0, f.get("place", HOME), named=False),
                 Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),
             ),
@@ -232,10 +232,15 @@ def _sync_onboarding_save(req, form, sess):
     if not {prefs.LOVE, prefs.OPEN} & set(f["causes"].values()):
         return fail("Please pick at least one cause you love or are open to.")
     reach = match.reach_km(place["mode"], place["max_minutes"])
+    if typed_zip:
+        area = zip_neighborhood(typed_zip) or ""
+    else:  # a listed neighborhood as listed; a device location names none
+        area = "" if where == prefs.MY_LOCATION else place["area"]
     data.save_onboarding(
         req.scope["uid"],
         display_name=f["first_name"],
         email=me.email or "",  # a Google sign-in's verified address
+        neighborhood=me.neighborhood or area,  # what nonprofits see; never overwritten
         # the Home place, also as the profile's point and radius (metrics, old readers)
         lat=place["lat"],
         lon=place["lon"],
