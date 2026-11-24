@@ -203,3 +203,12 @@ def test_the_preview_refuses_productions_service_or_account(tmp_path, env):
     rc, err, calls = deploy(tmp_path, "deploy_preview.sh", HOME=str(tmp_path), **env)
     assert rc == 1 and "names production" in err
     assert calls == []
+
+
+def test_the_preview_fakes_email_and_has_no_texts():
+    """Fake email: a preview never sends real email. No SMS, fake or real: its pages say
+    "email" where production's do (notify.texts_on), and the beta collects no numbers."""
+    script = (ROOT / "scripts" / "deploy_preview.sh").read_text()
+    (env,) = [line for line in script.splitlines() if "--set-env-vars" in line]
+    assert "CAUSEMATCH_FAKE_EMAIL=1;" in env
+    assert "SMS" not in env and "TWILIO" not in script

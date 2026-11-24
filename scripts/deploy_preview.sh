@@ -10,6 +10,9 @@
 # instance warm so a demo never waits for a cold start and the data survives between visits;
 # about $10-15 a month, and MIN_INSTANCES=0 scripts/deploy_preview.sh turns it back off].
 #
+# Fake email, so the preview never sends real email; no SMS, fake or real, so its pages say
+# "email" where production does (notify.texts_on: the beta collects no phone numbers).
+#
 # The seed is copied into ./preview-seed for the build only: git ignores it, .gcloudignore
 # sends it, and it is removed when this script exits. The secrets PREVIEW_PASSWORD,
 # SESSION_SECRET, PHONE_HASH_KEY, CERTIFICATE_KEY and TASKS_TOKEN must already be in Secret Manager, readable
@@ -89,7 +92,7 @@ gcloud run deploy "$SERVICE" --source . \
 	--allow-unauthenticated \
 	--min-instances "$MIN_INSTANCES" --max-instances 1 --cpu-boost \
 	--memory 1Gi --cpu 1 --concurrency 80 \
-	--set-env-vars "^;^CAUSEMATCH_ENV=preview;PREVIEW_SEED_DIR=/app/preview-seed;TRUSTED_PROXY_HOPS=1;CAUSEMATCH_FAKE_SMS=1;CAUSEMATCH_FAKE_EMAIL=1;CAUSEMATCH_FAKE_OAUTH=1;CAUSEMATCH_DEMO_MATCHES=1;CONTACT_EMAIL=$CONTACT_EMAIL;PUBLIC_BASE_URL=${url:-https://placeholder.invalid}" \
+	--set-env-vars "^;^CAUSEMATCH_ENV=preview;PREVIEW_SEED_DIR=/app/preview-seed;TRUSTED_PROXY_HOPS=1;CAUSEMATCH_FAKE_EMAIL=1;CAUSEMATCH_FAKE_OAUTH=1;CAUSEMATCH_DEMO_MATCHES=1;CONTACT_EMAIL=$CONTACT_EMAIL;PUBLIC_BASE_URL=${url:-https://placeholder.invalid}" \
 	--set-secrets "PREVIEW_PASSWORD=PREVIEW_PASSWORD:latest,SESSION_SECRET=SESSION_SECRET:latest,PHONE_HASH_KEY=PHONE_HASH_KEY:latest,CERTIFICATE_KEY=CERTIFICATE_KEY:latest,TASKS_TOKEN=TASKS_TOKEN:latest"
 
 deployed="$(describe_url)"

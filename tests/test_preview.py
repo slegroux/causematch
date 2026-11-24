@@ -216,8 +216,7 @@ def _start(tmp_path, code="import main", **env):
         "PUBLIC_BASE_URL": "https://causematch-preview.run.app",
         "CONTACT_EMAIL": "hello@causematch.test",
         "TRUSTED_PROXY_HOPS": "1",
-        "CAUSEMATCH_FAKE_SMS": "1",
-        "CAUSEMATCH_FAKE_EMAIL": "1",
+        "CAUSEMATCH_FAKE_EMAIL": "1",  # as scripts/deploy_preview.sh: and no SMS
         **CLOUD_RUN,
     }
     return subprocess.run(
@@ -235,12 +234,23 @@ def test_cloud_run_starts_a_preview_only_with_its_password(tmp_path):
     r = _start(tmp_path, CAUSEMATCH_ENV="preview")
     assert r.returncode != 0 and "PREVIEW_PASSWORD must be" in r.stderr
     r = _start(tmp_path, CAUSEMATCH_ENV="production")  # fakes: production refuses
+    assert r.returncode != 0 and "CAUSEMATCH_FAKE_EMAIL=1 needs" in r.stderr
+    email = {"EMAIL_API_KEY": "x", "EMAIL_FROM": "x@causematch.test"}
+    r = _start(tmp_path, CAUSEMATCH_ENV="production", CAUSEMATCH_FAKE_EMAIL=None,
+               CAUSEMATCH_FAKE_SMS="1", **email)  # fmt: skip
     assert r.returncode != 0 and "CAUSEMATCH_FAKE_SMS=1 needs" in r.stderr
 
 
 def test_a_preview_seeds_itself_at_startup_and_logs_the_sign_in_links(tmp_path):
-    r = _start(tmp_path, CAUSEMATCH_ENV="preview", PREVIEW_PASSWORD=PASSWORD)
+    """Started as scripts/deploy_preview.sh starts it: fake email, and no texts at all, so
+    its pages speak of email as production's do."""
+    code = (
+        "import main; from app import notify; "
+        "print(notify.texts_on(), type(notify.get_emailer()).__name__)"
+    )
+    r = _start(tmp_path, code, CAUSEMATCH_ENV="preview", PREVIEW_PASSWORD=PASSWORD)
     assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["False", "FakeEmailer"]
     assert "preview seeded" in r.stderr
     for email in (demo_seed.COORDINATOR[0], demo_seed.ADMIN[0]):
         assert re.search(
