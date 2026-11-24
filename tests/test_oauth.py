@@ -300,8 +300,9 @@ def test_link_connects_google_to_an_email_volunteer_but_not_someone_elses(anon):
     assert identities.count_where("subject = ?", ["g-theirs"]) == 1
 
 
-@pytest.mark.parametrize("forged", ["uid", "epoch", "created_at"])
+@pytest.mark.parametrize("forged", ["uid", "epoch", "created_at", "suspended"])
 def test_link_with_a_flow_sealed_for_another_uid_or_database_is_400(forged):
+    """And one for an account suspended since: no profile to compare with."""
     me, them = volunteer(), volunteer()
     uid = them.uid if forged == "uid" else me.uid
     ep = "another-database" if forged == "epoch" else data.session_epoch()
@@ -311,6 +312,8 @@ def test_link_with_a_flow_sealed_for_another_uid_or_database_is_400(forged):
     me.cookies.set("cm_oauth", oauth.seal("google", state, nonce, verifier, "link",
                                           uid, 1, ep, pc))  # fmt: skip
     flow = {"state": state, "nonce": nonce, "code_challenge": oauth.challenge(verifier)}
+    if forged == "suspended":
+        profiles.update(id=me.uid, suspended_at="2026-01-01T00:00:00+00:00")
     r = me.get(consent(me, flow, sub="g-forged"), follow_redirects=False)
     assert r.status_code == 400
     assert identities.count_where("subject = ?", ["g-forged"]) == 0

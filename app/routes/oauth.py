@@ -364,7 +364,8 @@ def _link(sess, name, flow, claims):
         and flow.pc == profile.created_at
     )
     same = (
-        sess.get("uid") == flow.uid
+        current
+        and sess.get("uid") == flow.uid
         and sess.get("sv") == flow.sv
         and same_database(sess)
         and same_profile(sess, profile)
