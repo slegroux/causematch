@@ -829,3 +829,14 @@ def test_the_time_is_locked_once_anyone_has_liked_it(coord):
         data.update_opening(coordinator_for(0)[0], o.id, starts_at=future(40))
     with pytest.raises(TypeError, match="org_id"):
         data.update_opening(coordinator_for(0)[0], o.id, org_id=2)
+
+
+def test_a_weekly_start_rolls_on_the_same_weekday_and_wall_clock_time(monkeypatch):
+    monkeypatch.setattr(
+        data, "_local_now", lambda: "2026-11-05T10:00"
+    )  # after DST ends
+    assert data.next_start("2026-10-27T09:00", "weekly") == "2026-11-10T09:00"
+    assert data.next_start("2026-10-29T10:00", "weekly") == "2026-11-05T10:00"  # now
+    assert data.next_start("2026-10-27T09:00", "one_time") == "2026-10-27T09:00"
+    assert data.next_start("2026-10-27T09:00", "weekly", "closed") == "2026-10-27T09:00"
+    assert data.next_start("2026-12-01T09:00", "weekly") == "2026-12-01T09:00"

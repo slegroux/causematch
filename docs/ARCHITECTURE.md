@@ -1317,7 +1317,7 @@ flowchart LR
     class cards key
 ```
 
-1. **Open openings** whose start is still ahead (an opening with an open urgent call is judged at the call's time).
+1. **Open openings** whose start is still ahead (an opening with an open urgent call is judged at the call's time). A weekly opening whose start has passed rolls to the same weekday and time in the first week ahead (`data.next_start`, read time only: `starts_at` keeps the first date), and that is the date its card, the dashboard, the inbox, the chat and the shift an accept books use.
 2. **Hard filters**, always on: a verified, active org the volunteer hasn't blocked; at least one active cause; not swiped yet; no cause marked "not for me"; a separate orientation only if the volunteer said that's fine; within the volunteer's horizon (how far ahead they look), or 48 hours in today mode ("Next 48h").
 3. **Only show choices** (dealbreakers), each only when picked:
    - distance: within some place's travel time (on by default);
