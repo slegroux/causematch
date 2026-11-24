@@ -258,6 +258,7 @@ def test_privacy_page_lists_places_and_preferences_as_private(anon):
     page = anon.get("/privacy").text
     assert "places" in page and "never an address" in page
     assert "Only you see these:" in page
+    assert "nonprofits you like see only the neighborhood" in page
 
 
 def test_onboarding_once_done_cannot_be_posted_again(user):

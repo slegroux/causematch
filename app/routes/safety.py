@@ -527,7 +527,8 @@ def privacy():
             "ahead you look, one-time or recurring, the kind of work and skills you "
             "picked, which preferences only show or only rank, whether you need proof of your "
             "hours, Surprise me, and your last-minute call settings. They decide which openings you see and in what "
-            "order.",
+            "order. Of a place you give, nonprofits you like see only the neighborhood, which "
+            "you can change or clear under Me, then Your profile.",
             'A nonprofit sees only what "Who sees what" lists, and only after you like '
             "one of its openings: your photo, your first name and last initial (all of your "
             "last name once it accepts you), pronouns, bio and interests, the causes you "
