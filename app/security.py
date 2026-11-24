@@ -313,8 +313,10 @@ GATE_FORM = (
     "</label></p>{next}<p><button type='submit'>Open</button></p></form>"
 )
 # the 401 page holds the carried path (a sign-in link's token, say): never cached, and
-# never sent on as a Referer
-GATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+# never sent on in a Referer, which strict-origin cuts to the bare origin. Not
+# no-referrer: its form's POST would carry "Origin: null", which Guard refuses (and
+# same-origin would send the token's URL as the Referer)
+GATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "strict-origin"}
 GATE_BODY_MAX = 4096
 
 
@@ -336,9 +338,11 @@ def local_path(target):
 
 
 def _carried(pairs):
-    """The one `next` the gate form carries, if it is a path here, else "/"."""
+    """The one `next` the gate form carries, if it is a path here other than the gate's
+    own (which only answers its form), else "/"."""
     values = [v for k, v in pairs if k == "next"]
-    return (len(values) == 1 and local_path(values[0])) or "/"
+    target = len(values) == 1 and local_path(values[0])
+    return target if target and urlsplit(target).path != GATE_PATH else "/"
 
 
 def _private_page(next_path=None):

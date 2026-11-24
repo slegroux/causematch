@@ -203,7 +203,7 @@ def _sync_org_login_verify(req, form, sess):
     if not (is_coordinator or (profile and profile.role == "admin")):
         return EmailForm(error=BAD_LINK)
     # the link reached this inbox: on a staging preview its mail goes out from now on
-    notify.prove(profile.email)
+    notify.prove(profile.email, profile.id)
     # the link's sign-in only: not the demo buttons', nor Google's or Apple's
     notify.after(req, notify.send_sign_in_notice, profile.email, notify.now())
     return sign_in_staff(sess, profile, is_coordinator)

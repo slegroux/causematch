@@ -4824,6 +4824,18 @@ def _live_members(org_id):
     ]
 
 
+def live_holders(email):
+    """Ids of the live (not deleted) profiles whose address is this lowercased one: where
+    mail to it goes, a volunteer's (urgent_email) and staff's alike (profile.email)."""
+    return {
+        r["id"]
+        for r in _db.db.q(
+            "SELECT id FROM profile WHERE lower(email) = ? AND deleted_at IS NULL",
+            [email],
+        )
+    }
+
+
 def _mixes_demo(org_id, email):
     """Whether adding this address would put a demo address (config.demo_address) and
     another in one org's team, deleted members included, as _hidden_in_demo counts them:

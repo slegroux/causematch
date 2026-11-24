@@ -198,36 +198,51 @@ class StagingEmailer(FakeEmailer):
     """A preview's emailer when SMTP is configured (make_emailer builds it on a preview
     only). Mail goes out for real through `real` (SMTPEmailer, under its daily ceilings),
     marked as staging, only to an address off the demo's (config.demo_address), and then
-    only link mail and claim decisions (OPEN_KINDS), or any mail to an address proven by
-    signing in with an emailed link here (prove). Everything else stays fake: recorded,
-    never sent, so nothing a visitor wrote (an opening's title, a chat message) reaches an
-    inbox nobody proved. `proven` lives in this process, as the preview's database does
+    only link mail and claim decisions (OPEN_KINDS), or any mail to a proven address
+    (proven_for). Everything else stays fake: recorded, never sent, so nothing a visitor
+    wrote (an opening's title, a chat message) reaches an inbox nobody proved. Unsent mail
+    to such an address keeps and logs no body. `proven` ({address: profile ids that
+    redeemed an emailed link to it}) lives in this process, as the preview's database does
     (wiped at a restart); the reset clears it."""
 
     def __init__(self, real):
         super().__init__()
         self.real = real
-        self.proven = set()
+        self.proven = {}
 
     def is_real(self, to):
         return not demo_address(to.strip())
 
-    def prove(self, email):
+    def prove(self, email, uid):
         if self.is_real(email):
-            self.proven.add(email.strip().lower())
+            self.proven.setdefault(email.strip().lower(), set()).add(uid)
+
+    def proven_for(self, to):
+        """Every live profile that holds this address (data.live_holders) redeemed an
+        emailed link to it, and at least one does: a profile that typed someone's proven
+        address into Me holds it too, and has proved nothing."""
+        holders = data.live_holders(to.strip().lower())
+        return bool(holders) and holders <= self.proven.get(to.strip().lower(), set())
 
     def sends(self, to, kind):
         """Whether this mail goes out for real."""
-        return self.is_real(to) and (
-            kind in OPEN_KINDS or to.strip().lower() in self.proven
-        )
+        return self.is_real(to) and (kind in OPEN_KINDS or self.proven_for(to))
 
     def batch(self):
         return self.real.batch()
 
     def send(self, to, subject, body, headers=None, kind="notice"):
-        if not self.sends(to, kind):
+        if not self.is_real(to):
             return super().send(to, subject, body, headers, kind)
+        if not self.sends(to, kind):
+            # a real inbox nobody proved: neither its body (what a visitor wrote) kept
+            # nor logged
+            _record(self.sent, (to, subject, None))
+            _record(self.outbox, (datetime.now(UTC), to, subject, None, False, kind))
+            log.warning(
+                "STAGING EMAIL NOT SENT to %s: %s (%s)", mask_email(to), subject, kind
+            )
+            return
         self.real.send(
             to, "[Staging] " + subject, f"{STAGING_MARK}\n\n{body}", headers, kind
         )
@@ -607,12 +622,13 @@ def real_mail_to(email):
     return isinstance(emailer, StagingEmailer) and emailer.is_real(email)
 
 
-def prove(email):
-    """This address signed in with an emailed link: on a preview that sends real mail,
-    every email to it goes out from now on (StagingEmailer.prove). Elsewhere nothing."""
+def prove(email, uid):
+    """Profile `uid` signed in with an emailed link to this address: on a preview that
+    sends real mail, every email to it goes out from now on, while each profile holding it
+    has done the same (StagingEmailer.proven_for). Elsewhere nothing."""
     emailer = get_emailer()
     if isinstance(emailer, StagingEmailer):
-        emailer.prove(email)
+        emailer.prove(email, uid)
 
 
 def smtp_for(email):

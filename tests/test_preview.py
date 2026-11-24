@@ -899,7 +899,44 @@ def make_staging_opening(coordinator, org):
 def test_the_fake_google_page_proves_no_inbox(preview, monkeypatch):
     emailer, sender = _staging(monkeypatch)
     fake_google(browser())  # types m@example.org, "verified"
-    assert emailer.proven == set() and sender.sent == []
+    assert emailer.proven == {} and sender.sent == []
+
+
+def test_a_proof_is_the_profiles_not_the_addresss(demo, monkeypatch):
+    """A tester proves their address with an emailed link; a demo volunteer then types it
+    into Me. Its match news (an opening someone else titled) never reaches the tester's
+    real inbox, and neither does the tester's own until the address is theirs alone."""
+    emailer, sender = _staging(monkeypatch)
+    monkeypatch.setattr(notify, "get_sms", lambda: None)  # a preview texts nobody
+    tester = browser()
+    tester.post("/login/send", data={"email": "river@example.org"})
+    link = re.search(r"/login/verify\?token=[\w-]+", sender.sent[-1][2])[0]
+    tester.get(link)
+    assert tester.post("/login/verify").url.path == "/onboarding"
+    river = data.email_sign_in_owner("river@example.org")
+    assert emailer.proven_for("river@example.org")
+    sam = as_demo_volunteer()
+    profiles.update(id=sam.uid, email="river@example.org")
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    m = data.swipe(sam.uid, demo_seed_first_opening(pat).id, True)
+    if matches[m.id].status == "pending":
+        data.decide(pat, m.id, True)
+    sent = len(sender.sent)
+    notify.on_accepted(m.id)
+    assert len(sender.sent) == sent  # recorded, not sent, and without its body
+    assert emailer.sent[-1] == ("river@example.org", emailer.sent[-1][1], None)
+    # the tester's own news waits too, until the address is theirs alone again
+    org = next(o for o in orgs() if not db.q(
+        "SELECT 1 FROM org_member WHERE org_id = ?", [o.id]))  # fmt: skip
+    coordinator, _ = coordinator_for(orgs().index(org), "lee@example.org")
+    own = matches.insert(Match(opening_id=make_staging_opening(coordinator, org),
+                               volunteer_id=river, status="pending",
+                               created_at=db_now()))  # fmt: skip
+    data.decide(coordinator, own.id, True)
+    notify.on_accepted(own.id)
+    assert len(sender.sent) == sent
+    profiles.update(id=sam.uid, email="")
+    assert emailer.proven_for("river@example.org")  # theirs alone: real mail again
 
 
 def test_a_preview_shows_the_sign_in_link_on_the_page(guest):
@@ -1941,7 +1978,7 @@ def test_an_emailed_link_survives_the_password_gate(preview):
     r = phone.get(link)
     assert r.status_code == 401 and PRIVATE in r.text
     assert r.headers["cache-control"] == "no-store"
-    assert r.headers["referrer-policy"] == "no-referrer"
+    assert r.headers["referrer-policy"] == "strict-origin"  # see the Origin: null test
     (carried,) = re.findall(r"name='next' value='([^']+)'", r.text)
     assert html.unescape(carried) == link
     assert _gate(phone, "/", "w" * 20).status_code == 401  # a wrong password: no way in
@@ -1955,7 +1992,14 @@ def test_an_emailed_link_survives_the_password_gate(preview):
 
 @pytest.mark.parametrize(
     "bad",
-    ["//evil.example", "https://evil.example", "/\\evil", "/x\r\nSet-Cookie: a=b"],
+    [
+        "//evil.example",
+        "https://evil.example",
+        "/\\evil",
+        "/x\r\nSet-Cookie: a=b",
+        "/__preview",
+        "/__preview?next=/x",
+    ],
 )
 def test_the_gate_carries_only_a_path_here(preview, bad):
     """Never an open redirect, nor reflected unescaped: any other next lands on /."""
@@ -1973,3 +2017,38 @@ def test_the_gate_carries_only_a_path_here(preview, bad):
     (carried,) = re.findall(r"name='next' value='([^']*)'", page)
     assert security.local_path(html.unescape(carried)).startswith("/x?next=")
     assert "\r" not in page and "Set-Cookie:" not in page
+
+
+def test_the_gate_forms_post_needs_the_sites_origin(preview):
+    """Why the gate page is strict-origin, not no-referrer: under no-referrer a browser
+    posts its form with "Origin: null", and Guard refuses that like any foreign site."""
+    client = TestClient(app, base_url="https://testserver")
+    r = client.post(
+        "/__preview",
+        data={"access": PASSWORD, "next": "/"},
+        headers={"Origin": "null"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403 and COOKIE not in r.cookies
+    assert _gate(client, "/").status_code == 303  # its own Origin: let in
+
+
+def test_the_gate_form_is_slowed_and_takes_only_a_small_post(preview):
+    """Ten wrong passwords, then 429 even for the right one. A post from another site is
+    never weighed, and a big body is refused before the password is read."""
+    client = TestClient(app, base_url="https://testserver")
+    cross = client.post(
+        "/__preview",
+        data={"access": PASSWORD, "next": "/"},
+        headers={"Sec-Fetch-Site": "cross-site"},
+        follow_redirects=False,
+    )
+    assert cross.status_code == 401 and "name='access'" not in cross.text
+    assert not counted() and COOKIE not in cross.cookies
+    big = {"access": PASSWORD, "next": "/" + "x" * security.GATE_BODY_MAX}
+    r = client.post("/__preview", data=big, follow_redirects=False)
+    assert r.status_code == 400 and COOKIE not in r.cookies
+    for _ in range(10):
+        assert _gate(client, "/", "w" * 20).status_code == 401
+    assert _gate(client, "/", "w" * 20).status_code == 429
+    assert _gate(client, "/").status_code == 429

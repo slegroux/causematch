@@ -10,7 +10,8 @@ from app import data, notify
 from app.db import identities, openings, orgs, profiles, shifts
 
 SE = {"width": 375, "height": 667}  # iPhone SE, the smallest phone in common use
-EXTERNAL = re.compile(r"^(?!(http|ws)://127\.0\.0\.1)(https?|wss?)://")
+# 127.0.0.1 over https too: the preview gate's test serves it with a self-signed cert
+EXTERNAL = re.compile(r"^(?!(https?|wss?)://127\.0\.0\.1)(https?|wss?)://")
 blocked = []  # requests that tried to leave the machine
 csp_errors = []  # the browser's Content-Security-Policy violation messages
 
