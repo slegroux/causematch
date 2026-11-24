@@ -27,6 +27,7 @@ from conftest import (
 )
 from PIL import Image
 from starlette.testclient import TestClient
+from test_auth import APP_COOKIE, resign
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
 from test_photos import key_of, upload
 
@@ -215,8 +216,7 @@ def _start(tmp_path, code="import main", **env):
         "PUBLIC_BASE_URL": "https://causematch-preview.run.app",
         "CONTACT_EMAIL": "hello@causematch.test",
         "TRUSTED_PROXY_HOPS": "1",
-        "CAUSEMATCH_FAKE_SMS": "1",
-        "CAUSEMATCH_FAKE_EMAIL": "1",
+        "CAUSEMATCH_FAKE_EMAIL": "1",  # as scripts/deploy_preview.sh: and no SMS
         **CLOUD_RUN,
     }
     return subprocess.run(
@@ -234,12 +234,23 @@ def test_cloud_run_starts_a_preview_only_with_its_password(tmp_path):
     r = _start(tmp_path, CAUSEMATCH_ENV="preview")
     assert r.returncode != 0 and "PREVIEW_PASSWORD must be" in r.stderr
     r = _start(tmp_path, CAUSEMATCH_ENV="production")  # fakes: production refuses
+    assert r.returncode != 0 and "CAUSEMATCH_FAKE_EMAIL=1 needs" in r.stderr
+    email = {"EMAIL_API_KEY": "x", "EMAIL_FROM": "x@causematch.test"}
+    r = _start(tmp_path, CAUSEMATCH_ENV="production", CAUSEMATCH_FAKE_EMAIL=None,
+               CAUSEMATCH_FAKE_SMS="1", **email)  # fmt: skip
     assert r.returncode != 0 and "CAUSEMATCH_FAKE_SMS=1 needs" in r.stderr
 
 
 def test_a_preview_seeds_itself_at_startup_and_logs_the_sign_in_links(tmp_path):
-    r = _start(tmp_path, CAUSEMATCH_ENV="preview", PREVIEW_PASSWORD=PASSWORD)
+    """Started as scripts/deploy_preview.sh starts it: fake email, and no texts at all, so
+    its pages speak of email as production's do."""
+    code = (
+        "import main; from app import notify; "
+        "print(notify.texts_on(), type(notify.get_emailer()).__name__)"
+    )
+    r = _start(tmp_path, code, CAUSEMATCH_ENV="preview", PREVIEW_PASSWORD=PASSWORD)
     assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["False", "FakeEmailer"]
     assert "preview seeded" in r.stderr
     for email in (demo_seed.COORDINATOR[0], demo_seed.ADMIN[0]):
         assert re.search(
@@ -1459,6 +1470,10 @@ def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
     urgent_calls.update(id=call.id, starts_at="2026-01-02T09:00")  # gone stale
     old = max(p.id for p in profiles())
     admin = _demo_admin()
+    pat = TestClient(app, headers={"Authorization": basic()})
+    pat.post("/org/login/demo")
+    epoch = data.session_epoch()  # every demo button's session carries it
+    assert all(_epoch_of(c) == epoch for c in (sam, pat, admin))
     assert 'href="/admin/reset"' in admin.get("/admin").text
     assert "be undone." in admin.get("/admin/reset").text
     r = admin.post("/admin/reset", follow_redirects=False)
@@ -1475,6 +1490,22 @@ def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
         "/org/login"
     )
     assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    # a cold start numbers profiles from 1 again: the old epoch alone signs sam out of
+    # whoever has an id now. The cookie names that profile in full (uid, sv and its
+    # created_at), so only the epoch differs, however many seconds the reset took
+    assert data.session_epoch() != epoch
+    now = profiles(where="role = 'volunteer' AND onboarded_at IS NOT NULL")[0]
+    theirs = {"uid": now.id, "sv": now.session_version or 1, "pc": now.created_at}
+    resign(sam, **theirs)
+    assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    resign(sam, **theirs, ep=data.session_epoch())
+    assert sam.get("/deck", follow_redirects=False).status_code == 200  # the control
+    assert _epoch_of(_demo_admin()) == data.session_epoch()  # the admin's one tap back
+
+
+def _epoch_of(client):
+    raw = client.cookies.get(APP_COOKIE).split(".")[0]
+    return json.loads(base64.b64decode(raw + "=="))["ep"]
 
 
 def test_outside_a_preview_reset_demo_data_is_not_found(request, monkeypatch):

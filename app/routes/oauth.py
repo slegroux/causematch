@@ -32,7 +32,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
 from app import data, oauth, security
-from app.auth import sign_in, sign_in_staff
+from app.auth import (
+    same_database,
+    same_profile,
+    sign_in,
+    sign_in_staff,
+    this_epoch,
+)
 from app.config import demo_address, is_preview, is_production, public_base_url
 from app.forms import EMAIL, bad_request, query, str_form
 from app.routes.auth import SUSPENDED, LoginPage, SentPage
@@ -72,7 +78,7 @@ def _redirect_uri(name):
     return public_base_url() + f"/auth/{name}/callback"
 
 
-def _start(req, name, intent="volunteer", uid=None, sv=None):
+def _start(req, name, intent="volunteer", uid=None, sv=None, ep=None, pc=None):
     provider = oauth.get_provider(name)
     if provider is None:
         return _not_found()
@@ -85,7 +91,7 @@ def _start(req, name, intent="volunteer", uid=None, sv=None):
     )
     r.set_cookie(
         oauth.oauth_cookie(),
-        oauth.seal(name, state, nonce, verifier, intent, uid, sv),
+        oauth.seal(name, state, nonce, verifier, intent, uid, sv, ep, pc),
         max_age=oauth.COOKIE_MAX_AGE,
         **_cookie_options(name),
     )
@@ -126,10 +132,19 @@ def apple_start(req):
 
 
 def _connect(req, name):
-    """Start a link flow for the signed-in volunteer: their uid and session version go
-    into the sealed flow cookie, and the callback connects to nobody else."""
+    """Start a link flow for the signed-in volunteer: their uid, session version, the
+    database's epoch and the profile's created_at go into the sealed flow cookie, and
+    the callback connects to nobody else."""
     profile = data.get_profile(req.scope["uid"])
-    return _start(req, name, "link", profile.id, profile.session_version or 1)
+    return _start(
+        req,
+        name,
+        "link",
+        profile.id,
+        profile.session_version or 1,
+        data.session_epoch(),
+        profile.created_at,
+    )
 
 
 def _disconnect(req, sess, name):
@@ -342,8 +357,19 @@ def _link(sess, name, flow, claims):
     there the sealed session version stands in: signing out or being suspended since
     changes it. The session is never written here, so Apple's post leaves it as it was."""
     profile = data.get_profile(flow.uid)
-    current = bool(profile) and (profile.session_version or 1) == flow.sv
-    same = sess.get("uid") == flow.uid and sess.get("sv") == flow.sv
+    current = (
+        bool(profile)
+        and (profile.session_version or 1) == flow.sv
+        and this_epoch(flow.ep)
+        and flow.pc == profile.created_at
+    )
+    same = (
+        current
+        and sess.get("uid") == flow.uid
+        and sess.get("sv") == flow.sv
+        and same_database(sess)
+        and same_profile(sess, profile)
+    )
     cross_site = name == "apple" and "uid" not in sess
     if not (current and profile.role == "volunteer" and (same or cross_site)):
         log.warning("%s connect refused: not the session that started it", name)

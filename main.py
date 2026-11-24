@@ -177,6 +177,9 @@ for routes in (
 data.start(not is_production())
 # after the migrations (app.db's import): the first admins, with no shell in production
 data.add_admins(admin_emails())
+# this database's session epoch, made now: a database that can't take the write stops
+# the start here rather than failing the first sign-in
+data.session_epoch()
 if is_preview():  # the demo's orgs and people, reseeded at each cold start
     seed_dir = os.environ.get("PREVIEW_SEED_DIR")
     demo_seed.seed_preview(seed_dir)

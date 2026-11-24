@@ -102,12 +102,24 @@ class Flow:
     intent: str
     uid: int | None  # link only: the volunteer who pressed Connect
     sv: int | None  # link only: their session version then
+    ep: str | None = None  # link only: the database's epoch then (data.session_epoch)
+    pc: str | None = None  # link only: their profile's created_at (auth.same_profile)
 
 
-def seal(provider, state, nonce, verifier, intent="volunteer", uid=None, sv=None):
+def seal(
+    provider,
+    state,
+    nonce,
+    verifier,
+    intent="volunteer",
+    uid=None,
+    sv=None,
+    ep=None,
+    pc=None,
+):
     flow = {"p": provider, "s": state, "n": nonce, "v": verifier, "i": intent}
     if intent == "link":
-        flow |= {"u": uid, "sv": sv}
+        flow |= {"u": uid, "sv": sv, "ep": ep, "pc": pc}
     return _serializer().dumps(flow)
 
 
@@ -130,11 +142,15 @@ def unseal(value, provider, state):
     intent, uid, sv = flow.get("i"), flow.get("u"), flow.get("sv")
     if intent not in INTENTS:
         raise AuthError("bad intent")
-    if intent == "link" and not (type(uid) is int and type(sv) is int):
+    ep, pc = flow.get("ep"), flow.get("pc")
+    # a link flow sealed before ep and pc were (10 minutes at most) is refused: no legacy
+    if intent == "link" and not (
+        type(uid) is int and type(sv) is int and type(ep) is str and "pc" in flow
+    ):
         raise AuthError("bad link")
     if intent != "link":
-        uid = sv = None
-    return Flow(str(flow.get("n", "")), str(flow.get("v", "")), intent, uid, sv)
+        uid = sv = ep = pc = None
+    return Flow(str(flow.get("n", "")), str(flow.get("v", "")), intent, uid, sv, ep, pc)
 
 
 # --- Google ------------------------------------------------------------------------------

@@ -16,6 +16,7 @@ from conftest import (
 )
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
+from test_auth import resign
 
 from app import data, notify, oauth, security
 from app.db import Identity, blocks, identities, photos, profiles, retained_identities
@@ -299,15 +300,36 @@ def test_link_connects_google_to_an_email_volunteer_but_not_someone_elses(anon):
     assert identities.count_where("subject = ?", ["g-theirs"]) == 1
 
 
-def test_link_with_a_flow_sealed_for_another_uid_is_400():
+@pytest.mark.parametrize("forged", ["uid", "epoch", "created_at", "suspended"])
+def test_link_with_a_flow_sealed_for_another_uid_or_database_is_400(forged):
+    """And one for an account suspended since: no profile to compare with."""
     me, them = volunteer(), volunteer()
+    uid = them.uid if forged == "uid" else me.uid
+    ep = "another-database" if forged == "epoch" else data.session_epoch()
+    pc = profiles[uid].created_at
+    if forged == "created_at":
+        pc = "2000-01-01T00:00:00+00:00"  # not the clock's: no same-second luck
+        assert profiles[uid].created_at != pc
     state, nonce, verifier = oauth.new_flow()
     me.cookies.set("cm_oauth", oauth.seal("google", state, nonce, verifier, "link",
-                                          them.uid, 1))  # fmt: skip
+                                          uid, 1, ep, pc))  # fmt: skip
     flow = {"state": state, "nonce": nonce, "code_challenge": oauth.challenge(verifier)}
+    if forged == "suspended":
+        profiles.update(id=me.uid, suspended_at="2026-01-01T00:00:00+00:00")
     r = me.get(consent(me, flow, sub="g-forged"), follow_redirects=False)
     assert r.status_code == 400
     assert identities.count_where("subject = ?", ["g-forged"]) == 0
+
+
+def test_link_from_a_session_of_another_database_is_400():
+    """Connect started, then the session's epoch differs (uid and sv the same): the
+    callback links nothing."""
+    me = volunteer()
+    flow = start(me, "/me/identity/google/connect", "POST")
+    resign(me, ep="another-database")
+    r = me.get(consent(me, flow, sub="g-stale"), follow_redirects=False)
+    assert r.status_code == 400
+    assert identities.count_where("subject = ?", ["g-stale"]) == 0
 
 
 def test_unlink_never_removes_the_last_way_in(anon):

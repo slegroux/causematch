@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 import re
@@ -6,7 +7,7 @@ import time
 from fasthtml.common import Beforeware, Redirect, Response
 
 from app import data
-from app.config import is_dev, is_production, strong_secret
+from app.config import is_dev, is_preview, is_production, strong_secret
 
 log = logging.getLogger("causematch")
 
@@ -109,6 +110,36 @@ def _fresh_session(sess, profile):
     sess["uid"] = profile.id
     sess["sv"] = profile.session_version or 1
     sess["at"] = int(time.time())
+    sess["ep"] = data.session_epoch()
+    sess["pc"] = profile.created_at
+
+
+def same_database(sess):
+    """Whether the session was made on this database (its "ep", data.session_epoch). A
+    preview's database is built afresh at each cold start, redeploy and reset, and its
+    profile ids are taken again: a cookie from before would sign its holder in as whoever
+    has its uid now. A session from before epochs were kept has none: refused on a
+    preview, kept elsewhere (check_session adds it), where the database persists."""
+    ep = sess.get("ep")
+    if ep is None:
+        return not is_preview()
+    return this_epoch(ep)
+
+
+def this_epoch(ep):
+    """Whether ep is this database's epoch; nothing else, None included, is."""
+    return isinstance(ep, str) and hmac.compare_digest(
+        ep.encode(), data.session_epoch().encode()
+    )
+
+
+def same_profile(sess, profile):
+    """Whether the session was made for this very profile: its "pc", the profile's
+    created_at when it signed in, is the profile's. Production can take an id again
+    while its epoch stays: a sign-up lost in a deploy overlap or a point-in-time restore
+    leaves a cookie naming an id that the next sign-up gets. A session from before "pc"
+    was kept has none and passes (check_session adds it)."""
+    return "pc" not in sess or sess["pc"] == profile.created_at
 
 
 def _too_old(sess, profile):
@@ -140,14 +171,21 @@ def check_session(req, sess):
     path = req.url.path
     if "me_pending_phone" in sess:
         pending_phone(sess, "me_pending")  # drops an expired one on any page
-    profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
-    if not profile or sess.get("sv") != (profile.session_version or 1):
+    live = sess.get("uid") and same_database(sess)
+    profile = data.get_profile(sess["uid"]) if live else None
+    if (
+        not profile
+        or sess.get("sv") != (profile.session_version or 1)
+        or not same_profile(sess, profile)
+    ):
         sess.pop("uid", None)
         staff = is_org_path(path) or is_admin_path(path)
         return Redirect("/org/login" if staff else "/login")
     if _too_old(sess, profile):
         sess.clear()
         return Redirect("/org/login")
+    sess.setdefault("ep", data.session_epoch())  # one from before epochs had none
+    sess.setdefault("pc", profile.created_at)  # and from before "pc" none
     req.scope["uid"] = profile.id
     if path == "/logout":
         return
@@ -179,12 +217,19 @@ def ws_session_user(ws, role):
     message) must call this itself and, on None, close the socket:
         if (user := ws_session_user(ws, "volunteer")) is None:
             return await ws.close(code=1008)
-    Same rules as check_session: live profile, matching session version, a staff
-    session within STAFF_MAX_AGE, and for coordinators a current org membership.
+    Same rules as check_session: this database's session, live profile, the same
+    profile it signed in (same_profile), matching session version, a staff session within STAFF_MAX_AGE, and for coordinators a
+    current org membership. One from before epochs or "pc" isn't given them here: a
+    websocket sends no cookie back.
     """
     sess = ws.scope.get("session") or {}
-    profile = data.get_profile(sess["uid"]) if sess.get("uid") else None
-    if not profile or sess.get("sv") != (profile.session_version or 1):
+    live = sess.get("uid") and same_database(sess)
+    profile = data.get_profile(sess["uid"]) if live else None
+    if (
+        not profile
+        or sess.get("sv") != (profile.session_version or 1)
+        or not same_profile(sess, profile)
+    ):
         return None
     if _too_old(sess, profile) or profile.role != role:
         return None

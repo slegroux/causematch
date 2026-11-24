@@ -802,7 +802,8 @@ def reset_preview(seed_dir=None):
 
     New profile ids continue past every old one: a session cookie still held (the
     admin's own, a volunteer's) names no profile, and is signed out, rather than whoever
-    took its id. RuntimeError, before touching a row, outside a preview or on a database
+    took its id; the database's session epoch is made anew too (data.session_epoch),
+    which signs them out by itself. RuntimeError, before touching a row, outside a preview or on a database
     Litestream replicates (LITESTREAM_BUCKET set, or its _litestream_ tables there): a
     production service switched to CAUSEMATCH_ENV=preview would replicate the wipe."""
     from app import data
@@ -823,24 +824,34 @@ def reset_preview(seed_dir=None):
         raise RuntimeError(
             "reset_preview runs on an unreplicated database only: Litestream is here"
         )
-    with data._lock, db.conn:  # the lock every data function takes (re-entrant)
-        tables = [
-            name
-            for (name,) in db.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' "
-                "AND name NOT LIKE '\\_litestream\\_%' ESCAPE '\\'"
-            )
-            if name not in (*RESET_KEEPS, TABLE)
-        ]
-        (top,) = db.conn.execute("SELECT coalesce(max(id), 0) FROM profile").fetchone()
-        for name in tables:
-            db.conn.execute(f'DELETE FROM "{name}"')
-        # a deleted profile at the old highest id while seeding: SQLite numbers the new
-        # rows after it, and they keep their ids once it goes
-        db.conn.execute(
-            "INSERT INTO profile (id, deleted_at) VALUES (?, ?)", [top, now()]
-        )
-        data.add_admins(admin_emails())
-        seed_preview(seed_dir)
-        db.conn.execute("DELETE FROM profile WHERE id = ?", [top])
+    with data._lock:  # the lock every data function takes (re-entrant)
+        try:
+            with db.conn:
+                tables = [
+                    name
+                    for (name,) in db.conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table' "
+                        "AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' "
+                        "AND name NOT LIKE '\\_litestream\\_%' ESCAPE '\\'"
+                    )
+                    if name not in (*RESET_KEEPS, TABLE)
+                ]
+                (top,) = db.conn.execute(
+                    "SELECT coalesce(max(id), 0) FROM profile"
+                ).fetchone()
+                for name in tables:
+                    db.conn.execute(f'DELETE FROM "{name}"')
+                # a deleted profile at the old highest id while seeding: SQLite numbers
+                # the new rows after it, and they keep their ids once it goes
+                db.conn.execute(
+                    "INSERT INTO profile (id, deleted_at) VALUES (?, ?)", [top, now()]
+                )
+                data.add_admins(admin_emails())
+                seed_preview(seed_dir)
+                db.conn.execute("DELETE FROM profile WHERE id = ?", [top])
+        finally:
+            # database_epoch's row went with the rest: once this commits, the next
+            # session_epoch makes a new one and every earlier session is signed out; if
+            # it rolled back, the old one is read again. Still under the lock, so no
+            # request reads the cache in between.
+            data.forget_session_epoch()
