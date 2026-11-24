@@ -210,6 +210,7 @@ def admin_reset_confirm():
                         "every account made here."
                     ),
                     Li("You are signed out. This can't be undone."),
+                    Li("The preview can be reset once every 15 minutes."),
                     cls="uk-list uk-list-disc",
                 ),
                 Form(
@@ -231,12 +232,18 @@ def admin_reset_confirm():
 
 
 @preview_ar("/admin/reset", methods=["POST"])
-def admin_reset(sess):
+def admin_reset(req, sess):
     """The admin's own profile is among the rows deleted: they sign in again, on the page
-    that offers the seeded admin in one tap."""
+    that offers the seeded admin in one tap. Under RESET_ALL and RESET_PER_IP: past
+    either, the 429 page and nothing reset."""
     if _no_reset():
         return Response("Not found", status_code=404)
+    ip = security.ip_subject(req)
+    if not security.allow((security.RESET_ALL, "all"), (security.RESET_PER_IP, ip)):
+        return security.too_many(retry_after=security.RESET_ALL[0][2])
     reset_demo()
+    # hashed as ip_subject's own log line, never the address
+    log.info("preview reset (client key %s)", security._key("client", ip)[-12:])
     sess.clear()
     return Redirect("/org/login")
 

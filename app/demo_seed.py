@@ -15,6 +15,7 @@ source_url, else the org's volunteer_url.
 
 import json
 import logging
+import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
@@ -801,7 +802,9 @@ def reset_preview(seed_dir=None):
 
     New profile ids continue past every old one: a session cookie still held (the
     admin's own, a volunteer's) names no profile, and is signed out, rather than whoever
-    took its id. RuntimeError outside a preview, whoever calls it."""
+    took its id. RuntimeError, before touching a row, outside a preview or on a database
+    Litestream replicates (LITESTREAM_BUCKET set, or its _litestream_ tables there): a
+    production service switched to CAUSEMATCH_ENV=preview would replicate the wipe."""
     from app import data
     from app.config import admin_emails, is_preview
     from app.db import db, now
@@ -810,6 +813,15 @@ def reset_preview(seed_dir=None):
     if not is_preview():
         raise RuntimeError(
             "reset_preview runs in a preview only (CAUSEMATCH_ENV=preview)"
+        )
+    if (
+        os.environ.get("LITESTREAM_BUCKET")
+        or db.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name LIKE '\\_litestream\\_%' ESCAPE '\\'"
+        ).fetchone()
+    ):
+        raise RuntimeError(
+            "reset_preview runs on an unreplicated database only: Litestream is here"
         )
     with data._lock, db.conn:  # the lock every data function takes (re-entrant)
         tables = [

@@ -115,8 +115,11 @@ def public_base_url(env=os.environ):
 
 def require_env(env=os.environ):
     """Refuse to start unless CAUSEMATCH_ENV is declared (Cloud Run counts as production),
-    or when a preview has no strong PREVIEW_PASSWORD."""
+    or when a preview has no strong PREVIEW_PASSWORD, or replicates (LITESTREAM_BUCKET):
+    its admin may wipe its database (demo_seed.reset_preview), as entrypoint.sh refuses."""
     if env.get("CAUSEMATCH_ENV") == "preview":
+        if env.get("LITESTREAM_BUCKET"):
+            raise RuntimeError("a preview never replicates: unset LITESTREAM_BUCKET")
         if not is_preview(env):
             raise RuntimeError(
                 f"PREVIEW_PASSWORD must be at least {MIN_PREVIEW_PASSWORD} characters "
