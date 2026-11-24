@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -639,3 +640,84 @@ def test_outside_a_demo_there_are_no_demo_buttons_and_their_posts_are_refused(
     for path in ("/login/demo", "/org/login/demo", "/org/login/demo-admin"):
         r = anon.post(path, follow_redirects=False)
         assert r.status_code == 403 and "uid" not in session_of(anon), path
+
+
+# --- a session belongs to the database it was made on (data.session_epoch) ---------------
+
+
+# The session cookie's name and key as main.py started with them (CAUSEMATCH_ENV=test),
+# whatever env a test sets since
+APP_COOKIE, APP_SECRET = "cm_session", session_secret(os.environ)
+
+
+def resign(client, **changes):
+    """The client's session re-signed with `changes`; a None value drops that key."""
+    import base64
+
+    from itsdangerous import TimestampSigner
+
+    raw = client.cookies.get(APP_COOKIE, "").split(".")[0]
+    sess = {**json.loads(base64.b64decode(raw + "==")), **changes}
+    sess = {k: v for k, v in sess.items() if v is not None}
+    raw = base64.b64encode(json.dumps(sess).encode())
+    (domain,) = {c.domain for c in client.cookies.jar if c.name == APP_COOKIE}
+    client.cookies.delete(APP_COOKIE)  # in its place: the next response's replaces it
+    signed = TimestampSigner(APP_SECRET).sign(raw).decode()
+    client.cookies.set(APP_COOKIE, signed, domain=domain)
+    return sess
+
+
+def socket_user(sess, role="volunteer"):
+    from types import SimpleNamespace
+
+    from app.auth import ws_session_user
+
+    return ws_session_user(SimpleNamespace(scope={"session": sess}), role)
+
+
+def google(path="/auth/google/start", **kw):
+    from test_oauth import google_sign_in
+
+    c = TestClient(app)
+    google_sign_in(c, path, **kw)
+    return c
+
+
+def google_staff():
+    from test_oauth import STAFF
+
+    coordinator_for(0, "coord0@example.org")
+    return google(STAFF, email="coord0@example.org", hd="example.org")
+
+
+@pytest.mark.parametrize("signed_in", [volunteer, coordinator, admin_client, google,
+                                       google_staff])  # fmt: skip
+def test_every_sign_in_writes_the_databases_epoch(signed_in):
+    """The emailed links (volunteer, coordinator, admin) and Google's, volunteer and
+    staff: all through auth._fresh_session. The demo buttons: test_preview's reset."""
+    assert session_of(signed_in())["ep"] == data.session_epoch()
+
+
+def test_a_session_from_another_database_signs_nobody_in():
+    sam = volunteer()
+    assert sam.get("/deck", follow_redirects=False).status_code == 200
+    assert socket_user(session_of(sam)).id == sam.uid
+    sess = resign(sam, ep="another-database")
+    r = sam.get("/deck", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+    assert "uid" not in session_of(sam)
+    assert socket_user(sess) is None
+
+
+def test_a_session_from_before_epochs_is_kept_and_given_one_except_on_a_preview(
+    monkeypatch,
+):
+    sam = volunteer()
+    sess = resign(sam, ep=None)
+    assert sam.get("/deck", follow_redirects=False).status_code == 200
+    assert session_of(sam)["ep"] == data.session_epoch()  # written on that request
+    monkeypatch.setenv("CAUSEMATCH_ENV", "production")
+    assert socket_user(sess).id == sam.uid
+    monkeypatch.setenv("CAUSEMATCH_ENV", "preview")  # rebuilt at every cold start
+    monkeypatch.setenv("PREVIEW_PASSWORD", "p" * 32)
+    assert socket_user(sess) is None

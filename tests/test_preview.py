@@ -27,6 +27,7 @@ from conftest import (
 )
 from PIL import Image
 from starlette.testclient import TestClient
+from test_auth import APP_COOKIE, resign
 from test_chat import Chat, bubble, one_loop, refused, say  # noqa: F401  one_loop: fixture
 from test_photos import key_of, upload
 
@@ -1459,6 +1460,10 @@ def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
     urgent_calls.update(id=call.id, starts_at="2026-01-02T09:00")  # gone stale
     old = max(p.id for p in profiles())
     admin = _demo_admin()
+    pat = TestClient(app, headers={"Authorization": basic()})
+    pat.post("/org/login/demo")
+    epoch = data.session_epoch()  # every demo button's session carries it
+    assert all(_epoch_of(c) == epoch for c in (sam, pat, admin))
     assert 'href="/admin/reset"' in admin.get("/admin").text
     assert "be undone." in admin.get("/admin/reset").text
     r = admin.post("/admin/reset", follow_redirects=False)
@@ -1475,6 +1480,20 @@ def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
         "/org/login"
     )
     assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    # a cold start numbers profiles from 1 again: the old epoch alone signs sam out of
+    # whoever has an id now
+    assert data.session_epoch() != epoch
+    now = profiles(where="role = 'volunteer' AND onboarded_at IS NOT NULL")[0]
+    resign(sam, uid=now.id, sv=now.session_version or 1)
+    assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
+    resign(sam, uid=now.id, sv=now.session_version or 1, ep=data.session_epoch())
+    assert sam.get("/deck", follow_redirects=False).status_code == 200  # the control
+    assert _epoch_of(_demo_admin()) == data.session_epoch()  # the admin's one tap back
+
+
+def _epoch_of(client):
+    raw = client.cookies.get(APP_COOKIE).split(".")[0]
+    return json.loads(base64.b64decode(raw + "=="))["ep"]
 
 
 def test_outside_a_preview_reset_demo_data_is_not_found(request, monkeypatch):

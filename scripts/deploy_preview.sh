@@ -24,6 +24,17 @@ SEED_SRC="${SEED_SRC:-$HOME/.omc/reports/2026-10-15-causematch-design/real-orgs}
 CONTACT_EMAIL="${CONTACT_EMAIL:-hello@causematch.test}"
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
 
+# Production's SERVICE or SERVICE_ACCOUNT left in the shell would redeploy production as a
+# preview: its env replaced (no LITESTREAM_BUCKET), its database the demo seed's, and its
+# sessions read against that database.
+case "$SERVICE $SERVICE_ACCOUNT" in
+"causematch "* | *" causematch-prod@"*)
+	echo "SERVICE ($SERVICE) or SERVICE_ACCOUNT ($SERVICE_ACCOUNT) names production:" \
+		"refusing" >&2
+	exit 1
+	;;
+esac
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SEED="${ROOT:?}/preview-seed"
 cd "$ROOT"

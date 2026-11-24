@@ -1,7 +1,7 @@
 """entrypoint.sh, the image's start: plain uvicorn, or uvicorn under Litestream when
 LITESTREAM_BUCKET is set. Run for real with fake litestream and uvicorn on PATH that log
 their arguments, one per line, and the LITESTREAM_DB they were given. And
-scripts/deploy_production.sh's refusals, with a fake gcloud: no real one ever runs."""
+scripts/deploy_production.sh's and deploy_preview.sh's refusals, with a fake gcloud: no real one ever runs."""
 
 import json
 import os
@@ -126,8 +126,8 @@ esac
 """
 
 
-def deploy(tmp_path, **env):
-    """Run deploy_production.sh against the fake gcloud; (returncode, stderr, calls)."""
+def deploy(tmp_path, script="deploy_production.sh", **env):
+    """Run a deploy script against the fake gcloud; (returncode, stderr, calls)."""
     bin_dir, log = tmp_path / "bin", tmp_path / "gcloud.log"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "gcloud").write_text(GCLOUD)
@@ -144,7 +144,7 @@ def deploy(tmp_path, **env):
         "FAKE_BUCKET_NUMBER": "111",
     }
     r = subprocess.run(
-        ["bash", str(ROOT / "scripts" / "deploy_production.sh")],
+        ["bash", str(ROOT / "scripts" / script)],
         check=False,
         env=base | env,
         capture_output=True,
@@ -189,4 +189,17 @@ def test_production_deploys_only_to_a_litestream_bucket_in_its_own_project(tmp_p
 def test_production_refuses_the_previews_service_or_account(tmp_path, env):
     rc, err, calls = deploy(tmp_path, **env)
     assert rc == 1 and "names the preview" in err
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"SERVICE": "causematch"},
+        {"SERVICE_ACCOUNT": "causematch-prod@causematch-la.iam.gserviceaccount.com"},
+    ],
+)
+def test_the_preview_refuses_productions_service_or_account(tmp_path, env):
+    rc, err, calls = deploy(tmp_path, "deploy_preview.sh", HOME=str(tmp_path), **env)
+    assert rc == 1 and "names production" in err
     assert calls == []

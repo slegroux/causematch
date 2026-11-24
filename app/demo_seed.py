@@ -802,7 +802,8 @@ def reset_preview(seed_dir=None):
 
     New profile ids continue past every old one: a session cookie still held (the
     admin's own, a volunteer's) names no profile, and is signed out, rather than whoever
-    took its id. RuntimeError, before touching a row, outside a preview or on a database
+    took its id; the database's session epoch is made anew too (data.session_epoch),
+    which signs them out by itself. RuntimeError, before touching a row, outside a preview or on a database
     Litestream replicates (LITESTREAM_BUCKET set, or its _litestream_ tables there): a
     production service switched to CAUSEMATCH_ENV=preview would replicate the wipe."""
     from app import data
@@ -836,6 +837,10 @@ def reset_preview(seed_dir=None):
         (top,) = db.conn.execute("SELECT coalesce(max(id), 0) FROM profile").fetchone()
         for name in tables:
             db.conn.execute(f'DELETE FROM "{name}"')
+        # database_epoch's row went too: the next session_epoch, once this commits, makes a
+        # new one and every session from before is signed out; if it rolls back, the old
+        # one is read again. Under the lock no request reads it in between.
+        data.forget_session_epoch()
         # a deleted profile at the old highest id while seeding: SQLite numbers the new
         # rows after it, and they keep their ids once it goes
         db.conn.execute(

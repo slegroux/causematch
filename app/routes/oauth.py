@@ -32,7 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import RedirectResponse
 
 from app import data, oauth, security
-from app.auth import sign_in, sign_in_staff
+from app.auth import same_database, sign_in, sign_in_staff
 from app.config import demo_address, is_preview, is_production, public_base_url
 from app.forms import EMAIL, bad_request, query, str_form
 from app.routes.auth import SUSPENDED, LoginPage, SentPage
@@ -343,7 +343,11 @@ def _link(sess, name, flow, claims):
     changes it. The session is never written here, so Apple's post leaves it as it was."""
     profile = data.get_profile(flow.uid)
     current = bool(profile) and (profile.session_version or 1) == flow.sv
-    same = sess.get("uid") == flow.uid and sess.get("sv") == flow.sv
+    same = (
+        sess.get("uid") == flow.uid
+        and sess.get("sv") == flow.sv
+        and same_database(sess)
+    )
     cross_site = name == "apple" and "uid" not in sess
     if not (current and profile.role == "volunteer" and (same or cross_site)):
         log.warning("%s connect refused: not the session that started it", name)
