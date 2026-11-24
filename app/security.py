@@ -305,6 +305,66 @@ PRIVATE_PAGE = (
     "<title>Private preview</title></head><body><p>This is a private preview. Ask the "
     "Causematch team for the link.</p></body></html>"
 )
+# The gate's password form posts here, carrying the page it stood in for (`next`)
+GATE_PATH = "/__preview"
+GATE_FORM = (
+    f"<form method='post' action='{GATE_PATH}'><p><label>Preview password "
+    "<input type='password' name='access' autocomplete='current-password' required>"
+    "</label></p>{next}<p><button type='submit'>Open</button></p></form>"
+)
+# the 401 page holds the carried path (a sign-in link's token, say): never cached, and
+# never sent on in a Referer, which strict-origin cuts to the bare origin. Not
+# no-referrer: its form's POST would carry "Origin: null", which Guard refuses (and
+# same-origin would send the token's URL as the Referer)
+GATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "strict-origin"}
+GATE_BODY_MAX = 4096
+
+
+def local_path(target):
+    """target when it is a path on this site ("/x?y"), else None: one leading slash, no
+    "//" or backslash (a browser reads both as another host), printable ASCII only (no
+    CR/LF, no header injection), and no scheme or host."""
+    if not (
+        isinstance(target, str)
+        and 0 < len(target) <= 2000
+        and target.startswith("/")
+        and not target.startswith("//")
+        and "\\" not in target
+        and all(" " < c < "\x7f" for c in target)
+    ):
+        return None
+    parts = urlsplit(target)
+    return None if parts.scheme or parts.netloc else target
+
+
+def _carried(pairs):
+    """The one `next` the gate form carries, if it is a path here other than the gate's
+    own (which only answers its form), else "/"."""
+    values = [v for k, v in pairs if k == "next"]
+    target = len(values) == 1 and local_path(values[0])
+    return target if target and urlsplit(target).path != GATE_PATH else "/"
+
+
+def _private_page(next_path=None):
+    """The 401 page; on a navigation, with the password form carrying next_path (escaped),
+    so the visitor lands where they were going."""
+    if next_path is None:
+        return HTMLResponse(PRIVATE_PAGE, 401, headers=GATE_HEADERS)
+    hidden = (
+        f"<input type='hidden' name='next' value='{escape(next_path, quote=True)}'>"
+    )
+    form = GATE_FORM.replace("{next}", hidden)
+    return HTMLResponse(
+        PRIVATE_PAGE.replace("</body>", form + "</body>"), 401, headers=GATE_HEADERS
+    )
+
+
+def _here(scope, pairs):
+    """This request's own path and query, without the access key, if it is a path here
+    (local_path)."""
+    rest = [(k, v) for k, v in pairs if k != "access"]
+    target = "/" + quote(scope["path"]).lstrip("/")
+    return local_path(target + ("?" + urlencode(rest) if rest else ""))
 
 
 def _is_preview_password(given):
@@ -355,14 +415,15 @@ def _cookie_ok(value, now=None):
     )
 
 
-def _without_key(scope, pairs, cookie=True):
-    """303 to the same path and query without the key, setting the access cookie unless
-    the browser has one already."""
+def _without_key(scope, pairs, cookie=True, location=None):
+    """303 to the same path and query without the key (or to `location`, the gate form's
+    carried path), setting the access cookie unless the browser has one already."""
     rest = [(k, v) for k, v in pairs if k != "access"]
     # one leading slash, and quoted (a backslash is %5C): "//host" would leave the site
-    location = "/" + quote(scope["path"]).lstrip("/")
-    if rest:
-        location += "?" + urlencode(rest)
+    if location is None:
+        location = "/" + quote(scope["path"]).lstrip("/")
+        if rest:
+            location += "?" + urlencode(rest)
     r = RedirectResponse(location, 303, headers={"Cache-Control": "no-store"})
     if cookie:
         r.set_cookie(
@@ -408,6 +469,8 @@ class PreviewGate:
         headers = Headers(scope=scope)
         subject = _subject(client_ip(scope))
         cookie = cookie_parser(headers.get("cookie", "")).get(PREVIEW_COOKIE)
+        if scope["type"] == "http" and scope["path"] == GATE_PATH:
+            return await self._form(scope, receive, send, headers, subject, cookie)
         pairs = parse_qsl(
             scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True
         )
@@ -422,16 +485,18 @@ class PreviewGate:
         if not take_token("preview", subject, take=False):
             refused = too_many(retry_after=BUCKETS["preview"][1])
         elif link and not _navigation(headers):  # never weighed, so never counted
-            refused = HTMLResponse(PRIVATE_PAGE, 401)
+            refused = _private_page()
         elif link:
             if len(keys) == 1 and _is_preview_password(keys[0].encode()):
                 return await _without_key(scope, pairs)(scope, receive, send)
             take_token("preview", subject)
-            refused = HTMLResponse(PRIVATE_PAGE, 401)
+            refused = _private_page(_here(scope, pairs))
         elif preview_password_ok(headers):
             return await self.app(scope, receive, send)
         else:
-            refused = HTMLResponse(PRIVATE_PAGE, 401)
+            page = scope["type"] == "http" and scope["method"] in ("GET", "HEAD")
+            navigation = page and _navigation(headers)
+            refused = _private_page(_here(scope, pairs) if navigation else None)
             if cookie is not None or "authorization" in headers:
                 take_token("preview", subject)  # a guess; a first visit sends neither
             if cookie is not None:  # expired or another password's: dropped
@@ -441,6 +506,40 @@ class PreviewGate:
         if scope["type"] == "websocket":
             return await send({"type": "websocket.close", "code": 1008})
         return await refused(scope, receive, send)
+
+    async def _form(self, scope, receive, send, headers, subject, cookie):
+        """POST GATE_PATH: the 401 page's password form (access, next). Right: the access
+        cookie and a 303 to `next` (a path here, else "/"), so an emailed sign-in link
+        opened before the password lands where it pointed, its token unused. Wrong: counted
+        as a guess, the page again. From another site (Guard already refuses its POST) or
+        not a POST: the plain page, never weighed. Nothing behind the gate is reached."""
+        site = headers.get("sec-fetch-site")
+        if scope["method"] != "POST" or site not in (None, "same-origin"):
+            return await _private_page()(scope, receive, send)
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if len(body) > GATE_BODY_MAX:
+                return await PlainTextResponse("Bad request", 400)(scope, receive, send)
+            if not message.get("more_body"):
+                break
+        pairs = parse_qsl(body.decode("latin-1"), keep_blank_values=True)
+        keys = [v for k, v in pairs if k == "access"]
+        target = _carried(pairs)
+        if _cookie_ok(cookie):
+            right = True
+        elif not take_token("preview", subject, take=False):
+            return await too_many(retry_after=BUCKETS["preview"][1])(
+                scope, receive, send
+            )
+        else:
+            right = len(keys) == 1 and _is_preview_password(keys[0].encode())
+        if not right:
+            take_token("preview", subject)
+            return await _private_page(target)(scope, receive, send)
+        r = _without_key(scope, [], not _cookie_ok(cookie), target)
+        return await r(scope, receive, send)
 
 
 # --- client IP -----------------------------------------------------------------------

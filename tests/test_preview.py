@@ -2,8 +2,10 @@
 demo's data and a banner. Production stays exactly as strict."""
 
 import base64
+import contextlib
 import hashlib
 import hmac
+import html
 import io
 import json
 import os
@@ -539,6 +541,11 @@ def test_robots_txt_disallows_everything(preview):
 def test_every_page_shows_the_preview_banner(guest, anon):
     assert PREVIEW_NOTICE == (
         "Preview · sample openings, not affiliated with these organizations · "
+        "visible to all testers, wiped at any time"
+    )
+    # no longer than the wording that fit two lines on an iPhone SE (e2e/test_deck_fit)
+    assert len(PREVIEW_NOTICE) <= len(
+        "Preview · sample openings, not affiliated with these organizations · "
         "demo data, wiped at any time · no real details"
     )
     for path in ("/login", "/org/login", "/privacy"):
@@ -550,13 +557,21 @@ def test_no_banner_outside_a_preview(anon):
     assert PREVIEW_NOTICE not in anon.get("/login").text
 
 
+def _link(page, path="/login/verify"):
+    """The sign-in link a page shows, as a path, or None."""
+    link = re.search(rf'href="https://causematch\.test({path}\?token=[\w-]+)"', page)
+    return link and link[1]
+
+
 def test_a_preview_shows_a_volunteers_link_on_the_page(guest):
     """As /org/login does for a coordinator: nothing is emailed, so the page shows it."""
+    from app.routes.auth import STAGING_LINK
+
     page = guest.post("/login/send", data={"email": "new@demo.causematch.test"}).text
     link = re.search(
         r'href="https://causematch\.test(/login/verify\?token=[\w-]+)"', page
     )
-    assert link and "Open your sign-in link" in page
+    assert link and "Open your sign-in link" in page and STAGING_LINK in page
     guest.get(link[1])
     r = guest.post("/login/verify", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/onboarding"
@@ -565,21 +580,45 @@ def test_a_preview_shows_a_volunteers_link_on_the_page(guest):
     assert "Open your sign-in link" not in page and "token=" not in page
 
 
-def test_a_preview_signs_up_and_in_demo_addresses_only(guest):
-    """Demo-only, as /org/login there: a real address gets the same answer, and no link
-    is made, shown, sent or logged, so it can neither sign up nor sign in."""
-    from app.db import login_tokens
+def test_a_preview_shows_any_addresss_link_on_the_page(guest):
+    """Staging: any address rehearses the emailed sign-in, its link on the page, under
+    the same rules as a real one: a staff address, or a +tag of one, gets no volunteer
+    link at /login, and an unknown address none at /org/login."""
     from app.routes.auth import SENT
 
-    data.volunteer_for_identity(  # a real person's account on the preview, say
-        oauth.Claims("google", "g-real", "real@example.org", True, "Real", "", "")
-    )
-    for email in ("real@example.org", "someone.new@example.org"):
-        r = guest.post("/login/send", data={"email": email})
-        assert r.status_code == 200 and SENT in r.text and "token=" not in r.text
-    assert not notify.get_emailer().sent and login_tokens.count == 0
-    page = guest.post("/login/send", data={"email": demo_seed.ME_EMAIL}).text
-    assert "/login/verify?token=" in page  # a demo address still gets its link
+    page = guest.post("/login/send", data={"email": "river.new@example.org"}).text
+    link = _link(page)
+    assert link and SENT in page
+    guest.get(link)
+    assert "river.new@example.org" in guest.get("/login/verify").text  # confirm page
+    r = guest.post("/login/verify", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/onboarding"
+    _, staff = coordinator_for(0)  # coord0@example.org
+    for email in (staff, "coord0+v@example.org"):
+        page = guest.post("/login/send", data={"email": email}).text
+        assert SENT in page and "token=" not in page and "/verify" not in page, email
+    page = guest.post("/org/login/send", data={"email": "nobody@example.org"}).text
+    assert "If that address belongs" in page and "token=" not in page
+
+
+@pytest.mark.parametrize("env", ["production", "test"])
+def test_outside_a_preview_the_page_never_shows_the_link(env, monkeypatch):
+    """The same POST, with the same fake emailer: no link and no token on the page."""
+    monkeypatch.setenv("CAUSEMATCH_ENV", env)
+    if env == "production":  # it refuses the fake Google and SMS
+        monkeypatch.delenv("CAUSEMATCH_FAKE_OAUTH", raising=False)
+        monkeypatch.delenv("CAUSEMATCH_FAKE_SMS", raising=False)
+    for k, v in SECRETS.items():
+        monkeypatch.setenv(k, v)
+    client = TestClient(app, base_url="https://testserver")
+    for path, email, answer in (
+        ("/login/send", "river.new@example.org", "Check your email"),
+        ("/org/login/send", coordinator_for(0)[1], "If that address belongs"),
+    ):
+        r = client.post(path, data={"email": email})
+        assert r.status_code == 200 and answer in r.text
+        assert "token=" not in r.text and "Open your sign-in link" not in r.text
+        assert "token=" in notify.get_emailer().sent[-1][2]  # emailed instead
 
 
 def browser():
@@ -700,14 +739,204 @@ def test_outside_a_preview_any_number_gets_a_code():
     assert notify.get_verifier().sent[-1][0] == "+13105551234"
 
 
-def test_a_preview_sends_nothing_to_an_address_off_the_demos_domains(guest, caplog):
+class _RealEmailer:
+    """Stands in for Resend or SMTP: records, and is not the fake."""
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, to, subject, body, headers=None, kind="notice"):
+        self.sent.append((to, subject, body))
+
+
+def test_a_preview_that_could_really_email_stays_demo_only(guest, monkeypatch):
+    """Only the fake emailer turns on the staging links: with a real one, an address off
+    the demo's domains gets the same answer with nothing sent or shown."""
+    real = _RealEmailer()
+    monkeypatch.setattr(notify, "_emailer", real)
     _, email = coordinator_for(0)  # coord0@example.org: as a real coordinator would be
-    sent = len(notify.get_emailer().sent)
-    with caplog.at_level("WARNING", logger="causematch"):
-        page = guest.post("/org/login/send", data={"email": email}).text
-    assert "If that address belongs to a coordinator" in page
-    assert "Open your sign-in link" not in page and "token=" not in page
-    assert len(notify.get_emailer().sent) == sent and "FAKE EMAIL" not in caplog.text
+    for path, address in (("/org/login/send", email), ("/login/send", "x@example.org")):
+        page = guest.post(path, data={"email": address}).text
+        assert "Open your sign-in link" not in page and "token=" not in page
+    assert real.sent == []
+
+
+SMTP = {"SMTP_USERNAME": "sender@example.org", "SMTP_PASSWORD": "a" * 16}
+
+
+class _Sender:
+    """Stands in for the SMTP sender: records, sends nothing."""
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, to, subject, body, headers=None, kind="notice"):
+        self.sent.append((to, subject, body))
+
+    def batch(self):
+        return contextlib.nullcontext()
+
+
+def test_only_a_preview_with_smtp_builds_the_staging_emailer():
+    fake, prod = {"CAUSEMATCH_FAKE_EMAIL": "1"}, {"CAUSEMATCH_ENV": "production"}
+    built = notify.make_emailer({**PREVIEW, **fake, **SMTP})
+    assert type(built) is notify.StagingEmailer
+    assert type(built.real) is notify.SMTPEmailer
+    # capped at 50 a day whatever the env says: the count restarts with the database
+    capped = notify.make_emailer({**PREVIEW, **fake, **SMTP, "SMTP_MAX_PER_DAY": "400"})
+    assert capped.real.limits["staff"][0][0][0][1] == notify.STAGING_MAX_PER_DAY == 50
+    assert type(notify.make_emailer({**PREVIEW, **fake})) is notify.FakeEmailer
+    # development with SMTP beside the fake: the fake only, never real mail
+    dev = {"CAUSEMATCH_ENV": "development", **fake, **SMTP}
+    assert type(notify.make_emailer(dev)) is notify.FakeEmailer
+    # production: its own choice, and a fake (staging's flag) still refuses to start
+    assert type(notify.make_emailer({**prod, **SMTP})) is notify.SMTPEmailer
+    for env in ({**prod, **fake, **SMTP}, {**CLOUD_RUN, **fake, **SMTP}):
+        with pytest.raises(RuntimeError, match="CAUSEMATCH_FAKE_EMAIL=1 needs"):
+            notify.make_emailer(env)
+
+
+def test_with_smtp_a_preview_emails_real_addresses_and_keeps_demo_ones_fake(
+    guest, monkeypatch
+):
+    """A real address gets its link by real email, marked as staging, and none on the
+    page; a demo address's stays fake, its link on the page."""
+    from app.routes.auth import STAGING_LINK
+
+    emailer = notify.make_emailer({**os.environ, **SMTP})
+    emailer.real = sender = _Sender()
+    monkeypatch.setattr(notify, "_emailer", emailer)
+    page = guest.post("/login/send", data={"email": "river@example.org"}).text
+    assert "token=" not in page and STAGING_LINK not in page
+    ((to, subject, body),) = sender.sent
+    assert (
+        to == "river@example.org"
+        and subject == "[Staging] Finish signing up for Causematch"
+    )
+    assert (
+        body.startswith(notify.STAGING_MARK + "\n\n") and "/login/verify?token=" in body
+    )
+    assert all(to != "river@example.org" for to, _, _ in emailer.sent)  # not faked too
+    page = guest.post("/login/send", data={"email": demo_seed.ME_EMAIL}).text
+    assert _link(page) and STAGING_LINK in page and len(sender.sent) == 1
+    assert emailer.sent[-1][0] == demo_seed.ME_EMAIL  # recorded, never sent
+    # real sends count against Gmail's per-mailbox limit too, as in production
+    assert notify.smtp_for("river@example.org")
+    assert not notify.smtp_for(demo_seed.ME_EMAIL)
+    # a coordinator's real address at /org/login: emailed, no link on the page
+    _, coordinator = coordinator_for(0)
+    page = guest.post("/org/login/send", data={"email": coordinator}).text
+    assert "token=" not in page and STAGING_LINK not in page
+    assert [to for to, _, _ in sender.sent] == ["river@example.org", coordinator]
+    # the outbox: masked, its kind for a subject, no body (L1: none even kept)
+    assert emailer.outbox[-1][1:] == (
+        coordinator,
+        "Your Causematch sign-in link",
+        None,
+        True,
+        "staff",
+    )
+
+
+def _staging(monkeypatch):
+    """This preview's emailer with SMTP set, its real sender a stand-in (_Sender)."""
+    emailer = notify.make_emailer({**os.environ, **SMTP})
+    emailer.real = sender = _Sender()
+    monkeypatch.setattr(notify, "_emailer", emailer)
+    return emailer, sender
+
+
+def test_staging_mails_what_visitors_wrote_only_to_proven_inboxes(demo, monkeypatch):
+    """Me's email is typed, not proven: a demo volunteer who sets it to someone's real
+    address and is matched by the demo coordinator mails that address nothing real. A
+    tester who signed in with their emailed link gets their match news for real."""
+    emailer, sender = _staging(monkeypatch)
+    monkeypatch.setattr(notify, "get_sms", lambda: None)  # a preview texts nobody
+    sam = as_demo_volunteer()
+    profiles.update(id=sam.uid, email="victim@example.org")
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    m = data.swipe(sam.uid, demo_seed_first_opening(pat).id, True)
+    if matches[m.id].status == "pending":  # else accepted already, as a demo's are
+        data.decide(pat, m.id, True)
+    assert matches[m.id].status == "accepted"
+    notify.on_accepted(m.id)
+    assert sender.sent == []
+    assert emailer.sent[-1][0] == "victim@example.org"  # recorded, never sent
+    # a tester: the emailed link proves the inbox
+    tester = browser()
+    tester.post("/login/send", data={"email": "river@example.org"})
+    link = re.search(
+        r"https://causematch\.test(/login/verify\?token=[\w-]+)", sender.sent[-1][2]
+    )
+    tester.get(link[1])
+    assert tester.post("/login/verify").url.path == "/onboarding"
+    uid = data.email_sign_in_owner("river@example.org")
+    index = next(
+        i for i, o in enumerate(orgs())
+        if not db.q("SELECT 1 FROM org_member WHERE org_id = ?", [o.id])
+    )  # fmt: skip
+    org = orgs()[index]
+    coordinator, _ = coordinator_for(index, "lee@example.org")
+    fresh = make_staging_opening(coordinator, org)
+    m = matches.insert(Match(opening_id=fresh, volunteer_id=uid, status="pending",
+                             created_at=db_now()))  # fmt: skip
+    data.decide(coordinator, m.id, True)
+    notify.on_accepted(m.id)
+    assert sender.sent[-1][0] == "river@example.org"
+    assert sender.sent[-1][1].startswith("[Staging] You're matched with")
+
+
+def make_staging_opening(coordinator, org):
+    return data.create_opening(
+        coordinator, org.id, title="Fresh", about="x", cause=json.loads(org.causes)[0],
+        lat=org.lat, lon=org.lon, neighborhood="Sawtelle",
+        starts_at=(datetime.now(data.LA) + timedelta(days=9)).strftime("%Y-%m-%dT10:00"),
+        recurrence="weekly", slots=4, orientation_required="no", notes="",
+        reply_channel="email",
+    )  # fmt: skip
+
+
+def test_the_fake_google_page_proves_no_inbox(preview, monkeypatch):
+    emailer, sender = _staging(monkeypatch)
+    fake_google(browser())  # types m@example.org, "verified"
+    assert emailer.proven == {} and sender.sent == []
+
+
+def test_a_proof_is_the_profiles_not_the_addresss(demo, monkeypatch):
+    """A tester proves their address with an emailed link; a demo volunteer then types it
+    into Me. Its match news (an opening someone else titled) never reaches the tester's
+    real inbox, and neither does the tester's own until the address is theirs alone."""
+    emailer, sender = _staging(monkeypatch)
+    monkeypatch.setattr(notify, "get_sms", lambda: None)  # a preview texts nobody
+    tester = browser()
+    tester.post("/login/send", data={"email": "river@example.org"})
+    link = re.search(r"/login/verify\?token=[\w-]+", sender.sent[-1][2])[0]
+    tester.get(link)
+    assert tester.post("/login/verify").url.path == "/onboarding"
+    river = data.email_sign_in_owner("river@example.org")
+    assert emailer.proven_for("river@example.org")
+    sam = as_demo_volunteer()
+    profiles.update(id=sam.uid, email="river@example.org")
+    pat = data.coordinator_by_email(DEMO_COORDINATOR)
+    m = data.swipe(sam.uid, demo_seed_first_opening(pat).id, True)
+    if matches[m.id].status == "pending":
+        data.decide(pat, m.id, True)
+    sent = len(sender.sent)
+    notify.on_accepted(m.id)
+    assert len(sender.sent) == sent  # recorded, not sent, and without its body
+    assert emailer.sent[-1] == ("river@example.org", emailer.sent[-1][1], None)
+    # the tester's own news waits too, until the address is theirs alone again
+    org = next(o for o in orgs() if not db.q(
+        "SELECT 1 FROM org_member WHERE org_id = ?", [o.id]))  # fmt: skip
+    coordinator, _ = coordinator_for(orgs().index(org), "lee@example.org")
+    own = matches.insert(Match(opening_id=make_staging_opening(coordinator, org),
+                               volunteer_id=river, status="pending",
+                               created_at=db_now()))  # fmt: skip
+    data.decide(coordinator, own.id, True)
+    notify.on_accepted(own.id)
+    assert len(sender.sent) == sent
+    profiles.update(id=sam.uid, email="")
+    assert emailer.proven_for("river@example.org")  # theirs alone: real mail again
 
 
 def test_a_preview_shows_the_sign_in_link_on_the_page(guest):
@@ -725,7 +954,8 @@ def test_a_preview_shows_the_sign_in_link_on_the_page(guest):
     assert "Open your sign-in link" not in page and "/org/login/verify" not in page
 
 
-def test_an_admins_sign_in_link_stays_in_the_log(guest):
+def test_an_admins_sign_in_link_stays_in_the_log(guest, monkeypatch):
+    """...unless "Try it as an admin" already makes anyone an admin (demo_matches)."""
     from app import data
 
     data.add_admin(*demo_seed.ADMIN)  # its address is in this public repo
@@ -733,6 +963,9 @@ def test_an_admins_sign_in_link_stays_in_the_log(guest):
     assert "Open your sign-in link" not in page and "token=" not in page
     to, _, body = notify.get_emailer().sent[-1]  # sent after the response, as always
     assert to == demo_seed.ADMIN[0] and "/org/login/verify?token=" in body
+    monkeypatch.setenv("CAUSEMATCH_DEMO_MATCHES", "1")
+    page = guest.post("/org/login/send", data={"email": demo_seed.ADMIN[0]}).text
+    assert _link(page, "/org/login/verify")
 
 
 def test_the_fakes_mask_addresses_and_keep_a_bounded_list(caplog):
@@ -1585,8 +1818,9 @@ def test_reset_preview_on_a_replicated_database_deletes_nothing(preview, monkeyp
 # whether main.py added the reset's route and bound reset_demo
 REGISTERED = (
     "import main; from app.routes import admin; "
-    "print(any(getattr(r, 'path', '') == '/admin/reset' for r in main.app.routes), "
-    "admin.reset_demo is not None)"
+    "paths = {getattr(r, 'path', '') for r in main.app.routes}; "
+    "print('/admin/reset' in paths, admin.reset_demo is not None, "
+    "'/admin/outbox' in paths)"
 )
 
 
@@ -1601,9 +1835,9 @@ def test_only_a_preview_starts_with_reset_demo_data(tmp_path):
     development = {"CAUSEMATCH_ENV": "development", "K_SERVICE": None}
     preview = {"CAUSEMATCH_ENV": "preview", "PREVIEW_PASSWORD": PASSWORD}
     for name, env, registered in (
-        ("production", production, ["False", "False"]),
-        ("development", development, ["False", "False"]),
-        ("preview", preview, ["True", "True"]),  # the check sees a route that is there
+        ("production", production, ["False", "False", "False"]),
+        ("development", development, ["False", "False", "False"]),
+        ("preview", preview, ["True", "True", "True"]),  # it sees a route that is there
     ):
         db_file = str(tmp_path / f"{name}.db")
         r = _start(tmp_path, REGISTERED, **env, CAUSEMATCH_DB=db_file)
@@ -1626,3 +1860,195 @@ def test_a_second_reset_within_15_minutes_resets_nothing(demo, reset_routes, cap
     assert _rows() == before
     assert admin.get("/admin", follow_redirects=False).status_code == 200
     assert sum("preview reset" in m for m in caplog.messages) == 1
+
+
+# --- the three roles with anyone's addresses ---------------------------------------
+
+
+def test_every_role_rehearses_with_its_own_address(demo, reset_routes):
+    """Staging: a new volunteer signs up by email, a new person claims a nonprofit, the
+    admin approves it and reads the approval email on /admin/outbox, the new coordinator
+    signs in with the claim's address and posts an opening, the volunteer likes it, the
+    coordinator accepts and both chat. No demo address anywhere."""
+    from conftest import FORM
+    from test_openings import form
+
+    # 1. a new volunteer, by email, through the confirm page and onboarding
+    vol = browser()
+    vol.get(_link(vol.post("/login/send", data={"email": "river@example.org"}).text))
+    assert vol.post("/login/verify").url.path == "/onboarding"
+    assert vol.post("/onboarding", data=FORM).url.path == "/deck"
+    # 2. a new person claims an org nobody manages yet
+    org = next(
+        o for o in orgs()
+        if o.ein and not db.q("SELECT 1 FROM org_member WHERE org_id = ?", [o.id])
+    )  # fmt: skip
+    claim = {"ein": org.ein, "org_name": org.name, "name": "Robin Claimer",
+             "email": "robin@example.org", "authorized": "1"}  # fmt: skip
+    assert "Request received" in browser().post("/org/claim", data=claim).text
+    # 3. the admin approves it, and reads what was emailed
+    admin = _demo_admin()
+    (claim_id,) = [c.id for c in claim_requests(where="email = 'robin@example.org'")]
+    r = admin.post(f"/admin/claims/{claim_id}/approve", follow_redirects=False)
+    assert r.headers["location"] == "/admin/claims?done=approved"
+    assert 'href="/admin/outbox"' in admin.get("/admin").text
+    outbox = admin.get("/admin/outbox")
+    assert outbox.headers["cache-control"] == "no-store"
+    # a tester's address: masked, its kind, no subject or body (anyone can be admin)
+    newest = outbox.text.split("Claim decision", 1)[1][:300]  # its card
+    assert "To r***@e***.org" in newest and "not sent" in newest
+    assert "robin@example.org" not in outbox.text and "approved on" not in outbox.text
+    # 4. the new coordinator signs in with the claim's address and posts an opening
+    robin = browser()
+    page = robin.post("/org/login/send", data={"email": "robin@example.org"}).text
+    robin.get(_link(page, "/org/login/verify"))
+    assert robin.post("/org/login/verify").url.path == "/org"
+    r = robin.post("/org/openings/new", data=form(org.id), follow_redirects=False)
+    assert r.status_code == 303
+    (opening,) = openings(where="org_id = ?", where_args=[org.id])
+    # 5. the volunteer likes it, the coordinator sees them and accepts, both chat
+    vol.post("/swipe", data={"opening_id": opening.id, "liked": "1"})
+    (m,) = matches(where="opening_id = ?", where_args=[opening.id])
+    assert not m.org_blind and "Sam" in robin.get("/org/inbox").text
+    r = robin.post(f"/org/matches/{m.id}/decide", data={"decision": "accept"})
+    assert r.status_code == 200 and matches[m.id].status == "accepted"
+    vol.post(f"/chat/{m.id}/send", data={"msg": "Hi, see you Saturday"})
+    robin.post(f"/org/chat/{m.id}/send", data={"msg": "Great, thank you"})
+    assert _chat_bodies(m.id)[-2:] == ["Hi, see you Saturday", "Great, thank you"]
+    # a reset empties the outbox with the rest
+    assert admin.post("/admin/reset", follow_redirects=False).status_code == 303
+    assert notify.get_emailer().outbox == []
+
+
+def test_only_an_admin_reads_the_outbox_and_bodies_stay_text(demo, reset_routes):
+    notify.get_emailer().send(
+        "x@demo.causematch.test", "Hello", "<script>alert(1)</script>"
+    )
+    page = _demo_admin().get("/admin/outbox").text
+    assert (
+        "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script>alert" not in page
+    )
+    sam = as_demo_volunteer()
+    assert sam.get("/admin/outbox").status_code == 403
+    pat = TestClient(app, headers={"Authorization": basic()})
+    pat.post("/org/login/demo")
+    r = pat.get("/admin/outbox", follow_redirects=False)
+    assert r.headers["location"] == "/org"
+    assert _demo_admin().post("/admin/outbox").status_code in (404, 405)
+
+
+def test_on_staging_a_team_is_all_demo_addresses_or_none(demo, reset_routes):
+    """Anyone may sign in as a demo address: a demo-address claim on an org a tester
+    manages (who would then see the testers' likes there), or the other way round, is
+    refused on the admin page."""
+    org = next(
+        o for o in orgs()
+        if o.ein and not db.q("SELECT 1 FROM org_member WHERE org_id = ?", [o.id])
+    )  # fmt: skip
+    data.add_coordinator("lee@example.org", org.id, "owner")
+    data.submit_claim(org.ein, org.name, "Mallory", "mal@demo.causematch.test", "")
+    (c,) = claim_requests(where="email = 'mal@demo.causematch.test'")
+    admin = _demo_admin()
+    page = admin.post(f"/admin/claims/{c.id}/approve", data={"confirm": "1"}).text
+    assert "all demo addresses or none" in page
+    assert data.coordinator_by_email("mal@demo.causematch.test") is None
+    # and a tester's claim on a demo org (Pat's, given an EIN to claim it by)
+    pats = data.coordinator_org_ids(data.coordinator_by_email(DEMO_COORDINATOR))[0]
+    orgs.update(id=pats, ein="530196605")
+    data.submit_claim("530196605", orgs[pats].name, "Lee", "lee2@example.org", "")
+    (c,) = claim_requests(where="email = 'lee2@example.org'")
+    page = admin.post(f"/admin/claims/{c.id}/approve", data={"confirm": "1"}).text
+    assert "all demo addresses or none" in page
+
+
+def _gate(client, next_path, password=PASSWORD):
+    return client.post(
+        "/__preview",
+        data={"access": password, "next": next_path},
+        follow_redirects=False,
+    )
+
+
+def test_an_emailed_link_survives_the_password_gate(preview):
+    """A tester opens the emailed link on a device that never had the preview's link:
+    the gate's page carries it through the password, the token unused."""
+    asker = TestClient(app, headers={"Authorization": basic()})
+    link = _link(asker.post("/login/send", data={"email": "river@example.org"}).text)
+    phone = TestClient(app, base_url="https://testserver")  # another device, no cookie
+    r = phone.get(link)
+    assert r.status_code == 401 and PRIVATE in r.text
+    assert r.headers["cache-control"] == "no-store"
+    assert r.headers["referrer-policy"] == "strict-origin"  # see the Origin: null test
+    (carried,) = re.findall(r"name='next' value='([^']+)'", r.text)
+    assert html.unescape(carried) == link
+    assert _gate(phone, "/", "w" * 20).status_code == 401  # a wrong password: no way in
+    r = _gate(phone, html.unescape(carried))
+    assert r.status_code == 303 and r.headers["location"] == link
+    assert COOKIE in r.cookies
+    phone.get(link)  # unused by the gate: the confirm page, then onboarding
+    r = phone.post("/login/verify", follow_redirects=False)
+    assert r.headers["location"] == "/onboarding"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "//evil.example",
+        "https://evil.example",
+        "/\\evil",
+        "/x\r\nSet-Cookie: a=b",
+        "/__preview",
+        "/__preview?next=/x",
+    ],
+)
+def test_the_gate_carries_only_a_path_here(preview, bad):
+    """Never an open redirect, nor reflected unescaped: any other next lands on /."""
+    client = TestClient(app, base_url="https://testserver")
+    r = _gate(client, bad)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    # the link's own query stays the page's (an app's ?next=), never a place to go
+    r = client.get(
+        "/", params={"access": PASSWORD, "next": bad}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"].startswith("/?next=")
+    assert security.local_path(r.headers["location"])
+    # the page carries its own path and query back, quoted: still a path here
+    page = TestClient(app).get("/x", params={"access": "w" * 20, "next": bad}).text
+    (carried,) = re.findall(r"name='next' value='([^']*)'", page)
+    assert security.local_path(html.unescape(carried)).startswith("/x?next=")
+    assert "\r" not in page and "Set-Cookie:" not in page
+
+
+def test_the_gate_forms_post_needs_the_sites_origin(preview):
+    """Why the gate page is strict-origin, not no-referrer: under no-referrer a browser
+    posts its form with "Origin: null", and Guard refuses that like any foreign site."""
+    client = TestClient(app, base_url="https://testserver")
+    r = client.post(
+        "/__preview",
+        data={"access": PASSWORD, "next": "/"},
+        headers={"Origin": "null"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403 and COOKIE not in r.cookies
+    assert _gate(client, "/").status_code == 303  # its own Origin: let in
+
+
+def test_the_gate_form_is_slowed_and_takes_only_a_small_post(preview):
+    """Ten wrong passwords, then 429 even for the right one. A post from another site is
+    never weighed, and a big body is refused before the password is read."""
+    client = TestClient(app, base_url="https://testserver")
+    cross = client.post(
+        "/__preview",
+        data={"access": PASSWORD, "next": "/"},
+        headers={"Sec-Fetch-Site": "cross-site"},
+        follow_redirects=False,
+    )
+    assert cross.status_code == 401 and "name='access'" not in cross.text
+    assert not counted() and COOKIE not in cross.cookies
+    big = {"access": PASSWORD, "next": "/" + "x" * security.GATE_BODY_MAX}
+    r = client.post("/__preview", data=big, follow_redirects=False)
+    assert r.status_code == 400 and COOKIE not in r.cookies
+    for _ in range(10):
+        assert _gate(client, "/", "w" * 20).status_code == 401
+    assert _gate(client, "/", "w" * 20).status_code == 429
+    assert _gate(client, "/").status_code == 429

@@ -28,7 +28,7 @@ from app.choices import (
     SHIFT_HOURS,
     SHIFT_LENGTHS,
 )
-from app.config import demo_matches, phone_hash_key
+from app.config import demo_address, demo_matches, phone_hash_key
 from app.forms import BIDI, abuse_key, hidden_chars
 from app.match import LA
 from app.metrics_rows import fetch_rows
@@ -972,9 +972,10 @@ def _swipe(uid, opening_id, liked, today=False, view=None, call_id=None):
                 status="pending",
                 created_at=_now(),
                 # a blocked volunteer's like looks normal to them and never reaches the org;
-                # in a demo, neither does a real tester's (anyone can be its coordinator)
+                # in a demo, neither does a real tester's at a demo org (anyone can be its
+                # coordinator)
                 org_blind=_org_blocked_volunteer(uid, _db.openings[opening_id].org_id)
-                or _hidden_in_demo(uid),
+                or _hidden_in_demo(uid, _db.openings[opening_id].org_id),
                 urgent_call_id=call[0].id if call else None,
             )
         )
@@ -4823,6 +4824,31 @@ def _live_members(org_id):
     ]
 
 
+def live_holders(email):
+    """Ids of the live (not deleted) profiles whose address is this lowercased one: where
+    mail to it goes, a volunteer's (urgent_email) and staff's alike (profile.email)."""
+    return {
+        r["id"]
+        for r in _db.db.q(
+            "SELECT id FROM profile WHERE lower(email) = ? AND deleted_at IS NULL",
+            [email],
+        )
+    }
+
+
+def _mixes_demo(org_id, email):
+    """Whether adding this address would put a demo address (config.demo_address) and
+    another in one org's team, deleted members included, as _hidden_in_demo counts them:
+    anyone may sign in as a demo address, so they must never see a tester's likes."""
+    emails = _db.db.q(
+        "SELECT p.email FROM org_member m JOIN profile p ON p.id = m.user_id "
+        "WHERE m.org_id = ?",
+        [org_id],
+    )
+    demo = demo_address(email)
+    return any(demo_address(r["email"] or "") != demo for r in emails)
+
+
 def _members_text(members):
     return ", ".join(f"{m['name']} ({m['role']})" for m in members)
 
@@ -4908,6 +4934,11 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False, confirm_volunteer=
         raise ValueError("that address belongs to a suspended coordinator")
     if mailbox_suspended(c.email):
         raise ValueError("that address belongs to a suspended volunteer: decline it")
+    if demo_matches() and _mixes_demo(org.id, c.email):
+        raise ValueError(
+            "on staging a nonprofit's team is all demo addresses or none, and this "
+            "claim would mix them: decline it"
+        )
     if not confirm_volunteer and _gives_volunteer_staff_links(c.email):
         raise ValueError(
             "this person already volunteers with this address: read the warning, tick "
@@ -5382,15 +5413,25 @@ DEMO_PHONE_PREFIX = "+1310000"
 DEMO_SEEDED_PHONES = frozenset(f"+1310555010{n}" for n in range(4))
 
 
-def _hidden_in_demo(uid):
+def _hidden_in_demo(uid, org_id):
     """While config.demo_matches is on, anyone may sign in as a demo org's coordinator
-    (the one-tap button, the preview's on-page links): a like from someone who is not a
-    demo person (a tester with their own number) is made blind, like a blocked one, so
-    no org ever sees their name, photo or count. Off: False, as production."""
+    (the one-tap button, a demo address's on-page link): a like from someone who is not a
+    demo person (a tester with their own address or number) at an org with a member at a
+    demo address (config.demo_address) is made blind, like a blocked one, so no demo org
+    ever sees their name, photo or count. An org claimed on the preview by a tester's own
+    address sees them, so the whole journey can be rehearsed. Off: False, as
+    production."""
     if not demo_matches():
         return False
     phone = (get_profile(uid) or _db.profiles[uid]).phone or ""
-    return not (phone.startswith(DEMO_PHONE_PREFIX) or phone in DEMO_SEEDED_PHONES)
+    if phone.startswith(DEMO_PHONE_PREFIX) or phone in DEMO_SEEDED_PHONES:
+        return False
+    members = _db.db.q(  # deleted members too: once a demo org, always one
+        "SELECT p.email FROM org_member m JOIN profile p ON p.id = m.user_id "
+        "WHERE m.org_id = ?",
+        [org_id],
+    )
+    return any(demo_address(r["email"] or "") for r in members)
 
 
 def is_demo_volunteer(uid):

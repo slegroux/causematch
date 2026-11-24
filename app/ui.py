@@ -44,10 +44,12 @@ CAUSE_CHIP = {
 }
 DEMO_NOTICE = "Demo: sample openings, not affiliated with these organizations"
 # Two lines on an iPhone SE, at most: a third pushes the deck card under its buttons
-# (tests/e2e/test_deck_fit.py). "No real details": names, photos, contact info.
+# (tests/e2e/test_deck_fit.py): no longer than it was with "demo data, wiped at any time
+# · no real details". Testers type their own addresses here, and anyone with the preview
+# link can be its admin and see what they entered.
 PREVIEW_NOTICE = (
     "Preview · sample openings, not affiliated with these organizations · "
-    "demo data, wiped at any time · no real details"
+    "visible to all testers, wiped at any time"
 )
 
 

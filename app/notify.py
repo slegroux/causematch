@@ -19,7 +19,9 @@ from app.config import (
     SMTP_TLS_PORT,
     collect_phone,
     contact_email,
+    demo_address,
     fakes_allowed,
+    is_preview,
     public_base_url,
     smtp,
     smtp_max_per_day,
@@ -164,17 +166,88 @@ def check_code(phone, code):
 
 class FakeEmailer:
     """Test, local-dev and preview emailer: sends nothing, records messages, logs them
-    (the address masked)."""
+    (the address masked). outbox: (when, to, subject, body, sent, kind), for the
+    preview's /admin/outbox (sent: really sent, by StagingEmailer, whose body is None)."""
 
     def __init__(self):
         self.sent = []
         self.with_headers = []  # (to, subject, headers) of messages that had any
+        self.outbox = []
 
     def send(self, to, subject, body, headers=None, kind="notice"):
         _record(self.sent, (to, subject, body))
+        _record(self.outbox, (datetime.now(UTC), to, subject, body, False, kind))
         if headers:
             _record(self.with_headers, (to, subject, headers))
         log.warning("FAKE EMAIL to %s: %s\n%s", mask_email(to), subject, body)
+
+
+STAGING_MARK = (
+    "This is the Causematch staging site: test data only, wiped at each update."
+)
+
+
+# Sent for real from a preview to any address off the demo's: a sign-in or sign-up link
+# (receiving it is the proof of the inbox), and a claim's decision (app-written, once per
+# claim, to the claim's own address, under the claim limits)
+OPEN_KINDS = ("staff", "sign-in", "sign-up", "claim")
+STAGING_MAX_PER_DAY = 50  # a preview's SMTP ceiling, whatever SMTP_MAX_PER_DAY says
+
+
+class StagingEmailer(FakeEmailer):
+    """A preview's emailer when SMTP is configured (make_emailer builds it on a preview
+    only). Mail goes out for real through `real` (SMTPEmailer, under its daily ceilings),
+    marked as staging, only to an address off the demo's (config.demo_address), and then
+    only link mail and claim decisions (OPEN_KINDS), or any mail to a proven address
+    (proven_for). Everything else stays fake: recorded, never sent, so nothing a visitor
+    wrote (an opening's title, a chat message) reaches an inbox nobody proved. Unsent mail
+    to such an address keeps and logs no body. `proven` ({address: profile ids that
+    redeemed an emailed link to it}) lives in this process, as the preview's database does
+    (wiped at a restart); the reset clears it."""
+
+    def __init__(self, real):
+        super().__init__()
+        self.real = real
+        self.proven = {}
+
+    def is_real(self, to):
+        return not demo_address(to.strip())
+
+    def prove(self, email, uid):
+        if self.is_real(email):
+            self.proven.setdefault(email.strip().lower(), set()).add(uid)
+
+    def proven_for(self, to):
+        """Every live profile that holds this address (data.live_holders) redeemed an
+        emailed link to it, and at least one does: a profile that typed someone's proven
+        address into Me holds it too, and has proved nothing."""
+        holders = data.live_holders(to.strip().lower())
+        return bool(holders) and holders <= self.proven.get(to.strip().lower(), set())
+
+    def sends(self, to, kind):
+        """Whether this mail goes out for real."""
+        return self.is_real(to) and (kind in OPEN_KINDS or self.proven_for(to))
+
+    def batch(self):
+        return self.real.batch()
+
+    def send(self, to, subject, body, headers=None, kind="notice"):
+        if not self.is_real(to):
+            return super().send(to, subject, body, headers, kind)
+        if not self.sends(to, kind):
+            # a real inbox nobody proved: neither its body (what a visitor wrote) kept
+            # nor logged
+            _record(self.sent, (to, subject, None))
+            _record(self.outbox, (datetime.now(UTC), to, subject, None, False, kind))
+            log.warning(
+                "STAGING EMAIL NOT SENT to %s: %s (%s)", mask_email(to), subject, kind
+            )
+            return
+        self.real.send(
+            to, "[Staging] " + subject, f"{STAGING_MARK}\n\n{body}", headers, kind
+        )
+        # no body kept: it may hold a live sign-in link
+        _record(self.outbox, (datetime.now(UTC), to, subject, None, True, kind))
 
 
 class ResendEmailer:
@@ -200,8 +273,9 @@ DAY = 24 * 3600
 # ceiling) and sign-up links each have a cap, so volunteers' links to existing accounts
 # always have room too.
 PUBLIC_SHARE, NOTICE_SHARE, SIGNUP_SHARE, URGENT_SHARE = 0.9, 0.5, 0.25, 0.25
-# what an emailer's send(kind=) takes; "staff" is send_login_link's and send_sign_in_notice's
-KINDS = ("staff", "sign-in", "sign-up", "notice", "urgent")
+# what an emailer's send(kind=) takes: "staff" is send_login_link's, "staff-notice"
+# send_sign_in_notice's (the same share), "claim" a claim's decision (a notice's shares)
+KINDS = ("staff", "staff-notice", "sign-in", "sign-up", "notice", "claim", "urgent")
 SMTP_BREAK = 60  # seconds without connecting after a deadline or a failed connect
 SMTP_AUTH_BREAK = (
     600  # after Gmail refuses the password: it won't fix itself in a minute
@@ -299,9 +373,11 @@ class SMTPEmailer:
         notices = share("notices", NOTICE_SHARE)
         self.limits = {
             "staff": (whole,),
+            "staff-notice": (whole,),
             "sign-in": (whole, public),
             "sign-up": (whole, public, share("signups", SIGNUP_SHARE)),
             "notice": (whole, public, notices),
+            "claim": (whole, public, notices),
             "urgent": (whole, public, notices, share("urgent", URGENT_SHARE)),
         }
 
@@ -499,6 +575,11 @@ def make_emailer(env=os.environ):
     SMTP when it is configured (config.smtp). SMTP set halfway refuses to start even
     beside Resend, and so does no emailer at all."""
     if _fake(env, "CAUSEMATCH_FAKE_EMAIL"):
+        # a preview with SMTP mails everyone but the demo's addresses for real (_fake
+        # refuses production, and is_preview is checked again here)
+        if is_preview(env) and (settings := smtp(env)):
+            per_day = min(smtp_max_per_day(env), STAGING_MAX_PER_DAY)
+            return StagingEmailer(SMTPEmailer(*settings, per_day))
         return FakeEmailer()
     settings = smtp(env)
     if env.get("EMAIL_API_KEY"):
@@ -522,6 +603,38 @@ def get_emailer():
     if _emailer is None:
         _emailer = make_emailer()
     return _emailer
+
+
+def staging_links():
+    """Staging only: whether sign-in links are shown on the page, and the emails on
+    /admin/outbox, instead of being emailed. True only on a preview (config.is_preview,
+    read from the environment at each call) whose emailer is the fake (or StagingEmailer),
+    which production refuses to start with (_fake). Nothing a request sends can turn it
+    on."""
+    return is_preview() and isinstance(get_emailer(), FakeEmailer)
+
+
+def real_mail_to(email):
+    """Whether a sign-in link to this address really goes out from a preview
+    (StagingEmailer: any address but the demo's). Then it is emailed, never shown on the
+    page."""
+    emailer = get_emailer()
+    return isinstance(emailer, StagingEmailer) and emailer.is_real(email)
+
+
+def prove(email, uid):
+    """Profile `uid` signed in with an emailed link to this address: on a preview that
+    sends real mail, every email to it goes out from now on, while each profile holding it
+    has done the same (StagingEmailer.proven_for). Elsewhere nothing."""
+    emailer = get_emailer()
+    if isinstance(emailer, StagingEmailer):
+        emailer.prove(email, uid)
+
+
+def smtp_for(email):
+    """Whether mail to this address goes through SMTP (Gmail), whose small daily quota
+    puts a sign-in link under security.LINK_PER_EMAIL_SMTP too."""
+    return isinstance(get_emailer(), SMTPEmailer) or real_mail_to(email)
 
 
 def send_login_link(email, token):
@@ -552,7 +665,7 @@ def send_sign_in_notice(email, at):
             f"to do. If it wasn't, sign in at {public_base_url()}/org/login and tap Sign "
             "out: it signs you out everywhere, ending every session on every device. "
             f"Then write to {contact_email()}.",
-            kind="staff",
+            kind="staff-notice",
         )
     except Exception as e:  # noqa: BLE001  a failed notice never fails the sign-in
         log.warning("sign-in notice not sent: %s", type(e).__name__)
@@ -582,6 +695,7 @@ def send_claim_approved(email, org_name):
         f"Sign in here: {public_base_url()}/org/login\n\n"
         "Enter this email address and we'll send you a sign-in link.\n\n"
         f"Questions? Write to {contact_email()}.",
+        kind="claim",
     )
 
 
@@ -592,6 +706,7 @@ def send_claim_rejected(email):
         "Your Causematch request",
         "Your request to manage an organization on Causematch was not approved.\n\n"
         f"If you think that is a mistake, write to {contact_email()}.",
+        kind="claim",
     )
 
 

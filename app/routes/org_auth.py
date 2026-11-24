@@ -19,6 +19,7 @@ from app.routes.auth import (
     BAD_LINK,
     ConfirmPage,
     ProviderSignIn,
+    StagingLink,
     asked_for,
 )
 from app.ui import (
@@ -42,12 +43,7 @@ def EmailForm(email="", error=None, notice=None, link=None):
         "Nonprofit sign in",
         DemoSignIn(volunteer=False),
         ProviderSignIn(for_org=True),
-        P(
-            A("Open your sign-in link", href=link, cls="text-brand font-bold"),
-            " (a preview sends no email)",
-        )
-        if link
-        else None,
+        StagingLink(link),
         Form(
             Field(
                 "Email",
@@ -117,19 +113,22 @@ def link_sent(req, email, sess):
     link limits. Also a staff provider sign-in's answer when the provider doesn't host the
     mailbox (app/routes/oauth.py). A page or the 429 response."""
     # every valid-shape address is counted, so a refusal says nothing about the account
-    smtp = isinstance(notify.get_emailer(), notify.SMTPEmailer)
-    if not security.allow(*security.link_limits(req, email, smtp)):
+    if not security.allow(*security.link_limits(req, email, notify.smtp_for(email))):
         return security.too_many()
-    if is_preview() and not demo_address(email):
-        # A preview is demo-only: any other address gets an unknown address's answer and
-        # nothing is sent, so a real coordinator approved there can't be signed in as
+    if is_preview() and not notify.staging_links() and not demo_address(email):
+        # A preview with a real emailer for everyone stays demo-only: any other address
+        # gets an unknown address's answer and nothing is sent
         return EmailForm(notice=SENT)
+    # with SMTP, a preview emails a real address's link (notify.StagingEmailer)
+    staging = notify.staging_links() and not notify.real_mail_to(email)
     asked_for(sess, email)
-    if is_preview() and isinstance(notify.get_emailer(), notify.FakeEmailer):
-        # Nothing is emailed, so the page shows a demo coordinator's link: anyone with the
-        # preview password may sign in as any of them. An admin's link stays in the log.
-        uid = data.coordinator_by_email(email)
-        if uid and data.coordinator_org_ids(uid):
+    if staging:
+        # Staging: nothing is emailed, so the page shows a coordinator's link, any
+        # address's: anyone with the preview password may sign in as any of them. An
+        # admin's too while "Try it as an admin" makes anyone an admin (demo_matches);
+        # else it stays in the fake emailer. An unknown address gets the notice alone.
+        profile, is_coordinator = data.staff_by_email(email)
+        if profile and (is_coordinator or demo_matches()):
             return EmailForm(notice=SENT, link=_send_link(email))
     notify.after(req, _send_link, email, limiter=notify.LINK_LIMITER)
     return EmailForm(notice=SENT)
@@ -203,6 +202,8 @@ def _sync_org_login_verify(req, form, sess):
     )
     if not (is_coordinator or (profile and profile.role == "admin")):
         return EmailForm(error=BAD_LINK)
+    # the link reached this inbox: on a staging preview its mail goes out from now on
+    notify.prove(profile.email, profile.id)
     # the link's sign-in only: not the demo buttons', nor Google's or Apple's
     notify.after(req, notify.send_sign_in_notice, profile.email, notify.now())
     return sign_in_staff(sess, profile, is_coordinator)

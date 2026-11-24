@@ -4,7 +4,7 @@ A short how-to for the admin running the beta. You don't need to be technical: e
 
 The screenshots use demo data: invented organizations and example.org addresses.
 
-This guide is for the live (production) site. The **preview** is demo-only: it accepts only demo addresses, so a real address gets no link there, and the demo admin's link is in the server log instead of an email; there, **Try it as an admin** on `/org/login` signs you in as the demo admin in one tap, with one invented claim to approve. Don't approve real claims on the preview. The preview's Admin page also has **Reset demo data**, which puts the sample data back (see [Rehearse on the preview](GETTING_STARTED.md#rehearse-on-the-preview)); the live site has no such button.
+This guide is for the live (production) site. The **preview** is for testing: with its mail account set up it emails every real address for real (marked **[Staging]**), so an admin listed in `ADMIN_EMAILS` gets real sign-in links and the real new-sign-in notice there; without it, nothing is sent and each sign-in link appears on the page. The demo's own accounts never get real email. The preview's Admin page has **Emails**, listing what was sent or would have been; there, **Try it as an admin** on `/org/login` signs you in as the demo admin in one tap, with one invented claim to approve. Don't approve real claims on the preview. The preview's Admin page also has **Reset demo data**, which puts the sample data back (see [Rehearse on the preview](GETTING_STARTED.md#rehearse-on-the-preview)); the live site has no such button.
 
 Nothing tells you when something new arrives. **No email goes to admins** when a nonprofit asks for access or someone files a report, so look at the Claims and Reports tabs every day or two.
 
