@@ -541,6 +541,11 @@ CLAIM_SEARCH_ALL = (("claim-search-all", 300, 3600),)
 # The public check link for a certificate (/check/{code}): per address, so a code can't be
 # guessed at (ids are 128 random bits; this keeps the page from being a free probe too).
 CHECK_PER_IP = (("check-ip", 30, 600),)
+# A preview's "Reset demo data" (app/routes/admin.py): anyone with the preview link can be
+# its admin, so one reset per 15 minutes for the whole preview and 3 an hour per address.
+# rate_event outlives the reset (demo_seed.RESET_KEEPS).
+RESET_ALL = (("reset-all", 1, 900),)
+RESET_PER_IP = (("reset-ip", 3, 3600),)
 assert all(
     w <= data.RATE_KEEP_SECONDS
     for rules in (SMS_PER_PHONE_IP, SMS_PER_PHONE, SMS_PER_IP, SMS_PER_NET)
@@ -549,6 +554,7 @@ assert all(
     + (SIGNUP_ALL, CLAIM_PER_IP, CLAIM_PER_EMAIL)
     + (OAUTH_PER_IP,)
     + (PROPUBLICA, CLAIM_SEARCH_PER_IP, CLAIM_SEARCH_ALL, CHECK_PER_IP)
+    + (RESET_ALL, RESET_PER_IP)
     for _, _, w in rules
 )
 
