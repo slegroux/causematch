@@ -143,3 +143,32 @@ def test_the_card_shows_what_you_will_do_and_a_tap_opens_the_sheet(
     sheet.get_by_role("button", name="Close").click()
     assert not sheet.is_visible()
     ctx.close()
+
+
+def test_the_filters_button_says_filters_and_the_row_still_fits(
+    browser, playwright, live_url
+):
+    ctx = guard(
+        browser.new_context(
+            **playwright.devices["iPhone SE (3rd gen)"], base_url=live_url
+        )
+    )  # 375x667
+    page = ctx.new_page()
+    p = sign_in_page(page, "(310) 555-0169")
+    tall_urgent_card(p.id)
+    data.dismiss_photo_nudge(p.id)
+    page.goto("/deck")
+    filters = page.locator("summary")
+    seen = filters.evaluate(
+        "e => [...e.childNodes].map(n => n.nodeType === 1 && n.closest('.sr-only') "
+        "? '' : n.textContent).join('').trim()"
+    )  # its visible words, not the screen-reader-only ones
+    assert seen == "Filters"
+    fb = filters.bounding_box()
+    pass_ = page.get_by_role("button", name="Pass", exact=True).bounding_box()
+    like = page.get_by_role("button", name="Like", exact=True).bounding_box()
+    assert fb["x"] >= 0 and fb["x"] + fb["width"] <= pass_["x"]  # left of Pass
+    assert like["x"] + like["width"] <= 375  # on screen
+    for box in (fb, pass_, like):
+        assert box["y"] + box["height"] <= 667 - 64  # above the tab bar
+    ctx.close()
