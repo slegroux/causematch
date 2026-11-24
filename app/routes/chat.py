@@ -89,11 +89,14 @@ def shift_day(s):
 
 def shift_line(head):
     """ "Sat Nov 14 · 9:00 AM to 12:00 PM · Sawtelle": the next shift, else the opening's time
-    (with "(not booked yet)" while the nonprofit's screening holds it)."""
+    (with "(not booked yet)" while the nonprofit's screening holds it, and "(not booked)"
+    for a repeating opening's next date when this volunteer has no shift on it)."""
     shift = head["shift"]
     start = shift["starts_at"] if shift else head["starts_at"]
     minutes = shift["duration_minutes"] if shift else head["duration_minutes"]
     held = "(not booked yet)" if head.get("screening_pending") else None
+    if not shift and head["writable"] and head["recurrence"] == "weekly" and not held:
+        held = "(not booked)"
     return " · ".join(
         part for part in (when(start, minutes), head["neighborhood"], held) if part
     )

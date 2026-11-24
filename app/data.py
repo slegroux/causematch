@@ -69,7 +69,13 @@ def next_start(starts_at, recurrence, status="open"):
     start = datetime.fromisoformat(starts_at)
     week = timedelta(weeks=1)
     weeks = -((start - datetime.fromisoformat(now)) // week)  # whole weeks, rounded up
-    return (start + weeks * week).strftime(_LOCAL_FORMAT)
+    rolled = start + weeks * week
+    # a wall time the clocks skip (Sunday 02:30 on the spring-forward night) moves on to the
+    # next valid one (03:30), as the post form would refuse it
+    rolled = (
+        rolled.replace(tzinfo=LA).astimezone(UTC).astimezone(LA).replace(tzinfo=None)
+    )
+    return rolled.strftime(_LOCAL_FORMAT)
 
 
 def local_today():
@@ -2438,6 +2444,7 @@ def chat_header(uid, match_id):
         "neighborhood": o.neighborhood,
         "availability": availability,  # the volunteer's usual times, for the coordinator
         "shift": _next_shift(m.id) if m.status == "accepted" else None,
+        "recurrence": o.recurrence,
         # accepted, its first shift held for the nonprofit's screening (decide)
         "screening_pending": m.status == "accepted" and m.screening_status == "pending",
         **_face(the_org, o),
@@ -3518,15 +3525,15 @@ def org_badges(coordinator_uid):
     }
 
 
-def _upcoming_booked(opening_id):
-    """{match id: [start of each upcoming scheduled shift, soonest first]} on the opening:
-    what close_opening cancels."""
+def _upcoming_booked(opening_id, now):
+    """{match id: [start of each upcoming scheduled shift after now, soonest first]} on the
+    opening: what close_opening cancels."""
     booked = {}
     for r in _db.db.query(
         "SELECT match_id, starts_at FROM shift WHERE status = 'scheduled' "
         "AND starts_at > ? AND match_id IN (SELECT id FROM match WHERE opening_id = ?) "
         "ORDER BY starts_at, id",
-        [_local_now(), opening_id],
+        [now, opening_id],
     ):
         booked.setdefault(r["match_id"], []).append(r["starts_at"])
     return booked
@@ -3544,7 +3551,7 @@ def opening_to_close(coordinator_uid, opening_id):
         "title": o.title,
         "booked": [
             org_match_volunteer(coordinator_uid, match_id)
-            for match_id in _upcoming_booked(opening_id)
+            for match_id in _upcoming_booked(opening_id, _local_now())
         ],
     }
 
@@ -3557,15 +3564,16 @@ def close_opening(coordinator_uid, opening_id):
     shift, for the caller's notices once this has committed."""
     coordinator_opening(coordinator_uid, opening_id)
     told = []
+    now = _local_now()
     with _db.db.conn:
         _db.openings.update(id=opening_id, status="closed")
         _end_urgent(opening_id, "closed")
-        booked = _upcoming_booked(opening_id)
+        booked = _upcoming_booked(opening_id, now)
         _db.db.execute(
             "UPDATE shift SET status = 'cancelled', cancelled_at = ?, cancelled_by = ? "
             "WHERE status = 'scheduled' AND starts_at > ? AND match_id IN "
             "(SELECT id FROM match WHERE opening_id = ?)",
-            [_now(), coordinator_uid, _local_now(), opening_id],
+            [_now(), coordinator_uid, now, opening_id],
         )
         o = _db.openings[opening_id]
         org = _db.orgs[o.org_id]
@@ -3761,7 +3769,7 @@ def reopen_opening(coordinator_uid, opening_id):
             raise PermissionError("this org is deactivated")
         if o.status != "closed":
             raise ValueError("This opening is not closed.")
-        if o.starts_at <= _local_now():
+        if next_start(o.starts_at, o.recurrence) <= _local_now():
             raise ValueError("This opening has started, so it can't be reopened.")
         _db.openings.update(id=opening_id, status="open")
         _sync_fill(opening_id)
