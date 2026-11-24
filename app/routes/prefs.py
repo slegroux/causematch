@@ -532,8 +532,14 @@ def CausesCards(f, error=None):
         ),
         Section(
             "Where you'll help from",
-            "Each card shows the time from the nearest of your places. Nonprofits you "
-            "like see only the neighborhood; we keep an area, never an address.",
+            (
+                (
+                    "Each card shows the time from the nearest of your places. "
+                    "Nonprofits you like see only the neighborhood on "
+                ),
+                A("Your profile", href="/me/profile", cls="underline"),
+                "; we keep an area, never an address.",
+            ),
             PlaceFields(0, first),
             SecondPlace(second, error),
             Datalist(*[Option(value=n) for n in neighborhoods()], id="la-areas"),

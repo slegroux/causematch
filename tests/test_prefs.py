@@ -156,6 +156,10 @@ def test_each_section_name_shows_once_as_a_heading(user):
         assert headings.count(name) == 1, name
     assert "Causes and places" in headings and "Causes" in headings
     assert "Where you'll help from" in headings
+    assert re.search(
+        r"see only the neighborhood on <a[^>]*href=\"/me/profile\"[^>]*>Your profile</a>;",
+        html,
+    )
 
 
 @pytest.mark.parametrize("key", ["causes", "when", "work", "urgent"])
