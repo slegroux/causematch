@@ -119,6 +119,7 @@ Approving gives a stranger the right to post openings, accept volunteers and cha
 
 - **Approve.** Tap it. If the card has a checkbox, tick it first:
   - *Yes, approve for (name)* appears when the typed name differs from the IRS name. If you tap Approve without it, nothing is approved and the card explains: "IRS records name this EIN '...', not what they typed. Check it's right, tick ..., then tap Approve again."
+  - *Choose a cause* appears when the organization is new and its IRS code (the card names it) matches none of our causes. Pick the cause that fits best, then tap Approve again; it has no effect on an organization outside Los Angeles County, which is still refused.
   - *Yes, add them too (the people above can already sign in)* appears when the organization already has someone who can sign in. This is how you add a second coordinator ([see below](#a-nonprofit-needs-a-second-coordinator)).
   - *Yes, make it a coordinator sign-in* appears with that warning. Tick it only once you've read the warning and the nonprofit can't use another address. Without it, nothing is approved and the card asks you to tick it.
 - **Decline.** Tap it. It happens **at once**: there is no "are you sure?" and no way to undo it. The person gets a short, neutral email ("not approved"), with no reason and none of what they typed. If they should have been approved, they have to file a new claim (up to 3 a day per email address).

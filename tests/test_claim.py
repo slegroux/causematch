@@ -518,7 +518,6 @@ def test_approving_a_claim_for_an_org_not_yet_here_adds_it_in_one_step(
         (lambda r: httpx.Response(429), "Tap Approve again in a minute"),
         (lambda r: httpx.Response(404, json={}), "no nonprofit with that EIN. Decline it"),
         (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "94103", "ntee_code": "K31"}}), "not a Los Angeles County ZIP. Decline it"),
-        (lambda r: httpx.Response(200, json={"organization": {"name": "X", "zipcode": "90019", "ntee_code": "K03"}}), "maps to no cause. Decline it"),
     ],
 )  # fmt: skip
 def test_an_approval_that_cannot_add_the_org_says_why_and_changes_nothing(
@@ -538,6 +537,50 @@ def test_an_approval_that_cannot_add_the_org_says_why_and_changes_nothing(
         propublica_says(monkeypatch, serve_org)
         assert approve(admin, cid).status_code == 303
         assert the_claim().status == "approved"
+
+
+def unmapped(ntee="P80", zipcode="90019"):
+    org = {"name": "Los Angeles Food Bank", "zipcode": zipcode, "ntee_code": ntee}
+    return lambda r: httpx.Response(200, json={"organization": org})
+
+
+def test_an_ntee_code_with_no_cause_lets_the_admin_choose_one(admin, monkeypatch):
+    propublica_says(monkeypatch, unmapped())
+    claim()
+    cid = the_claim().id
+    r = approve(admin, cid)
+    assert r.status_code == 200 and "the code P80" in r.text
+    assert 'name="cause"' in r.text and "Animal shelters" in r.text
+    assert (
+        not orgs(where="ein = ?", where_args=[EIN]) and the_claim().status == "pending"
+    )
+    r = approve(admin, cid, cause="animal-shelters")
+    assert r.status_code == 303
+    org = orgs(where="ein = ?", where_args=[EIN])[0]
+    assert json.loads(org.causes) == ["animal-shelters"] and org.verified_at
+    assert the_claim().status == "approved"
+
+
+def test_a_choice_that_is_not_ours_to_make_changes_nothing(admin, monkeypatch):
+    claim()
+    cid = the_claim().id
+    before = orgs.count
+    propublica_says(monkeypatch, unmapped())
+    r = approve(admin, cid, cause="made-up")
+    assert r.status_code == 200 and "isn't one of our causes" in r.text.replace(
+        "&#x27;", "'"
+    )
+    assert 'name="cause"' in r.text and orgs.count == before
+    propublica_says(monkeypatch, unmapped(zipcode="94103"))  # outside the county
+    r = approve(admin, cid, cause="animal-shelters")
+    assert r.status_code == 200 and "not a Los Angeles County ZIP" in r.text
+    assert 'name="cause"' not in r.text and orgs.count == before
+    assert the_claim().status == "pending"
+    propublica_says(monkeypatch, serve_org)  # K31 maps to food: the choice is ignored
+    assert approve(admin, cid, cause="animal-shelters").status_code == 303
+    org = orgs(where="ein = ?", where_args=[EIN])[0]
+    assert json.loads(org.causes) == ["food-insecurity"]
+    assert orgs.count == before + 1
 
 
 def test_a_typed_name_unlike_the_irs_name_needs_a_second_look(admin, monkeypatch):
