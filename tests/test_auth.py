@@ -695,7 +695,10 @@ def google_staff():
 def test_every_sign_in_writes_the_databases_epoch(signed_in):
     """The emailed links (volunteer, coordinator, admin) and Google's, volunteer and
     staff: all through auth._fresh_session. The demo buttons: test_preview's reset."""
-    assert session_of(signed_in())["ep"] == data.session_epoch()
+    c = signed_in()
+    sess = session_of(c)
+    assert sess["ep"] == data.session_epoch()
+    assert sess["pc"] == profiles[sess["uid"]].created_at
 
 
 def test_a_session_from_another_database_signs_nobody_in():
@@ -709,13 +712,27 @@ def test_a_session_from_another_database_signs_nobody_in():
     assert socket_user(sess) is None
 
 
+def test_a_session_for_another_profile_at_the_same_id_signs_nobody_in():
+    """Production can take an id again on the same database (a sign-up lost in a deploy
+    overlap or a restore): the session names the profile's created_at too."""
+    sam = volunteer()
+    sess = resign(sam, pc="2026-01-01T00:00:00+00:00")
+    r = sam.get("/deck", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+    assert "uid" not in session_of(sam)
+    assert socket_user(sess) is None
+
+
 def test_a_session_from_before_epochs_is_kept_and_given_one_except_on_a_preview(
     monkeypatch,
 ):
     sam = volunteer()
-    sess = resign(sam, ep=None)
+    sess = resign(sam, ep=None, pc=None)
+    assert socket_user(sess).id == sam.uid
     assert sam.get("/deck", follow_redirects=False).status_code == 200
-    assert session_of(sam)["ep"] == data.session_epoch()  # written on that request
+    now = session_of(sam)  # both written on that request
+    assert now["ep"] == data.session_epoch()
+    assert now["pc"] == profiles[sam.uid].created_at
     monkeypatch.setenv("CAUSEMATCH_ENV", "production")
     assert socket_user(sess).id == sam.uid
     monkeypatch.setenv("CAUSEMATCH_ENV", "preview")  # rebuilt at every cold start

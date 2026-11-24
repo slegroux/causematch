@@ -29,11 +29,17 @@ MIN_INSTANCES="${MIN_INSTANCES:-1}"
 
 # Production's SERVICE or SERVICE_ACCOUNT left in the shell would redeploy production as a
 # preview: its env replaced (no LITESTREAM_BUCKET), its database the demo seed's, and its
-# sessions read against that database.
-case "$SERVICE $SERVICE_ACCOUNT" in
-"causematch "* | *" causematch-prod@"*)
-	echo "SERVICE ($SERVICE) or SERVICE_ACCOUNT ($SERVICE_ACCOUNT) names production:" \
+# sessions read against that database. So SERVICE is a preview's name or nothing:
+# causematch-preview, or causematch-preview-<lowercase letters, digits, hyphens>; never a
+# fully qualified one. And never production's service account.
+if ! [[ "$SERVICE" =~ ^causematch-preview(-[a-z0-9-]+)?$ ]]; then
+	echo "SERVICE ($SERVICE) is not causematch-preview or causematch-preview-<name>:" \
 		"refusing" >&2
+	exit 1
+fi
+case "$SERVICE_ACCOUNT" in
+causematch-prod@*)
+	echo "SERVICE_ACCOUNT ($SERVICE_ACCOUNT) names production: refusing" >&2
 	exit 1
 	;;
 esac

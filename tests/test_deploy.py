@@ -193,16 +193,42 @@ def test_production_refuses_the_previews_service_or_account(tmp_path, env):
 
 
 @pytest.mark.parametrize(
-    "env",
+    "env, why",
     [
-        {"SERVICE": "causematch"},
-        {"SERVICE_ACCOUNT": "causematch-prod@causematch-la.iam.gserviceaccount.com"},
+        ({"SERVICE": "causematch"}, "is not causematch-preview"),
+        (
+            {
+                "SERVICE": "projects/causematch-la/locations/us-west1/services/causematch"
+            },
+            "is not causematch-preview",
+        ),
+        ({"SERVICE": "causematch-preview/../causematch"}, "is not causematch-preview"),
+        (
+            {
+                "SERVICE_ACCOUNT": "causematch-prod@causematch-la.iam.gserviceaccount.com"
+            },
+            "names production",
+        ),
     ],
 )
-def test_the_preview_refuses_productions_service_or_account(tmp_path, env):
+def test_the_preview_refuses_productions_service_or_account(tmp_path, env, why):
     rc, err, calls = deploy(tmp_path, "deploy_preview.sh", HOME=str(tmp_path), **env)
-    assert rc == 1 and "names production" in err
+    assert rc == 1 and why in err
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "service", ["causematch-preview", "causematch-preview-katie-2"]
+)
+def test_the_preview_deploys_to_a_preview_service_name(tmp_path, service):
+    """Past the name check: the first gcloud call (the project's name) is made. The seed
+    is missing here, so it stops after that, before copying or deploying anything."""
+    rc, err, calls = deploy(
+        tmp_path, "deploy_preview.sh", HOME=str(tmp_path), SERVICE=service
+    )
+    assert rc == 1 and "is missing" in err and "refusing" not in err
+    assert calls and calls[0].startswith("projects describe")
+    assert deployed(calls) == []
 
 
 def test_the_preview_fakes_email_and_has_no_texts():
