@@ -4,9 +4,9 @@ A short how-to for the admin running the beta. You don't need to be technical: e
 
 The screenshots use demo data: invented organizations and example.org addresses.
 
-This guide is for the live (production) site. The **preview** is demo-only: it accepts only demo addresses, so a real address gets no link there, and the demo admin's link is in the server log instead of an email; there, **Try it as an admin** on `/org/login` signs you in as the demo admin in one tap, with one invented claim to approve. Don't approve real claims on the preview.
+This guide is for the live (production) site. The **preview** is demo-only: it accepts only demo addresses, so a real address gets no link there, and the demo admin's link is in the server log instead of an email; there, **Try it as an admin** on `/org/login` signs you in as the demo admin in one tap, with one invented claim to approve. Don't approve real claims on the preview. The preview's Admin page also has **Reset demo data**, which puts the sample data back (see [Rehearse on the preview](GETTING_STARTED.md#rehearse-on-the-preview)); the live site has no such button.
 
-Nothing tells you when something new arrives. **No email or text goes to admins** when a nonprofit asks for access or someone files a report, so look at the Claims and Reports tabs every day or two.
+Nothing tells you when something new arrives. **No email goes to admins** when a nonprofit asks for access or someone files a report, so look at the Claims and Reports tabs every day or two.
 
 Contents: [1. Signing in](#1-who-is-an-admin-and-how-to-sign-in) · [2. Claims](#2-approving-a-nonprofits-request-for-access-a-claim) · [3. Verifying a nonprofit](#3-verifying-a-nonprofit) · [4. Reports and blocks](#4-reports-and-blocks) · [5. Pilot metrics](#5-pilot-metrics) · [6. When something's off](#6-when-somethings-off)
 
@@ -65,6 +65,8 @@ The link only shows you this page; nothing happens until you tap **Sign in**. Th
 
 The sign-in page always answers "If that address belongs to a coordinator, a sign-in link is on its way", whether or not the address is known. That is on purpose, so strangers can't find out who has an account. If no email comes, see [When something's off](#6-when-somethings-off).
 
+One address has one role, so staff sign in at `/org/login`. A `+tag` variant of a staff address (`admin+test@example.org` for `admin@example.org`) typed at `/login` gets "Check your email" and no email. That is by design.
+
 A **Continue with Google** (or Apple) button shows only when that sign-in is switched on. It works for you only when the email on that account is the one you were added with **and** Google or Apple itself hosts that mailbox: a Gmail or Google Workspace address for Google, an iCloud address for Apple. For any other address, such as a nonprofit's own domain on another mail service, the button sends you an emailed link instead.
 
 ![The Admin page, with the tabs along the top](assets/admin/admin-home.png)
@@ -80,7 +82,7 @@ Nobody gets a nonprofit account by signing up. They ask, and an admin says yes. 
 ### What the coordinator does
 
 1. They open `/org/claim` ("Claim your organization").
-2. They find their organization by typing its name (from IRS records) or by typing its **EIN**, then fill in the organization's name, their own name, their email and, optionally, a phone number.
+2. They find their organization by typing its name (from IRS records) or by typing its **EIN**, then fill in the organization's name, their own name and their email. The form asks for no phone number.
 3. They tick **I'm authorized to represent this organization** and tap **Request access**.
 4. They see "Request received". They get no email at this point, and the page says the same thing whatever the EIN, so it never reveals which organizations exist.
 
@@ -97,7 +99,7 @@ Open **Claims** (the Admin page's "Claims" box, or the tab). Each pending reques
 Each card shows:
 
 - the organization's name and **EIN**, and its city when Causematch already has it;
-- the person's name, email and phone (the phone appears in international form, `+1310...`);
+- the person's name and email;
 - **They typed: ...** when the name they entered is not the name IRS records have for that EIN;
 - **Already claimed by ...** when someone can already sign in for this organization;
 - a warning, **This person already volunteers on Causematch with this address**, when a volunteer signs in with exactly that email address (a `+tag` or dotted variant of it doesn't count). Approving makes it a coordinator sign-in: every emailed sign-in link for it then opens the nonprofit side, and they reach their volunteer account only by signing in with Google or Apple, if they've connected one. Ask the nonprofit for a different address if you can. If the address is already a coordinator's, nothing changes for them, and there is no warning;
@@ -137,7 +139,7 @@ A green banner confirms the decision: "Approved. We emailed them where to sign i
 - Access to their organization: they are its **owner** if it had no owner who can sign in, otherwise a **coordinator**.
 - A **verified** organization: approving a claim also verifies the organization if it wasn't ([section 3](#3-verifying-a-nonprofit)).
 
-Causematch erases the name, email and phone on a request 90 days after you decide it.
+Causematch erases the name and email on a request 90 days after you decide it.
 
 ---
 
@@ -171,7 +173,7 @@ Volunteers can report the nonprofit of a match, and coordinators can report a vo
 
 ### The reports queue
 
-Open **Reports**. Each card says who reported whom, the reason, the match and opening it came from, and what they wrote. You see **first names only**: no email, phone or place.
+Open **Reports**. Each card says who reported whom, the reason, the match and opening it came from, and what they wrote. You see **first names only**: no email or place.
 
 ![Two open reports](assets/admin/reports.png)
 
@@ -187,8 +189,8 @@ What each button does:
 Things to know before you tap:
 
 - **Suspending and deactivating can't be undone from the admin pages.** There is no "un-suspend" or "reactivate" button. Ask the operator if you got it wrong.
-- **The person isn't told.** Causematch sends no email or text for a suspension.
-- A suspension follows the person's **email address** (a `+tag` or Gmail dots don't get around it) and their **Google or Apple account**, not a phone number: phones are only used for texts now. Even after they delete their account, a suspended person who signs up again with that address or account is refused.
+- **The person isn't told.** Causematch sends no email for a suspension.
+- A suspension follows the person's **email address** (a `+tag` or Gmail dots don't get around it) and their **Google or Apple account**. Even after they delete their account, a suspended person who signs up again with that address or account is refused.
 - If the card says "Already suspended" or "Already deactivated", the earlier action already covers it: Dismiss it.
 
 ### One person, several accounts
@@ -207,7 +209,7 @@ When a volunteer blocks a nonprofit, its openings leave that volunteer's deck, t
 
 ## 5. Pilot metrics
 
-Open **Metrics** for how the pilot is going. The numbers are totals only: no names, emails or phones. **Download CSV** saves them all.
+Open **Metrics** for how the pilot is going. The numbers are totals only: no names or emails. **Download CSV** saves them all.
 
 ![The Metrics page](assets/admin/metrics.png)
 
@@ -261,7 +263,7 @@ Remember: **only a volunteer's first shift is scheduled automatically.** The rep
 
 ### Someone wants their account deleted
 
-- **A volunteer** can do it themselves: **Me**, then **Your profile**, then **Delete my account** at the bottom (they confirm once). It erases their name, email (and phone, where one was added) and location, withdraws their matches and cancels future shifts, and replaces their chat messages with "[message removed]". The answers behind the pilot's statistics stay, without a name. Reports they filed or that name them stay too. If they were blocked, reported or suspended, Causematch keeps one-way hashes (not the values) of their email address, their phone number and any Google or Apple account, so a suspension or block can't be dodged by signing up again.
+- **A volunteer** can do it themselves: **Me**, then **Your profile**, then **Delete my account** at the bottom (they confirm once). It erases their name, email and location, withdraws their matches and cancels future shifts, and replaces their chat messages with "[message removed]". The answers behind the pilot's statistics stay, without a name. Reports they filed or that name them stay too. If they were blocked, reported or suspended, Causematch keeps one-way hashes (not the values) of their email address and any Google or Apple account, so a suspension or block can't be dodged by signing up again.
 - **A coordinator or an admin** can't do it themselves: ask the operator. For a coordinator: `uv run python scripts/remove_coordinator.py --email coordinator@example.org` (this deletes the **whole account**: they are removed from **every** organization they belonged to, signed out at once, and their name and email erased; their chat messages stay as the nonprofit's record). For an admin: `scripts/remove_admin.py`, as in section 1.
 - Anything else they ask to see or fix: the privacy page tells them to write to the contact address.
 

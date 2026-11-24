@@ -13,7 +13,7 @@ Contents: [Before you start](#before-you-start) · [Volunteer](#volunteer) · [N
 - **Links work once and expire after 15 minutes.** Only the newest link works: asking again cancels the one before.
 - **The email comes from the Causematch address.** The subject is "Your Causematch sign-in link", or "Finish signing up for Causematch" the first time a volunteer signs up.
 - **One browser holds one sign-in.** Signing in to a second role in the same browser signs the first one out. To try several roles, use a different browser (or a private window) for each.
-- **Ask for the link in the browser you'll use.** If you open it in another browser or device, the confirm page warns "This browser didn't ask for this link...". If you asked for it yourself, carry on.
+- **Ask for the link in the browser you'll use.** If you open it in another browser or device, the confirm page asks "Did you ask for this link on another device? Then carry on. If someone sent it to you, don't." If you asked for it yourself, carry on.
 - **Google.** If a **Continue with Google** button is shown, you can use it instead of the emailed link.
 
 ### If the link doesn't arrive
@@ -39,11 +39,11 @@ Contents: [Before you start](#before-you-start) · [Volunteer](#volunteer) · [N
 The page asks, in this order:
 
 1. **About you:** your **First name**.
-2. **Where:** **Neighborhood or ZIP** (in Los Angeles County), or **Use my location** if your browser offers it. Then **Getting there** (**Car**, **Transit**, **Bike** or **Walk**) and **Up to (minutes)** (15, 30, 45, 60 or **Any**). Only you see this.
-3. **What:** for each cause (Food insecurity, Environment & parks, Animal shelters, Homelessness services) pick **Love**, **Open to it** or **Not for me**. Pick at least one Love or Open to it. **Not for me** hides that cause's openings.
+2. **Where:** **Neighborhood or ZIP** (in Los Angeles County), or **Use my location** if your browser offers it. Then **Getting there** (**Car**, **Transit**, **Bike** or **Walk**) and **Up to (minutes)** (15, 30, 45, 60 or **Any**). Only you see where you are. Nonprofits you like see only the neighborhood, which onboarding fills in from this place: a listed neighborhood as you picked it, a ZIP's neighborhood, and nothing for **Use my location**. You can change or clear it later in **Your profile**.
+3. **What:** for each cause (Food insecurity, Environment & parks, Animal shelters, Homelessness services) pick **Love**, **Open to it** or **Not for me**. Pick at least one Love or Open to it. **Not for me** hides that cause's openings. Below the causes, tick **I need proof of my volunteer hours** if you need them for school, court or a work program: only nonprofits that confirm hours are shown, and you can get a certificate. Ticking it needs your **Last name**, because a certificate carries your full name.
 4. Tick **I'm 18 or older and I agree to the privacy policy**, then tap **Start swiping**.
 
-Your free times, the kind of work and the rest can be set later under **Me**, **Preferences**.
+Your free times, the kind of work and the rest can be set later under **Me**, **Preferences**, one page with one **Save**.
 
 ### The deck (Openings)
 
@@ -52,7 +52,8 @@ The bottom bar has three tabs: **Openings**, **Matches** and **Me**.
 - **Like** (the heart) or **Pass** (the cross) on each card. You can also drag the card.
 - Tap the card, or **More**, to open **What you'll do**: the full description, "Good to know", any orientation, and any screening the nonprofit asks for. **Pass** and **Like** are there too.
 - **Next 48h** (top right) shows only openings starting within 48 hours, soonest first.
-- The round button with sliders, left of Pass, opens **Filters**: travel time, which causes to show, and **Only this week**. Tap **Show openings**. Filters hold until you tap **Clear** and change none of your saved preferences.
+- The **Filters** button (sliders and the word), left of Pass, opens **Filters**: travel time, which causes to show, and **Only this week**. Tap **Show openings**. Filters hold until you tap **Clear** and change none of your saved preferences.
+- If you ticked **I need proof of my volunteer hours** and no nonprofit near you confirms hours yet, the deck reads "No nonprofit near you confirms hours yet". **Also show nonprofits that can't confirm hours (N)** shows them, and turns the proof-of-hours choice off in your preferences, so hours with them won't go on a certificate.
 - A card marked **Screening required** means the nonprofit runs its own screening (a background check, Live Scan, a training or other) before your first shift.
 
 ### After a Like
@@ -77,8 +78,8 @@ The bottom bar has three tabs: **Openings**, **Matches** and **Me**.
 
 ### Me
 
-- **Your profile** ("What nonprofits see"): your photo, **First name**, **Last name (optional)**, pronouns, a short bio, the neighborhood nonprofits see, interests, and, under **Only we see**, your email and other causes. Tap **Save profile**. Match news and messages are emailed to the email here, so keep it filled in.
-- **Preferences** ("What you see, and when"): **Causes and places**, **When**, **Kind of work** and **Last-minute calls** (off unless you turn it on).
+- **Your profile** ("What nonprofits see"): your photo, **First name**, **Last name (optional)**, pronouns, a short bio, **Neighborhood nonprofits see** (onboarding fills it in; change or clear it here), interests, and, under **Only we see**, your **Email (optional)** and other causes. Tap **Save profile**. Match news, reminders and last-minute calls go to the email here. Leave it empty and Causematch can't reach you outside the app.
+- **Preferences** ("What you see, and when"): one page with one **Save**. It holds **Proof of hours** (**I need proof of my volunteer hours**, first on the page, with your **Last name**), **Causes and places**, **When**, **Kind of work** and **Last-minute calls** (off unless you turn it on).
 - **Screenings** ("Confirmed by nonprofits"): which nonprofits confirmed your screening, its kind and the date. Causematch never sees documents or results.
 - **Delete my account**: at the bottom of **Your profile**, then **Delete my account** on the confirm page. It erases your name, email and location, withdraws your matches, cancels your shifts and replaces your chat messages with "[message removed]". It can't be undone.
 - **Sign out** is the last row of **Me**.
@@ -95,11 +96,11 @@ Nobody gets a nonprofit account by signing up: you ask, and an admin approves.
 2. Under **Find your organization**, start typing its name and pick it from the IRS records. That fills in **Organization's EIN** and **Organization name**. You can also type the EIN.
 3. Fill in **Your name** and **Your email**, the address you'll sign in with.
 4. Tick **I'm authorized to represent this organization** and tap **Request access**.
-5. You see **Request received**. No email comes now. Causematch takes only nonprofits in Los Angeles County whose work fits one of its causes.
+5. You see **Request received**: "If it is approved, we'll email the address you gave with where to sign in." No email comes now. Causematch takes only nonprofits in Los Angeles County whose work fits one of its causes.
 
 ### Sign in after approval
 
-1. You get an email, "You're approved on Causematch". It has **no sign-in link**, only the address of `/org/login`. (The claim page says a link will be emailed; that's the one you ask for next.)
+1. You get an email, "You're approved on Causematch". It has **no sign-in link**, only where to sign in: `/org/login`. You ask for the link there next.
 2. Open `/org/login` ("Nonprofit sign in"), type your email and tap **Email me a link**.
 3. Open "Your Causematch sign-in link", tap the link, then **Sign in** on the confirm page. You land on **Your openings**.
 4. The first time, the page asks you to "Add your name so volunteers know who you are". Type your name and role and tap **Save details**. **Post an opening** appears after that.
@@ -116,7 +117,11 @@ The tabs along the top are **Openings**, **Inbox**, **Shifts** and **Organizatio
 6. **The adults rule (required):** tick the box that confirms the opening is for adults (18+). Without screening it also confirms there is no one-to-one contact with vulnerable people; with screening it says you screen each volunteer before their first shift. Homelessness services openings are for group shifts only, unless they require your screening.
 7. **More details (optional)** holds the kind of work, languages and skills. Tap **Post opening**.
 
-Volunteers see the opening until its date and time arrive. A volunteer accepted after that gets no shift booked: schedule one for them (see Shifts).
+A one-time opening leaves volunteers' decks when its date and time arrive, and a volunteer accepted after that gets no shift booked: schedule one for them (see Shifts). A weekly opening stays: once its first date has passed, it shows the same weekday and time next week, and the shift an accepted volunteer gets is booked on that date.
+
+**Close an opening.** Under **More**, **Close opening** works on an open or a filled opening. A page first names the volunteers with an upcoming shift (or says "Nobody has an upcoming shift on it."). Closing cancels their upcoming shifts, and each of them gets a message in their chat ("(Nonprofit) closed this opening, so your shift on (date) is cancelled.") and the usual new-message email. The opening leaves volunteers' decks; past shifts and their hours stay. **Reopen** brings a closed opening back while its date is still ahead, but the cancelled shifts stay cancelled.
+
+**Weekly openings, the limits.** Spots don't reset each week: a filled weekly opening stays filled from week to week, like a standing team, until someone leaves. Only the first shift is booked automatically (see Shifts). A closed weekly opening whose first date has passed can't be reopened: post a new one.
 
 **Last-minute calls.** When an opening starts within 48 hours and still has spots, its **More** menu offers **Short of people? Post a last-minute call** (not on screening-required openings, and up to 3 a day). Nearby volunteers who turned on last-minute calls see it first. The emails to them go out only once the site's scheduled jobs are running (an operator step).
 
@@ -162,7 +167,7 @@ The preview is a separate copy of Causematch filled with sample data, for trying
 
 What is seeded: a nonprofit that confirms volunteer hours (its cards say **Confirms your hours**), an opening marked **Screening required**, a last-minute call for tomorrow, and a pending claim to approve under **Claims**.
 
-What you do on the preview stays there. To put it back as it started, an admin taps **Reset demo data** on the **Admin** page, then **Reset demo data** on the confirm page. Every like, match, chat, shift and claim, and every account made on the preview, goes, and the sample data comes back with fresh dates. It can't be undone, and it signs you out: tap **Try it as an admin** to carry on. A reset signs out everyone on the preview, so don't press it while someone else is in the middle of a demo. The preview can be reset once every 15 minutes.
+What you do on the preview stays there. To put it back as it started, an admin taps **Reset demo data** on the **Admin** page, then **Reset demo data** on the confirm page. Every like, match, chat, shift and claim, and every account made on the preview, goes, and the sample data comes back with fresh dates. It can't be undone, and it signs you out: tap **Try it as an admin** to carry on. A reset signs out everyone on the preview, so don't press it while someone else is in the middle of a demo. The preview can be reset once every 15 minutes in all, and 3 times an hour from one address; past either you see **Too many tries** and nothing is reset. If someone is mid-action during a reset, a stray notice from it can be left on the preview.
 
 The live site has no sample data and no **Reset demo data**. It has no nonprofits until real ones ask for access and an admin approves them.
 
@@ -175,7 +180,7 @@ You need three mailboxes (admin, coordinator, volunteer), one browser or private
 The timing rule that matters: the opening must start in the future when you post it, the volunteer must like it and the coordinator accept it **before** it starts (that books the shift), and the shift can be marked only **once it has started**. So post it about 10 minutes ahead.
 
 1. **Coordinator browser:** open `/org/claim`, find the nonprofit, fill in the coordinator's name and email, tick the box, tap **Request access**.
-2. **Admin browser:** sign in at `/org/login`. Open **Claims**, find the request and tap **Approve** (tick any checkbox the card shows first). The banner says "Approved".
+2. **Admin browser:** sign in at `/org/login`. Open **Claims**, find the request and tap **Approve** (tick any checkbox the card shows first). The banner says "Approved. We emailed them where to sign in."
 3. **Coordinator browser:** sign in at `/org/login` with the coordinator address. Add your name and tap **Save details**.
 4. Tap **Post an opening**. Note the ZIP code you use. Set **Date and time of the next shift** to about 10 minutes from now, **How long is a shift?** to 1 hour, **Does it repeat?** to **One-time**, 1 volunteer, orientation **No**. Leave screening unticked, tick the adults box, tap **Post opening**.
 5. **Volunteer browser:** sign up at `/login` with the volunteer address. In onboarding, type the **same ZIP code** under **Neighborhood or ZIP**, leave **Car** and 30 minutes, and pick **Love** for the opening's cause. Tick the consent box and tap **Start swiping**.
