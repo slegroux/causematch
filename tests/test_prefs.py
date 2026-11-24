@@ -142,6 +142,22 @@ def test_preferences_is_one_page_with_one_save(user):
         assert f'id="{key}"' in html and f'value="{key}" name="sections"' in html
 
 
+def test_each_section_name_shows_once_as_a_heading(user):
+    """A card whose title repeats its section heading drops the title; the cards
+    "Causes" and "Where you'll help from" keep theirs."""
+    import re
+
+    html = user.get("/me/preferences").text
+    headings = [
+        re.sub(r"<[^>]+>", "", h).strip()
+        for h in re.findall(r"<h[1-6][^>]*>(.*?)</h[1-6]>", html, re.DOTALL)
+    ]
+    for name in ("When", "Kind of work", "Last-minute calls"):
+        assert headings.count(name) == 1, name
+    assert "Causes and places" in headings and "Causes" in headings
+    assert "Where you'll help from" in headings
+
+
 @pytest.mark.parametrize("key", ["causes", "when", "work", "urgent"])
 def test_the_old_section_pages_land_on_their_heading(user, key):
     r = user.get(f"/me/preferences/{key}", follow_redirects=False)
@@ -491,7 +507,7 @@ def test_the_page_marks_exactly_what_a_nonprofit_sees(user):
         "when",
         "work",
     ):  # a legend under the heading, not a card's note
-        assert parts[k].index(SHARED) < parts[k].index("<h2", 1)
+        assert parts[k].index(SHARED) < (parts[k] + "<h2").index("<h2", 1)
     for item in ("causes", "availability", "languages", "how often"):
         assert item in SHARED_WITH_NONPROFIT
 

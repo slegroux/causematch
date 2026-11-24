@@ -163,9 +163,12 @@ def SharedNote(detail):
 
 
 def Section(title, hint, *content):
+    """title None: the page's own heading above the card already names it."""
     return Div(
-        H2(title, cls=ORG_SECTION),
-        P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
+        H2(title, cls=ORG_SECTION) if title else None,
+        P(hint, cls=("-mt-2 " if title else "") + "text-sm text-ink-muted")
+        if hint
+        else None,
         *content,
         cls="space-y-3 p-5 " + CARD,
     )
@@ -345,7 +348,7 @@ def Hour(name, value):
 def LastMinute(u):
     """The opt-in to urgent calls: off unless turned on, and private."""
     return Section(
-        "Last-minute calls",
+        None,
         "Short of people in the next 48 hours and you're free then: "
         + (
             "we text you (or email you, without a number)."
@@ -511,7 +514,7 @@ def CausesCards(f, error=None):
 def WhenCards(f):
     return (
         Section(
-            "When",
+            None,
             "Tick the times you're usually free: openings then rank first.",
             Hidden(name="sections", value="when"),
             DayGrid(f["availability"]),
@@ -550,7 +553,7 @@ def WhenCards(f):
 def WorkCards(f):
     return (
         Section(
-            "Kind of work",
+            None,
             "Openings that say they fit rank higher; ones that don't say aren't held "
             "back.",
             Hidden(name="sections", value="work"),
