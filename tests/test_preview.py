@@ -1491,12 +1491,14 @@ def test_reset_demo_data_puts_the_preview_back_to_its_seed(demo, reset_routes):
     )
     assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
     # a cold start numbers profiles from 1 again: the old epoch alone signs sam out of
-    # whoever has an id now
+    # whoever has an id now. The cookie names that profile in full (uid, sv and its
+    # created_at), so only the epoch differs, however many seconds the reset took
     assert data.session_epoch() != epoch
     now = profiles(where="role = 'volunteer' AND onboarded_at IS NOT NULL")[0]
-    resign(sam, uid=now.id, sv=now.session_version or 1)
+    theirs = {"uid": now.id, "sv": now.session_version or 1, "pc": now.created_at}
+    resign(sam, **theirs)
     assert sam.get("/deck", follow_redirects=False).headers["location"] == "/login"
-    resign(sam, uid=now.id, sv=now.session_version or 1, ep=data.session_epoch())
+    resign(sam, **theirs, ep=data.session_epoch())
     assert sam.get("/deck", follow_redirects=False).status_code == 200  # the control
     assert _epoch_of(_demo_admin()) == data.session_epoch()  # the admin's one tap back
 

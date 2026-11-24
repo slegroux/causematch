@@ -716,7 +716,9 @@ def test_a_session_for_another_profile_at_the_same_id_signs_nobody_in():
     """Production can take an id again on the same database (a sign-up lost in a deploy
     overlap or a restore): the session names the profile's created_at too."""
     sam = volunteer()
-    sess = resign(sam, pc="2026-01-01T00:00:00+00:00")
+    other = "2000-01-01T00:00:00+00:00"  # not the clock's: no same-second luck
+    assert profiles[sam.uid].created_at != other
+    sess = resign(sam, pc=other)
     r = sam.get("/deck", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
     assert "uid" not in session_of(sam)

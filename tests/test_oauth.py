@@ -306,8 +306,10 @@ def test_link_with_a_flow_sealed_for_another_uid_or_database_is_400(forged):
     me, them = volunteer(), volunteer()
     uid = them.uid if forged == "uid" else me.uid
     ep = "another-database" if forged == "epoch" else data.session_epoch()
-    pc = "2026-01-01T00:00:00+00:00" if forged == "created_at" else None
-    pc = pc or profiles[uid].created_at
+    pc = profiles[uid].created_at
+    if forged == "created_at":
+        pc = "2000-01-01T00:00:00+00:00"  # not the clock's: no same-second luck
+        assert profiles[uid].created_at != pc
     state, nonce, verifier = oauth.new_flow()
     me.cookies.set("cm_oauth", oauth.seal("google", state, nonce, verifier, "link",
                                           uid, 1, ep, pc))  # fmt: skip
