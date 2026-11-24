@@ -40,7 +40,14 @@ from starlette.datastructures import UploadFile
 
 from app import data, notify, oauth, photos, security
 from app.auth import BAD_PHONE, normalize_phone, pending_phone, set_pending
-from app.choices import INTERESTS, MAX_BIO, MAX_INTERESTS, MAX_PRONOUNS, PRONOUNS
+from app.choices import (
+    INTERESTS,
+    MAX_BIO,
+    MAX_INTERESTS,
+    MAX_NAME,
+    MAX_PRONOUNS,
+    PRONOUNS,
+)
 from app.config import demo_number, is_preview
 from app.forms import (
     EMAIL,
@@ -97,7 +104,6 @@ for _name, _label in oauth.LABELS.items():
     }
 # Me's add-a-number keeps its pending number under its own session keys (auth.set_pending)
 ME_PENDING = "me_pending"
-MAX_NAME = 80
 MAX_NEIGHBORHOOD = 80
 MAX_EMAIL = 254
 MAX_OTHER_CAUSES = 300

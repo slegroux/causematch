@@ -303,17 +303,25 @@ def SwipeButtons(opening_id, today=False, call_id=None):
     )
 
 
-def EmptyDeck(today=False, relax=None):
-    """Nothing to swipe. relax: data.relaxations(), the one change that adds most cards."""
+def EmptyDeck(today=False, relax=None, hours=False):
+    """Nothing to swipe. relax: data.relaxations(), the one change that adds most cards.
+    hours: the need for proof of hours is what leaves it empty (data.hours_need_empties_deck)."""
+    hours = hours and not today
     return Div(
         Img(src="/static/img/empty-deck.svg", alt="", cls="mx-auto h-40 w-40"),
         H2(
-            "No openings in the next 48 hours" if today else "You're all caught up",
+            "No openings in the next 48 hours"
+            if today
+            else "No nonprofit near you confirms hours yet"
+            if hours
+            else "You're all caught up",
             cls="font-display text-xl font-extrabold text-ink",
         ),
         P(
             "None of the openings you could reach start that soon."
             if today
+            else "New openings from nonprofits that do will show up here."
+            if hours
             else "You have seen every opening for now. Check back soon.",
             cls="mx-auto max-w-xs text-ink-muted",
         ),
@@ -321,10 +329,19 @@ def EmptyDeck(today=False, relax=None):
             Hidden(name="key", value=relax["key"]),
             Hidden(name="today", value="1") if today else None,
             Button(
-                f"{relax['label']}: {relax['more']} more",
+                f"{relax['label']} ({relax['more']})"
+                if relax["key"] == "only_verified"
+                else f"{relax['label']}: {relax['more']} more",
                 type="submit",
                 cls="uk-btn uk-btn-primary mt-2 px-6",
             ),
+            P(
+                "This turns off “I need proof of my volunteer hours” in your "
+                "preferences. Your hours with them won't go on a certificate.",
+                cls="mx-auto mt-2 max-w-xs text-sm text-ink-muted",
+            )
+            if relax["key"] == "only_verified"
+            else None,
             action="/deck/relax",
             method="post",
         )
@@ -641,7 +658,7 @@ def DeckArea(uid, today=False, view=None, notice=None, first=None, sheet=None):
         return Div(
             note,
             sheet,
-            EmptyDeck(today, relax),
+            EmptyDeck(today, relax, not view and data.hours_need_empties_deck(uid)),
             Div(FilterSheet(uid, today, count, view), cls="mt-3 flex justify-center"),
             id="deck-area",
             cls="relative",
