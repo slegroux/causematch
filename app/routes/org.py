@@ -1299,6 +1299,7 @@ def label_of(options, value):
 INBOX_NOTICE = {
     "decided": "Someone already decided that one.",
     "full": "That opening is full. You can decline instead, or post another opening.",
+    "closed": "That opening is closed. Reopen it to accept, or decline instead.",
     "full_screening": "That opening is full, counting the volunteers waiting for your "
     "screening. Raise the spots or decline this like.",
     "reported": "Thanks. A Causematch admin will review the report.",
@@ -1354,7 +1355,14 @@ def Declined(m):
 
 def InboxRow(m):
     accept = (
-        Pill("Full", "off")
+        P(
+            "This opening is closed. Reopen it to accept."
+            if m["reopenable"]
+            else "This opening is closed.",
+            cls="text-sm text-ink-muted",
+        )
+        if m["closed"]
+        else Pill("Full", "off")
         if m["full"]
         else Button("Accept", name="decision", value="accept", cls=ButtonT.primary)
     )
@@ -1528,7 +1536,9 @@ def _sync_decide(req, decision, match_id: int):
         return Refusal(403)
     except ValueError as e:
         notice = (
-            "full_screening"
+            "closed"
+            if str(e) == "opening closed"
+            else "full_screening"
             if "screening" in str(e)
             else "full"
             if "slots" in str(e)

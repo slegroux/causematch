@@ -64,6 +64,21 @@ def test_optional_fields_can_be_cleared(user):
     assert json.loads(p.interests) == []
 
 
+def test_proof_of_hours_keeps_the_last_name_on_the_profile(user):
+    save(user)
+    uid = uid_of(user)
+    profiles.update(id=uid, verified_hours="only")
+    page = user.get("/me/profile").text
+    assert "Last name</label>" in page and "Last name (optional)" not in page
+    r = save(user, last_name="")
+    assert r.status_code == 400 and "keep a last name while" in r.text
+    assert "You can turn that off in Preferences." in r.text
+    assert profiles[uid].last_name == "Lee"
+    profiles.update(id=uid, verified_hours=None)
+    assert save(user, last_name="").status_code == 303
+    assert profiles[uid].last_name is None
+
+
 @pytest.mark.parametrize(
     ("over", "message"),
     [
