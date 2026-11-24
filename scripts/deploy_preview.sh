@@ -11,8 +11,9 @@
 # about $10-15 a month, and MIN_INSTANCES=0 scripts/deploy_preview.sh turns it back off],
 # ADMIN_EMAILS [none: comma-separated addresses the preview makes admins at startup and at
 # each reset; they sign in at /org/login, by email when the preview sends real email],
-# STAGING_REAL_EMAIL [1: real email when production's mail secrets exist; 0 keeps the
-# preview all fake].
+# STAGING_REAL_EMAIL [1: real email when the mail secrets below exist; 0 keeps the preview
+# all fake], CPU_ALWAYS_ALLOCATED [0: --cpu-throttling, so mail sent after the response can
+# arrive late, as in production today; 1: --no-cpu-throttling, billed all month].
 #
 # Fake email, so the demo's addresses never get real email (and, without the mail secrets
 # below, no address does); no SMS, fake or real, so its pages say "email" where production
@@ -23,18 +24,20 @@
 # SESSION_SECRET, PHONE_HASH_KEY, CERTIFICATE_KEY and TASKS_TOKEN must already be in Secret Manager, readable
 # by the service account the service runs as.
 #
-# Real email: production never shares a key with the preview, with ONE exception, the
-# owner's choice: the mail account. SMTP_USERNAME_PROD and SMTP_PASSWORD_PROD are passed as
-# SMTP_USERNAME and SMTP_PASSWORD when both exist (checked with gcloud secrets describe;
-# only one is refused) and STAGING_REAL_EMAIL isn't 0. The preview's service account needs
-# secretAccessor on those two, granted by hand (else the deploy fails). So revoking the app
-# password stops both, and both share the sender's daily allowance (Gmail's 500: the preview
-# is capped at SMTP_MAX_PER_DAY=50, production at its 400). No other _PROD secret
-# goes to the preview. With them the preview emails every address but the demo's for real,
-# marked "[Staging]" (notify.StagingEmailer), and its CPU is always allocated
-# (--no-cpu-throttling), since mail goes out after the response; without them it sends no
-# email and shows each sign-in link on the page. CAUSEMATCH_FAKE_EMAIL=1 stays in both: it
-# is what keeps the demo's addresses fake.
+# Real email (unless STAGING_REAL_EMAIL=0): the preview's own SMTP_USERNAME_STAGING and
+# SMTP_PASSWORD_STAGING when both exist; else, the ONE exception to "production never
+# shares a key with the preview", by the owner's choice, production's SMTP_USERNAME_PROD
+# and SMTP_PASSWORD_PROD. Passed as SMTP_USERNAME and SMTP_PASSWORD; each pair both or
+# neither (checked with gcloud secrets describe; one alone is refused). The preview's
+# service account needs secretAccessor on the pair, granted by hand (else the deploy
+# fails). With production's pair, revoking the app password stops both, both share the
+# sender's daily allowance (Gmail's 500: the preview is capped at 50, notify.STAGING_MAX_
+# PER_DAY, production at its 400), and the preview can read the account's Sent folder.
+# No other _PROD secret goes to the preview. With a pair the preview emails sign-in links
+# to every address but the demo's, and everything else only to addresses that signed in
+# with one (notify.StagingEmailer), marked "[Staging]"; without one it sends no email and
+# shows each sign-in link on the page. CAUSEMATCH_FAKE_EMAIL=1 stays in both: it is what
+# keeps the demo's addresses fake.
 set -euo pipefail
 
 PROJECT="${PROJECT:-causematch-la}"
@@ -45,6 +48,7 @@ SEED_SRC="${SEED_SRC:-$HOME/.omc/reports/2026-10-15-causematch-design/real-orgs}
 CONTACT_EMAIL="${CONTACT_EMAIL:-hello@causematch.test}"
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
 STAGING_REAL_EMAIL="${STAGING_REAL_EMAIL:-1}"
+CPU_ALWAYS_ALLOCATED="${CPU_ALWAYS_ALLOCATED:-0}"
 ADMIN_EMAILS="${ADMIN_EMAILS:-}"
 
 # Production's SERVICE or SERVICE_ACCOUNT left in the shell would redeploy production as a
@@ -79,37 +83,56 @@ has_secret() {
 	gcloud secrets describe "$1" --project "$PROJECT" --format 'value(name)' >/dev/null 2>&1
 }
 secrets="PREVIEW_PASSWORD=PREVIEW_PASSWORD:latest,SESSION_SECRET=SESSION_SECRET:latest,PHONE_HASH_KEY=PHONE_HASH_KEY:latest,CERTIFICATE_KEY=CERTIFICATE_KEY:latest,TASKS_TOKEN=TASKS_TOKEN:latest"
-cpu_flag=--cpu-throttling
+# Explicit either way, so a deploy turns a previous always-allocated one back off.
+case "$CPU_ALWAYS_ALLOCATED" in
+0) cpu_flag=--cpu-throttling ;;
+1) cpu_flag=--no-cpu-throttling ;;
+*)
+	echo "CPU_ALWAYS_ALLOCATED must be 0 (the default) or 1" >&2
+	exit 1
+	;;
+esac
 mail_env=""
-# Real email is optional, and half of SMTP refuses to start (config.smtp).
-smtp=0
+# Real email is optional, and half of SMTP refuses to start (config.smtp). pair NAME: how
+# many of SMTP_USERNAME_NAME (1) and SMTP_PASSWORD_NAME (2) exist.
+pair() {
+	n=0
+	has_secret "SMTP_USERNAME_$1" && n=$((n + 1))
+	has_secret "SMTP_PASSWORD_$1" && n=$((n + 2))
+	echo "$n"
+}
+mail=""
 case "$STAGING_REAL_EMAIL" in
 0) echo "STAGING_REAL_EMAIL=0: the preview sends no email" ;;
 1)
-	has_secret SMTP_USERNAME_PROD && smtp=$((smtp + 1))
-	has_secret SMTP_PASSWORD_PROD && smtp=$((smtp + 2))
+	for name in STAGING PROD; do
+		case "$(pair "$name")" in
+		0) ;;
+		3)
+			mail="$name"
+			break
+			;;
+		*)
+			echo "only one of SMTP_USERNAME_$name and SMTP_PASSWORD_$name exists: add" \
+				"the other or delete it, or set STAGING_REAL_EMAIL=0" >&2
+			exit 1
+			;;
+		esac
+	done
+	[ -n "$mail" ] || echo "no SMTP_*_STAGING or SMTP_*_PROD secrets: the preview sends no email"
 	;;
 *)
 	echo "STAGING_REAL_EMAIL must be 1 (the default) or 0" >&2
 	exit 1
 	;;
 esac
-case "$smtp" in
-0) [ "$STAGING_REAL_EMAIL" = 0 ] || echo "no SMTP_*_PROD secrets: the preview sends no email" ;;
-3)
-	secrets="$secrets,SMTP_USERNAME=SMTP_USERNAME_PROD:latest,SMTP_PASSWORD=SMTP_PASSWORD_PROD:latest"
-	cpu_flag=--no-cpu-throttling
-	# Gmail's 500 a day is per account, and each deploy counts its own ceiling:
-	# production's 400 plus these 50 stay under it
+if [ -n "$mail" ]; then
+	secrets="$secrets,SMTP_USERNAME=SMTP_USERNAME_$mail:latest,SMTP_PASSWORD=SMTP_PASSWORD_$mail:latest"
+	# Gmail's 500 a day is per account, and each deploy counts its own ceiling: production's
+	# 400 plus these 50 stay under it (the app caps a preview at 50 too)
 	mail_env=";SMTP_MAX_PER_DAY=50"
-	echo "real email: $SERVICE_ACCOUNT needs access to SMTP_USERNAME_PROD and SMTP_PASSWORD_PROD"
-	;;
-*)
-	echo "only one of SMTP_USERNAME_PROD and SMTP_PASSWORD_PROD exists: add the other or" \
-		"delete it, or set STAGING_REAL_EMAIL=0" >&2
-	exit 1
-	;;
-esac
+	echo "real email: $SERVICE_ACCOUNT needs access to SMTP_USERNAME_$mail and SMTP_PASSWORD_$mail"
+fi
 # ; separates the env vars below (gcloud's ^;^ syntax): commas and @ appear in values.
 case "$CONTACT_EMAIL$ADMIN_EMAILS" in
 *";"*)

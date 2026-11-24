@@ -4824,6 +4824,19 @@ def _live_members(org_id):
     ]
 
 
+def _mixes_demo(org_id, email):
+    """Whether adding this address would put a demo address (config.demo_address) and
+    another in one org's team, deleted members included, as _hidden_in_demo counts them:
+    anyone may sign in as a demo address, so they must never see a tester's likes."""
+    emails = _db.db.q(
+        "SELECT p.email FROM org_member m JOIN profile p ON p.id = m.user_id "
+        "WHERE m.org_id = ?",
+        [org_id],
+    )
+    demo = demo_address(email)
+    return any(demo_address(r["email"] or "") != demo for r in emails)
+
+
 def _members_text(members):
     return ", ".join(f"{m['name']} ({m['role']})" for m in members)
 
@@ -4909,6 +4922,11 @@ def approve_claim(admin_uid, claim_id, confirm_claimed=False, confirm_volunteer=
         raise ValueError("that address belongs to a suspended coordinator")
     if mailbox_suspended(c.email):
         raise ValueError("that address belongs to a suspended volunteer: decline it")
+    if demo_matches() and _mixes_demo(org.id, c.email):
+        raise ValueError(
+            "on staging a nonprofit's team is all demo addresses or none, and this "
+            "claim would mix them: decline it"
+        )
     if not confirm_volunteer and _gives_volunteer_staff_links(c.email):
         raise ValueError(
             "this person already volunteers with this address: read the warning, tick "

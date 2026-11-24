@@ -321,6 +321,7 @@ def _sync_verify(form, sess):
     if profile is None or profile.role != "volunteer":  # suspended by an admin
         sess.clear()
         return LoginPage(error=SUSPENDED)
+    notify.prove(email)  # the link reached this inbox (a staging preview's real mail)
     return sign_in(sess, profile)
 
 

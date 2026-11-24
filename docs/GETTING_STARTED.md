@@ -172,7 +172,9 @@ You can also walk through every role with your own addresses. When the preview s
 3. **Admin:** tap **Try it as an admin** on `/org/login` (or type an admin's address there), open **Claims** and approve the request. The approval email goes to the second address.
 4. **Coordinator:** on `/org/login`, type the second address and open its sign-in link. Post an opening; like it as the volunteer, accept the like as the coordinator, and chat.
 
-If an emailed link opens on the private-preview page, open the preview link once on that device, then tap the emailed link again. **Emails** on the preview's **Admin** page lists the last 100 emails, newest first, each marked sent or not sent; the demo's own accounts never get real email. Everything, your accounts included, is wiped at a reset or a redeploy, so register again afterwards.
+If an emailed link opens on the private-preview page, type the preview password there (the part after `access=` in the preview link you were sent): you land on the sign-in page the link pointed to. Real email reaches you only after you have signed in with a link sent to that address: until then match news, messages and reminders are recorded on the preview but not sent. **Emails** on the preview's **Admin** page lists the last 100 emails, newest first, each marked sent or not sent; for a tester's address it shows only a masked address and the kind of email. The demo's own accounts never get real email. Everything, your accounts included, is wiped at a reset or a redeploy, so register again afterwards.
+
+**Anything you enter on the preview is visible to everyone who has its link.** Anyone there can tap **Try it as an admin**, see claimants' names and addresses and the reports, suspend accounts and reset everything. Use an address you don't mind the testers seeing, and no other real details. Mail to a mistyped address bounces back to the team's shared mailbox, so type it carefully.
 
 What is seeded: a nonprofit that confirms volunteer hours (its cards say **Confirms your hours**), an opening marked **Screening required**, a last-minute call for tomorrow, and a pending claim to approve under **Claims**.
 

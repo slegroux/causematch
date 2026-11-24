@@ -40,7 +40,7 @@ from monsterui.all import (
 from starlette.concurrency import run_in_threadpool
 
 from app import data, notify, propublica, security
-from app.config import is_preview
+from app.config import demo_address, is_preview
 from app.forms import query, str_form
 from app.match import LA
 from app.metrics import (
@@ -78,6 +78,15 @@ reset_demo = None
 RESET_CARD = ("Reset demo data", "Back to the sample data", "/admin/reset")
 OUTBOX_CARD = ("Emails", "What this preview emailed, or would have", "/admin/outbox")
 OUTBOX_SHOWN = 100  # the most recent fake emails /admin/outbox lists
+# what /admin/outbox says an email to a tester is, instead of its subject (notify.KINDS)
+KIND_LABELS = {
+    "staff": "Sign-in link",
+    "sign-in": "Sign-in link",
+    "sign-up": "Sign-up link",
+    "staff-notice": "New sign-in notice",
+    "claim": "Claim decision",
+    "urgent": "Last-minute call",
+}
 log = logging.getLogger("causematch")
 NO_STORE = {"Cache-Control": "no-store"}
 NO_STORE_HEADER = HttpHeader("Cache-Control", "no-store")
@@ -204,14 +213,35 @@ def _outbox():
     return notify.get_emailer().outbox if notify.staging_links() else None
 
 
+def _OutboxCard(at, to, subject, body, sent, kind):
+    tester = not demo_address(to)  # a real inbox: masked, and nothing of what it says
+    return Div(
+        P(
+            KIND_LABELS.get(kind, "Notice") if tester else subject,
+            cls="font-bold text-ink break-words",
+        ),
+        P(
+            f"To {notify.mask_email(to) if tester else to} · "
+            + at.astimezone(LA).strftime("%a %b %-d, %-I:%M %p")
+            + (" · sent" if sent else " · not sent"),
+            cls=TextPresets.muted_sm + " break-all",
+        ),
+        P(
+            "A tester's address: not shown here." if tester else body,
+            cls="whitespace-pre-wrap break-words text-ink",
+        ),
+        cls="space-y-2 p-5 " + CARD,
+    )
+
+
 @preview_ar("/admin/outbox", methods=["GET"])
 def admin_outbox():
     """Staging: the emails a real deploy would have sent, newest first, each marked sent
-    (really, with SMTP, to an address off the demo's: notify.StagingEmailer) or not sent
-    (fake). A fake's body as plain text (escaped), sign-in links included: the same
-    disclosure as the link the sign-in pages show here. A sent one's address is masked
-    and its body left out: anyone here can be an admin, and it may hold a tester's
-    sign-in link."""
+    (really, with SMTP: notify.StagingEmailer) or not sent (fake). A demo address's in
+    full, its body as plain text (escaped), sign-in links included: the same disclosure
+    as the link the sign-in pages show for it. Any other address's masked, with its kind
+    instead of its subject and no body, sent or not: anyone here can be an admin, and it
+    may hold a tester's sign-in link or say what they do."""
     kept = _outbox()
     if kept is None:
         return Response("Not found", status_code=404)
@@ -224,23 +254,7 @@ def admin_outbox():
                 f"(the last {OUTBOX_SHOWN}), until a reset or a restart.",
                 cls=TextPresets.muted_sm,
             ),
-            *[
-                Div(
-                    P(subject, cls="font-bold text-ink break-words"),
-                    P(
-                        f"To {notify.mask_email(to) if sent else to} · "
-                        + at.astimezone(LA).strftime("%a %b %-d, %-I:%M %p")
-                        + (" · sent" if sent else " · not sent"),
-                        cls=TextPresets.muted_sm + " break-all",
-                    ),
-                    P(
-                        "Sent to its inbox, so not shown here." if sent else body,
-                        cls="whitespace-pre-wrap break-words text-ink",
-                    ),
-                    cls="space-y-2 p-5 " + CARD,
-                )
-                for at, to, subject, body, sent in reversed(kept[-OUTBOX_SHOWN:])
-            ]
+            *[_OutboxCard(*row) for row in reversed(kept[-OUTBOX_SHOWN:])]
             or [P("Nothing yet.", cls="text-ink-muted")],
         ),
         NO_STORE_HEADER,
@@ -297,6 +311,8 @@ def admin_reset(req, sess):
     reset_demo()
     if (kept := _outbox()) is not None:
         kept.clear()
+        if isinstance(emailer := notify.get_emailer(), notify.StagingEmailer):
+            emailer.proven.clear()  # the accounts that proved them are gone
     # hashed as ip_subject's own log line, never the address
     log.info("preview reset (client key %s)", security._key("client", ip)[-12:])
     sess.clear()
