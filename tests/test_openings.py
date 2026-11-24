@@ -13,8 +13,8 @@ from conftest import (
 )
 from starlette.testclient import TestClient
 
-from app import data, geo
-from app.db import causes, matches, messages, openings, orgs, profiles
+from app import data, geo, notify
+from app.db import causes, matches, messages, openings, orgs, profiles, shifts
 from app.routes.org import ADULT_SCREENED, SCREENING_REQUIRED, opening_fields
 from main import app
 
@@ -191,6 +191,7 @@ def test_org_b_cannot_close_org_a_opening(coord):
     _, email_b = coordinator_for(1)
     b = TestClient(app)
     org_sign_in(b, email_b)
+    assert b.get(f"/org/openings/{o.id}/close").status_code == 403
     assert (
         b.post(f"/org/openings/{o.id}/close", follow_redirects=False).status_code == 403
     )
@@ -785,6 +786,34 @@ def test_reopening_a_closed_opening_restores_it_and_its_fill(coord):
     coord.post(f"/org/openings/{o.id}/reopen")
     assert openings[o.id].status == "closed"
     assert f"/org/openings/{o.id}/reopen" not in coord.get("/org").text
+
+
+def test_closing_a_filled_opening_cancels_the_booked_shift_and_tells_them(
+    coord, monkeypatch
+):
+    told = []
+    monkeypatch.setattr(notify, "on_new_message", lambda *a: told.append(a))
+    o = pantry()
+    data.update_opening(coordinator_for(0)[0], o.id, slots=1)
+    m = data.swipe(volunteer("Ana").uid, o.id, True)
+    data.decide(coordinator_for(0)[0], m.id, True)
+    assert openings[o.id].status == "filled"
+    close = f"/org/openings/{o.id}/close"
+    assert f'href="{close}"' in coord.get("/org").text  # under More, filled too
+    page = coord.get(close).text
+    assert "Ana has an upcoming shift" in page and "cancels their upcoming" in page
+    before = messages.count_where("match_id = ?", [m.id])
+    assert coord.post(close, follow_redirects=False).status_code == 303
+    (s,) = shifts(where="match_id = ?", where_args=[m.id])
+    assert s.status == "cancelled"
+    (line,) = messages(where="match_id = ?", where_args=[m.id])[before:]
+    assert line.sender_id == data.SYSTEM_SENDER
+    assert line.body.startswith(f"{orgs[o.org_id].name} closed this opening, so your")
+    assert told == [(m.id, data.SYSTEM_SENDER)]  # the new-message notice
+    post(coord)  # nobody booked on it: one line says so
+    (empty,) = openings(where="title = ?", where_args=["Saturday fridge restock"])
+    page = coord.get(f"/org/openings/{empty.id}/close").text
+    assert "Nobody has an upcoming shift on it." in page
 
 
 def test_the_time_is_locked_once_anyone_has_liked_it(coord):

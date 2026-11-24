@@ -3453,11 +3453,49 @@ def org_badges(coordinator_uid):
     }
 
 
+def _upcoming_booked(opening_id):
+    """{match id: [start of each upcoming scheduled shift, soonest first]} on the opening:
+    what close_opening cancels."""
+    booked = {}
+    for r in _db.db.query(
+        "SELECT match_id, starts_at FROM shift WHERE status = 'scheduled' "
+        "AND starts_at > ? AND match_id IN (SELECT id FROM match WHERE opening_id = ?) "
+        "ORDER BY starts_at, id",
+        [_local_now(), opening_id],
+    ):
+        booked.setdefault(r["match_id"], []).append(r["starts_at"])
+    return booked
+
+
+def opening_to_close(coordinator_uid, opening_id):
+    """{"title", "booked": [names]} for the page that asks before close_opening: the
+    volunteers with an upcoming booked shift on it, named as the inbox names them
+    (org_match_volunteer). PermissionError as coordinator_opening; ValueError when it is
+    closed already."""
+    o = coordinator_opening(coordinator_uid, opening_id)
+    if o.status == "closed":
+        raise ValueError("already closed")
+    return {
+        "title": o.title,
+        "booked": [
+            org_match_volunteer(coordinator_uid, match_id)
+            for match_id in _upcoming_booked(opening_id)
+        ],
+    }
+
+
 def close_opening(coordinator_uid, opening_id):
+    """Close an open or filled opening: its urgent call ends, every upcoming booked shift
+    is cancelled (past and completed ones stay), and each volunteer whose shift was
+    cancelled gets one line in their chat; volunteers held for screening are released.
+    PermissionError as coordinator_opening. The ids of the matches told of a cancelled
+    shift, for the caller's notices once this has committed."""
     coordinator_opening(coordinator_uid, opening_id)
+    told = []
     with _db.db.conn:
         _db.openings.update(id=opening_id, status="closed")
         _end_urgent(opening_id, "closed")
+        booked = _upcoming_booked(opening_id)
         _db.db.execute(
             "UPDATE shift SET status = 'cancelled', cancelled_at = ?, cancelled_by = ? "
             "WHERE status = 'scheduled' AND starts_at > ? AND match_id IN "
@@ -3466,6 +3504,21 @@ def close_opening(coordinator_uid, opening_id):
         )
         o = _db.openings[opening_id]
         org = _db.orgs[o.org_id]
+        for match_id, starts in booked.items():
+            if _blocked_either(_db.matches[match_id].volunteer_id, o.org_id):
+                continue
+            first = _match.start_text(starts[0])
+            _db.messages.insert(
+                match_id=match_id,
+                sender_id=SYSTEM_SENDER,
+                body=f"{org.name} closed this opening, so your shift on {first} is "
+                "cancelled."
+                if len(starts) == 1
+                else f"{org.name} closed this opening, so your {len(starts)} upcoming "
+                f"shifts, from {first}, are cancelled.",
+                created_at=_now(),
+            )
+            told.append(match_id)
         # a volunteer held for screening has no shift to cancel: release them
         for m in _db.matches(
             where="opening_id = ? AND status = 'accepted' AND screening_status = 'pending'",
@@ -3479,6 +3532,7 @@ def close_opening(coordinator_uid, opening_id):
                     body=f"The opening closed before {org.name} confirmed your screening.",
                     created_at=_now(),
                 )
+    return told
 
 
 # What a coordinator may change on a posted opening, by the words the accepted volunteers

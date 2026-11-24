@@ -284,12 +284,12 @@ def OpeningRow(o, counts, urgent=None, screening=0):
                     cls=SMALL_LINK + " text-sm",
                 ),
                 UrgentLink(o, urgent, accepted),
-                PlainForm(
-                    Button("Close opening", cls=ButtonT.default),
-                    action=f"/org/openings/{o.id}/close",
-                    method="post",
+                A(  # a page that asks first (close_page)
+                    "Close opening",
+                    href=f"/org/openings/{o.id}/close",
+                    cls="uk-btn " + ButtonT.default,
                 )
-                if o.status == "open"
+                if o.status in ("open", "filled")
                 else None,
                 cls="flex flex-col items-start gap-1.5",
             ),
@@ -1091,12 +1091,63 @@ def reopen(req, opening_id: int):
     return Redirect("/org")
 
 
+@ar("/org/openings/{opening_id}/close", methods=["GET"])
+def close_page(req, opening_id: int):
+    """Asks before close_opening: it cancels the booked volunteers' upcoming shifts."""
+    uid = req.scope["uid"]
+    try:
+        o = data.opening_to_close(uid, opening_id)
+    except PermissionError:
+        return Refusal(403)
+    except ValueError:  # closed already: the dashboard shows it as it is
+        return Redirect("/org")
+    names = o["booked"]
+    who = (
+        ", ".join(names[:-1]) + f" and {names[-1]}"
+        if len(names) > 1
+        else "".join(names)
+    )
+    return OrgShell(
+        "openings",
+        data.org_badges(uid),
+        Div(
+            H1(f"Close {o['title']}?", cls=ORG_TITLE + " pb-4"),
+            Div(
+                P(
+                    f"{who} {'has' if len(names) == 1 else 'have'} an upcoming shift. "
+                    "Closing cancels their upcoming shifts, and each of them gets a "
+                    "message in their chat."
+                    if names
+                    else "Nobody has an upcoming shift on it.",
+                    cls="text-ink",
+                ),
+                P(
+                    "It leaves volunteers' decks. Past shifts and their hours stay.",
+                    cls=TextPresets.muted_sm,
+                ),
+                PlainForm(
+                    Button("Close opening", cls=ButtonT.primary),
+                    A("Back", href="/org", cls=SMALL_LINK),
+                    action=f"/org/openings/{opening_id}/close",
+                    method="post",
+                    cls="flex items-center gap-4 pt-2",
+                ),
+                cls="space-y-3 p-5 " + CARD,
+            ),
+            cls="max-w-md",
+        ),
+    )
+
+
 @ar("/org/openings/{opening_id}/close", methods=["POST"])
 def close(req, opening_id: int):
     try:
-        data.close_opening(req.scope["uid"], opening_id)
+        told = data.close_opening(req.scope["uid"], opening_id)
     except PermissionError:
         return Refusal(403)
+    # the chat lines were written by the app: tell each volunteer as a message would
+    for match_id in told:
+        notify.after(req, notify.on_new_message, match_id, data.SYSTEM_SENDER)
     return Redirect("/org")
 
 
