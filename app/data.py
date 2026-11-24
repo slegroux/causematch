@@ -1077,7 +1077,8 @@ def _decidable(coordinator_uid, match_id):
 def decide(coordinator_uid, match_id, accept, undoable=False):
     """Accept or decline a pending match. PermissionError unless a member of the org.
 
-    ValueError when the match is not pending or no slot is left to accept into.
+    ValueError when the match is not pending, its opening is closed (an accept only:
+    declining clears the inbox) or no slot is left to accept into.
     undoable: a decline the coordinator may take back for UNDO_DECLINE (undo_decline);
     until then the volunteer is shown nothing of it (my_matches, match_news_count).
 
@@ -1112,14 +1113,17 @@ def decide(coordinator_uid, match_id, accept, undoable=False):
             "UPDATE match SET status = ?, decided_at = ?, decided_by = ?, undo_until = ?, "
             "screening_status = ? "
             "WHERE id = ? AND status = 'pending' AND (? = 0 OR "
+            "((SELECT status FROM opening WHERE id = ?) != 'closed' AND "
             f"(SELECT count(*) FROM match WHERE opening_id = ? AND status = 'accepted'{skip}) "
-            "< (SELECT slots FROM opening WHERE id = ?))",
+            "< (SELECT slots FROM opening WHERE id = ?)))",
             [status, _now(), coordinator_uid, undo_until, "pending" if held else None,
-             match_id, int(bool(accept)), o.id, *args, o.id],
+             match_id, int(bool(accept)), o.id, o.id, *args, o.id],
         )  # fmt: skip
         if _db.db.conn.changes() != 1:
             if _db.matches[match_id].status != "pending":
                 raise ValueError("already decided")
+            if _db.openings[o.id].status == "closed":
+                raise ValueError("opening closed")
             if _db.matches.count_where(
                 "opening_id = ? AND status = 'accepted' AND screening_status = 'pending'",
                 [o.id],
@@ -1491,7 +1495,7 @@ def org_inbox(coordinator_uid):
     rows = _db.db.query(
         "SELECT m.id, m.status, m.undo_until, m.screening_status, m.urgent_call_id, "
         "o.title, o.recurrence, o.slots, o.status AS opening_status, "
-        "o.duration_minutes, "
+        "o.starts_at AS opening_starts_at, o.duration_minutes, "
         "coalesce((SELECT c.starts_at FROM urgent_call c WHERE c.id = m.urgent_call_id), "
         "o.starts_at) AS starts_at, "
         "p.display_name, p.causes, p.availability, "
@@ -1566,6 +1570,11 @@ def org_inbox(coordinator_uid):
                 "neighborhood": None if blocked else r["neighborhood"],
                 "frequency": None if blocked else r["frequency"],
                 "full": r["taken"] >= r["slots"],
+                # a pending like on a closed opening can't be accepted (decide); reopening
+                # it works while its start is ahead (reopen_opening)
+                "closed": r["opening_status"] == "closed",
+                "reopenable": r["opening_status"] == "closed"
+                and next_start(r["opening_starts_at"], r["recurrence"]) > _local_now(),
                 "weekly": r["recurrence"] == "weekly",
                 "starts_at": starts_at,
                 "duration_minutes": r["duration_minutes"],

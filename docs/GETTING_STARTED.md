@@ -78,7 +78,7 @@ The bottom bar has three tabs: **Openings**, **Matches** and **Me**.
 
 ### Me
 
-- **Your profile** ("What nonprofits see"): your photo, **First name**, **Last name (optional)**, pronouns, a short bio, **Neighborhood nonprofits see** (onboarding fills it in; change or clear it here), interests, and, under **Only we see**, your **Email (optional)** and other causes. Tap **Save profile**. Match news, reminders and last-minute calls go to the email here. Leave it empty and Causematch can't reach you outside the app.
+- **Your profile** ("What nonprofits see"): your photo, **First name**, **Last name** (optional, unless **I need proof of my volunteer hours** is on: then it must stay filled in), pronouns, a short bio, **Neighborhood nonprofits see** (onboarding fills it in; change or clear it here), interests, and, under **Only we see**, your **Email (optional)** and other causes. Tap **Save profile**. Match news, reminders and last-minute calls go to the email here. Leave it empty and Causematch can't reach you outside the app.
 - **Preferences** ("What you see, and when"): one page with one **Save**. It holds **Proof of hours** (**I need proof of my volunteer hours**, first on the page, with your **Last name**), **Causes and places**, **When**, **Kind of work** and **Last-minute calls** (off unless you turn it on).
 - **Screenings** ("Confirmed by nonprofits"): which nonprofits confirmed your screening, its kind and the date. Causematch never sees documents or results.
 - **Delete my account**: at the bottom of **Your profile**, then **Delete my account** on the confirm page. It erases your name, email and location, withdraws your matches, cancels your shifts and replaces your chat messages with "[message removed]". It can't be undone.
