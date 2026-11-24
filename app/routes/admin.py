@@ -58,12 +58,13 @@ from app.metrics import (
     label,
     pilot_metrics,
 )
-from app.org_import import import_ein
+from app.org_import import NoCause, import_ein
 from app.ui import (
     CARD,
     ORG_SECTION,
     ORG_TITLE,
     SMALL_LINK,
+    Choice,
     Refusal,
     Router,
     TextInput,
@@ -614,8 +615,9 @@ def _sync_org_verify(uid, org_id, ein):
     return Redirect("/admin/orgs")
 
 
-def ClaimCard(c, error=None):
-    """One pending claim for a non-technical admin: the org, the person, Approve, Decline."""
+def ClaimCard(c, error=None, choose_cause=False):
+    """One pending claim for a non-technical admin: the org, the person, Approve, Decline.
+    `choose_cause` adds the choice of cause for an org the IRS code places in none."""
     org = c["org"]
     ein = f"EIN {c['ein'][:2]}-{c['ein'][2:]}"
     members = ", ".join(f"{m['name']} ({m['role']})" for m in c["members"])
@@ -677,6 +679,14 @@ def ClaimCard(c, error=None):
                 )
                 if c["volunteer"]
                 else None,
+                Choice(
+                    "cause",
+                    [(x.slug, x.label) for x in data.active_causes()],
+                    placeholder="Choose a cause",
+                    required=True,
+                )
+                if choose_cause
+                else None,
                 PlainButton("Approve", type="submit", cls="uk-btn uk-btn-primary"),
                 action=f"/admin/claims/{c['id']}/approve",
                 method="post",
@@ -699,7 +709,7 @@ DONE = {
 }
 
 
-def ClaimsPage(uid, only=None, error=None, done=None):
+def ClaimsPage(uid, only=None, error=None, done=None, choose_cause=False):
     rows = data.admin_claims(uid)
     return (
         AdminPage(
@@ -710,7 +720,14 @@ def ClaimsPage(uid, only=None, error=None, done=None):
             else None,
             Div(
                 *(
-                    [ClaimCard(c, error if c["id"] == only else None) for c in rows]
+                    [
+                        ClaimCard(
+                            c,
+                            error if c["id"] == only else None,
+                            choose_cause and c["id"] == only,
+                        )
+                        for c in rows
+                    ]
                     or [P("No pending requests.")]
                 ),
                 cls="flex flex-col gap-3 max-w-2xl",
@@ -762,18 +779,36 @@ def _sync_admin_claim_approve(req, form, claim_id: int):
     except LookupError:
         return Redirect("/admin/claims")  # already decided
     if org is None:
+        chosen = form.get("cause", "")
+        if chosen and chosen not in {c.slug for c in data.active_causes()}:
+            return ClaimsPage(
+                uid,
+                claim_id,
+                "That isn't one of our causes. Choose one from the list, then tap "
+                "Approve again.",
+                choose_cause=True,
+            )
         if not security.allow((security.PROPUBLICA, "all")):
             return ClaimsPage(
                 uid, claim_id, "Too many IRS lookups this hour. Try again later."
             )
         try:
-            org = import_ein(ein)
+            org = import_ein(ein, fallback=chosen or None)
         except propublica.LookupFailed:
             return ClaimsPage(
                 uid,
                 claim_id,
                 "We couldn't reach the IRS records (ProPublica), so nothing changed. "
                 "Tap Approve again in a minute.",
+            )
+        except NoCause as e:
+            code = f"the code {e.ntee}" if e.ntee else "no code"
+            return ClaimsPage(
+                uid,
+                claim_id,
+                f"IRS records list {code} for this organization, which matches none of "
+                "our causes. Choose one, then tap Approve again.",
+                choose_cause=True,
             )
         except ValueError as e:  # NotImportable: worded for an admin
             return ClaimsPage(

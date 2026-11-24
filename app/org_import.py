@@ -73,6 +73,14 @@ class NotImportable(ValueError):
     """Why this nonprofit is not imported. Worded for an admin."""
 
 
+class NoCause(NotImportable):
+    """The ZIP is in the county but the NTEE code maps to none of our causes."""
+
+    def __init__(self, ntee):
+        super().__init__(f"NTEE code {ntee or '(none)'} maps to no cause")
+        self.ntee = ntee
+
+
 def ntee_cause(code):
     """The cause an NTEE code maps to, else None.
 
@@ -91,21 +99,22 @@ def ntee_cause(code):
     )
 
 
-def classify(org, cause=None):
+def classify(org, cause=None, fallback=None):
     """(cause, lat, lon) for a propublica.lookup() record, else NotImportable. `cause`
-    overrides the NTEE mapping (an admin's choice); the ZIP check always applies."""
+    overrides the NTEE mapping; `fallback` (an admin's choice) is used only when the NTEE
+    code maps to none. The ZIP check always applies."""
     place = geo.zip_latlon(org["zip"])
     if place is None:
         raise NotImportable(
             f"ZIP {org['zip'] or '(none)'} is not a Los Angeles County ZIP"
         )
-    cause = cause or ntee_cause(org["ntee"])
+    cause = cause or ntee_cause(org["ntee"]) or fallback
     if cause is None:
-        raise NotImportable(f"NTEE code {org['ntee'] or '(none)'} maps to no cause")
+        raise NoCause(org["ntee"])
     return cause, *place
 
 
-def import_ein(ein, client=None, dry_run=False, cause=None):
+def import_ein(ein, client=None, dry_run=False, cause=None, fallback=None):
     """Look one EIN up and import it under the same rules as the bulk import: "created",
     "updated" or (dry run) "would import". NotImportable says why not; ValueError for a
     malformed EIN; LookupFailed when ProPublica can't be asked. Network first, then the
@@ -113,7 +122,7 @@ def import_ein(ein, client=None, dry_run=False, cause=None):
     org = propublica.lookup(ein, client)
     if org is None:
         raise NotImportable("ProPublica has no nonprofit with that EIN")
-    cause, lat, lon = classify(org, cause)
+    cause, lat, lon = classify(org, cause, fallback)
     verb = "would import"
     if not dry_run:
         from app import data  # opening the database creates it: not in a dry run
