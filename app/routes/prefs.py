@@ -55,7 +55,6 @@ from app.ui import (
     BACK,
     CARD,
     HEART,
-    NEXT,
     ORG_SECTION,
     PEOPLE,
     PIN,
@@ -154,7 +153,7 @@ SHARED = "Shared with a nonprofit after you like its opening"
 
 
 def SharedNote(detail):
-    """The legend under a section page's title: what a nonprofit sees of it
+    """The legend under a section's heading: what a nonprofit sees of it
     (choices.SHARED_WITH_NONPROFIT); the rest of the page is private."""
     return P(
         Icon(PEOPLE, size=16, cls="mt-0.5"),
@@ -164,9 +163,12 @@ def SharedNote(detail):
 
 
 def Section(title, hint, *content):
+    """title None: the page's own heading above the card already names it."""
     return Div(
-        H2(title, cls=ORG_SECTION),
-        P(hint, cls="-mt-2 text-sm text-ink-muted") if hint else None,
+        H2(title, cls=ORG_SECTION) if title else None,
+        P(hint, cls=("-mt-2 " if title else "") + "text-sm text-ink-muted")
+        if hint
+        else None,
         *content,
         cls="space-y-3 p-5 " + CARD,
     )
@@ -346,7 +348,7 @@ def Hour(name, value):
 def LastMinute(u):
     """The opt-in to urgent calls: off unless turned on, and private."""
     return Section(
-        "Last-minute calls",
+        None,
         "Short of people in the next 48 hours and you're free then: "
         + (
             "we text you (or email you, without a number)."
@@ -512,7 +514,7 @@ def CausesCards(f, error=None):
 def WhenCards(f):
     return (
         Section(
-            "When",
+            None,
             "Tick the times you're usually free: openings then rank first.",
             Hidden(name="sections", value="when"),
             DayGrid(f["availability"]),
@@ -551,7 +553,7 @@ def WhenCards(f):
 def WorkCards(f):
     return (
         Section(
-            "Kind of work",
+            None,
             "Openings that say they fit rank higher; ones that don't say aren't held "
             "back.",
             Hidden(name="sections", value="work"),
@@ -620,7 +622,7 @@ def WorkCards(f):
 
 
 # section key -> (name, its cards, what a nonprofit sees of it); the key is the
-# page's path and its form's `back`
+# heading's anchor
 SECTIONS = {
     "causes": (
         "Causes and places",
@@ -639,23 +641,6 @@ SECTIONS = {
     ),
     "urgent": ("Last-minute calls", lambda f: (LastMinute(f["urgent"]),), None),
 }
-
-
-def PrefsRow(key, saved):
-    """One row of the index: its name, a line on what is saved, a chevron."""
-    return A(
-        Div(
-            Div(SECTIONS[key][0], cls="font-bold text-ink"),
-            Div(saved, cls="truncate text-sm font-normal text-ink-muted")
-            if saved
-            else None,
-            cls="min-w-0 flex-1",
-        ),
-        Icon(NEXT, size=18, cls="text-ink-muted"),
-        href=f"/me/preferences/{key}",
-        cls="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left "
-        "hover:bg-cream",
-    )
 
 
 def Notices(error, saved):
@@ -681,19 +666,8 @@ def BackLink(text, href):
 
 
 def PrefsPage(uid, f, error=None, saved=False):
-    """The index: one row per section."""
-    picked = [
-        c.label
-        for c in data.active_causes()
-        if f["causes"].get(c.slug) in (prefs.LOVE, prefs.OPEN)
-    ]
-    places = [pf["label"] for pf in f["place_forms"] if pf["where"].strip()]
-    n = len(f["availability"])
-    lines = {
-        "causes": " · ".join(filter(None, [", ".join(picked), ", ".join(places)])),
-        "when": f"{n} usual time{'' if n == 1 else 's'}" if n else "",
-        "urgent": "On" if f["urgent"]["on"] else "Off",
-    }
+    """The four sections under their headings in one form, with one Save that stays in
+    reach; a field error shows at the top and beside the Save."""
     return VolunteerShell(
         "me",
         BackLink("Me", "/profile"),
@@ -709,41 +683,28 @@ def PrefsPage(uid, f, error=None, saved=False):
             cls="-mt-2 mb-4 flex gap-2 text-sm text-ink-muted",
         ),
         *Notices(error, saved),
-        Div(
-            *[PrefsRow(key, lines.get(key)) for key in SECTIONS],
-            cls="divide-y divide-line overflow-hidden " + CARD,
-        ),
-        uid=uid,
-    )
-
-
-def SectionPage(uid, f, key, error=None, saved=False):
-    """One section's cards in a form of their own, with its own Save."""
-    name, cards, shared = SECTIONS[key]
-    return VolunteerShell(
-        "me",
-        BackLink("Preferences", "/me/preferences"),
-        H1(name, cls=TITLE + " !mt-0"),
-        SharedNote(shared) if shared else None,
-        *Notices(error, saved),
         Form(
-            *(cards(f, error=error) if key == "causes" else cards(f)),
-            Hidden(name="back", value=key),
-            Div(BigButton("Save"), cls="cm-savebar z-20 -mx-1 py-3"),
+            *[
+                Div(
+                    H2(name, id=key, cls="scroll-mt-4 text-xl font-bold text-ink"),
+                    SharedNote(shared) if shared else None,
+                    *(cards(f, error=error) if key == "causes" else cards(f)),
+                    cls="space-y-4",
+                )
+                for key, (name, cards, shared) in SECTIONS.items()
+            ],
+            Div(
+                Alert(error, cls=AlertT.error + " mb-2") if error else None,
+                BigButton("Save"),
+                cls="cm-savebar z-20 -mx-1 py-3",
+            ),
             action="/me/preferences",
             method="post",
-            cls="space-y-4",
+            cls="space-y-8",
         ),
-        Script(src="/static/geo.js", defer=True) if key == "causes" else None,
+        Script(src="/static/geo.js", defer=True),
         uid=uid,
     )
-
-
-def page_of(uid, f, key, error=None, saved=False):
-    """The index, or the section page named by key."""
-    if key in SECTIONS:
-        return SectionPage(uid, f, key, error, saved)
-    return PrefsPage(uid, f, error, saved)
 
 
 def place_forms(places):
@@ -767,34 +728,15 @@ def preferences_page(req):
     )
 
 
-def section_page(req, key):
-    uid = req.scope["uid"]
-    return SectionPage(
-        uid,
-        form_values(data.preferences(uid)),
-        key,
-        saved=query(req, "saved") == "1",
+def _to_section(key):
+    return lambda: Redirect(f"/me/preferences#{key}")
+
+
+# the old section pages' URLs (bookmarks, emails) land on their heading
+for _key in SECTIONS:
+    ar(f"/me/preferences/{_key}", methods=["GET"], name=f"preferences_{_key}_page")(
+        _to_section(_key)
     )
-
-
-@ar("/me/preferences/causes", methods=["GET"])
-def preferences_causes_page(req):
-    return section_page(req, "causes")
-
-
-@ar("/me/preferences/when", methods=["GET"])
-def preferences_when_page(req):
-    return section_page(req, "when")
-
-
-@ar("/me/preferences/work", methods=["GET"])
-def preferences_work_page(req):
-    return section_page(req, "work")
-
-
-@ar("/me/preferences/urgent", methods=["GET"])
-def preferences_urgent_page(req):
-    return section_page(req, "urgent")
 
 
 @ar("/me/preferences", methods=["POST"])
@@ -811,14 +753,6 @@ def _sync_save(req, form):
     marks = form.getlist("sections")
     if "only" in marks:  # a form loaded before the section pages existed
         marks += ["causes", "when"]
-    back = form.get("back")
-    # a form without a `back` (a script): the page its fields are from
-    if back not in SECTIONS:
-        back = (
-            "causes"
-            if "place1_where" in form
-            else next((k for k in ("when", "work", "urgent") if k in marks), None)
-        )
     skills = form.getlist("skills")
     # a ticked "language" with no language picked has lost its checkbox: keep it
     if (
@@ -934,14 +868,14 @@ def _sync_save(req, form):
         or form.get("urgent_on") not in (None, "1")
     ):
         f["urgent"] = saved["urgent"]  # the page shows what is saved
-        return page_of(uid, f, back, prefs.UNRECOGNIZED)
+        return PrefsPage(uid, f, prefs.UNRECOGNIZED)
     if "urgent" in marks:
         u = f["urgent"] = {
             **u,
             **{k: int(u[k]) for k in ("quiet_from", "quiet_to", "per_week")},
         }
         if u["quiet_from"] == u["quiet_to"]:
-            return page_of(uid, f, back, QUIET_SAME)
+            return PrefsPage(uid, f, QUIET_SAME)
     if (
         not set(rated.values()) <= {v for v, _ in prefs.CAUSE_STATES}
         or not set(f["availability"]) <= SLOTS
@@ -959,21 +893,21 @@ def _sync_save(req, form):
         or not set(f["skills"]) <= {v for v, _ in SKILLS}
         or f["frequency"] not in {v for v, _ in FREQUENCY} | {""}
     ):
-        return page_of(uid, f, back, prefs.UNRECOGNIZED)
+        return PrefsPage(uid, f, prefs.UNRECOGNIZED)
     if on_causes_page and not {prefs.LOVE, prefs.OPEN} & set(rated.values()):
-        return page_of(uid, f, back, NO_CAUSE)
+        return PrefsPage(uid, f, NO_CAUSE)
     if date_error:
-        return page_of(uid, f, back, date_error)
+        return PrefsPage(uid, f, date_error)
     places = []
     for i, pf in enumerate(posted):
         current = saved["places"][i] if i < len(saved["places"]) else None
         place, error = prefs.resolve_place(pf, current, i)
         if error:
-            return page_of(uid, f, back, error)
+            return PrefsPage(uid, f, error)
         if place:
             places.append(place)
     if on_causes_page and (not places or not f["place_forms"][0]["where"].strip()):
-        return page_of(uid, f, back, NO_PLACE)
+        return PrefsPage(uid, f, NO_PLACE)
     data.save_preferences(
         uid,
         **{
@@ -988,9 +922,7 @@ def _sync_save(req, form):
     req.session.pop(
         "deck_view", None
     )  # the deck's filter sheet starts again from these
-    return Redirect(
-        f"/me/preferences/{back}?saved=1" if back else "/me/preferences?saved=1"
-    )
+    return Redirect("/me/preferences?saved=1")
 
 
 UNSUBSCRIBE = "Stop last-minute calls"

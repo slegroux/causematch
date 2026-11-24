@@ -21,6 +21,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/OPERATIONS.md">Operations</a> ·
+  <a href="docs/GETTING_STARTED.md">Getting started</a> ·
   <a href="docs/ADMIN_GUIDE.md">Admin guide</a> ·
   <a href="docs/OPERATIONS.md#security">Security</a>
 </p>

@@ -400,8 +400,6 @@ def story(vol, org, adm, gst):
     vol.wait_for_url("**/profile")
     tap(vol, vol.get_by_role("link", name="Preferences").first)
     vol.wait_for_url("**/me/preferences")
-    tap(vol, vol.locator("a[href='/me/preferences/when']"))
-    vol.wait_for_url("**/me/preferences/when")
     smooth_to(vol, vol.locator("input[name=availability]").first)
     for slot in ("sat_morning", "sun_morning", "wed_evening"):
         box = vol.locator(f"input[name=availability][value={slot}]")
@@ -420,8 +418,6 @@ def story(vol, org, adm, gst):
     vol.wait_for_url("**/profile")
     tap(vol, vol.get_by_role("link", name="Preferences").first)
     vol.wait_for_url("**/me/preferences")
-    tap(vol, vol.locator("a[href='/me/preferences/causes']"))
-    vol.wait_for_url("**/me/preferences/causes")
     need = vol.locator("label:has(input[name=verified_hours])")
     smooth_to(vol, need)
     hold(0.6)

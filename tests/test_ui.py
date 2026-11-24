@@ -54,6 +54,11 @@ NOT_PAGES = {
     "/org/zip",
     "/org/claim/search",  # JSON for static/claim.js
     "/deck/news",  # a fragment the deck and Matches pages poll
+    # the old preferences section pages: each redirects to its heading on /me/preferences
+    "/me/preferences/causes",
+    "/me/preferences/when",
+    "/me/preferences/work",
+    "/me/preferences/urgent",
     # sign-in with Google or Apple: each answers with a redirect, never a page of its own
     "/auth/google/start",
     "/auth/apple/start",
@@ -152,10 +157,6 @@ def pages(anon, user, coord):
         (user, f"/hours/certificate/{certificate}"),
         (user, "/profile"),
         (user, "/me/preferences"),
-        (user, "/me/preferences/causes"),
-        (user, "/me/preferences/when"),
-        (user, "/me/preferences/work"),
-        (user, "/me/preferences/urgent"),
         (user, "/profile/delete"),
         (user, "/me/profile"),
         (user, "/me/screenings"),
