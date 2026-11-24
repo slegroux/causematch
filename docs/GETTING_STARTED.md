@@ -162,7 +162,7 @@ The preview is a separate copy of Causematch filled with sample data, for trying
 
 What is seeded: a nonprofit that confirms volunteer hours (its cards say **Confirms your hours**), an opening marked **Screening required**, a last-minute call for tomorrow, and a pending claim to approve under **Claims**.
 
-What you do on the preview stays there. To put it back as it started, an admin taps **Reset demo data** on the **Admin** page, then **Reset demo data** on the confirm page. Every like, match, chat, shift and claim, and every account made on the preview, goes, and the sample data comes back with fresh dates. It can't be undone, and it signs you out: tap **Try it as an admin** to carry on.
+What you do on the preview stays there. To put it back as it started, an admin taps **Reset demo data** on the **Admin** page, then **Reset demo data** on the confirm page. Every like, match, chat, shift and claim, and every account made on the preview, goes, and the sample data comes back with fresh dates. It can't be undone, and it signs you out: tap **Try it as an admin** to carry on. A reset signs out everyone on the preview, so don't press it while someone else is in the middle of a demo. The preview can be reset once every 15 minutes.
 
 The live site has no sample data and no **Reset demo data**. It has no nonprofits until real ones ask for access and an admin approves them.
 
