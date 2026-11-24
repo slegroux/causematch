@@ -2,7 +2,7 @@
 
 How to sign up and use Causematch as a volunteer, as a nonprofit coordinator, and as an admin. It is written for the live site, `https://causematch-vseu3pmeua-uw.a.run.app`; every path below (such as `/login`) goes after that address. Button and page names are in **bold**, exactly as the app shows them.
 
-Contents: [Before you start](#before-you-start) · [Volunteer](#volunteer) · [Nonprofit coordinator](#nonprofit-coordinator) · [Admin](#admin) · [Try the whole loop yourself](#try-the-whole-loop-yourself-in-15-minutes)
+Contents: [Before you start](#before-you-start) · [Volunteer](#volunteer) · [Nonprofit coordinator](#nonprofit-coordinator) · [Admin](#admin) · [The preview](#rehearse-on-the-preview) · [Try the whole loop yourself](#try-the-whole-loop-yourself-in-15-minutes)
 
 ---
 
@@ -149,6 +149,22 @@ There is no invite button. The second person files their own request at `/org/cl
 - **Metrics:** the **Metrics** tab, or the **Pilot metrics** box on the Admin page. **Download CSV** saves the figures.
 
 Everything else (the checks before approving, reports, suspensions, blocks, reading the metrics) is in [docs/ADMIN_GUIDE.md](ADMIN_GUIDE.md).
+
+---
+
+## Rehearse on the preview
+
+The preview is a separate copy of Causematch filled with sample data, for trying the three roles before you use the live site. Open it with the preview link you were sent, and don't pass the link on.
+
+- **Try it as a volunteer** on `/login` signs you in as Sam, a fresh copy for each tap, with matches, a chat, shifts and hours already confirmed, so a certificate is ready. Nonprofits there answer a like within a few seconds.
+- **Try it as a nonprofit**, on `/login` or `/org/login`, signs you in as the sample coordinator, Pat.
+- **Try it as an admin** on `/org/login` signs you in as the sample admin.
+
+What is seeded: a nonprofit that confirms volunteer hours (its cards say **Confirms your hours**), an opening marked **Screening required**, a last-minute call for tomorrow, and a pending claim to approve under **Claims**.
+
+What you do on the preview stays there. To put it back as it started, an admin taps **Reset demo data** on the **Admin** page, then **Reset demo data** on the confirm page. Every like, match, chat, shift and claim, and every account made on the preview, goes, and the sample data comes back with fresh dates. It can't be undone, and it signs you out: tap **Try it as an admin** to carry on.
+
+The live site has no sample data and no **Reset demo data**. It has no nonprofits until real ones ask for access and an admin approves them.
 
 ---
 
